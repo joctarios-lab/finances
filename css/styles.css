@@ -740,11 +740,6 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .lock-card img { width: 62px; height: 62px; border-radius: 14px; margin-bottom: 14px; }
 .lock-card h2 { font-size: 19px; font-weight: 800; margin-bottom: 4px; }
 .lock-card p { color: var(--paper-dim); font-size: 13px; margin-bottom: 18px; }
-.pin-input {
-  font-size: 26px; font-weight: 800; text-align: center; letter-spacing: .4em;
-  margin-bottom: 14px;
-}
-
 /* ---------- Teclado numérico do PIN ---------- */
 .lock-pin-card { max-width: 340px; padding: 28px 22px 24px; }
 .lock-pin-card p { margin-bottom: 20px; }

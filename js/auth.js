@@ -311,6 +311,46 @@ const Auth = {
     document.getElementById('lock-forgot').onclick = () => this.showForgot(onDone);
   },
 
+  /* Criar ou trocar o PIN fora do primeiro acesso (Configurações → Segurança).
+     Usa o mesmo teclado, para a experiência ser a mesma em qualquer lugar do app. */
+  fluxoPin({ trocar = false, aoTerminar }) {
+    const fechar = ok => { this.hide(); if (aoTerminar) aoTerminar(ok); };
+
+    const escolher = (atual, primeiro = '') => {
+      const criando = !primeiro;
+      this.pinPad({
+        titulo: criando ? (trocar ? 'Novo PIN' : 'Criar PIN') : 'Confirme o PIN',
+        texto: criando
+          ? 'Escolha de 4 a 8 dígitos. Ele <b>criptografa os dados guardados neste aparelho</b>.'
+          : 'Digite o mesmo PIN outra vez.',
+        rodape: `<div class="btn-row"><button class="btn ghost" id="pin-cancel">${criando ? 'Cancelar' : 'Recomeçar'}</button></div>`,
+        aoConfirmar: async valor => {
+          if (criando) { escolher(atual, valor); return null; }
+          if (valor !== primeiro) return 'Os PINs não conferem — comece de novo';
+          await this.setPin(valor);
+          fechar(true);
+          return null;
+        },
+      });
+      document.getElementById('pin-cancel').onclick = () => (criando ? fechar(false) : escolher(atual));
+    };
+
+    if (!trocar) return escolher(null);
+
+    // Trocar exige confirmar o PIN atual antes
+    this.pinPad({
+      titulo: 'PIN atual',
+      texto: 'Confirme o PIN de hoje para poder trocá-lo.',
+      rodape: '<div class="btn-row"><button class="btn ghost" id="pin-cancel">Cancelar</button></div>',
+      aoConfirmar: async valor => {
+        if (!(await this.tryPin(valor))) return 'PIN incorreto';
+        escolher(valor);
+        return null;
+      },
+    });
+    document.getElementById('pin-cancel').onclick = () => fechar(false);
+  },
+
   showForgot(onDone) {
     const el = this.el();
     el.innerHTML = `

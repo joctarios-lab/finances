@@ -2090,68 +2090,75 @@ function openConfigSection(sec) {
       <div class="modal-title">🔒 Segurança<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
       <p class="muted" style="margin-bottom:12px">O PIN não é só uma tela de bloqueio: ele deriva uma chave <b>AES-256</b> (PBKDF2) que <b>criptografa os dados guardados neste aparelho</b> — sem o PIN, o conteúdo é ilegível. Após 5 erros, o app bloqueia por tempo progressivo. A nuvem tem camada própria: login e-mail/senha + regras por família (RLS) no Supabase.</p>
       ${Auth.enabled() ? `
-        <div class="field"><label>PIN atual</label><input id="sec-cur" type="password" inputmode="numeric" maxlength="8"></div>
-        <div class="field"><label>Novo PIN (deixe vazio para só alterar o tempo)</label><input id="sec-new" type="password" inputmode="numeric" maxlength="8" placeholder="4 a 8 dígitos"></div>
-        <div class="field"><label>Bloquear após (minutos em segundo plano)</label><input id="sec-min" type="number" min="0" max="120" value="${Auth.cfg.lockAfterMin ?? 5}"></div>
-        <button class="btn" id="sec-save">Salvar</button>
+        <div class="settings-item" id="sec-trocar"><span class="cfg-left"><span class="cfg-ico" data-ico="lock"></span><span>Trocar o PIN<br><small>abre o teclado para escolher um novo</small></span></span><span class="chev" data-ico="chev"></span></div>
+        <div class="field" style="margin-top:12px"><label>Bloquear após (minutos em segundo plano)</label><input id="sec-min" type="number" min="0" max="120" value="${Auth.cfg.lockAfterMin ?? 5}"></div>
+        <button class="btn" id="sec-save">Salvar tempo de bloqueio</button>
         <hr class="sep">
         <p class="section-title" style="margin-bottom:8px">👆 Desbloqueio por digital</p>
         ${Auth.bioAtiva()
           ? '<p class="muted" style="margin-bottom:10px">Ativo neste aparelho — o app pede a digital ao abrir e o PIN continua valendo como alternativa.</p><button class="btn ghost" id="sec-bio-off">Desativar digital</button>'
           : Auth.cfg.bioIndisponivel
             ? '<p class="bio-indisponivel">Este navegador ainda não permite usar a digital para proteger dados (falta suporte a PRF). Continue com o PIN.</p>'
-            : '<p class="muted" style="margin-bottom:10px">Use a digital (ou o rosto) em vez de digitar o PIN toda vez. Confirme o PIN atual acima e ative aqui. A criptografia continua a mesma: o leitor do aparelho guarda o segredo que abre a chave.</p><button class="btn ghost" id="sec-bio-on">Ativar digital neste aparelho</button>'}
-        <p id="sec-bio-msg" class="muted" style="margin-top:8px"></p>
+            : '<p class="muted" style="margin-bottom:10px">Use a digital (ou o rosto) em vez de digitar o PIN toda vez. A criptografia continua a mesma: o leitor do aparelho guarda o segredo que abre a chave.</p><button class="btn ghost" id="sec-bio-on">Ativar digital neste aparelho</button>'}
         <div class="btn-row"><button class="btn danger" id="sec-off">Remover PIN</button></div>
       ` : `
-        <div class="field"><label>Criar PIN (4 a 8 dígitos)</label><input id="sec-new" type="password" inputmode="numeric" maxlength="8"></div>
-        <div class="field"><label>Repetir PIN</label><input id="sec-new2" type="password" inputmode="numeric" maxlength="8"></div>
-        <button class="btn" id="sec-on">Ativar proteção</button>
+        <button class="btn" id="sec-on">Criar PIN e proteger este aparelho</button>
       `}
     `);
     $('#md-back').onclick = openConfig;
     const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
-    on('#sec-on', async () => {
-      const p1 = $('#sec-new').value, p2 = $('#sec-new2').value;
-      if (!/^\d{4,8}$/.test(p1)) return toast('Use de 4 a 8 dígitos');
-      if (p1 !== p2) return toast('Os PINs não conferem');
-      await Auth.setPin(p1);
-      toast('PIN ativado ✓'); openConfig();
+    // Criar e trocar usam o mesmo teclado do primeiro acesso
+    on('#sec-on', () => {
+      closeModal();
+      Auth.fluxoPin({ aoTerminar: ok => { if (ok) toast('PIN ativado ✓'); openConfigSection('security'); } });
     });
-    on('#sec-save', async () => {
-      if (!(await Auth.verify($('#sec-cur').value))) return toast('PIN atual incorreto');
-      const novo = $('#sec-new').value;
-      if (novo) {
-        if (!/^\d{4,8}$/.test(novo)) return toast('Novo PIN: 4 a 8 dígitos');
-        await Auth.setPin(novo);
-      }
+    on('#sec-trocar', () => {
+      closeModal();
+      Auth.fluxoPin({ trocar: true, aoTerminar: ok => { if (ok) toast('PIN alterado ✓'); openConfigSection('security'); } });
+    });
+    on('#sec-save', () => {
       Auth.cfg.lockAfterMin = Math.min(120, Math.max(0, parseInt($('#sec-min').value) || 5));
       Auth.save();
-      toast('Segurança atualizada ✓'); openConfig();
+      toast('Tempo de bloqueio salvo ✓'); openConfig();
     });
-    on('#sec-off', async () => {
+    // Ações sensíveis pedem o PIN pelo teclado, em vez de um campo solto na tela
+    on('#sec-off', () => {
       if (!confirm('Remover a proteção? Os dados deste aparelho voltarão a ficar SEM criptografia.')) return;
-      if (!(await Auth.removePin($('#sec-cur').value))) return toast('PIN atual incorreto');
-      Auth.desativarBio();
-      toast('PIN removido — dados locais sem criptografia'); openConfig();
+      closeModal();
+      Auth.pinPad({
+        titulo: 'Confirme o PIN',
+        texto: 'Digite o PIN atual para remover a proteção deste aparelho.',
+        rodape: '<div class="btn-row"><button class="btn ghost" id="pin-cancel">Cancelar</button></div>',
+        aoConfirmar: async valor => {
+          if (!(await Auth.removePin(valor))) return 'PIN incorreto';
+          Auth.desativarBio();
+          Auth.hide();
+          toast('PIN removido — dados locais sem criptografia');
+          openConfigSection('security');
+          return null;
+        },
+      });
+      $('#pin-cancel').onclick = () => { Auth.hide(); openConfigSection('security'); };
     });
-    on('#sec-bio-on', async () => {
-      const pin = $('#sec-cur').value;
-      if (!pin) { $('#sec-cur').focus(); return toast('Digite o PIN atual acima para ativar'); }
-      const msg = $('#sec-bio-msg');
-      msg.className = 'muted';
-      msg.textContent = 'Confirme no leitor do aparelho…';
-      try {
-        await Auth.ativarBio(pin);
-        toast('Digital ativada ✓'); openConfigSection('security');
-      } catch (e) {
-        const naoSuporta = /PRF|não oferece leitor/i.test(e.message);
-        msg.className = naoSuporta ? 'bio-indisponivel' : 'lock-err';
-        msg.textContent = e.name === 'NotAllowedError' ? 'Digital não confirmada' : e.message;
-        // Sem suporte no navegador, o botão some: não adianta insistir
-        if (naoSuporta) { $('#sec-bio-on').hidden = true; Auth.cfg.bioIndisponivel = true; Auth.save(); }
-        else toast(msg.textContent);
-      }
+    on('#sec-bio-on', () => {
+      closeModal();
+      Auth.pinPad({
+        titulo: 'Confirme o PIN',
+        texto: 'Digite o PIN atual para vincular a digital a este aparelho.',
+        rodape: '<div class="btn-row"><button class="btn ghost" id="pin-cancel">Cancelar</button></div>',
+        aoConfirmar: async valor => {
+          if (!(await Auth.verify(valor))) return 'PIN incorreto';
+          try {
+            await Auth.ativarBio(valor);
+            Auth.hide(); toast('Digital ativada ✓'); openConfigSection('security');
+            return null;
+          } catch (e) {
+            if (/PRF|não oferece leitor/i.test(e.message)) { Auth.hide(); openConfigSection('security'); return null; }
+            return e.name === 'NotAllowedError' ? 'Digital não confirmada' : e.message;
+          }
+        },
+      });
+      $('#pin-cancel').onclick = () => { Auth.hide(); openConfigSection('security'); };
     });
     on('#sec-bio-off', () => { Auth.desativarBio(); toast('Digital desativada'); openConfigSection('security'); });
   }

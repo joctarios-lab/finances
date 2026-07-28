@@ -210,7 +210,7 @@ console.log('\n=== Nenhuma função inexistente é chamada (DB.x / OFX.x) ===');
     const alvo = { DB, OFX, Sync: global.Sync, Auth: global.Auth, Notif: typeof Notif !== 'undefined' ? Notif : {} }[obj];
     if (alvo && typeof alvo[met] !== 'function' && !quebradas.includes(obj + '.' + met)) quebradas.push(obj + '.' + met);
   }
-  const ignorar = ['Sync.startAuto', 'Auth.bioAtiva', 'Auth.ativarBio', 'Auth.desativarBio', 'Auth.desbloquearComBio', 'Auth.bioSuportadaNoAparelho', 'Sync.rest', 'Sync.signIn', 'Sync.signUp', 'Sync.signOut', 'Sync.createFamily', 'Sync.joinFamily', 'Sync.syncAll', 'Sync.status', 'Auth.setPin', 'Auth.verify', 'Auth.removePin', 'Auth.lockNow', 'Auth.save', 'Notif.load', 'Notif.enable', 'Notif.disable', 'Notif.push', 'Notif.check', 'Notif.save', 'Notif.pushState', 'Notif.subscribePush', 'Notif.unsubscribePush', 'Notif.enabled', 'Notif.vapid', 'Notif.urlB64ToU8', 'Notif.registerFail', 'Notif.registerSuccess'];
+  const ignorar = ['Auth.fluxoPin', 'Auth.pinPad', 'Auth.hide', 'Sync.startAuto', 'Auth.bioAtiva', 'Auth.ativarBio', 'Auth.desativarBio', 'Auth.desbloquearComBio', 'Auth.bioSuportadaNoAparelho', 'Sync.rest', 'Sync.signIn', 'Sync.signUp', 'Sync.signOut', 'Sync.createFamily', 'Sync.joinFamily', 'Sync.syncAll', 'Sync.status', 'Auth.setPin', 'Auth.verify', 'Auth.removePin', 'Auth.lockNow', 'Auth.save', 'Notif.load', 'Notif.enable', 'Notif.disable', 'Notif.push', 'Notif.check', 'Notif.save', 'Notif.pushState', 'Notif.subscribePush', 'Notif.unsubscribePush', 'Notif.enabled', 'Notif.vapid', 'Notif.urlB64ToU8', 'Notif.registerFail', 'Notif.registerSuccess'];
   const reais = quebradas.filter(q => !ignorar.includes(q));
   check('todas as chamadas existem', reais.length ? reais.join(', ') : true, true);
 }
@@ -399,6 +399,14 @@ console.log('\n=== Teclado do PIN ===');
   check('desbloqueio usa o teclado novo', /showLock[\s\S]{0,200}pinPad/.test(au), true);
   check('some com o teclado ao sair da tela', au.includes('document.onkeydown = null'), true);
   check('cabe em tela baixa', cssL.includes('max-height: 680px'), true);
+  // O teclado é o mesmo em todo o app — nada de campo de texto para PIN
+  const ap2 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('criar PIN nas configurações usa o teclado', au.includes('fluxoPin') && ap2.includes("Auth.fluxoPin({ aoTerminar"), true);
+  check('trocar PIN usa o teclado', ap2.includes("trocar: true"), true);
+  check('remover PIN pede confirmação pelo teclado', /sec-off[\s\S]{0,300}Auth\.pinPad/.test(ap2), true);
+  check('ativar digital pede o PIN pelo teclado', /sec-bio-on[\s\S]{0,200}Auth\.pinPad/.test(ap2), true);
+  check('nenhum campo de texto para PIN restou', !ap2.includes('sec-cur') && !ap2.includes('sec-new'), true);
+  check('estilo do campo antigo removido', !cssL.includes('.pin-input'), true);
 }
 
 console.log('\n=== Digital indisponível no navegador ===');
@@ -409,7 +417,7 @@ console.log('\n=== Digital indisponível no navegador ===');
   check('aviso em vermelho, com destaque', /\.bio-indisponivel[^}]*var\(--red\)/.test(cssL), true);
   check('lembra que o navegador não suporta', au.includes('bioIndisponivel = true'), true);
   check('não oferece mais a digital depois disso', /bioIndisponivel[\s\S]{0,80}return false/.test(au), true);
-  check('botão some nas configurações', ap.includes("$('#sec-bio-on').hidden = true"), true);
+  check('botão some nas configurações', ap.includes('Auth.cfg.bioIndisponivel'), true);
   check('configurações mostram o aviso no lugar do botão', ap.includes('Auth.cfg.bioIndisponivel') && ap.includes('bio-indisponivel'), true);
   check('no primeiro acesso o botão também some', /ob-bio[\s\S]{0,300}b\.hidden = true/.test(au), true);
   check('e o texto vira "Continuar com o PIN"', au.includes('Continuar com o PIN'), true);
