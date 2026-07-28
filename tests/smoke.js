@@ -181,6 +181,27 @@ try {
   check('detalhe da fatura lista os lançamentos', el('#modal').innerHTML.includes('Roupa'), true);
 } catch (e) { console.log(` FALHA | detalhe da fatura: ${e.message}`); fail++; }
 
+console.log('\n=== Formulário: escolha manual nunca é sobrescrita ===');
+try {
+  const alim = cat('Aliment').id, moradia = cat('Moradia').id;
+  // O DOM falso não roda listeners; reproduzimos a mesma decisão do handler.
+  const decidir = ({ catManual, texto }) => {
+    const anterior = txHistory().find(h => h.description.toLowerCase() === texto.toLowerCase());
+    if (anterior) return (!catManual && anterior.category_id) ? anterior.category_id : 'MANTEM';
+    if (catManual) return 'MANTEM';
+    return OFX.guessCategoryId(texto, DB.all('categories')) || 'MANTEM';
+  };
+  check('sem escolha manual, sugere pela palavra-chave', decidir({ catManual: false, texto: 'Supermercado' }), alim);
+  check('sem escolha manual, repete o lançamento igual', decidir({ catManual: false, texto: 'Mercado' }), alim);
+  check('COM escolha manual, digitar palavra-chave NÃO troca', decidir({ catManual: true, texto: 'Supermercado' }), 'MANTEM');
+  check('COM escolha manual, descrição repetida NÃO troca', decidir({ catManual: true, texto: 'Mercado' }), 'MANTEM');
+  check('descrição desconhecida não força nenhuma categoria', decidir({ catManual: false, texto: 'zzz qualquer coisa' }), 'MANTEM');
+  // Ao editar, a categoria gravada conta como escolha manual desde o início
+  const editando = DB.all('transactions').find(t => t.description === 'Mercado');
+  check('ao editar, a categoria salva é preservada', !!editando.category_id, true);
+  check('categoria salva é a que foi lançada', editando.category_id, alim);
+} catch (e) { console.log(` FALHA | formulário: ${e.message}`); fail++; }
+
 console.log('\n=== Reserva de emergência ===');
 check('caixinha entra na reserva por padrão', DB.isReserveAccount(DB.get('accounts', caixinha)), true);
 check('conta corrente fica fora por padrão', DB.isReserveAccount(DB.get('accounts', conta)), false);

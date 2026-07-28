@@ -1098,18 +1098,29 @@ function openTxSheet(tx, asNew) {
     }
     $('#f-cat-more').hidden = true;
   };
-  bindChips('g-cat', () => {
+  // A partir do momento em que a pessoa escolhe categoria ou forma de pagamento,
+  // o preenchimento automático não mexe mais nesses campos.
+  let catManual = !!tx.category_id;
+  let methodManual = isEdit;
+
+  bindChips('g-cat', v => {
     $('#cat-auto').textContent = '';
+    if (v) catManual = true;                       // escolheu um dos botões
     const abriu = $('#cat-other').classList.contains('active') && !$('#cat-other').dataset.v;
     $('#f-cat-more').hidden = !abriu;
     if (abriu) setTimeout(() => $('#f-cat-more').focus(), 20);
   });
-  $('#f-cat-more').onchange = e => { if (e.target.value) setCategory(e.target.value); };
+  $('#f-cat-more').onchange = e => {
+    if (!e.target.value) return;
+    catManual = true;                              // escolheu pelo dropdown
+    $('#cat-auto').textContent = '';
+    setCategory(e.target.value);
+  };
   setCategory(tx.category_id);
 
   bindChips('g-type', v => { applyType(v); applyMethod(chipValue('g-method')); });
   bindChips('g-scope', applyScope);
-  bindChips('g-method', applyMethod);
+  bindChips('g-method', v => { methodManual = true; applyMethod(v); });
   applyType(tx.type || 'Despesa');
   applyScope(tx.scope || 'Família');
 
@@ -1128,16 +1139,22 @@ function openTxSheet(tx, asNew) {
   desc.addEventListener('input', () => {
     const texto = desc.value.trim();
     if (!texto || chipValue('g-type') === 'Receita') return;
+
     const anterior = historico.find(h => h.description.toLowerCase() === texto.toLowerCase());
-    if (anterior) {                                   // já lançou isso antes: repete a classificação
-      setCategory(anterior.category_id);
-      selectChip('g-method', anterior.method);
-      applyMethod(anterior.method);
-      if (anterior.category_id) $('#cat-auto').textContent = '· repetido do último lançamento igual';
+    if (anterior) {                       // já lançou isso antes: repete o que ainda não foi escolhido
+      if (!catManual && anterior.category_id) {
+        setCategory(anterior.category_id);
+        $('#cat-auto').textContent = '· repetido do último lançamento igual';
+      }
+      if (!methodManual && anterior.method && METHODS.includes(anterior.method)) {
+        selectChip('g-method', anterior.method);
+        applyMethod(anterior.method);
+      }
       if (!moneyVal('#f-amount') && anterior.amount) initMoney('#f-amount', anterior.amount);
       return;
     }
-    if (chipValue('g-cat')) return;                   // não sobrescreve escolha manual
+
+    if (catManual) return;                // escolha da pessoa tem prioridade sobre qualquer sugestão
     const guess = OFX.guessCategoryId(texto, cats);
     if (guess) { setCategory(guess); $('#cat-auto').textContent = '· sugerida automaticamente'; }
   });
