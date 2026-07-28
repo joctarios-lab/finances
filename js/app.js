@@ -623,8 +623,8 @@ function renderInicio(period) {
       <div class="hero-value">${fmt(Math.abs(resultado))}</div>
       <p class="hero-msg">${realized > 0 ? 'Receitas menos despesas do período.' : 'Sem receitas lançadas neste período — o valor mostra o total gasto.'}</p>
       <div class="hero-stats">
-        <div><small>Receitas</small><b>${fmtShort(realized)}</b></div>
-        <div><small>Despesas</small><b>${fmtShort(stats.spent)}</b></div>
+        <div><small>Receitas</small><b>${fmt(realized)}</b></div>
+        <div><small>Despesas</small><b>${fmt(stats.spent)}</b></div>
         <div><small>Lançamentos</small><b>${txs.length}</b></div>
       </div>
     </div>`;
@@ -638,9 +638,9 @@ function renderInicio(period) {
       <div class="hero-value">${fmt(available)}</div>
       <p class="hero-msg">${health.msg}</p>
       <div class="hero-stats">
-        <div><small>Em contas</small><b>${fmtShort(saldo)}</b></div>
-        <div><small>Comprometido</small><b>${fmtShort(committed)}</b></div>
-        <div><small>Gasto previsto</small><b>${fmtShort(stats.projection)}</b></div>
+        <div><small>Em contas</small><b>${fmt(saldo)}</b></div>
+        <div><small>Comprometido</small><b>${fmt(committed)}</b></div>
+        <div><small>Gasto previsto</small><b>${fmt(stats.projection)}</b></div>
       </div>
     </div>`;
 
@@ -650,9 +650,9 @@ function renderInicio(period) {
     ${atual ? heroAtual : heroFechado}
     ${adviceCard}
     <div class="kpi-grid">
-      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmtShort(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
-      <div class="card kpi"><span class="kpi-ico t-danger" data-ico="invoice"></span><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmtShort(openInvoices)}</div><div class="kpi-label">Faturas em aberto</div><div class="kpi-sub">${upcoming.length} fatura(s)</div></div>
-      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmtShort(saldo)}</div><div class="kpi-label">Saldo em contas</div><div class="kpi-sub">${contas.length} conta(s)</div></div>
+      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
+      <div class="card kpi"><span class="kpi-ico t-danger" data-ico="invoice"></span><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmt(openInvoices)}</div><div class="kpi-label">Faturas em aberto</div><div class="kpi-sub">${upcoming.length} fatura(s)</div></div>
+      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmt(saldo)}</div><div class="kpi-label">Saldo em contas</div><div class="kpi-sub">${contas.length} conta(s)</div></div>
       <div class="card kpi"><span class="kpi-ico t-info" data-ico="target"></span><div class="kpi-value">${avgPct}%</div><div class="kpi-label">Metas (média)</div><div class="kpi-sub">${goals.length} em andamento</div></div>
     </div>
     <div class="grid-2">
@@ -797,11 +797,16 @@ function renderExtrato(period) {
     if (t.date !== lastDay) {
       lastDay = t.date;
       const d = porDia[t.date] || { saiu: 0, entrou: 0 };
-      // Saída e entrada lado a lado em vez de um saldo líquido: um dia com
-      // R$ 3.000 de salário e R$ 3.000 de contas não é um dia sem movimento.
+      /* Componentes sempre, saldo só quando houve os dois: num dia só de gastos o
+         saldo repetiria o mesmo número, e repetir número é o que faz a pessoa
+         parar de ler. Com os dois, o saldo é a resposta que nenhum dos dois dá
+         sozinho — R$ 3.000 de salário e R$ 3.000 de contas não é dia parado. */
+      const liq = d.entrou - d.saiu;
       const totais = [
-        d.saiu ? `<span class="tx-day-out">− ${fmtShort(d.saiu)}</span>` : '',
-        d.entrou ? `<span class="tx-day-in">+ ${fmtShort(d.entrou)}</span>` : '',
+        d.entrou ? `<span class="tx-day-in">+ ${fmt(d.entrou)}</span>` : '',
+        d.saiu ? `<span class="tx-day-out">− ${fmt(d.saiu)}</span>` : '',
+        (d.entrou && d.saiu)
+          ? `<span class="tx-day-liq ${liq >= 0 ? 'pos' : 'neg'}">${liq >= 0 ? '+' : '−'} ${fmt(Math.abs(liq))}</span>` : '',
       ].filter(Boolean).join('');
       list += `<p class="tx-day"><span>${fmtDay(t.date)}</span>${totais ? `<span class="tx-day-tot">${totais}</span>` : ''}</p>`;
     }
@@ -855,22 +860,34 @@ function renderExtrato(period) {
       const nomes = contasFiltradas.map(id => (DB.get('accounts', id) || {}).name).filter(Boolean);
       const saldo = contasFiltradas.reduce((s, id) => s + (Number((DB.get('accounts', id) || {}).balance) || 0), 0);
       const varias = contasFiltradas.length > 1;
+      // Entrou e saiu na linha de cima, porque é o par que se compara; média e
+      // saldo embaixo, que são leituras de apoio.
+      const resultadoConta = entrouNaConta - saiuNaConta;
       return `
-    <div class="mini-stats">
-      <div class="card"><small>Saiu</small><b class="txt-red">${fmtShort(saiuNaConta)}</b></div>
-      <div class="card"><small>Entrou</small><b class="txt-green">${fmtShort(entrouNaConta)}</b></div>
-      <div class="card"><small>${varias ? 'Saldo somado' : 'Saldo hoje'}</small><b>${fmtShort(saldo)}</b></div>
+    <div class="stat-2x2">
+      <div class="card"><small>Entrou</small><b class="txt-green">${fmt(entrouNaConta)}</b></div>
+      <div class="card"><small>Saiu</small><b class="txt-red">${fmt(saiuNaConta)}</b></div>
+      <div class="card"><small>Resultado do mês</small><b class="${resultadoConta >= 0 ? 'txt-green' : 'txt-red'}">${resultadoConta >= 0 ? '+' : '−'} ${fmt(Math.abs(resultadoConta))}</b></div>
+      <div class="card"><small>${varias ? 'Saldo somado' : 'Saldo hoje'}</small><b>${fmt(saldo)}</b></div>
     </div>
     <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc(nomes.join(' + '))}</b> — transferência conta quando entra ou sai ${varias
       ? 'do conjunto; entre estas contas ela não conta, porque o dinheiro não saiu daqui.'
       : 'desta conta.'}</p>`;
     })()
-    : `
-    <div class="mini-stats">
-      <div class="card"><small>Receitas</small><b class="txt-green">${fmtShort(receitas)}</b></div>
-      <div class="card"><small>Média/dia</small><b>${fmtShort(st.dailyAvg)}</b></div>
-      <div class="card"><small>${isCurrent ? 'Projeção' : 'Total'}</small><b>${fmtShort(isCurrent ? st.projection : st.spent)}</b></div>
-    </div>`}
+    : (() => {
+      // Receitas e despesas lado a lado: é a comparação que responde "sobrou ou faltou".
+      const resultado = receitas - total;
+      return `
+    <div class="stat-2x2">
+      <div class="card"><small>Receitas</small><b class="txt-green">${fmt(receitas)}</b></div>
+      <div class="card"><small>Despesas</small><b class="txt-red">${fmt(total)}</b></div>
+      <div class="card"><small>Média/dia</small><b>${fmt(st.dailyAvg)}</b></div>
+      <div class="card"><small>${isCurrent ? 'Sobra prevista' : 'Resultado'}</small><b class="${
+        (isCurrent ? receitas - st.projection : resultado) >= 0 ? 'txt-green' : 'txt-red'}">${
+        (isCurrent ? receitas - st.projection : resultado) >= 0 ? '+' : '−'} ${
+        fmtShort(Math.abs(isCurrent ? receitas - st.projection : resultado))}</b></div>
+    </div>`;
+    })()}
     <div class="quick-add">
       <button class="qa qa-desp" data-novo="Despesa"><span data-ico="plus"></span>Despesa</button>
       <button class="qa qa-rec" data-novo="Receita"><span data-ico="plus"></span>Receita</button>
@@ -1087,10 +1104,10 @@ function renderRelatorios() {
       <button id="rep-next" aria-label="Próximo mês" data-ico="chevR"></button>
     </div>
     <div class="kpi-grid">
-      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmtShort(total)}</div><div class="kpi-label">Despesas</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
-      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmtShort(receitasPeriodo)}</div><div class="kpi-label">Receitas</div><div class="kpi-sub">no período</div></div>
-      <div class="card kpi"><span class="kpi-ico ${receitasPeriodo - total >= 0 ? 't-success' : 't-danger'}" data-ico="pie"></span><div class="kpi-value ${receitasPeriodo - total >= 0 ? 'green' : 'red'}">${fmtShort(receitasPeriodo - total)}</div><div class="kpi-label">Resultado</div><div class="kpi-sub">${receitasPeriodo > 0 ? Math.round((receitasPeriodo - total) / receitasPeriodo * 100) + '% da receita' : 'sem receita lançada'}</div></div>
-      <div class="card kpi"><span class="kpi-ico t-warning" data-ico="calendar"></span><div class="kpi-value">${fmtShort(total / Math.max(1, DB.elapsedDays(period)))}</div><div class="kpi-label">Média por dia</div><div class="kpi-sub">${DB.elapsedDays(period)} de ${DB.periodDays(period)} dias</div></div>
+      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Despesas</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
+      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmt(receitasPeriodo)}</div><div class="kpi-label">Receitas</div><div class="kpi-sub">no período</div></div>
+      <div class="card kpi"><span class="kpi-ico ${receitasPeriodo - total >= 0 ? 't-success' : 't-danger'}" data-ico="pie"></span><div class="kpi-value ${receitasPeriodo - total >= 0 ? 'green' : 'red'}">${fmt(receitasPeriodo - total)}</div><div class="kpi-label">Resultado</div><div class="kpi-sub">${receitasPeriodo > 0 ? Math.round((receitasPeriodo - total) / receitasPeriodo * 100) + '% da receita' : 'sem receita lançada'}</div></div>
+      <div class="card kpi"><span class="kpi-ico t-warning" data-ico="calendar"></span><div class="kpi-value">${fmt(total / Math.max(1, DB.elapsedDays(period)))}</div><div class="kpi-label">Média por dia</div><div class="kpi-sub">${DB.elapsedDays(period)} de ${DB.periodDays(period)} dias</div></div>
     </div>
 
     <div class="card">

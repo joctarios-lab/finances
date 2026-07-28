@@ -295,6 +295,18 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .rep-table .num { text-align: right; white-space: nowrap; }
 .rep-table th:nth-child(n+2) { text-align: right; }
 
+/* Duas colunas: o par de cima é o que se compara (entrou x saiu, receita x
+   despesa), e o de baixo são leituras de apoio. Em três colunas o valor com
+   centavos não cabia na largura do celular. */
+.stat-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stat-2x2 .card { padding: 12px 14px; min-width: 0; }
+.stat-2x2 small {
+  display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--paper-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.stat-2x2 b { display: block; font-size: 16px; font-weight: 800; margin-top: 2px; white-space: nowrap; }
+@media (max-width: 380px) { .stat-2x2 b { font-size: 14.5px; } }
+
 .mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .mini-stats .card { padding: 12px 14px; text-align: center; min-width: 0; }
 .mini-stats small {
@@ -365,9 +377,22 @@ svg:hover .ch-bar-on { fill: #005a92; }
 }
 /* O total do dia acompanha o rótulo, sem competir com o valor de cada lançamento:
    mesmo tamanho da data, não o corpo da linha. */
-.tx-day-tot { display: flex; gap: 10px; letter-spacing: 0; flex: none; }
+.tx-day-tot { display: flex; align-items: center; gap: 8px; letter-spacing: 0; flex: none; }
 .tx-day-out { color: var(--red); }
 .tx-day-in { color: #47be7d; }
+/* O saldo é a conclusão, então ganha moldura para se separar das parcelas que o
+   formaram — sem isso os três números viram uma fileira só, sem hierarquia. */
+.tx-day-liq {
+  padding: 2px 7px; border-radius: 20px; font-weight: 800;
+  background: var(--ink-3); color: var(--paper);
+}
+.tx-day-liq.pos { background: rgba(80, 205, 137, .14); color: #3aa76d; }
+.tx-day-liq.neg { background: rgba(241, 65, 108, .1); color: var(--red); }
+/* Em tela estreita o saldo desce para a própria linha, em vez de espremer a data */
+@media (max-width: 400px) {
+  .tx-day { flex-wrap: wrap; }
+  .tx-day-tot { gap: 7px; }
+}
 .tx {
   display: flex; align-items: center; gap: 12px; padding: 11px 14px;
   background: var(--ink-2); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;

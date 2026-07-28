@@ -1233,24 +1233,45 @@ try {
   };
 
   let linha = linhaDoDia(renderExtrato(pD));
-  check('o dia mostra o que saiu', linha.includes(fmtShort(250)), true);
-  check('e o que entrou, separado', linha.includes(fmtShort(80)), true);
+  check('o dia mostra o que saiu, com centavos', linha.includes(fmt(250)), true);
+  check('e o que entrou, separado', linha.includes(fmt(80)), true);
   check('saída em vermelho, entrada em verde', linha.includes('tx-day-out') && linha.includes('tx-day-in'), true);
 
   // Transferência é dinheiro mudando de lugar: não pode inflar o total do dia
   const tr = { description: 'Para a poupança', amount: 900, date: diaTeste, type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: contaD, to_account: DB.all('accounts')[1].id };
   const trId = DB.upsert('transactions', tr);
   linha = linhaDoDia(renderExtrato(pD));
-  check('transferência não entra no total do dia', linha.includes(fmtShort(250)), true);
-  check('nem como entrada', linha.includes(fmtShort(900)), false);
+  check('transferência não entra no total do dia', linha.includes(fmt(250)), true);
+  check('nem como entrada', linha.includes(fmt(900)), false);
   DB.remove('transactions', trId);
 
   // O total precisa refletir o filtro, senão não bate com as linhas logo abaixo
   state.filtros = { ...FILTROS_VAZIOS, busca: 'mercado do dia' };
   linha = linhaDoDia(renderExtrato(pD));
-  check('com filtro, o total acompanha o que é exibido', linha.includes(fmtShort(200)), true);
-  check('e some o que foi filtrado fora', linha.includes(fmtShort(250)), false);
+  check('com filtro, o total acompanha o que é exibido', linha.includes(fmt(200)), true);
+  check('e some o que foi filtrado fora', linha.includes(fmt(250)), false);
   state.filtros = { ...FILTROS_VAZIOS };
+
+  /* Saldo do dia: só quando houve entrada E saída. Num dia de um tipo só ele
+     repetiria o mesmo número, e repetir número faz a pessoa parar de ler. */
+  state.filtros = { ...FILTROS_VAZIOS };
+  linha = linhaDoDia(renderExtrato(pD));
+  check('dia misto mostra o saldo', linha.includes('tx-day-liq'), true);
+  check('e o saldo é entrada menos saída', linha.includes(fmt(170)), true);
+
+  /* Totalizadores com centavos: arredondar escondia diferença de centavos
+     justamente na conferência contra o extrato do banco. */
+  const cabecalho = renderExtrato(pD);
+  check('cards do extrato em 2 colunas', cabecalho.includes('stat-2x2'), true);
+  check('receitas e despesas na linha de cima',
+    cabecalho.indexOf('>Receitas<') < cabecalho.indexOf('>Despesas<') &&
+    cabecalho.indexOf('>Despesas<') < cabecalho.indexOf('>Média/dia<'), true);
+  check('e o resultado embaixo', /Sobra prevista|>Resultado</.test(cabecalho), true);
+  const apF = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('cards totalizadores usam centavos',
+    /<small>Receitas<\/small><b[^>]*>\$\{fmt\(/.test(apF) && /<small>Despesas<\/small><b[^>]*>\$\{fmt\(/.test(apF), true);
+  check('KPIs do painel também', !/kpi-value[^"]*">\$\{fmtShort\(/.test(apF), true);
+  check('e o hero do painel', /<small>Em contas<\/small><b>\$\{fmt\(/.test(apF), true);
 
   // Dia só com entrada não mostra saída zerada
   const soEntrada = dia(24);
