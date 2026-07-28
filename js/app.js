@@ -3254,9 +3254,14 @@ function renderOfxPreview(parsed, accounts, cards) {
   let parEncontrado = {};              // linha -> transferência que já cobre este valor
   const novos = parsed.txs.filter(t => !DB.hasFitid(t.fitid));
   const dups = parsed.txs.length - novos.length;
+  /* Só o PRIMEIRO de cada grupo vem marcado. Marcando todos, o navegador fica com
+     o ÚLTIMO — enquanto o código assumia o primeiro. As duas pontas discordavam, e
+     a lista de destinos de transferência era montada excluindo a conta errada:
+     a conta que estava sendo importada aparecia como destino dela mesma, e dava
+     para criar transferência de uma conta para ela própria (que não move nada). */
   const destOpts = `
-    ${cards.length ? `<optgroup label="Cartões de crédito">${cards.map(c => `<option value="card:${c.id}" ${parsed.isCard ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
-    ${accounts.length ? `<optgroup label="Contas">${accounts.map(a => `<option value="acc:${a.id}" ${!parsed.isCard ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>` : ''}`;
+    ${cards.length ? `<optgroup label="Cartões de crédito">${cards.map((c, i) => `<option value="card:${c.id}" ${parsed.isCard && i === 0 ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
+    ${accounts.length ? `<optgroup label="Contas">${accounts.map((a, i) => `<option value="acc:${a.id}" ${!parsed.isCard && i === 0 ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>` : ''}`;
 
   /* A conta que está sendo importada só é conhecida depois que a pessoa escolhe
      em "Lançar em" — e é ela que define quais linhas já foram lançadas como a
@@ -3424,7 +3429,7 @@ function renderOfxPreview(parsed, accounts, cards) {
     const account = kind === 'acc' ? DB.get('accounts', id) : null;
     if (!card && !account) return toast('Escolha onde lançar');
 
-    let n = 0, transferidos = 0;
+    let n = 0, transferidos = 0, descartadas = 0;
     boxes().forEach(box => {
       if (!box.checked) return;
       const idx = Number(box.dataset.i);
@@ -3443,6 +3448,14 @@ function renderOfxPreview(parsed, accounts, cards) {
       if (escolha.startsWith('transfer:')) {
         const outroId = escolha.slice('transfer:'.length);
         const daqui = account ? account.id : (card ? card.id : null);
+        /* Rede de segurança: transferência de uma conta para ela mesma não move
+           dinheiro nenhum (sai e volta), então some do saldo sem deixar rastro.
+           A lista já exclui a conta atual, mas errar aqui custa caro demais
+           para depender de um único ponto. */
+        if (!outroId || outroId === daqui) {
+          descartadas++;
+          return;
+        }
         const transf = {
           description: t.memo,
           amount: Math.abs(t.amount),
@@ -3492,6 +3505,7 @@ function renderOfxPreview(parsed, accounts, cards) {
     const pulados = Object.keys(parEncontrado).length;
     const partes = [`${n} lançamento(s) importado(s)`];
     if (transferidos) partes.push(`${transferidos} como transferência`);
+    if (descartadas) partes.push(`${descartadas} sem destino válido, ignorada(s)`);
     if (pulados) partes.push(`${pulados} já estavam lançados`);
     toast(partes.join(' · ') + ' ✓');
   };

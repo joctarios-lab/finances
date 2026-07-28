@@ -53,17 +53,33 @@ function lerEnv() {
 }
 
 /* Quanto este lançamento pesa no saldo da conta indicada.
-   Transferência toca duas contas com sinais opostos; o resto toca uma só. */
+   Transferência toca as duas pontas: se as duas forem a MESMA conta, o efeito é
+   zero — sai e volta. Foi o que fez 28 lançamentos sumirem do saldo sem rastro. */
 const efeito = (t, contaId) => {
   const v = Number(t.amount) || 0;
   if (t.status !== 'Pago') return 0;
   if (t.type === 'Transferência') {
-    if (t.account_id === contaId) return -v;
-    if (t.to_account === contaId) return v;
-    return 0;
+    let e = 0;
+    if (t.account_id === contaId) e -= v;
+    if (t.to_account === contaId) e += v;
+    return e;
   }
   if (t.account_id !== contaId) return 0;
   return t.type === 'Receita' ? v : -v;
+};
+
+// Como o lançamento fica depois de mudar de conta — para calcular o saldo novo
+const aposMover = (t, origemId, destinoId) => {
+  const novo = { ...t };
+  if (t.type !== 'Transferência') { novo.account_id = destinoId; return novo; }
+  if (t.account_id === origemId && t.to_account === origemId) {
+    if (/recebid/i.test(t.description || '')) novo.to_account = destinoId;
+    else novo.account_id = destinoId;
+    return novo;
+  }
+  if (t.to_account === origemId) novo.to_account = destinoId;
+  else novo.account_id = destinoId;
+  return novo;
 };
 
 (async () => {
@@ -128,17 +144,37 @@ const efeito = (t, contaId) => {
   const alvos = txs.filter(t => t.account_id === origem.id && String(t.updated_at).slice(0, 16) === LOTE);
   if (!alvos.length) { console.log(`\nNenhum lançamento em "${origem.name}" no lote ${LOTE}.\n`); return; }
 
-  let saiDaOrigem = 0;
-  for (const t of alvos) saiDaOrigem += efeito(t, origem.id);
+  /* Delta = efeito DEPOIS menos efeito ANTES, conta a conta. Não basta "tirar de
+     uma e pôr na outra": a autotransferência tinha efeito zero e passa a ter
+     efeito real, então o saldo muda dos dois lados por valores diferentes. */
+  const deltas = {};
+  const tocadas = new Set([origem.id, destino.id]);
+  for (const t of alvos) {
+    const depois = aposMover(t, origem.id, destino.id);
+    for (const id of [t.account_id, t.to_account, depois.account_id, depois.to_account]) if (id) tocadas.add(id);
+  }
+  for (const id of tocadas) {
+    let antes = 0, depois = 0;
+    for (const t of alvos) {
+      antes += efeito(t, id);
+      depois += efeito(aposMover(t, origem.id, destino.id), id);
+    }
+    if (Math.abs(depois - antes) > 0.005) deltas[id] = depois - antes;
+  }
 
   const rec = alvos.filter(t => t.type === 'Receita').length;
   const des = alvos.filter(t => t.type === 'Despesa').length;
   const tr = alvos.filter(t => t.type === 'Transferência').length;
+  const auto = alvos.filter(t => t.type === 'Transferência' && t.account_id === t.to_account).length;
   console.log(`\n${alvos.length} lançamento(s) de "${origem.name}" → "${destino.name}"`);
-  console.log(`  ${rec} receitas · ${des} despesas · ${tr} transferências\n`);
-  console.log('EFEITO NOS SALDOS:\n');
-  console.log(`  ${origem.name.padEnd(22)} ${brl(origem.balance).padStart(14)} → ${brl(Number(origem.balance) - saiDaOrigem).padStart(14)}`);
-  console.log(`  ${destino.name.padEnd(22)} ${brl(destino.balance).padStart(14)} → ${brl(Number(destino.balance) + saiDaOrigem).padStart(14)}`);
+  console.log(`  ${rec} receitas · ${des} despesas · ${tr} transferências`);
+  if (auto) console.log(`  ⚠ ${auto} eram transferência da conta para ela mesma (não moviam nada) e passam a mover`);
+  console.log('\nEFEITO NOS SALDOS:\n');
+  for (const [id, d] of Object.entries(deltas)) {
+    const a = contas.find(x => x.id === id);
+    if (!a) continue;
+    console.log(`  ${a.name.padEnd(22)} ${brl(a.balance).padStart(14)} → ${brl(Number(a.balance || 0) + d).padStart(14)}   (${d >= 0 ? '+' : ''}${brl(d)})`);
+  }
 
   if (!APLICAR) {
     console.log('\n── Simulação. Nada foi alterado. ──');
@@ -148,19 +184,31 @@ const efeito = (t, contaId) => {
 
   console.log('\nAplicando…');
   for (const t of alvos) {
-    // Numa transferência, só a perna que estava na conta errada muda
-    const corpo = t.type === 'Transferência' && t.to_account === origem.id
-      ? { to_account: destino.id, updated_at: new Date().toISOString() }
-      : { account_id: destino.id, updated_at: new Date().toISOString() };
+    const corpo = { updated_at: new Date().toISOString() };
+    if (t.type !== 'Transferência') {
+      corpo.account_id = destino.id;
+    } else if (t.account_id === origem.id && t.to_account === origem.id) {
+      /* Transferência da conta para ela mesma: nasceu de um bug do preview, e não
+         movia dinheiro nenhum. O lado a corrigir é o da conta importada, e a
+         descrição do banco diz qual é — "enviada" saiu dela, "recebida" entrou. */
+      if (/recebid/i.test(t.description || '')) corpo.to_account = destino.id;
+      else corpo.account_id = destino.id;
+    } else if (t.to_account === origem.id) {
+      corpo.to_account = destino.id;      // a conta importada é o destino
+    } else {
+      corpo.account_id = destino.id;      // a conta importada é a origem
+    }
     const res = await fetch(`${env.SUPABASE_URL}/rest/v1/transactions?id=eq.${t.id}`, {
       method: 'PATCH', headers: H, body: JSON.stringify(corpo),
     });
     if (!res.ok) console.error(`  ✕ ${t.id}: ${res.status}`);
   }
-  for (const [a, delta] of [[origem, -saiDaOrigem], [destino, saiDaOrigem]]) {
-    await fetch(`${env.SUPABASE_URL}/rest/v1/accounts?id=eq.${a.id}`, {
+  for (const [id, d] of Object.entries(deltas)) {
+    const a = contas.find(x => x.id === id);
+    if (!a) continue;
+    await fetch(`${env.SUPABASE_URL}/rest/v1/accounts?id=eq.${id}`, {
       method: 'PATCH', headers: H,
-      body: JSON.stringify({ balance: Number(a.balance || 0) + delta, updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ balance: Number(a.balance || 0) + d, updated_at: new Date().toISOString() }),
     });
   }
   console.log('\n✓ Pronto.');

@@ -1575,6 +1575,23 @@ try {
   check('e aparece desmarcada com o motivo', apT.includes('Já lançado como transferência'), true);
   check('trocar a conta refaz o pareamento', /dest\.onchange[\s\S]{0,200}linhasHtml\(\)/.test(apT), true);
 
+  /* Transferência de uma conta para ELA MESMA não move dinheiro (sai e volta),
+     então some do saldo sem deixar rastro. Aconteceu 28 vezes numa base real:
+     "Lançar em" marcava todas as opções como selected, então o navegador ficava
+     com a ÚLTIMA enquanto o código assumia a PRIMEIRA — e a lista de destinos
+     era montada excluindo a conta errada. */
+  check('só a primeira opção de destino vem marcada',
+    /accounts\.map\(\(a, i\) =>[\s\S]{0,120}i === 0 \? 'selected'/.test(apT), true);
+  check('e o mesmo para cartões',
+    /cards\.map\(\(c, i\) =>[\s\S]{0,120}i === 0 \? 'selected'/.test(apT), true);
+  check('o fallback usa a mesma conta que fica marcada',
+    /destinoAtual = \(\)[\s\S]{0,220}accounts\[0\]/.test(apT), true);
+  check('a lista de destinos exclui a conta atual',
+    /contasTransferencia\(contaAtual[\s\S]{0,400}a\.id !== contaAtual/.test(apT), true);
+  check('e o gravador recusa destino igual à origem',
+    /if \(!outroId \|\| outroId === daqui\) \{[\s\S]{0,60}descartadas\+\+/.test(apT), true);
+  check('avisando quantas foram ignoradas', apT.includes('sem destino válido'), true);
+
   DB.remove('transactions', m1.id); DB.remove('transactions', m2.id);
   DB.remove('accounts', contaA); DB.remove('accounts', contaB);
 } catch (e) { console.log(` FALHA | transferência no OFX: ${e.message}`); fail++; }
