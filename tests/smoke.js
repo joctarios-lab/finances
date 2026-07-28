@@ -384,6 +384,24 @@ console.log('\n=== Primeiro acesso (ordem das etapas) ===');
   check('showFirstRun antigo foi removido', !au.includes('showFirstRun'), true);
 }
 
+console.log('\n=== Identidade visual (logo) ===');
+{
+  const svg = fs.readFileSync(BASE + 'icons/icon.svg', 'utf8');
+  const mf = JSON.parse(fs.readFileSync(BASE + 'manifest.webmanifest', 'utf8'));
+  check('SVG usa a paleta do app', svg.includes('#0095e8') && svg.includes('#7239ea'), true);
+  check('conceito documentado no próprio arquivo', /<desc>[\s\S]*lar[\s\S]*<\/desc>/i.test(svg), true);
+  check('acessível para leitores de tela', svg.includes('role="img"') && svg.includes('aria-label'), true);
+  check('telhado e três colunas', (svg.match(/<rect x=/g) || []).length === 3 && svg.includes('L256 100'), true);
+  check('nada do ícone antigo (F$ em serifa)', !svg.includes('Georgia') && !svg.includes('F$'), true);
+  check('traço grosso o bastante para 32px', /stroke-width="4\d"/.test(svg), true);
+  for (const f of ['icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable.png']) {
+    check(`${f} existe`, fs.existsSync(BASE + f), true);
+  }
+  check('maskable declarado à parte no manifest', mf.icons.some(i => i.purpose === 'maskable'), true);
+  check('maskable tem zona de segurança', /New-Icone 512 .*maskable.* 0\.7/.test(fs.readFileSync(BASE + 'icons/gerar-icones.ps1', 'utf8')), true);
+  check('gerador dos PNG versionado junto', fs.existsSync(BASE + 'icons/gerar-icones.ps1'), true);
+}
+
 console.log('\n=== Teclado do PIN ===');
 {
   const au = fs.readFileSync(BASE + 'js/auth.js', 'utf8');

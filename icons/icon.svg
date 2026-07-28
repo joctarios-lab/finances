@@ -1,14 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Finanças da Família">
+  <title>Finanças da Família</title>
+  <desc>Um telhado sobre colunas que crescem: o lar abrigando um patrimônio que se acumula mês a mês.</desc>
+
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#e7bd63"/>
-      <stop offset="1" stop-color="#d4a94e"/>
+    <linearGradient id="fundo" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0095e8"/>
+      <stop offset="1" stop-color="#7239ea"/>
     </linearGradient>
+    <radialGradient id="brilho" cx="0.24" cy="0.12" r="0.9">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.20"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="#0e1512"/>
-  <circle cx="392" cy="120" r="150" fill="#d4a94e" opacity="0.12"/>
-  <text x="256" y="330" font-family="Georgia, 'Times New Roman', serif" font-size="248"
-        font-weight="700" text-anchor="middle" fill="url(#g)">F$</text>
-  <rect x="120" y="384" width="272" height="14" rx="7" fill="#2a3a31"/>
-  <rect x="120" y="384" width="180" height="14" rx="7" fill="#3fae76"/>
+
+  <rect width="512" height="512" rx="114" fill="url(#fundo)"/>
+  <rect width="512" height="512" rx="114" fill="url(#brilho)"/>
+
+  <!-- Telhado: o lar que abriga -->
+  <path d="M104 208 L256 100 L408 208" fill="none" stroke="#ffffff"
+        stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Colunas crescentes: o patrimônio se acumulando mês a mês -->
+  <g fill="#ffffff">
+    <rect x="119" y="316" width="68" height="94"  rx="34" opacity="0.60"/>
+    <rect x="222" y="286" width="68" height="124" rx="34" opacity="0.80"/>
+    <rect x="325" y="252" width="68" height="158" rx="34"/>
+  </g>
 </svg>
