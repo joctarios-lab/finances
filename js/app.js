@@ -37,11 +37,19 @@ const TITULOS = {
   metas: 'Metas', relatorios: 'Relatórios',
 };
 
-// Só a aba é lembrada. Mês e filtros ficam de fora por escolha: reabrir o app
-// num mês antigo é justamente o que faz alguém ler o saldo errado.
+/* Etiquetas fixadas: escolha deliberada de quem está lançando uma sequência
+   ("estou registrando os gastos da viagem"). Sobrevive a troca de tela e a
+   recarregar, ao contrário de mês e filtros, porque não é jeito de olhar a tela —
+   é uma decisão que a pessoa tomou e que ela desfaz quando quiser. */
+let tagsFixas = [];
+const fixarTags = lista => { tagsFixas = (lista || []).slice(0, 5); persistUI(); };
+const lerTagsFixas = () => tagsFixas;   // let de módulo: o teste precisa do valor atual
+
+// Só a aba e as etiquetas fixadas são lembradas. Mês e filtros ficam de fora por
+// escolha: reabrir o app num mês antigo é o que faz alguém ler o saldo errado.
 function persistUI() {
   try {
-    localStorage.setItem(UI_KEY, JSON.stringify({ tab: state.tab }));
+    localStorage.setItem(UI_KEY, JSON.stringify({ tab: state.tab, tagsFixas }));
   } catch (_) {}
 }
 
@@ -50,6 +58,7 @@ function restoreUI() {
   try {
     const s = JSON.parse(localStorage.getItem(UI_KEY));
     if (s && TABS.includes(s.tab)) state.tab = s.tab;
+    if (s && Array.isArray(s.tagsFixas)) tagsFixas = s.tagsFixas.filter(t => typeof t === 'string');
   } catch (_) {}
 }
 
@@ -1075,6 +1084,29 @@ function renderRelatorios() {
       ${svgRanking(catIds.map(cid => [catLabel(cid === '_sem' ? null : cid), byCat[cid] || 0]).filter(e => e[1] > 0))}
     </div>
 
+    <!-- Etiqueta só compensa se der para ver o total dela. É aqui que "separar do
+         todo" acontece: quanto custou a viagem, somando categorias diferentes. -->
+    ${(() => {
+      const porTag = DB.spentByTag(period);
+      const linhas = Object.entries(porTag).sort((a, b) => b[1] - a[1]);
+      if (!linhas.length) return '';
+      const somaTags = linhas.reduce((s, l) => s + l[1], 0);
+      return `
+    <div class="card">
+      <div class="card-head"><div><b>Por etiqueta</b><small>assunto que atravessa categorias — toque para ver os lançamentos</small></div>
+        <span class="kpi-ico t-primary" data-ico="tag" style="width:34px;height:34px;margin:0"></span></div>
+      <div class="rank">
+        ${linhas.map(([tag, v], i) => `
+          <div class="rank-row rank-clicavel" data-ver-tag="${esc(tag)}">
+            <span class="rank-name">#${esc(tag)}</span>
+            <span class="rank-bar"><i style="width:${Math.max(2, v / linhas[0][1] * 100).toFixed(1)}%;background:${PALETTE[i % PALETTE.length]}"></i></span>
+            <span class="rank-val">${fmtShort(v)}</span>
+          </div>`).join('')}
+      </div>
+      <div class="chart-foot"><span>${fmtShort(somaTags)} etiquetado no período — um lançamento com duas etiquetas conta nas duas.</span></div>
+    </div>`;
+    })()}
+
     <div class="grid-2">
       <div class="card">
         <div class="card-head"><div><b>Maiores gastos</b><small>top 10 do período</small></div></div>
@@ -1136,6 +1168,13 @@ function bindView() {
   v.querySelectorAll('[data-tag]').forEach(el => el.onclick = e => {
     e.stopPropagation();
     state.filtros.tag = el.dataset.tag;
+    render();
+  });
+  // Do relatório por etiqueta direto para os lançamentos dela
+  v.querySelectorAll('[data-ver-tag]').forEach(el => el.onclick = () => {
+    const tag = el.dataset.verTag;
+    setTab('extrato');                    // zera o resto dos filtros, então o alvo fica só a etiqueta
+    state.filtros.tag = tag;
     render();
   });
 
@@ -1501,20 +1540,27 @@ function openTxSheet(tx, asNew) {
     </div>
     <!-- Etiquetas: assunto que atravessa envelopes. "Viagem Bahia" junta passagem,
          comida e hospedagem, que estão em três categorias diferentes.
-         Num lançamento novo já vêm ligadas as do anterior: gasto de viagem se
-         lança em série, e redigitar a mesma etiqueta dez vezes é o que se evita. -->
+
+         As sugeridas são OFERECIDAS, nunca aplicadas sozinhas: gasto esporádico é
+         o caso mais comum de etiqueta, e nele o lançamento anterior não tem relação
+         nenhuma. Quem está lançando uma sequência fixa a etiqueta de propósito. -->
     ${(() => {
-      const atuais = isEdit ? DB.tagsOf(tx) : (DB.tagsOf(tx).length ? DB.tagsOf(tx) : DB.tagsRecentes());
-      const herdadas = !isEdit && !DB.tagsOf(tx).length && atuais.length;
-      const sugeridas = DB.allTags().filter(t => !atuais.includes(t)).slice(0, 6);
+      const atuais = isEdit ? DB.tagsOf(tx) : (DB.tagsOf(tx).length ? DB.tagsOf(tx) : tagsFixas);
+      const veioDeFixa = !isEdit && !DB.tagsOf(tx).length && atuais.length > 0;
+      const sugeridas = DB.tagsRelevantes(8).filter(t => !atuais.includes(t));
       const chips = [...atuais.map(t => ({ t, on: true })), ...sugeridas.map(t => ({ t, on: false }))];
       return `
-    <div class="field"><label>Etiquetas <span class="muted" id="tag-auto">${herdadas ? '· repetidas do lançamento anterior' : '— opcional, agrupa por assunto'}</span></label>
+    <div class="field"><label>Etiquetas <span class="muted">— opcional, agrupa por assunto</span></label>
       <div class="chips" id="g-tags">
         ${chips.map(({ t, on }) => `<button type="button" class="chip chip-tag ${on ? 'active' : ''}" data-v="${esc(t)}">#${esc(t)}</button>`).join('')}
       </div>
-      <input id="f-tag-nova" list="tag-hist" placeholder="Nova etiqueta e Enter (ex: viagem, reforma)" autocomplete="off" maxlength="24" style="margin-top:8px">
+      <input id="f-tag-nova" list="tag-hist" placeholder="Buscar ou criar etiqueta e Enter" autocomplete="off" maxlength="24" style="margin-top:8px">
       <datalist id="tag-hist">${DB.allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+      ${isEdit ? '' : `<button type="button" class="chip chip-fixa ${veioDeFixa ? 'active' : ''}" id="tag-fixar" style="margin-top:8px">
+        📌 Manter nos próximos lançamentos</button>
+      <p class="muted" id="tag-fixa-hint" style="margin-top:6px;font-size:11.5px">${veioDeFixa
+        ? `Fixado: ${atuais.map(t => '#' + t).join(' ')}. Desligue quando a sequência terminar.`
+        : 'Use ao lançar vários gastos do mesmo assunto — uma viagem, uma reforma.'}</p>`}
     </div>`;
     })()}
     <div class="field"><label id="lbl-rec">Custo fixo mensal (recorrente)?</label><select id="f-rec"><option value="">Não</option><option value="1" ${tx.recurring ? 'selected' : ''}>Sim — entra nos custos fixos e no lançamento em 1 clique</option></select></div>
@@ -1648,10 +1694,9 @@ function openTxSheet(tx, asNew) {
     b.onclick = () => b.classList.toggle('active');
     chipsTags().appendChild(b);
   };
-  // Tocar num chip é também o que encerra a herança: some o aviso de "repetidas"
-  chipsTags().querySelectorAll('.chip-tag').forEach(c => {
-    c.onclick = () => { c.classList.toggle('active'); const a = $('#tag-auto'); if (a) a.textContent = ''; };
-  });
+  chipsTags().querySelectorAll('.chip-tag').forEach(c => { c.onclick = () => c.classList.toggle('active'); });
+  const btnFixar = $('#tag-fixar');
+  if (btnFixar) btnFixar.onclick = () => btnFixar.classList.toggle('active');
   const campoTag = $('#f-tag-nova');
   campoTag.onkeydown = e => {
     if (e.key !== 'Enter' && e.key !== ',') return;
@@ -1661,6 +1706,11 @@ function openTxSheet(tx, asNew) {
   campoTag.onblur = () => { if (campoTag.value.trim()) { addTag(campoTag.value); campoTag.value = ''; } };
   const tagsEscolhidas = () =>
     [...chipsTags().querySelectorAll('.chip-tag.active')].map(c => c.dataset.v);
+  // Salvar é o momento de gravar (ou soltar) o que fica fixado para os próximos
+  const aplicarFixacao = () => {
+    if (!btnFixar) return;                                  // editando: não mexe na fixação
+    fixarTags(btnFixar.classList.contains('active') ? tagsEscolhidas() : []);
+  };
 
   // A folha inteira veste a cor do tipo escolhido (faixa, valor e botão salvar)
   const pintarTipo = v => { $('#sheet').dataset.tipo = v || 'Despesa'; };
@@ -1750,6 +1800,7 @@ function openTxSheet(tx, asNew) {
       if (orig) applyTxEffect(orig, -1);
       DB.upsert('transactions', transf);
       applyTxEffect(transf, +1);
+      aplicarFixacao();
       closeSheet(); render(); Sync.autoSync();
       return toast(`${fmt(amount)} transferido ✓`);
     }
@@ -1807,6 +1858,7 @@ function openTxSheet(tx, asNew) {
             group_id: group, installment: `${i + 1}/${parcelas}`,
           });
         }
+        aplicarFixacao();
         closeSheet(); render(); Sync.autoSync();
         toast(`Parcelado em ${parcelas}x de ${fmtShort(amount / parcelas)} ✓`);
         return;
@@ -1817,6 +1869,7 @@ function openTxSheet(tx, asNew) {
     if (orig) applyTxEffect(orig, -1);   // reverte efeito antigo (inclui transferências)
     DB.upsert('transactions', rec);
     applyTxEffect(rec, +1);              // aplica efeito novo
+    aplicarFixacao();
     closeSheet(); render(); Sync.autoSync();
     toast(isEdit ? 'Lançamento atualizado ✓' : (isReceita ? 'Receita lançada ✓' : 'Gasto lançado ✓'));
   };
@@ -2797,6 +2850,60 @@ function openOfxImport() {
   };
 }
 
+/* Etiquetas de UMA linha da importação. Folha em vez de campo na linha: o campo
+   por linha resolveria o mesmo com quarenta campos abertos na tela.
+   segueLote diz se a linha ainda usa o padrão do lote; devolver null a religa. */
+function openTagsLinhaSheet(tx, atuais, segueLote, aoAplicar) {
+  const sugeridas = DB.tagsRelevantes(8).filter(t => !atuais.includes(t));
+  const chips = [...atuais.map(t => ({ t, on: true })), ...sugeridas.map(t => ({ t, on: false }))];
+  openSheet(`
+    <div class="sheet-title">Etiquetas do lançamento<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin-bottom:4px">${esc(tx.memo)}</p>
+    <p class="muted" style="margin-bottom:14px;font-size:11.5px">${segueLote
+      ? 'Hoje esta linha usa as etiquetas do lote. Mexer aqui vale só para ela.'
+      : 'Esta linha tem etiquetas próprias.'}</p>
+    <div class="field">
+      <div class="chips" id="tl-tags">
+        ${chips.map(({ t, on }) => `<button type="button" class="chip chip-tag ${on ? 'active' : ''}" data-v="${esc(t)}">#${esc(t)}</button>`).join('')}
+      </div>
+      <input id="tl-nova" list="tag-hist-linha" placeholder="Nova etiqueta e Enter" autocomplete="off" maxlength="24" style="margin-top:8px">
+      <datalist id="tag-hist-linha">${DB.allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+    </div>
+    <button class="btn" id="sh-save">Aplicar nesta linha</button>
+    ${segueLote ? '' : '<div class="btn-row"><button class="btn ghost" id="tl-lote">Voltar a seguir o lote</button></div>'}
+  `);
+  const box = $('#tl-tags');
+  const add = nome => {
+    const tag = DB.normTag(nome);
+    if (!tag) return;
+    const existe = [...box.querySelectorAll('.chip-tag')]
+      .find(c => DB._semAcento(c.dataset.v) === DB._semAcento(tag));
+    if (existe) { existe.classList.add('active'); return; }
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip chip-tag active'; b.dataset.v = tag;
+    b.textContent = '#' + tag;
+    b.onclick = () => b.classList.toggle('active');
+    box.appendChild(b);
+  };
+  box.querySelectorAll('.chip-tag').forEach(c => { c.onclick = () => c.classList.toggle('active'); });
+  const campo = $('#tl-nova');
+  campo.onkeydown = e => {
+    if (e.key !== 'Enter' && e.key !== ',') return;
+    e.preventDefault(); e.stopPropagation();
+    add(campo.value); campo.value = '';
+  };
+  campo.onblur = () => { if (campo.value.trim()) { add(campo.value); campo.value = ''; } };
+
+  $('#sh-close').onclick = closeSheet;
+  const voltarLote = $('#tl-lote');
+  if (voltarLote) voltarLote.onclick = () => { aoAplicar(null); closeSheet(); };
+  $('#sh-save').onclick = () => {
+    if (campo.value.trim()) add(campo.value);
+    aoAplicar([...box.querySelectorAll('.chip-tag.active')].map(c => c.dataset.v));
+    closeSheet();
+  };
+}
+
 function renderOfxPreview(parsed, accounts, cards) {
   const cats = DB.all('categories');   // com os pais: a adivinhação depende deles
   const novos = parsed.txs.filter(t => !DB.hasFitid(t.fitid));
@@ -2817,6 +2924,7 @@ function renderOfxPreview(parsed, accounts, cards) {
       <span class="ofx-cat">${isExp
         ? `<select data-cat="${i}"><option value="">Sem categoria</option>${optionsCategorias(guess)}</select>`
         : '<span class="muted">receita — entra sem categoria</span>'}</span>
+      <button type="button" class="ofx-tag-btn" data-tagbtn="${i}" title="Etiquetas deste lançamento"><span data-ico="tag"></span><span class="ofx-tag-txt"></span></button>
     </div>`;
   }).join('');
 
@@ -2833,7 +2941,7 @@ function renderOfxPreview(parsed, accounts, cards) {
            o extrato de uma viagem é o caso típico, e 40 campos poluiriam a tela. -->
       <div class="field"><label>Etiquetar todos <span class="muted">— opcional</span></label>
         <div class="chips" id="ofx-tags">
-          ${DB.allTags().slice(0, 6).map(t => `<button type="button" class="chip chip-tag" data-v="${esc(t)}">#${esc(t)}</button>`).join('')}
+          ${DB.tagsRelevantes(6).map(t => `<button type="button" class="chip chip-tag" data-v="${esc(t)}">#${esc(t)}</button>`).join('')}
         </div>
         <input id="ofx-tag-nova" list="tag-hist-ofx" placeholder="Nova etiqueta e Enter (ex: viagem bahia)" autocomplete="off" maxlength="24" style="margin-top:8px">
         <datalist id="tag-hist-ofx">${DB.allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
@@ -2866,15 +2974,49 @@ function renderOfxPreview(parsed, accounts, cards) {
     b.onclick = () => b.classList.toggle('active');
     chipsOfx.appendChild(b);
   };
-  chipsOfx.querySelectorAll('.chip-tag').forEach(c => { c.onclick = () => c.classList.toggle('active'); });
   const campoTagOfx = $('#ofx-tag-nova');
+  const tagsDoLote = () => [...chipsOfx.querySelectorAll('.chip-tag.active')].map(c => c.dataset.v);
+
+  /* Etiqueta por linha, com o lote como padrão: null significa "segue o lote".
+     Assim etiquetar 40 linhas de uma viagem continua sendo um toque, e a linha
+     que fugir da regra é ajustada sem desfazer o resto. */
+  const tagsLinha = novos.map(() => null);
+  const tagsDe = i => tagsLinha[i] || tagsDoLote();
+
+  const pintarBotoes = () => {
+    document.querySelectorAll('#ofx-result [data-tagbtn]').forEach(b => {
+      const i = Number(b.dataset.tagbtn);
+      const tags = tagsDe(i);
+      const txt = b.querySelector('.ofx-tag-txt');
+      txt.textContent = !tags.length ? 'etiqueta'
+        : tags.length === 1 ? '#' + tags[0]
+        : `${tags.length} etiquetas`;
+      b.classList.toggle('tem', tags.length > 0);
+      b.title = tags.length ? tags.map(t => '#' + t).join(' ') : 'Etiquetas deste lançamento';
+      // Linha que segue o lote fica sem marca própria; ajustada, ganha um ponto
+      b.classList.toggle('propria', tagsLinha[i] !== null);
+    });
+  };
+  // Mexer no lote repinta as linhas que ainda o seguem
+  chipsOfx.querySelectorAll('.chip-tag').forEach(c => {
+    c.onclick = () => { c.classList.toggle('active'); pintarBotoes(); };
+  });
+  const addTagOfxEPintar = nome => { addTagOfx(nome); pintarBotoes(); };
   campoTagOfx.onkeydown = e => {
     if (e.key !== 'Enter' && e.key !== ',') return;
     e.preventDefault();
-    addTagOfx(campoTagOfx.value); campoTagOfx.value = '';
+    addTagOfxEPintar(campoTagOfx.value); campoTagOfx.value = '';
   };
-  campoTagOfx.onblur = () => { if (campoTagOfx.value.trim()) { addTagOfx(campoTagOfx.value); campoTagOfx.value = ''; } };
-  const tagsDoLote = () => [...chipsOfx.querySelectorAll('.chip-tag.active')].map(c => c.dataset.v);
+  campoTagOfx.onblur = () => { if (campoTagOfx.value.trim()) { addTagOfxEPintar(campoTagOfx.value); campoTagOfx.value = ''; } };
+
+  document.querySelectorAll('#ofx-result [data-tagbtn]').forEach(b => b.onclick = () => {
+    const i = Number(b.dataset.tagbtn);
+    openTagsLinhaSheet(novos[i], tagsDe(i), tagsLinha[i] === null, escolhidas => {
+      tagsLinha[i] = escolhidas;      // null volta a seguir o lote
+      pintarBotoes();
+    });
+  });
+  pintarBotoes();
 
   const boxes = () => document.querySelectorAll('#ofx-result [data-i]');
   $('#ofx-all').onclick = () => boxes().forEach(b => { b.checked = true; });
@@ -2907,7 +3049,7 @@ function renderOfxPreview(parsed, accounts, cards) {
         account_id: account ? account.id : null,
         invoice_key: card ? DB.invoiceKeyFor(card, t.date) : '',
         recurring: false,
-        tags: tagsDoLote(),
+        tags: tagsDe(Number(box.dataset.i)),
       });
       n++;
     });

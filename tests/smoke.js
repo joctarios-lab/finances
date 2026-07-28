@@ -68,7 +68,7 @@ eval(appSrc + `; Object.assign(global, {
   state, fmt, fmtShort, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
-  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
+  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -860,46 +860,82 @@ try {
   const idsViagem = DB.all('transactions').filter(t => DB.tagsOf(t).includes('viagem'));
   check('etiqueta agrupa gastos de categorias diferentes', idsViagem.length, 2);
 
-  /* Reaproveitar etiqueta: lançar gasto de viagem é em série, e redigitar a mesma
-     etiqueta dez vezes é o que se quer evitar. */
-  console.log('\n=== Reaproveitar etiquetas ===');
+  /* Etiquetas são OFERECIDAS, nunca aplicadas sozinhas. Aplicar a do lançamento
+     anterior erra justamente no caso mais comum — o gasto esporádico, em que o
+     anterior não tem relação nenhuma. Fixar para uma sequência é escolha explícita. */
+  console.log('\n=== Sugestão e fixação de etiquetas ===');
   const folhaDe = abrir => { abrir(); return els['#sheet'].innerHTML; };
 
-  check('herda as etiquetas do último lançamento', DB.tagsRecentes().sort().join(','), 'lazer,viagem');
+  check('nada é aplicado sozinho', typeof DB.tagsRecentes, 'undefined');
+  const relev = DB.tagsRelevantes(8);
+  check('as etiquetas em uso são sugeridas', relev.includes('viagem'), true);
+  check('a mais usada vem primeiro', relev[0], 'viagem');
 
-  // No formulário de um lançamento novo elas já vêm ligadas
-  const novo = folhaDe(() => openTxSheet(null));
-  check('lançamento novo já vem com a etiqueta ligada', /chip-tag active" data-v="viagem"/.test(novo), true);
-  check('e diz de onde ela veio', novo.includes('repetidas do lançamento anterior'), true);
-  check('campo de etiqueta tem autocomplete', novo.includes('list="tag-hist"') && novo.includes('<datalist id="tag-hist"'), true);
-  check('tocar no chip apaga o aviso de herança', /chip-tag'\)\.forEach[\s\S]{0,200}tag-auto/.test(fs.readFileSync(BASE + 'js/app.js', 'utf8')), true);
+  // Uso recente pesa mais que uso antigo, com a mesma contagem
+  const velha = DB.upsert('transactions', { description: 'Compra velha', amount: 20, date: dia(2), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaT, tags: ['antiga', 'antiga2'] });
+  DB.get('transactions', velha).updated_at = new Date(Date.now() - 400 * 86400000).toISOString();
+  const nova = DB.upsert('transactions', { description: 'Compra nova', amount: 20, date: dia(19), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaT, tags: ['recente'] });
+  const ordem = DB.tagsRelevantes(20);
+  check('com o mesmo uso, a recente vem antes da antiga',
+    ordem.indexOf('recente') < ordem.indexOf('antiga'), true);
+  DB.remove('transactions', velha); DB.remove('transactions', nova);
 
-  // Ao editar, vale o que está salvo — não se inventa etiqueta que o lançamento não tem
+  // Formulário: sugestões desligadas, nada pré-selecionado sem fixação
+  fixarTags([]);
+  const novoLim = folhaDe(() => openTxSheet(null));
+  check('sem fixar, nenhuma etiqueta vem ligada', /chip-tag active/.test(novoLim), false);
+  check('mas todas ficam a um toque', novoLim.includes('chip-tag'), true);
+  check('campo busca e cria, com autocomplete', novoLim.includes('list="tag-hist"') && novoLim.includes('<datalist id="tag-hist"'), true);
+  check('oferece fixar para os próximos', novoLim.includes('id="tag-fixar"'), true);
+  check('e explica para que serve', novoLim.includes('vários gastos do mesmo assunto'), true);
+
+  // Fixado: aí sim vem ligado, e dizendo que está fixado
+  fixarTags(['viagem']);
+  const comFixa = folhaDe(() => openTxSheet(null));
+  check('etiqueta fixada vem ligada', /chip-tag active" data-v="viagem"/.test(comFixa), true);
+  check('e o botão de fixar aparece ligado', /chip-fixa active/.test(comFixa), true);
+  check('avisa o que está fixado e como soltar', comFixa.includes('Desligue quando a sequência terminar'), true);
+
+  // Fixação sobrevive a trocar de tela e a reabrir — é decisão, não jeito de olhar
+  setTab('cartoes'); setTab('extrato');
+  check('trocar de tela não solta a fixação', lerTagsFixas().join(','), 'viagem');
+  check('fixar grava no aparelho', JSON.parse(store['financas.ui.v1']).tagsFixas.join(','), 'viagem');
+  // Simula o app abrindo com o que a sessão anterior deixou gravado
+  fixarTags([]);
+  store['financas.ui.v1'] = JSON.stringify({ tab: 'extrato', tagsFixas: ['viagem'] });
+  restoreUI();
+  check('reabrir o app recupera a fixação', lerTagsFixas().join(','), 'viagem');
+
+  // Ao editar, vale o que está salvo — e não se oferece fixar
   const semTags = DB.all('transactions').find(t => t.description === 'Mercado');
   check('o lançamento de referência não tem etiqueta', DB.tagsOf(semTags).length, 0);
   const editando = folhaDe(() => openTxSheet(semTags));
-  check('editar não inventa etiqueta', /chip-tag active/.test(editando), false);
+  check('editar não aplica a fixada', /chip-tag active/.test(editando), false);
+  check('editar não oferece fixar', editando.includes('id="tag-fixar"'), false);
+  fixarTags([]);
 
-  // Etiqueta de uma viagem de março não pode reaparecer em maio: envelhece a base
-  // toda para que o mais recente também esteja fora da janela.
-  const idades = DB.all('transactions').map(t => [t, t.updated_at]);
-  for (const [t] of idades) t.updated_at = new Date(Date.now() - 40 * 3600000).toISOString();
-  check('fora da janela, não herda nada', DB.tagsRecentes(24).length, 0);
-  check('com janela maior, volta a herdar', DB.tagsRecentes(48).length > 0, true);
-  for (const [t, orig] of idades) t.updated_at = orig;
-  check('a base volta ao estado anterior', DB.tagsRecentes().sort().join(','), 'lazer,viagem');
-
-  // Salvar sem etiqueta encerra a sequência sozinho, sem estado guardado
-  const semTag = DB.upsert('transactions', { description: 'Padaria da esquina', amount: 12, date: dia(18), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Dinheiro', account_id: contaT, tags: [] });
-  check('lançamento sem etiqueta encerra a herança', DB.tagsRecentes().length, 0);
-  DB.remove('transactions', semTag);
+  // O total por etiqueta é o que faz a etiqueta compensar
+  const porTag = DB.spentByTag(DB.monthPeriod(new Date()));
+  check('soma o gasto por etiqueta', porTag.viagem, 1500);
+  check('etiqueta atravessa categorias', porTag.lazer, 600);
+  const rel = renderRelatorios(DB.monthPeriod(new Date()));
+  check('relatório mostra o total por etiqueta', rel.includes('Por etiqueta'), true);
+  check('e leva aos lançamentos dela', rel.includes('data-ver-tag="viagem"'), true);
 
   // OFX: uma etiqueta para o lote, não um campo por linha
   const ap2 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   check('importação tem etiqueta para o lote', ap2.includes('id="ofx-tags"'), true);
   check('com autocomplete também', ap2.includes('list="tag-hist-ofx"'), true);
-  check('e aplica em todas as linhas importadas', /tags: tagsDoLote\(\)/.test(ap2), true);
-  check('não há um campo de etiqueta por linha', /ofx-row[\s\S]{0,400}ofx-tag-linha/.test(ap2), false);
+  check('cada linha grava as próprias etiquetas', /tags: tagsDe\(Number\(box\.dataset\.i\)\)/.test(ap2), true);
+  check('linha sem ajuste segue o lote', /const tagsDe = i => tagsLinha\[i\] \|\| tagsDoLote\(\)/.test(ap2), true);
+  check('há botão de etiqueta por linha', ap2.includes('data-tagbtn='), true);
+  check('e uma folha para editar só aquela linha', ap2.includes('openTagsLinhaSheet'), true);
+  check('dá para voltar a seguir o lote', ap2.includes('Voltar a seguir o lote'), true);
+  // A folha abre sobre o modal da importação, então precisa estar acima dele
+  const cssZ = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  const zSheet = Number((cssZ.match(/\.sheet \{[^}]*z-index: (\d+)/) || [])[1]);
+  const zModal = Number((cssZ.match(/\.modal \{[^}]*z-index: (\d+)/) || [])[1]);
+  check('folha fica acima do modal', zSheet > zModal, true);
 
   console.log('\n=== Painel de filtros do extrato ===');
   const p2 = DB.monthPeriod(new Date());
@@ -1049,7 +1085,8 @@ console.log('\n=== Nome do lançamento nunca é cortado ===');
 
   // OFX: descrição na linha de cima, seletor na de baixo com largura inteira
   check('linha do OFX é grade de duas linhas', /\.ofx-row \{[^}]*grid-template-columns/.test(cssT), true);
-  check('seletor de categoria ocupa a linha inteira', /\.ofx-cat \{[^}]*grid-column: 2 \/ -1/.test(cssT), true);
+  check('categoria e etiqueta dividem a segunda linha',
+    /\.ofx-cat \{[^}]*grid-column: 2;/.test(cssT) && /\.ofx-tag-btn \{[^}]*grid-column: 3/.test(cssT), true);
   check('seletor não é mais fixo em 130px', /\.ofx-cat select \{[^}]*width: 100%/.test(cssT), true);
   check('markup do OFX usa o contêiner novo', ap.includes('class="ofx-cat"'), true);
 
@@ -1181,7 +1218,7 @@ console.log('\n=== Voltar para a tela zera o estado ===');
   check('reabrir esquece o mês do relatório', state.repOffset, 0);
 
   const gravado = JSON.parse(store['financas.ui.v1']);
-  check('só a aba é gravada', Object.keys(gravado).join(','), 'tab');
+  check('grava a aba e a fixação de etiqueta', Object.keys(gravado).sort().join(','), 'tab,tagsFixas');
   const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   check('não grava mais a cada rolagem', /addEventListener\('scroll'[\s\S]{0,120}persistUI/.test(ap), false);
   check('volta ao topo ao trocar de tela', /if \(trocou\) \{[\s\S]{0,140}scrollTo\(0, 0\)/.test(ap), true);

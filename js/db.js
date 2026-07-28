@@ -319,30 +319,40 @@ const DB = {
     return this.all('transactions').filter(t => this.tagsOf(t).includes(tag)).length;
   },
 
-  /* Etiquetas do último lançamento criado, para o próximo já vir com elas.
-     Lançar os gastos de uma viagem é sempre em série: sem isto, a mesma etiqueta
-     é digitada dez vezes seguidas.
+  /* Etiquetas ordenadas por relevância, para OFERECER — nunca para aplicar sozinho.
+     Herdar a etiqueta do último lançamento parecia esperto e não é: gasto
+     esporádico é o caso mais comum de etiqueta ("essa compra eu quero separar do
+     resto"), e nele o lançamento anterior não tem relação nenhuma. Aplicar sozinho
+     erra justamente onde a etiqueta mais serve, e erra em silêncio.
 
-     Se auto-corrige e não precisa guardar estado nenhum: salvar um lançamento sem
-     etiqueta faz dele o último, e a sugestão acaba junto. Tirar o chip é o que
-     encerra a sequência, sem precisar de botão para isso.
-
-     A janela existe para a etiqueta de uma viagem de março não reaparecer em maio.
-     24h cobre lançar hoje o que se gastou ontem. */
-  tagsRecentes(horasLimite = 24) {
-    /* Empate de updated_at é comum: a importação de OFX grava dezenas de
-       registros no mesmo milissegundo. O >= faz o de posição mais alta vencer,
-       e como a lista é append-only, esse é o criado por último. Com > (ou com
-       sort) o desempate seria arbitrário. */
-    let ultimo = null;
+     A ordenação combina quanto se usa e há quanto tempo: etiqueta de uso constante
+     fica no topo, e uma que voltou a ser usada ontem sobe na frente de uma
+     abandonada meses atrás. É o que os apps do ramo fazem — o que fixa etiqueta
+     para uma sequência é uma escolha explícita, não adivinhação. */
+  tagsRelevantes(limite = 8) {
+    const agora = Date.now();
+    const escore = {};
     for (const t of this.all('transactions')) {
-      if (!t.updated_at) continue;
-      if (!ultimo || String(t.updated_at) >= String(ultimo.updated_at)) ultimo = t;
+      const tags = this.tagsOf(t);
+      if (!tags.length) continue;
+      const dias = t.updated_at ? Math.max(0, (agora - Date.parse(t.updated_at)) / 86400000) : 999;
+      // Meia-vida de 30 dias: uso recente pesa mais, uso antigo continua contando
+      const peso = 1 + 2 / (1 + dias / 30);
+      for (const tag of tags) escore[tag] = (escore[tag] || 0) + peso;
     }
-    if (!ultimo) return [];
-    const idade = (Date.now() - Date.parse(ultimo.updated_at)) / 3600000;
-    if (!(idade >= 0) || idade > horasLimite) return [];
-    return this.tagsOf(ultimo);
+    return Object.keys(escore)
+      .sort((a, b) => escore[b] - escore[a] || a.localeCompare(b, 'pt-BR'))
+      .slice(0, limite);
+  },
+
+  // Gasto por etiqueta no período: é o que faz a etiqueta valer a pena — ver
+  // quanto uma viagem ou uma reforma custou, atravessando os envelopes.
+  spentByTag(period) {
+    const out = {};
+    for (const t of this.expensesOf(period)) {
+      for (const tag of this.tagsOf(t)) out[tag] = (out[tag] || 0) + (Number(t.amount) || 0);
+    }
+    return out;
   },
 
   /* Gasto por envelope: o que foi lançado numa subcategoria sobe para o pai.

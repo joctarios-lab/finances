@@ -398,7 +398,21 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .ofx-main b { display: block; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; line-height: 1.35; }
 .ofx-main small { display: block; color: var(--paper-dim); font-size: 11.5px; }
 .ofx-val { grid-column: 3; grid-row: 1; font-weight: 700; font-size: 13px; white-space: nowrap; text-align: right; }
-.ofx-cat { grid-column: 2 / -1; grid-row: 2; min-width: 0; }
+.ofx-cat { grid-column: 2; grid-row: 2; min-width: 0; }
+/* Etiqueta por linha: um botão pequeno, não um campo. Quarenta campos de texto
+   resolveriam o mesmo com a tela cheia. O texto do botão pode reticenciar — é
+   rótulo de controle, não o nome do lançamento. */
+.ofx-tag-btn {
+  grid-column: 3; grid-row: 2; justify-self: end; align-self: center;
+  display: flex; align-items: center; gap: 5px; cursor: pointer;
+  max-width: 120px; padding: 6px 9px; border-radius: 8px;
+  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper-dim);
+  font-family: var(--font-body); font-size: 11.5px; font-weight: 600;
+}
+.ofx-tag-btn svg { width: 13px; height: 13px; flex: none; }
+.ofx-tag-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ofx-tag-btn:hover { border-color: var(--gold); color: var(--gold); }
+.ofx-tag-btn.tem { border-color: var(--gold); color: var(--gold); background: rgba(0, 158, 247, .07); }
 .ofx-cat select { width: 100%; padding: 6px 8px; font-size: 12px; }
 /* Depois do UI.enhance quem aparece é o .ui-select; o nativo fica escondido atrás */
 .ofx-cat .ui-select { width: 100%; }
@@ -521,6 +535,11 @@ svg:hover .ch-bar-on { fill: #005a92; }
 }
 .tx-tag:hover { border-color: var(--gold); color: var(--gold); }
 .chip-tag { font-size: 12.5px; }
+/* Fixar etiqueta é decisão deliberada, então o estado ligado precisa ser óbvio */
+.chip-fixa { font-size: 12.5px; border-style: dashed; }
+.chip-fixa.active { border-style: solid; background: rgba(0, 158, 247, .1); color: var(--gold); border-color: var(--gold); }
+.rank-clicavel { cursor: pointer; }
+.rank-clicavel:hover .rank-name { color: var(--gold); }
 
 .filter-row { display: flex; align-items: center; gap: 10px; max-width: 100%; }
 .filter-lbl {
@@ -631,8 +650,12 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 
 /* ---------- Sheet e Modal ---------- */
 .sheet-backdrop, .modal-backdrop { position: fixed; inset: 0; background: rgba(24, 28, 50, .35); z-index: 30; }
+/* A folha é sempre a camada mais interna — dá para abrir uma sobre um modal (ex.:
+   etiquetas de uma linha da importação). Sem isto ela ficava atrás: os dois tinham
+   z-index 31 e #modal vem depois no HTML, então vencia o empate. */
+.sheet-backdrop { z-index: 32; }
 .sheet {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 31;
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 33;
   max-width: 560px; margin: 0 auto; max-height: 90dvh; overflow-y: auto; overscroll-behavior: contain;
   background: var(--ink-2); border-radius: 16px 16px 0 0;
   padding: 20px 20px calc(22px + env(safe-area-inset-bottom));
