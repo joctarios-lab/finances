@@ -293,14 +293,25 @@ body {
 .chip-num { opacity: .7; font-weight: 500; margin-left: 4px; font-size: 11.5px; }
 
 /* Linha de filtro rotulada (extrato) */
-.filter-row { display: flex; align-items: center; gap: 10px; }
+.filter-row { display: flex; align-items: center; gap: 10px; max-width: 100%; }
 .filter-lbl {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
   color: var(--paper-dim); width: 46px; flex: none;
 }
-.filter-row .chips { flex: 1; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; scrollbar-width: none; }
-.filter-row .chips::-webkit-scrollbar { display: none; }
-.filter-row .chip { white-space: nowrap; }
+/* min-width:0 é o que permite o item flex encolher e rolar em vez de estourar a tela */
+.filter-row .chips {
+  flex: 1 1 auto; min-width: 0; overflow-x: auto; flex-wrap: nowrap;
+  padding-bottom: 4px; scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+  scroll-snap-type: x proximity;
+}
+.filter-row .chips::-webkit-scrollbar { height: 4px; }
+.filter-row .chips::-webkit-scrollbar-thumb { background: #d8e3ea; border-radius: 2px; }
+.filter-row .chip { white-space: nowrap; flex: none; scroll-snap-align: start; }
+
+/* Nenhuma tela pode empurrar o corpo para os lados */
+body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
+.view > * { min-width: 0; }
 
 /* Ação rápida de pagar no extrato */
 .pay-btn {

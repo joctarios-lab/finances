@@ -108,9 +108,13 @@ create table if not exists goal_entries (
   description text default 'Aporte',
   amount numeric not null,
   date date not null,
+  from_account uuid,          -- conta de onde o dinheiro saiu (permite reverter)
+  to_account uuid,            -- conta onde o dinheiro ficou guardado
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
+alter table goal_entries add column if not exists from_account uuid;
+alter table goal_entries add column if not exists to_account uuid;
 
 create table if not exists invoice_status (
   id uuid primary key,

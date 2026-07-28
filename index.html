@@ -98,6 +98,14 @@
 <script>
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+    // Quando uma versão nova assume o controle, recarrega uma vez para não ficar
+    // metade da aplicação antiga e metade nova.
+    let recarregou = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (recarregou) return;
+      recarregou = true;
+      location.reload();
+    });
   }
 </script>
 </body>

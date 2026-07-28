@@ -1,7 +1,7 @@
 /* Finanças da Família — service worker: app shell offline-first */
 'use strict';
 
-const CACHE = 'financas-v5';
+const CACHE = 'financas-v6';
 const SHELL = [
   './',
   'index.html',
@@ -73,16 +73,17 @@ self.addEventListener('fetch', e => {
     return;
   }
 
-  // App shell: cache-first, atualização em segundo plano.
+  // App shell: REDE PRIMEIRO, cache como reserva.
+  // Cache-first fazia o navegador rodar a versão anterior do app por um carregamento
+  // inteiro depois de cada atualização — o que dava a impressão de botão "sem função".
   if (url.origin === location.origin) {
     e.respondWith(
-      caches.match(e.request).then(hit => {
-        const fresh = fetch(e.request).then(res => {
+      fetch(e.request)
+        .then(res => {
           if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }
           return res;
-        }).catch(() => hit);
-        return hit || fresh;
-      })
+        })
+        .catch(() => caches.match(e.request).then(hit => hit || caches.match('index.html')))
     );
   }
 });

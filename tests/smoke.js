@@ -10,27 +10,34 @@ global.localStorage = {
   removeItem: k => { delete store[k]; },
 };
 global.crypto = { randomUUID: () => 'id-' + Math.random().toString(36).slice(2, 12) };
-const fakeEl = new Proxy({}, {
-  get: (o, p) => {
-    if (p === 'classList') return { toggle() {}, add() {}, remove() {}, contains: () => false };
-    if (p === 'dataset') return {};
-    if (p === 'style') return {};
-    if (p === 'options') return [{}, {}];
-    if (p === 'querySelectorAll') return () => [];
-    if (p === 'addEventListener' || p === 'focus' || p === 'setSelectionRange') return () => {};
-    if (p in o) return o[p];
-    return '';
-  },
-  set: (o, p, v) => { o[p] = v; return true; },
-});
+
+// DOM falso com registro por seletor: permite preencher campos e "clicar" nos botões,
+// exercitando os fluxos reais do app (não só as funções de renderização).
+const els = {};
+function makeEl(sel) {
+  return {
+    _sel: sel, value: '', innerHTML: '', textContent: '', hidden: false, checked: false, placeholder: '',
+    dataset: {}, style: {}, options: [{ textContent: '' }, { textContent: '' }],
+    classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+    addEventListener() {}, removeEventListener() {}, focus() {}, blur() {}, setSelectionRange() {},
+    click() { if (this.onclick) this.onclick({ stopPropagation() {} }); },
+    querySelector: () => el('#_dentro'), querySelectorAll: () => [],
+  };
+}
+const el = sel => els[sel] || (els[sel] = makeEl(sel));
 global.document = {
-  querySelector: () => fakeEl,
+  querySelector: sel => el(sel),
   querySelectorAll: () => [],
-  getElementById: () => fakeEl,
+  getElementById: id => el('#' + id),
   addEventListener: () => {},
-  createElement: () => fakeEl,
+  createElement: () => makeEl('novo'),
 };
 global.window = global;
+global.confirm = () => true;
+global.requestAnimationFrame = fn => fn();
+global.paintIcons = () => {};
+global.scrollTo = () => {};
+global.addEventListener = () => {};
 global.Sync = { load() {}, autoSync() {}, saveCfg() {}, cfg: {}, hasFamily: () => false, loggedIn: () => false, configured: () => false };
 global.Auth = { init: cb => cb(), enabled: () => false, cfg: {} };
 global.navigator = { onLine: false };
@@ -42,7 +49,9 @@ eval(fs.readFileSync(BASE + 'js/ofx.js', 'utf8') + '; global.OFX = OFX;');
 const appSrc = fs.readFileSync(BASE + 'js/app.js', 'utf8').split('/* ---------- Boot ---------- */')[0];
 eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
-  state, fmt, fmtShort, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM });`);
+  state, fmt, fmtShort, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
+  openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
+  openSaldoSheet, openTransferSheet, persistUI, restoreUI });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -118,6 +127,105 @@ const inicio = renderInicio(p);
 for (const [rotulo, valor] of [['disponível', fmt(16350)], ['gasto do mês', fmtShort(1550)], ['comprometido', fmtShort(650)]]) {
   check(`painel exibe ${rotulo} (${valor})`, inicio.includes(valor), true);
 }
+
+/* ---- Fluxos reais: aportes, detalhe da meta e da fatura ---- */
+console.log('\n=== Aportes (fluxo real, do clique ao saldo) ===');
+try {
+  const saldoAntes = DB.get('accounts', conta).balance;
+  const caixaAntes = DB.get('accounts', caixinha).balance;
+  const totalAntes = DB.goalTotal(meta);
+
+  openAporteSheet(meta);                              // abre a folha
+  el('#a-amount').dataset.cents = '50000';            // R$ 500,00
+  el('#a-desc').value = 'Aporte de teste';
+  el('#a-date').value = dia(9);
+  el('#a-account').value = conta;                     // saiu da corrente
+  el('#a-to').value = caixinha;                       // entrou na caixinha
+  el('#sh-save').click();                             // clica em Registrar aporte
+
+  check('aporte somou na meta', DB.goalTotal(meta), totalAntes + 500);
+  check('debitou a conta de origem', DB.get('accounts', conta).balance, saldoAntes - 500);
+  check('creditou a conta de destino', DB.get('accounts', caixinha).balance, caixaAntes + 500);
+
+  const lancado = DB.all('goal_entries').find(e => e.description === 'Aporte de teste');
+  check('guardou as contas movimentadas', !!(lancado.from_account && lancado.to_account), true);
+
+  // Detalhe da meta mostra TODO o histórico (não só os últimos)
+  openGoalDetail(meta);
+  const html = el('#modal').innerHTML;
+  const todos = DB.all('goal_entries').filter(e => e.goal_id === meta);
+  check(`detalhe lista todos os ${todos.length} aportes`, todos.every(e => html.includes(esc(e.description))), true);
+  check('detalhe mostra total e ritmo', html.includes('Guardado') && html.includes('Histórico completo'), true);
+
+  // Corrigir o valor ajusta os saldos pela diferença
+  openEntrySheet(lancado.id, meta);
+  el('#e-amount').dataset.cents = '30000';            // vira R$ 300,00 (−200)
+  el('#e-desc').value = 'Aporte de teste';
+  el('#e-date').value = lancado.date;
+  el('#sh-save').click();
+  check('editar aporte corrige a meta', DB.goalTotal(meta), totalAntes + 300);
+  check('editar devolve a diferença à origem', DB.get('accounts', conta).balance, saldoAntes - 300);
+
+  // Excluir devolve tudo
+  openEntrySheet(lancado.id, meta);
+  el('#sh-del').click();
+  check('excluir aporte volta a meta ao valor anterior', DB.goalTotal(meta), totalAntes);
+  check('excluir devolve o saldo da origem', DB.get('accounts', conta).balance, saldoAntes);
+  check('excluir devolve o saldo do destino', DB.get('accounts', caixinha).balance, caixaAntes);
+} catch (e) {
+  console.log(` FALHA | fluxo de aportes: ${e.message}`); fail++;
+}
+
+try {
+  openInvoiceDetail(DB.invoicesOf(DB.get('cards', cartao))[0].key);
+  check('detalhe da fatura lista os lançamentos', el('#modal').innerHTML.includes('Roupa'), true);
+} catch (e) { console.log(` FALHA | detalhe da fatura: ${e.message}`); fail++; }
+
+console.log('\n=== Memória da navegação ===');
+state.tab = 'relatorios'; state.monthOffset = -2; state.memberFilter = 'Joctã';
+persistUI();
+state.tab = 'inicio'; state.monthOffset = 0; state.memberFilter = 'Todos';
+restoreUI();
+check('recarregar volta para a mesma aba', state.tab, 'relatorios');
+check('recarregar mantém o mês em análise', state.monthOffset, -2);
+check('recarregar mantém o filtro de membro', state.memberFilter, 'Joctã');
+
+/* ---- O banco do Supabase aceita tudo o que o app envia? ---- */
+console.log('\n=== Schema do Supabase x payload do app ===');
+const schema = fs.readFileSync(BASE + 'supabase/schema.sql', 'utf8');
+const colunasDe = tabela => {
+  const cria = schema.match(new RegExp(`create table if not exists ${tabela} \\(([\\s\\S]*?)\\n\\);`, 'i'));
+  const cols = new Set(['id', 'family_id', 'updated_at', 'deleted']);
+  if (cria) {
+    for (const linha of cria[1].split('\n')) {
+      const m = linha.trim().match(/^"?(\w+)"?\s+\w/);
+      if (m && !/^(primary|unique|foreign|constraint|check)$/i.test(m[1])) cols.add(m[1]);
+    }
+  }
+  for (const m of schema.matchAll(new RegExp(`alter table ${tabela} add column if not exists (\\w+)`, 'gi'))) cols.add(m[1]);
+  return cols;
+};
+
+const syncSrc = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
+const bloco = syncSrc.match(/const SYNC_TABLES = \{([\s\S]*?)\n\};/)[1];
+const SYNC = {};
+for (const m of bloco.matchAll(/(\w+):\s*\[([^\]]*)\]/g)) {
+  SYNC[m[1]] = m[2].split(',').map(s => s.trim().replace(/^'|'$/g, '')).filter(Boolean);
+}
+for (const [tabela, campos] of Object.entries(SYNC)) {
+  const cols = colunasDe(tabela);
+  const faltando = campos.filter(c => !cols.has(c));
+  check(`${tabela}: ${campos.length} campos existem no schema`, faltando.length ? faltando.join(', ') : true, true);
+}
+// Toda tabela sincronizada precisa do envelope de sync e de RLS
+for (const tabela of Object.keys(SYNC)) {
+  const cols = colunasDe(tabela);
+  check(`${tabela}: tem updated_at e deleted`, cols.has('updated_at') && cols.has('deleted'), true);
+  check(`${tabela}: RLS habilitado`, new RegExp(`alter table ${tabela} enable row level security`, 'i').test(schema), true);
+}
+check('push_subscriptions com RLS', /alter table push_subscriptions enable row level security/i.test(schema), true);
+check('notification_log com RLS', /alter table notification_log enable row level security/i.test(schema), true);
+check('função is_member definida antes das policies', schema.indexOf('function is_member') < schema.indexOf('create policy'), true);
 
 console.log(`\n${fail === 0 ? '✅ TUDO CERTO' : '❌ PROBLEMAS ENCONTRADOS'} — ${ok} passaram, ${fail} falharam\n`);
 process.exit(fail ? 1 : 0);

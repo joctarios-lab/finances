@@ -7,7 +7,34 @@ const METHODS = ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto'];
 const MEMBRO_COMUM = 'Comum / Família';   // usado sempre que o âmbito é Família
 const PALETTE = ['#009ef7', '#50cd89', '#7239ea', '#f1416c', '#ffc700', '#43ced7', '#fd7e14', '#8950fc', '#1bc5bd', '#6c7293'];
 
-let state = { tab: 'inicio', monthOffset: 0, filter: 'Todos' };
+let state = { tab: 'inicio', monthOffset: 0, filter: 'Todos', memberFilter: 'Todos', repOffset: 0 };
+
+/* ---------- Memória da navegação: recarregar volta para onde você estava ---------- */
+const UI_KEY = 'financas.ui.v1';
+const TABS = ['inicio', 'extrato', 'cartoes', 'metas', 'relatorios'];
+
+function persistUI() {
+  try {
+    localStorage.setItem(UI_KEY, JSON.stringify({
+      tab: state.tab, monthOffset: state.monthOffset, filter: state.filter,
+      memberFilter: state.memberFilter, repOffset: state.repOffset,
+      scrollY: Math.round(window.scrollY || 0),
+    }));
+  } catch (_) {}
+}
+
+function restoreUI() {
+  try {
+    const s = JSON.parse(localStorage.getItem(UI_KEY));
+    if (!s) return;
+    if (TABS.includes(s.tab)) state.tab = s.tab;
+    state.monthOffset = Number(s.monthOffset) || 0;
+    state.filter = s.filter || 'Todos';
+    state.memberFilter = s.memberFilter || 'Todos';
+    state.repOffset = Number(s.repOffset) || 0;
+    state._scrollY = Number(s.scrollY) || 0;
+  } catch (_) {}
+}
 
 /* ---------- Utilitários ---------- */
 const $ = sel => document.querySelector(sel);
@@ -77,12 +104,21 @@ function setTab(tab) {
 }
 
 function render() {
-  const period = DB.monthPeriod(new Date(), state.tab === 'extrato' ? state.monthOffset : 0);
-  $('#topbar-month').textContent = DB.monthPeriod(new Date()).label;
+  // O período é derivado da data de hoje + dia de início do mês financeiro.
+  // Não existe "fechar o mês": ele vira sozinho. O offset serve para revisar meses passados.
+  const usaOffset = state.tab === 'extrato' || state.tab === 'inicio';
+  const period = DB.monthPeriod(new Date(), usaOffset ? state.monthOffset : 0);
+  $('#topbar-month').textContent = period.label;
   const views = { inicio: renderInicio, extrato: renderExtrato, cartoes: renderCartoes, metas: renderMetas, relatorios: renderRelatorios };
   $('#view').innerHTML = views[state.tab](period);
   paintIcons($('#view'));
   bindView();
+  persistUI();
+  if (state._scrollY) {   // primeira renderização após recarregar: volta ao ponto de leitura
+    const y = state._scrollY;
+    delete state._scrollY;
+    requestAnimationFrame(() => window.scrollTo(0, y));
+  }
 }
 
 /* ---------- Gráficos SVG (sem bibliotecas, funcionam offline) ---------- */
@@ -315,8 +351,37 @@ function renderInicio(period) {
       ${faltando.map(f => `<div class="settings-item" data-setup="${f.go}"><span class="cfg-left"><span class="cfg-ico" data-ico="check"></span><span>${f.txt}</span></span><span class="chev" data-ico="chev"></span></div>`).join('')}
     </div>` : '';
 
-  return `
-    ${setupCard}
+  // Barra de período: deixa explícito o intervalo e permite revisar meses fechados
+  const fimExibido = new Date(period.end.getTime() - 86400000);
+  const atual = state.monthOffset === 0;
+  const periodBar = `
+    <div class="card month-nav">
+      <button id="mn-prev" aria-label="Mês anterior" data-ico="chevL"></button>
+      <div style="text-align:center">
+        <b>${period.label}</b>
+        <div class="muted" style="font-size:11.5px">${period.start.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} a ${fimExibido.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}${atual ? ` · dia ${stats.elapsedDays} de ${stats.totalDays}` : ' · encerrado'}</div>
+      </div>
+      <button id="mn-next" aria-label="Próximo mês" data-ico="chevR" ${atual ? 'disabled style="opacity:.35"' : ''}></button>
+    </div>`;
+
+  // Mês encerrado: o "disponível hoje" não faz sentido — mostra o resultado daquele mês
+  const resultado = realized - stats.spent;
+  const heroFechado = `
+    <div class="hero hero-${resultado >= 0 ? 'green' : 'red'}">
+      <div class="hero-top">
+        <span class="hero-label">Resultado de ${esc(period.label)}</span>
+        <span class="hero-badge b-${resultado >= 0 ? 'green' : 'red'}">${resultado >= 0 ? 'Sobrou' : 'Faltou'}</span>
+      </div>
+      <div class="hero-value">${fmt(Math.abs(resultado))}</div>
+      <p class="hero-msg">${realized > 0 ? 'Receitas menos despesas do período.' : 'Sem receitas lançadas neste período — o valor mostra o total gasto.'}</p>
+      <div class="hero-stats">
+        <div><small>Receitas</small><b>${fmtShort(realized)}</b></div>
+        <div><small>Despesas</small><b>${fmtShort(stats.spent)}</b></div>
+        <div><small>Lançamentos</small><b>${txs.length}</b></div>
+      </div>
+    </div>`;
+
+  const heroAtual = `
     <div class="hero hero-${health.cls}">
       <div class="hero-top">
         <span class="hero-label">Disponível para usar</span>
@@ -329,7 +394,12 @@ function renderInicio(period) {
         <div><small>Comprometido</small><b>${fmtShort(committed)}</b></div>
         <div><small>Projeção do mês</small><b>${fmtShort(stats.projection)}</b></div>
       </div>
-    </div>
+    </div>`;
+
+  return `
+    ${setupCard}
+    ${periodBar}
+    ${atual ? heroAtual : heroFechado}
     ${adviceCard}
     <div class="kpi-grid">
       <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmtShort(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
@@ -481,6 +551,7 @@ function renderCartoes() {
         <span class="badge ${inv.status.toLowerCase()}">${inv.status}</span>
         <span class="muted">fecha ${fmtDate(inv.closing)} · vence ${fmtDate(inv.due)}</span>
         <span style="flex:1"></span>
+        <button class="link-btn" data-inv-detail="${inv.key}">${inv.count} itens</button>
         <span class="num">${fmtShort(inv.total)}</span>
         ${inv.status !== 'Paga'
           ? `<button class="link-btn" data-pay="${inv.key}">marcar paga</button>`
@@ -543,9 +614,11 @@ function renderMetas() {
       ${forecast}
       <div class="btn-row">
         <button class="btn ghost" data-aporte="${g.id}">＋ Aporte</button>
-        <button class="btn ghost" data-editgoal="${g.id}">Editar</button>
+        <button class="btn ghost" data-goal-detail="${g.id}">Ver histórico (${entries.length})</button>
       </div>
-      ${entries.slice(0, 3).map(e => `<div class="muted" style="margin-top:6px">· ${fmtDay(e.date)} — ${esc(e.description)} <b style="color:var(--paper)">${fmtShort(e.amount)}</b></div>`).join('')}
+      ${entries.length ? `<p class="muted" style="margin-top:10px;font-weight:600">Últimos aportes</p>` : ''}
+      ${entries.slice(0, 3).map(e => `<div class="muted" style="margin-top:4px">· ${fmtDay(e.date)} — ${esc(e.description)} <b style="color:var(--paper)">${fmtShort(e.amount)}</b></div>`).join('')}
+      ${entries.length > 3 ? `<div class="muted" style="margin-top:6px">e mais ${entries.length - 3} — toque em <b>Ver histórico</b> para ver todos</div>` : ''}
     </div>`;
   }
   return html;
@@ -659,7 +732,7 @@ function bindView() {
   v.querySelectorAll('[data-tx]').forEach(el => el.onclick = () => openTxSheet(DB.get('transactions', el.dataset.tx)));
   const prev = $('#mn-prev'), next = $('#mn-next');
   if (prev) prev.onclick = () => { state.monthOffset--; render(); };
-  if (next) next.onclick = () => { state.monthOffset++; render(); };
+  if (next) next.onclick = () => { if (state.monthOffset < 0) { state.monthOffset++; render(); } };
   const rprev = $('#rep-prev'), rnext = $('#rep-next');
   if (rprev) rprev.onclick = () => { state.repOffset = (state.repOffset || 0) - 1; render(); };
   if (rnext) rnext.onclick = () => { state.repOffset = (state.repOffset || 0) + 1; render(); };
@@ -767,6 +840,8 @@ function bindView() {
   if (ng) ng.onclick = () => openGoalSheet(null);
   v.querySelectorAll('[data-editgoal]').forEach(b => b.onclick = () => openGoalSheet(DB.get('goals', b.dataset.editgoal)));
   v.querySelectorAll('[data-aporte]').forEach(b => b.onclick = () => openAporteSheet(b.dataset.aporte));
+  v.querySelectorAll('[data-goal-detail]').forEach(b => b.onclick = () => openGoalDetail(b.dataset.goalDetail));
+  v.querySelectorAll('[data-inv-detail]').forEach(b => b.onclick = () => openInvoiceDetail(b.dataset.invDetail));
 }
 
 /* ---------- Sheet: lançamento rápido ---------- */
@@ -1220,6 +1295,145 @@ function openGoalSheet(goal) {
   };
 }
 
+/* ---------- Detalhe da fatura: todos os lançamentos que a compõem ---------- */
+function openInvoiceDetail(key) {
+  const card = DB.get('cards', key.split(':')[0]);
+  if (!card) return toast('Cartão não encontrado');
+  const inv = DB.invoicesOf(card).find(i => i.key === key);
+  if (!inv) return toast('Fatura não encontrada');
+  const itens = DB.all('transactions').filter(t => t.invoice_key === key)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  openModal(`
+    <div class="modal-title">${esc(card.name)} — fatura<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="proj-row"><span>Total</span><b>${fmt(inv.total)}</b></div>
+      <div class="proj-row"><span>Fecha</span><b>${inv.closing.toLocaleDateString('pt-BR')}</b></div>
+      <div class="proj-row"><span>Vence</span><b>${inv.due.toLocaleDateString('pt-BR')}</b></div>
+      <div class="proj-row"><span>Situação</span><span class="badge ${inv.status.toLowerCase()}">${inv.status}</span></div>
+    </div>
+    <p class="section-title">${itens.length} lançamento(s) <span class="muted">— toque para editar</span></p>
+    ${itens.map(t => {
+      const c = catOf(t.category_id);
+      const isExp = DB.isExpense(t);
+      return `<div class="tx" data-inv-tx="${t.id}">
+        <span class="tx-ico">${isExp ? esc(c ? c.icon : '🧾') : '↩️'}</span>
+        <span class="tx-info"><span class="tx-name">${esc(t.description)}</span>
+        <span class="tx-meta">${fmtDay(t.date)}${t.member && t.member !== MEMBRO_COMUM ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}</span></span>
+        <span class="tx-amount ${isExp ? '' : 'income'}">${isExp ? '' : '− '}${fmt(t.amount)}</span>
+      </div>`;
+    }).join('') || '<div class="empty">Nenhum lançamento nesta fatura.</div>'}
+  `);
+  $('#md-back').onclick = closeModal;
+  document.querySelectorAll('#modal [data-inv-tx]').forEach(el =>
+    el.onclick = () => { closeModal(); openTxSheet(DB.get('transactions', el.dataset.invTx)); });
+}
+
+/* ---------- Detalhe da meta: histórico completo de aportes ---------- */
+function openGoalDetail(goalId) {
+  const g = DB.get('goals', goalId);
+  if (!g) return toast('Meta não encontrada');
+  const entries = DB.all('goal_entries').filter(e => e.goal_id === goalId)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const total = DB.goalTotal(goalId);
+  const alvo = Number(g.target_amount) || 0;
+  const falta = Math.max(0, alvo - total);
+  const pct = alvo > 0 ? Math.round(total / alvo * 100) : 0;
+  const pace = DB.goalPace(goalId);
+
+  // Agrupa por mês, com subtotal — mostra a constância dos aportes
+  let lista = '', mesAtual = '';
+  for (const e of entries) {
+    const mes = e.date.slice(0, 7);
+    if (mes !== mesAtual) {
+      mesAtual = mes;
+      const soma = entries.filter(x => x.date.slice(0, 7) === mes).reduce((s, x) => s + (Number(x.amount) || 0), 0);
+      const nome = new Date(mes + '-01T12:00:00').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+      lista += `<p class="tx-day">${esc(nome.charAt(0).toUpperCase() + nome.slice(1))} · ${fmtShort(soma)}</p>`;
+    }
+    lista += `<div class="tx" data-entry="${e.id}">
+      <span class="tx-ico">💰</span>
+      <span class="tx-info"><span class="tx-name">${esc(e.description || 'Aporte')}</span>
+      <span class="tx-meta">${fmtDay(e.date)}</span></span>
+      <span class="tx-amount income">+ ${fmt(e.amount)}</span>
+    </div>`;
+  }
+
+  const previsao = falta > 0 && pace > 0
+    ? new Date(Date.now() + (falta / pace) * 30.44 * 86400000).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+    : null;
+
+  openModal(`
+    <div class="modal-title">${esc(g.icon)} ${esc(g.name)}<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="proj-row"><span>Guardado</span><b class="txt-green">${fmt(total)}</b></div>
+      <div class="proj-row"><span>Meta</span><b>${fmt(alvo)}</b></div>
+      <div class="proj-row"><span>Falta</span><b class="${falta ? '' : 'txt-green'}">${falta ? fmt(falta) : 'nada — meta atingida! 🎉'}</b></div>
+      <div class="bar ${pct >= 100 ? 'bar-green' : pct >= 50 ? 'bar-green' : 'bar-amber'}" style="margin:10px 0 6px"><i style="width:${Math.min(100, pct)}%"></i></div>
+      <div class="proj-row muted"><span>${pct}% concluído · ${entries.length} aporte(s)</span>
+        <span>${pace > 0 ? `ritmo ${fmtShort(pace)}/mês` : 'sem aportes recentes'}</span></div>
+      ${previsao ? `<p class="muted" style="margin-top:6px">📈 Nesse ritmo, conclusão prevista para <b>${previsao}</b>.</p>` : ''}
+      ${g.target_date && falta > 0 ? `<p class="muted">🎯 Para cumprir até ${fmtDay(g.target_date)}: <b>${fmtShort(falta / Math.max(0.5, (new Date(g.target_date) - Date.now()) / (30.44 * 86400000)))}/mês</b></p>` : ''}
+    </div>
+    <div class="btn-row" style="margin-bottom:10px">
+      <button class="btn" id="gd-novo">＋ Novo aporte</button>
+      <button class="btn ghost" id="gd-edit">Editar meta</button>
+    </div>
+    <p class="section-title">Histórico completo <span class="muted">— toque para corrigir</span></p>
+    ${lista || '<div class="empty"><b>Nenhum aporte ainda</b>Registre o primeiro para começar a acompanhar o progresso.</div>'}
+  `);
+  $('#md-back').onclick = closeModal;
+  $('#gd-novo').onclick = () => { closeModal(); openAporteSheet(goalId); };
+  $('#gd-edit').onclick = () => { closeModal(); openGoalSheet(DB.get('goals', goalId)); };
+  document.querySelectorAll('#modal [data-entry]').forEach(el =>
+    el.onclick = () => openEntrySheet(el.dataset.entry, goalId));
+}
+
+/* Editar/excluir um aporte, revertendo o que ele movimentou nas contas */
+function openEntrySheet(entryId, goalId) {
+  const e = DB.get('goal_entries', entryId);
+  if (!e) return toast('Aporte não encontrado');
+  const contas = DB.all('accounts').filter(a => a.active !== false);
+  const nomeConta = id => (DB.get('accounts', id) || {}).name;
+  const movimento = [e.from_account && `saiu de ${nomeConta(e.from_account)}`, e.to_account && `entrou em ${nomeConta(e.to_account)}`]
+    .filter(Boolean).join(' · ');
+
+  openSheet(`
+    <div class="sheet-title">Corrigir aporte<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="field"><input class="amount-input" id="e-amount" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
+    <div class="row2">
+      <div class="field"><label>Descrição</label><input id="e-desc" value="${esc(e.description || 'Aporte')}"></div>
+      <div class="field"><label>Data</label><input id="e-date" type="date" value="${e.date}"></div>
+    </div>
+    ${movimento ? `<p class="muted" style="margin-bottom:10px">💸 Este aporte movimentou contas (${esc(movimento)}). Alterar o valor ou excluir ajusta os saldos de volta automaticamente.</p>` : ''}
+    <button class="btn" id="sh-save">Salvar</button>
+    <div class="btn-row"><button class="btn danger" id="sh-del">Excluir aporte</button></div>
+  `);
+  initMoney('#e-amount', e.amount);
+  $('#sh-close').onclick = closeSheet;
+
+  const voltarParaDetalhe = () => { closeSheet(); render(); Sync.autoSync(); openGoalDetail(goalId); };
+
+  $('#sh-save').onclick = () => {
+    const novo = moneyVal('#e-amount');
+    if (!novo) return toast('Informe o valor');
+    const delta = novo - (Number(e.amount) || 0);
+    if (delta && e.from_account) adjustBalance(e.from_account, -delta);
+    if (delta && e.to_account) adjustBalance(e.to_account, delta);
+    DB.upsert('goal_entries', { ...e, amount: novo, description: $('#e-desc').value || 'Aporte', date: $('#e-date').value || e.date });
+    voltarParaDetalhe();
+    toast('Aporte atualizado ✓');
+  };
+  $('#sh-del').onclick = () => {
+    if (!confirm('Excluir este aporte?')) return;
+    if (e.from_account) adjustBalance(e.from_account, Number(e.amount) || 0);   // devolve
+    if (e.to_account) adjustBalance(e.to_account, -(Number(e.amount) || 0));
+    DB.remove('goal_entries', e.id);
+    voltarParaDetalhe();
+    toast('Aporte excluído');
+  };
+}
+
 function openAporteSheet(goalId) {
   const g = DB.get('goals', goalId);
   if (!g) return toast('Meta não encontrada — atualize a tela');
@@ -1248,7 +1462,11 @@ function openAporteSheet(goalId) {
     if (!amount) return toast('Informe o valor');
     const de = $('#a-account').value, para = $('#a-to').value;
     if (de && de === para) return toast('Origem e destino não podem ser a mesma conta');
-    DB.upsert('goal_entries', { goal_id: goalId, amount, description: $('#a-desc').value || 'Aporte', date: $('#a-date').value || todayISO() });
+    DB.upsert('goal_entries', {
+      goal_id: goalId, amount, description: $('#a-desc').value || 'Aporte',
+      date: $('#a-date').value || todayISO(),
+      from_account: de || null, to_account: para || null,   // guardado para poder reverter depois
+    });
     if (de) adjustBalance(de, -amount);      // saiu da conta corrente
     if (para) adjustBalance(para, amount);   // entrou na caixinha/reserva
     closeSheet(); render(); Sync.autoSync();
@@ -1848,9 +2066,17 @@ function refreshUserChip() {
 refreshUserChip();
 paintIcons();   // ícones do shell estático (sidebar, topbar, tabbar)
 
+let scrollTimer;
+window.addEventListener('scroll', () => {
+  clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(persistUI, 250);
+}, { passive: true });
+window.addEventListener('beforeunload', persistUI);
+
 Notif.load();
+restoreUI();
 Auth.init(() => {
-  render();
+  setTab(state.tab);          // restaura a aba e marca o menu corretamente
   Sync.autoSync();
   setTimeout(() => Notif.check(), 800);
 });
