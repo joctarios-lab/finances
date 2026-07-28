@@ -24,7 +24,8 @@ const Sync = {
   // Agendamento
   INTERVALO: 60000,        // consulta o servidor a cada 1 min com o app aberto
   ESPERA_APOS_EDICAO: 1200, // agrupa edições seguidas num envio só
-  _timer: null, _debounce: null, _retry: 0, _ultimoErro: null,
+  GIRO_MINIMO: 600,        // tempo mínimo do ícone girando, para não piscar
+  _timer: null, _debounce: null, _retry: 0, _ultimoErro: null, _girando: false,
 
   load() {
     try { this.cfg = JSON.parse(localStorage.getItem(this.cfgKey)) || {}; }
@@ -134,7 +135,14 @@ const Sync = {
     if (this.busy) return null;
     this.busy = true;
     let enviados = 0, recebidos = 0;
-    this.avisarEstado();
+
+    // O giro só aparece quando há trabalho que o usuário reconhece: um pedido dele
+    // ou envio pendente. A consulta de rotina (1x/min) é silenciosa — girar a cada
+    // minuto passava a impressão de que o app vive sincronizando.
+    this._girando = !silencioso || this.pendentes() > 0;
+    const inicio = Date.now();
+    if (this._girando) this.avisarEstado();
+
     try {
       if (!silencioso) this.status('Sincronizando…');
       const fid = this.cfg.family_id;
@@ -182,16 +190,22 @@ const Sync = {
       if (silencioso) this.status(''); else this.status('Sincronizado ✓');
       // Se o servidor trouxe novidade (o cônjuge lançou algo), a tela precisa redesenhar
       if (recebidos > 0 && this.onChanged) this.onChanged(recebidos);
-      this.avisarEstado();
       return { enviados, recebidos };
     } catch (e) {
       this._ultimoErro = e.message;
       if (!silencioso) this.status('Falha ao sincronizar: ' + e.message, false);
-      this.avisarEstado();
       this.agendarNovaTentativa();
       throw e;
     } finally {
+      // Avisar aqui, e só aqui, é o que encerra o giro: dentro do try o busy ainda
+      // era true, então o botão era informado de que ainda estava sincronizando e
+      // ficava girando para sempre, até a próxima sincronização.
       this.busy = false;
+      const restante = this._girando ? Math.max(0, this.GIRO_MINIMO - (Date.now() - inicio)) : 0;
+      this._girando = false;
+      // Sincronização instantânea piscava o ícone; segura o giro por um tempo mínimo
+      if (restante) setTimeout(() => this.avisarEstado(), restante);
+      else this.avisarEstado();
     }
   },
 
@@ -211,7 +225,7 @@ const Sync = {
 
   estado() {
     if (!this.hasFamily()) return 'off';
-    if (this.busy) return 'sync';
+    if (this.busy && this._girando) return 'sync';
     if (!navigator.onLine) return 'offline';
     if (this.pendentes() > 0) return 'pendente';
     return 'ok';

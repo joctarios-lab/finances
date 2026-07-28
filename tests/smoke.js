@@ -793,6 +793,51 @@ check('função is_member definida antes das policies', schema.indexOf('function
    armazenamento (o app instalado é só um atalho), então a limpeza precisa
    existir dentro do app e não pode esquecer nenhuma chave. */
 (async () => {
+  /* ---- O botão ⇅ para de girar quando termina? ----
+     Roda o sync.js de verdade com fetch simulado e anota cada estado avisado. */
+  console.log('\n=== Estado do botão de sincronizar ===');
+  {
+    const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S.GIRO_MINIMO = 0;   // sem espera artificial: o teste quer o estado final
+    S.cfg = {
+      url: 'https://exemplo.supabase.co', anonKey: 'k', access_token: 'a',
+      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: 'fam-1',
+    };
+    S.saveCfg = () => {};
+    global.navigator.onLine = true;
+    global.fetch = async () => ({ ok: true, status: 200, json: async () => [], text: async () => '' });
+
+    let vistos = [];
+    S.onState = e => vistos.push(e);
+
+    // 1) Pedido do usuário: gira e precisa parar no fim
+    await S.syncAll(false);
+    check('pedido do usuário mostra o giro', vistos.includes('sync'), true);
+    check('o giro termina quando a sincronização acaba', vistos[vistos.length - 1], 'ok');
+    check('não fica preso em sincronizando', vistos[vistos.length - 1] !== 'sync', true);
+
+    // 2) Consulta de rotina sem nada a enviar: não deve girar
+    vistos = [];
+    await S.syncAll(true);
+    check('consulta de rotina não gira o ícone', vistos.includes('sync'), false);
+    check('consulta de rotina termina em dia', vistos[vistos.length - 1], 'ok');
+
+    // 3) Falha de rede também precisa encerrar o giro
+    vistos = [];
+    global.fetch = async () => { throw new Error('sem rede'); };
+    await S.syncAll(false).catch(() => {});
+    check('falha não deixa o ícone girando', vistos[vistos.length - 1] !== 'sync', true);
+    clearTimeout(S._debounce);   // cancela a nova tentativa agendada pelo erro
+
+    // 4) Com envio pendente, girar faz sentido mesmo em silêncio
+    vistos = [];
+    S.pendentes = () => 3;
+    global.fetch = async () => ({ ok: true, status: 200, json: async () => [], text: async () => '' });
+    await S.syncAll(true);
+    check('envio pendente gira mesmo em silêncio', vistos.includes('sync'), true);
+    check('e para ao terminar o envio', vistos[vistos.length - 1] !== 'sync', true);
+  }
+
   console.log('\n=== Apagar dados deste aparelho ===');
 
   const dadosAntes = DB.data, storeAntes = { ...store };
