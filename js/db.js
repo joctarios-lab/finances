@@ -454,6 +454,12 @@ const DB = {
     const d = period.start;
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   },
+  // period.end é exclusivo, então esta é a data do primeiro dia FORA do período:
+  // o saldo nela é justamente o saldo de fechamento deste mês
+  fimISO(period) {
+    const d = period.end;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  },
 
   spentByCategory(period) {
     const out = {};

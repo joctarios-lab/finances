@@ -876,11 +876,19 @@ function renderExtrato(period) {
       const nomes = contasFiltradas.map(id => (DB.get('accounts', id) || {}).name).filter(Boolean);
       const saldo = contasFiltradas.reduce((s, id) => s + (Number((DB.get('accounts', id) || {}).balance) || 0), 0);
       const varias = contasFiltradas.length > 1;
-      /* Saldo anterior + entrou − saiu = saldo final: a mesma conta que o extrato
-         do banco mostra. É o que faz o resultado de um mês aparecer no seguinte,
-         em vez de cada mês parecer começar do zero. */
+      /* Saldo anterior e saldo final vêm os DOIS do saldo real da conta, cada um
+         medido na sua data — não de "anterior + entrou − saiu".
+
+         Motivo: entrou/saiu deixam a conciliação de fora de propósito (ela não é
+         gasto nem entrada), mas ela MEXE no saldo. Derivar o fechamento da soma
+         daria um número que não existe em lugar nenhum — foi o que fez o extrato
+         de julho discordar do saldo da conta.
+
+         Quando sobra diferença, ela é a conciliação, e aparece dita por extenso
+         em vez de deixar a conta parecer errada. */
       const anterior = DB.saldoNaData(contasFiltradas, DB.inicioISO(period));
-      const finalMes = anterior + entrouNaConta - saiuNaConta;
+      const finalMes = DB.saldoNaData(contasFiltradas, DB.fimISO(period));
+      const conciliado = finalMes - (anterior + entrouNaConta - saiuNaConta);
       return `
     <div class="stat-2x2">
       <div class="card"><small>Saldo anterior</small><b class="${anterior >= 0 ? '' : 'txt-red'}">${fmt(anterior)}</b></div>
@@ -888,16 +896,20 @@ function renderExtrato(period) {
       <div class="card"><small>Entrou</small><b class="txt-green">${fmt(entrouNaConta)}</b></div>
       <div class="card"><small>Saiu</small><b class="txt-red">${fmt(saiuNaConta)}</b></div>
     </div>
-    <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc(nomes.join(' + '))}</b> — o saldo anterior é o que veio do mês passado${varias
-      ? '. Transferência entre estas contas não conta, porque o dinheiro não saiu daqui.' : '.'}</p>`;
+    <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc(nomes.join(' + '))}</b> — o saldo anterior é o que veio do mês passado.${
+      Math.abs(conciliado) > 0.005 ? ` Há <b>${fmt(Math.abs(conciliado))}</b> de conciliação no período, que mexe no saldo mas não é gasto nem entrada.` : ''}${varias
+      ? ' Transferência entre estas contas não conta, porque o dinheiro não saiu daqui.' : ''}</p>`;
     })()
     : (() => {
       /* Sem filtro de conta, o extrato é o de todo o dinheiro da família — e aí
          o que sobrou do mês passado também precisa aparecer, senão cada mês
          parece começar do zero e a soma nunca fecha com o saldo das contas. */
+      // Os dois saldos vêm do saldo real das contas, cada um na sua data — ver o
+      // comentário no ramo de cima: derivar o fechamento da soma ignora a conciliação
       const anterior = DB.saldoNaData(null, DB.inicioISO(period));
+      const finalMes = DB.saldoNaData(null, DB.fimISO(period));
       const resultado = receitas - total;
-      const finalMes = anterior + resultado;
+      const conciliado = finalMes - (anterior + resultado);
       return `
     <div class="stat-2x2">
       <div class="card"><small>Saldo anterior</small><b class="${anterior >= 0 ? '' : 'txt-red'}">${fmt(anterior)}</b></div>
@@ -907,7 +919,8 @@ function renderExtrato(period) {
     </div>
     <p class="muted" style="margin:-4px 0 2px">${resultado >= 0
       ? `Sobrou <b class="txt-green">${fmt(resultado)}</b> neste mês, somados aos ${fmt(anterior)} que vieram do anterior.`
-      : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> neste mês, tirados dos ${fmt(anterior)} que vieram do anterior.`}</p>`;
+      : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> neste mês, tirados dos ${fmt(anterior)} que vieram do anterior.`}${
+      Math.abs(conciliado) > 0.005 ? ` Há ainda <b>${fmt(Math.abs(conciliado))}</b> de conciliação, que mexe no saldo sem ser gasto nem entrada.` : ''}</p>`;
     })()}
     <div class="quick-add">
       <button class="qa qa-desp" data-novo="Despesa"><span data-ico="plus"></span>Despesa</button>

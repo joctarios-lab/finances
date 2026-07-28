@@ -1376,6 +1376,30 @@ try {
   check('com o valor que veio do mês passado', tela.includes(fmt(1000)), true);
   check('e o saldo do mês fechando', tela.includes(fmt(700)), true);
 
+  /* Com conciliação no meio do mês, "anterior + entrou − saiu" NÃO dá o saldo:
+     a conciliação mexe no saldo mas fica fora de entrou/saiu, porque não é gasto
+     nem entrada. O fechamento tem de vir do saldo real, medido na data do fim —
+     senão o extrato mostra um número que não existe em lugar nenhum. */
+  const saldoAntesDaConciliacao = DB.get('accounts', cM).balance;
+  const conc = { description: 'Ajuste de saldo (extrato do banco)', amount: 250, date: dia(4), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: cM, adjustment: true };
+  DB.upsert('transactions', conc); applyTxEffect(conc, +1);
+  check('conciliação mexe no saldo', DB.get('accounts', cM).balance, saldoAntesDaConciliacao - 250);
+
+  const comConc = renderExtrato(mesAtual);
+  const fechamento = DB.saldoNaData([cM], DB.fimISO(mesAtual));
+  check('o saldo de fechamento é o saldo real da conta', fechamento, DB.get('accounts', cM).balance);
+  check('e é ele que aparece na tela', comConc.includes(fmt(fechamento)), true);
+  // O valor aparece na linha do próprio ajuste; o que importa é o card "Saiu",
+  // que deve contar só o gasto real do mês (300), não os 300 + 250
+  const cardSaiu = (comConc.match(/<small>Saiu<\/small><b[^>]*>([^<]*)</) || [])[1];
+  check('a conciliação não entra no total que saiu', cardSaiu, fmt(300));
+  check('mas é explicada por extenso', comConc.includes('de conciliação'), true);
+  // O erro que existia: derivar o fechamento da soma dava 250 a mais
+  check('o fechamento não é anterior + entrou − saiu',
+    comConc.includes(fmt(fechamento + 250)), false);
+  DB.remove('transactions', DB.all('transactions').find(t => t.adjustment && t.account_id === cM).id);
+  applyTxEffect(conc, -1);
+
   // A pagar não entra: ainda não saiu da conta
   DB.upsert('transactions', { description: 'Boleto futuro', amount: 500, date: dia(3), type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cM });
   check('lançamento a pagar não muda o saldo anterior', DB.saldoNaData([cM], DB.inicioISO(mesAtual)), 1000);
