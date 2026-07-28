@@ -92,9 +92,22 @@ function adjustBalance(accountId, delta) {
   if (a) DB.upsert('accounts', { ...a, balance: (Number(a.balance) || 0) + delta });
 }
 function txEffect(t) {
-  if (!t || t.status !== 'Pago' || !t.account_id || t.card_id) return 0;
+  if (!t || t.status !== 'Pago' || !t.account_id || t.card_id || DB.isTransfer(t)) return 0;
   const v = Number(t.amount) || 0;
   return DB.isExpense(t) ? -v : v;   // despesa debita, receita credita
+}
+
+/* Aplica (sinal +1) ou desfaz (sinal −1) o efeito de um lançamento nos saldos.
+   Transferência mexe em duas contas: sai de uma e entra na outra. */
+function applyTxEffect(t, sinal = 1) {
+  if (!t || t.status !== 'Pago') return;
+  const v = Number(t.amount) || 0;
+  if (DB.isTransfer(t)) {
+    if (t.account_id) adjustBalance(t.account_id, -v * sinal);
+    if (t.to_account) adjustBalance(t.to_account, v * sinal);
+    return;
+  }
+  adjustBalance(t.account_id, txEffect(t) * sinal);
 }
 
 /* Conciliação: corrigir o saldo NÃO reescreve o número em silêncio.
@@ -157,55 +170,145 @@ function render() {
 
 /* ---------- Gráficos SVG (sem bibliotecas, funcionam offline) ---------- */
 // Barras verticais com rótulos: series = [{label, value, hint?}], refLine opcional (ex: renda).
-function svgBars(series, refLine) {
-  const W = 560, H = 190, padB = 26, padT = 18;
-  const max = Math.max(refLine || 0, ...series.map(s => s.value), 1) * 1.08;
-  const bw = W / series.length;
+function svgBars(series, refLine, opts = {}) {
+  const W = 720, H = opts.height || 240, padB = 30, padT = 28, padL = 6, padR = 6;
+  const plotH = H - padB - padT;
+  const max = niceCeil(Math.max(refLine || 0, ...series.map(s => s.value), 1));
+  const bw = (W - padL - padR) / series.length;
+  const y = v => padT + plotH - (v / max) * plotH;
+  const media = series.reduce((s, x) => s + x.value, 0) / (series.length || 1);
+
+  // Grade discreta com escala à esquerda (padrão Metronic)
+  let grid = '';
+  for (let i = 0; i <= 4; i++) {
+    const gy = y(max * i / 4);
+    grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '" class="ch-grid"/>';
+    if (i) grid += '<text x="' + padL + '" y="' + (gy - 5).toFixed(1) + '" class="ch-axis">' + fmtShort(max * i / 4).replace('R$', '').trim() + '</text>';
+  }
+
   let bars = '', labels = '';
   series.forEach((s, i) => {
-    const h = Math.max(2, (s.value / max) * (H - padB - padT));
-    const x = i * bw + bw * 0.18, y = H - padB - h;
-    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw * 0.64).toFixed(1)}" height="${h.toFixed(1)}" rx="5" fill="${s.hint || '#009ef7'}" opacity="0.9"/>`;
-    if (s.value > 0) bars += `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${(y - 6).toFixed(1)}" text-anchor="middle" class="ch-val">${fmtShort(s.value).replace(/ /g, ' ')}</text>`;
-    labels += `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle" class="ch-lbl">${esc(s.label)}</text>`;
+    const h = s.value > 0 ? Math.max(4, (s.value / max) * plotH) : 0;
+    const larg = Math.min(40, bw * 0.58);
+    const cx = padL + i * bw + bw / 2;
+    const topo = padT + plotH - h;
+    const cor = s.hint || '#009ef7';
+    const forte = cor === '#009ef7';
+    bars += '<rect x="' + (cx - larg / 2).toFixed(1) + '" y="' + topo.toFixed(1) + '" width="' + larg.toFixed(1) +
+      '" height="' + h.toFixed(1) + '" rx="6" fill="' + cor + '" opacity="' + (forte ? 1 : 0.5) + '">' +
+      '<title>' + esc(s.label) + ': ' + fmt(s.value) + '</title></rect>';
+    if (s.value > 0 && (series.length <= 8 || forte || s.value >= media))
+      bars += '<text x="' + cx.toFixed(1) + '" y="' + (topo - 9).toFixed(1) + '" text-anchor="middle" class="ch-val">' +
+        fmtShort(s.value).replace('R$', '').trim() + '</text>';
+    labels += '<text x="' + cx.toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle" class="ch-lbl' + (forte ? ' ch-lbl-on' : '') + '">' + esc(s.label) + '</text>';
   });
+
   let ref = '';
   if (refLine > 0) {
-    const ry = H - padB - (refLine / max) * (H - padB - padT);
-    ref = `<line x1="0" x2="${W}" y1="${ry.toFixed(1)}" y2="${ry.toFixed(1)}" stroke="#f1416c" stroke-dasharray="5 4" stroke-width="1.5"/>
-           <text x="${W - 4}" y="${(ry - 5).toFixed(1)}" text-anchor="end" class="ch-ref">renda</text>`;
+    const ry = y(refLine);
+    ref = '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + ry.toFixed(1) + '" y2="' + ry.toFixed(1) + '" class="ch-ref-line"/>' +
+      '<rect x="' + (W - 96) + '" y="' + (ry - 19).toFixed(1) + '" width="90" height="17" rx="8" class="ch-ref-pill"/>' +
+      '<text x="' + (W - 51) + '" y="' + (ry - 6).toFixed(1) + '" text-anchor="middle" class="ch-ref">renda ' + fmtShort(refLine).replace('R$', '').trim() + '</text>';
   }
-  return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img">${ref}${bars}${labels}</svg>`;
+  return '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img">' + grid + ref + bars + labels + '</svg>';
 }
 
-// Burn-up do mês: gasto acumulado dia a dia vs. linha ideal do orçamento/renda.
+// Arredonda o topo da escala para um número redondo — deixa a grade legível
+function niceCeil(v) {
+  if (v <= 0) return 1;
+  const exp = Math.pow(10, Math.floor(Math.log10(v)));
+  return Math.ceil(v / (exp / 2)) * (exp / 2);
+}
+
+/* Donut em SVG: anel espesso com separação entre fatias, rótulo central e legenda. */
+function svgDonut(fatias, total, opts = {}) {
+  const S = 240, R = 96, W = 30, cx = S / 2, cy = S / 2;   // raio e espessura do anel
+  const circ = 2 * Math.PI * R;
+  const gap = fatias.length > 1 ? 2.5 : 0;                  // respiro entre fatias
+  let offset = 0, aneis = '';
+  for (const f of fatias) {
+    const frac = total > 0 ? f.value / total : 0;
+    const comp = Math.max(0, frac * circ - gap);
+    aneis += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${f.color}" stroke-width="${W}"
+      stroke-dasharray="${comp.toFixed(2)} ${(circ - comp).toFixed(2)}"
+      stroke-dashoffset="${(-offset).toFixed(2)}" stroke-linecap="round" class="dn-arc">
+      <title>${esc(f.label)}: ${fmt(f.value)} (${Math.round(frac * 100)}%)</title></circle>`;
+    offset += frac * circ;
+  }
+  return `<svg class="donut-svg" viewBox="0 0 ${S} ${S}" role="img">
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="var(--ink-3)" stroke-width="${W}"/>
+    <g transform="rotate(-90 ${cx} ${cy})">${aneis}</g>
+    <text x="${cx}" y="${cy - 6}" text-anchor="middle" class="dn-total">${fmtShort(total).replace('R$', '').trim()}</text>
+    <text x="${cx}" y="${cy + 14}" text-anchor="middle" class="dn-cap">${esc(opts.caption || 'no período')}</text>
+    ${opts.sub ? `<text x="${cx}" y="${cy + 32}" text-anchor="middle" class="dn-sub">${esc(opts.sub)}</text>` : ''}
+  </svg>`;
+}
+
+// Barras horizontais com rótulo e valor — para rankings (categoria, membro, método)
+function svgRanking(entries, cores) {
+  if (!entries.length) return '<div class="empty">Sem dados no período.</div>';
+  const max = Math.max(...entries.map(e => e[1]), 1);
+  const total = entries.reduce((s, e) => s + e[1], 0);
+  return '<div class="rank">' + entries.map(([nome, v], i) => {
+    const cor = (cores && cores[i % cores.length]) || PALETTE[i % PALETTE.length];
+    return '<div class="rank-row">' +
+      '<span class="rank-name" title="' + esc(nome) + '">' + esc(nome) + '</span>' +
+      '<span class="rank-bar"><i style="width:' + Math.max(2, v / max * 100).toFixed(1) + '%;background:' + cor + '"></i></span>' +
+      '<span class="rank-val">' + fmtShort(v) + '<small>' + (total ? Math.round(v / total * 100) : 0) + '%</small></span>' +
+      '</div>';
+  }).join('') + '</div>';
+}
+
+// Burn-up do mês: gasto acumulado dia a dia vs. trilha ideal do orçamento/renda.
 function svgBurnup(period, refLimit) {
-  const W = 560, H = 170, padB = 20, padT = 12;
-  const total = DB.periodDays(period), elapsed = DB.elapsedDays(period);
-  const daily = new Array(total).fill(0);
+  const W = 720, H = 230, padB = 26, padT = 22, padL = 6, padR = 6;
+  const plotH = H - padB - padT;
+  const totalDias = DB.periodDays(period), decorridos = DB.elapsedDays(period);
+  const diario = new Array(totalDias).fill(0);
   for (const t of DB.expensesOf(period)) {
-    const idx = Math.min(total - 1, Math.max(0, Math.floor((new Date(t.date + 'T12:00:00') - period.start) / 86400000)));
-    daily[idx] += Number(t.amount) || 0;
+    const i = Math.min(totalDias - 1, Math.max(0, Math.floor((new Date(t.date + 'T12:00:00') - period.start) / 86400000)));
+    diario[i] += Number(t.amount) || 0;
   }
   let acc = 0;
-  const cum = daily.map(v => (acc += v));
-  const spentNow = elapsed > 0 ? cum[Math.max(0, elapsed - 1)] : 0;
-  const max = Math.max(refLimit || 0, cum[total - 1], spentNow, 1) * 1.1;
-  const X = i => (i / (total - 1)) * W;
-  const Y = v => H - padB - (v / max) * (H - padB - padT);
-  let path = '';
-  for (let i = 0; i < Math.max(1, elapsed); i++) path += `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(cum[i]).toFixed(1)}`;
-  let ideal = '';
-  if (refLimit > 0) ideal = `<line x1="${X(0)}" y1="${Y(0)}" x2="${X(total - 1)}" y2="${Y(refLimit).toFixed(1)}" stroke="#7e8299" stroke-dasharray="5 4" stroke-width="1.5"/>`;
-  const dotX = X(Math.max(0, elapsed - 1)), dotY = Y(spentNow);
-  return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img">
-    ${ideal}
-    <path d="${path}" fill="none" stroke="#009ef7" stroke-width="2.5" stroke-linejoin="round"/>
-    <circle cx="${dotX.toFixed(1)}" cy="${dotY.toFixed(1)}" r="4" fill="#009ef7"/>
-    <text x="${Math.min(W - 4, dotX + 8).toFixed(1)}" y="${Math.max(12, dotY - 8).toFixed(1)}" class="ch-val" text-anchor="${dotX > W - 90 ? 'end' : 'start'}">${fmtShort(spentNow).replace(/ /g, ' ')}</text>
-    <text x="4" y="${H - 6}" class="ch-lbl">dia 1</text>
-    <text x="${W - 4}" y="${H - 6}" text-anchor="end" class="ch-lbl">dia ${total}</text>
-  </svg>`;
+  const cum = diario.map(v => (acc += v));
+  const gastoHoje = decorridos > 0 ? cum[decorridos - 1] : 0;
+  const max = niceCeil(Math.max(refLimit || 0, cum[totalDias - 1], 1));
+  const X = i => padL + (i / Math.max(1, totalDias - 1)) * (W - padL - padR);
+  const Y = v => padT + plotH - (v / max) * plotH;
+
+  let grid = '';
+  for (let i = 0; i <= 4; i++) {
+    const gy = Y(max * i / 4);
+    grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '" class="ch-grid"/>';
+    if (i) grid += '<text x="' + padL + '" y="' + (gy - 5).toFixed(1) + '" class="ch-axis">' + fmtShort(max * i / 4).replace('R$', '').trim() + '</text>';
+  }
+
+  const pts = [];
+  for (let i = 0; i < Math.max(1, decorridos); i++) pts.push(X(i).toFixed(1) + ',' + Y(cum[i]).toFixed(1));
+  const linha = 'M' + pts.join('L');
+  const area = pts.length > 1
+    ? linha + 'L' + X(decorridos - 1).toFixed(1) + ',' + Y(0).toFixed(1) + 'L' + X(0).toFixed(1) + ',' + Y(0).toFixed(1) + 'Z'
+    : '';
+
+  const ideal = refLimit > 0
+    ? '<line x1="' + X(0) + '" y1="' + Y(0).toFixed(1) + '" x2="' + X(totalDias - 1).toFixed(1) + '" y2="' + Y(refLimit).toFixed(1) + '" class="ch-ref-line"/>' +
+      '<text x="' + (W - padR) + '" y="' + (Y(refLimit) - 7).toFixed(1) + '" text-anchor="end" class="ch-ref">trilha ideal</text>'
+    : '';
+
+  const dx = X(Math.max(0, decorridos - 1)), dy = Y(gastoHoje);
+  const estourou = refLimit > 0 && gastoHoje > refLimit * (decorridos / totalDias);
+  return '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img">' +
+    '<defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1">' +
+    '<stop offset="0%" stop-color="#009ef7" stop-opacity=".28"/>' +
+    '<stop offset="100%" stop-color="#009ef7" stop-opacity="0"/></linearGradient></defs>' +
+    grid + ideal +
+    (area ? '<path d="' + area + '" fill="url(#gArea)"/>' : '') +
+    '<path d="' + linha + '" fill="none" stroke="' + (estourou ? '#f1416c' : '#009ef7') + '" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>' +
+    '<circle cx="' + dx.toFixed(1) + '" cy="' + dy.toFixed(1) + '" r="6" fill="#fff" stroke="' + (estourou ? '#f1416c' : '#009ef7') + '" stroke-width="3"/>' +
+    '<text x="' + Math.min(W - padR, dx + 12).toFixed(1) + '" y="' + Math.max(16, dy - 12).toFixed(1) + '" class="ch-val" text-anchor="' + (dx > W - 120 ? 'end' : 'start') + '">' + fmtShort(gastoHoje).replace('R$', '').trim() + '</text>' +
+    '<text x="' + padL + '" y="' + (H - 8) + '" class="ch-lbl">dia 1</text>' +
+    '<text x="' + (W - padR) + '" y="' + (H - 8) + '" text-anchor="end" class="ch-lbl">dia ' + totalDias + '</text>' +
+    '</svg>';
 }
 
 /* ---------- Situação financeira (conceitos: disponível real, run-rate, 50/30/20, reserva) ---------- */
@@ -252,21 +355,29 @@ function renderInicio(period) {
   const entries = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
   let donut = '', legend = '';
   if (total > 0) {
-    let acc = 0; const stops = [];
-    entries.forEach(([cid, v], i) => {
-      const from = acc / total * 360; acc += v;
-      const to = acc / total * 360;
-      const color = PALETTE[i % PALETTE.length];
-      stops.push(`${color} ${from.toFixed(1)}deg ${to.toFixed(1)}deg`);
-      if (i < 6) legend += `<div class="legend-row"><i class="legend-dot" style="background:${color}"></i>
-        <span class="legend-name">${esc(catLabel(cid === '_sem' ? null : cid))}</span>
-        <span class="legend-val">${fmtShort(v)}</span></div>`;
-    });
+    // Até 6 fatias; o excedente vira "Outras" para o anel não virar confete
+    const TOP = 6;
+    const fatias = entries.slice(0, TOP).map(([cid, v], i) => ({
+      label: catLabel(cid === '_sem' ? null : cid), value: v, color: PALETTE[i % PALETTE.length],
+    }));
+    const resto = entries.slice(TOP).reduce((s, [, v]) => s + v, 0);
+    if (resto > 0) fatias.push({ label: `Outras ${entries.length - TOP} categorias`, value: resto, color: '#c4cad4' });
+
+    const maior = fatias[0];
+    legend = fatias.map(f => `<div class="legend-row">
+      <i class="legend-dot" style="background:${f.color}"></i>
+      <span class="legend-name">${esc(f.label)}</span>
+      <span class="legend-pct">${Math.round(f.value / total * 100)}%</span>
+      <span class="legend-val">${fmtShort(f.value)}</span>
+    </div>`).join('');
+
     donut = `<div class="donut-wrap">
-      <div class="donut" style="background:conic-gradient(${stops.join(',')})">
-        <div class="donut-center"><b>${fmtShort(total)}</b><span>no mês</span></div>
-      </div>
+      ${svgDonut(fatias, total, { caption: 'gasto no período', sub: `${txs.length} lançamentos` })}
       <div class="legend">${legend}</div>
+    </div>
+    <div class="chart-foot">
+      <span>Maior peso: <b>${esc(maior.label)}</b> com ${Math.round(maior.value / total * 100)}% do total</span>
+      <span>${entries.length} categoria(s) com gasto</span>
     </div>`;
   } else {
     donut = `<div class="empty"><b>Nenhum gasto no período</b>Toque no ＋ para lançar o primeiro.</div>`;
@@ -338,23 +449,26 @@ function renderInicio(period) {
   const avgSpend = DB.avgMonthlySpend();
   const coverage = avgSpend > 0 ? reserve / avgSpend : 0;
   const covPct = Math.min(100, Math.round(coverage / 6 * 100));
-  const reserveAccs = DB.reserveAccounts();
-  const alvoReserva = avgSpend * 6;
+  const reserveGoal = DB.reserveGoals()[0];
+  const alvoReserva = reserveGoal && reserveGoal.target_amount ? Number(reserveGoal.target_amount) : avgSpend * 6;
   const faltaReserva = Math.max(0, alvoReserva - reserve);
   const reserveCard = `
     <div class="card">
-      <div class="card-head"><div><b>Reserva de emergência</b><small>o dinheiro guardado nas contas marcadas como reserva</small></div><span class="kpi-ico t-success" data-ico="shield" style="width:34px;height:34px;margin:0"></span></div>
-      ${!reserveAccs.length ? `
-        <div class="empty" style="padding:14px 4px"><b>Nenhuma conta marcada como reserva</b>
-        Marque a poupança/caixinha onde vocês guardam dinheiro para emergências.</div>
-        <button class="btn ghost" data-setup="accounts">Marcar uma conta como reserva</button>
+      <div class="card-head"><div><b>Reserva de emergência</b><small>uma caixinha: o quanto vocês já separaram, esteja onde estiver</small></div><span class="kpi-ico t-success" data-ico="shield" style="width:34px;height:34px;margin:0"></span></div>
+      ${!reserveGoal ? `
+        <div class="empty" style="padding:14px 4px"><b>Reserva ainda não criada</b>
+        A reserva é uma caixinha alimentada por depósitos — não fica presa a uma conta.
+        ${avgSpend > 0 ? `Pelo gasto médio de ${fmtShort(avgSpend)}/mês, o ideal são <b>${fmtShort(avgSpend * 6)}</b> (6 meses).` : ''}</div>
+        <button class="btn" id="btn-criar-reserva">Criar minha reserva de emergência</button>
       ` : `
         <div class="proj-row"><span>Guardado</span><b>${fmtShort(reserve)}</b></div>
-        <div class="proj-row"><span>Cobre</span><b class="${coverage >= 6 ? 'txt-green' : coverage >= 3 ? 'txt-amber' : 'txt-red'}">${coverage.toFixed(1)} meses</b></div>
+        <div class="proj-row"><span>Cobre</span><b class="${coverage >= 6 ? 'txt-green' : coverage >= 3 ? 'txt-amber' : 'txt-red'}">${coverage.toFixed(1)} ${coverage === 1 ? 'mês' : 'meses'}</b></div>
         <div class="bar ${coverage >= 6 ? 'bar-green' : coverage >= 3 ? 'bar-amber' : 'bar-red'}" style="margin:8px 0 4px"><i style="width:${covPct}%"></i></div>
-        <p class="muted">Recomendação clássica: 3 a 6 meses do gasto médio (${fmtShort(avgSpend)}/mês)${faltaReserva > 0 ? ` — faltam <b>${fmtShort(faltaReserva)}</b> para 6 meses` : ' — objetivo alcançado 🎉'}.</p>
-        <p class="muted" style="margin-top:6px">Composta por: ${reserveAccs.map(a => `${esc(a.name)} (${fmtShort(a.balance)})`).join(' · ')}</p>
-        <button class="btn ghost" id="btn-guardar" style="margin-top:10px">＋ Guardar na reserva</button>
+        <p class="muted">Recomendação clássica: 3 a 6 meses do gasto médio (${fmtShort(avgSpend)}/mês)${faltaReserva > 0 ? ` — faltam <b>${fmtShort(faltaReserva)}</b>` : ' — objetivo alcançado 🎉'}.</p>
+        <div class="btn-row">
+          <button class="btn ghost" data-aporte="${reserveGoal.id}">＋ Guardar dinheiro</button>
+          <button class="btn ghost" data-goal-detail="${reserveGoal.id}">Ver depósitos</button>
+        </div>
       `}
     </div>`;
 
@@ -479,8 +593,13 @@ function renderInicio(period) {
         ${donut}
       </div>
       <div class="card">
-        <div class="card-head"><div><b>Orçamento por categoria</b><small>gasto do período vs. limite mensal</small></div></div>
-        ${budgets || '<div class="empty">Defina orçamentos em Configurações → Categorias.</div>'}
+        <div class="card-head"><div><b>Orçamento por categoria</b><small>quanto do limite mensal já foi usado</small></div></div>
+        <div class="budget-scroll">${budgets || '<div class="empty">Defina orçamentos em Configurações → Categorias.</div>'}</div>
+        ${budgets ? `<div class="chart-foot">
+          <span>Orçado <b>${fmtShort(budgetTotal)}</b></span>
+          <span>Usado <b>${fmtShort(total)}</b></span>
+          <span>Restante <b class="${budgetTotal - total >= 0 ? 'txt-green' : 'txt-red'}">${fmtShort(budgetTotal - total)}</b></span>
+        </div>` : ''}
       </div>
     </div>
     ${venc ? `<p class="section-title">Próximos vencimentos</p>${venc}` : ''}
@@ -506,11 +625,17 @@ function renderExtrato(period) {
       ? `💳 ${esc((DB.get('cards', t.card_id) || {}).name || 'Cartão')}`
       : esc(t.method);
     const isExp = DB.isExpense(t);
-    list += `<div class="tx ${t.adjustment ? 'tx-adj' : ''}" data-tx="${t.id}">
-      <span class="tx-ico">${t.adjustment ? '⚖️' : isExp ? esc(c ? c.icon : '🧾') : '💵'}</span>
+    const isTr = DB.isTransfer(t);
+    const rota = isTr
+      ? `${esc((DB.get('accounts', t.account_id) || {}).name || '?')} → ${esc((DB.get('accounts', t.to_account) || {}).name || '?')}`
+      : '';
+    list += `<div class="tx ${DB.isNeutral(t) ? 'tx-adj' : ''}" data-tx="${t.id}">
+      <span class="tx-ico">${isTr ? '⇄' : t.adjustment ? '⚖️' : isExp ? esc(c ? c.icon : '🧾') : '💵'}</span>
       <span class="tx-info"><span class="tx-name">${esc(t.description)}</span>
-      <span class="tx-meta">${t.adjustment ? 'Conciliação — fora das análises · toque para classificar' : `${isExp ? esc(c ? c.name : 'Sem categoria') : 'Receita'} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}`}</span></span>
-      <span class="tx-amount ${!isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${isExp ? '' : '+ '}${fmt(t.amount)}</span>
+      <span class="tx-meta">${isTr ? `Transferência · ${rota}`
+        : t.adjustment ? 'Conciliação — fora das análises · toque para classificar'
+        : `${isExp ? esc(c ? c.name : 'Sem categoria') : 'Receita'} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}`}</span></span>
+      <span class="tx-amount ${isTr ? '' : !isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${isTr ? '' : isExp ? '' : '+ '}${fmt(t.amount)}</span>
       ${t.status === 'A Pagar' ? `<button class="pay-btn" data-pay-tx="${t.id}" title="Marcar como ${isExp ? 'pago' : 'recebido'}"><span data-ico="check"></span></button>` : ''}
     </div>`;
   }
@@ -567,10 +692,11 @@ function renderCartoes() {
       ${contas.length ? contas.map(a => `
         <div class="acc-row" data-acc="${a.id}">
           <span class="acc-ico">${a.type === 'Caixinha / Rendimento' ? '🐷' : a.type === 'Investimento' ? '📈' : a.type === 'Carteira Digital' ? '📱' : '🏦'}</span>
-          <span class="acc-info"><b>${esc(a.name)}${DB.isReserveAccount(a) ? ' <span class="badge paga">reserva</span>' : ''}</b><small>${esc(a.type)}${a.institution ? ' · ' + esc(a.institution) : ''}</small></span>
+          <span class="acc-info"><b>${esc(a.name)}</b><small>${esc(a.type)}${a.institution ? ' · ' + esc(a.institution) : ''}</small></span>
           <span class="num">${fmt(a.balance)}</span>
         </div>`).join('') : '<div class="empty">Nenhuma conta cadastrada. Adicione em Configurações → Contas.</div>'}
       ${contas.length > 1 ? '<button class="btn ghost" id="btn-transfer" style="margin-top:10px">⇄ Transferir entre contas</button>' : ''}
+      <button class="btn ghost" data-setup="accounts" style="margin-top:8px">Gerenciar contas</button>
     </div>`;
 
   if (!cards.length) {
@@ -700,11 +826,7 @@ function renderRelatorios() {
     for (const t of txs) { const k = t[key] || '—'; out[k] = (out[k] || 0) + (Number(t.amount) || 0); }
     return Object.entries(out).sort((a, b) => b[1] - a[1]);
   };
-  const hb = entries => entries.map(([name, v]) => {
-    const pct = total > 0 ? Math.round(v / total * 100) : 0;
-    return `<div class="budget-row"><div class="budget-head"><b>${esc(name)}</b><span class="num">${fmtShort(v)} <span class="muted">· ${pct}%</span></span></div>
-      <div class="bar bar-green"><i style="width:${pct}%;background:#009ef7"></i></div></div>`;
-  }).join('') || '<div class="empty">Sem dados no período.</div>';
+  const hb = entries => svgRanking(entries);
 
   // 3) Maiores gastos
   const top = [...txs].sort((a, b) => (b.amount || 0) - (a.amount || 0)).slice(0, 10)
@@ -732,11 +854,32 @@ function renderRelatorios() {
       <b>Relatórios · ${period.label}</b>
       <button id="rep-next" aria-label="Próximo mês" data-ico="chevR"></button>
     </div>
-    <button class="btn ghost" id="btn-csv" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="download"></span>Exportar CSV do período (Excel)</button>
+    <div class="kpi-grid">
+      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmtShort(total)}</div><div class="kpi-label">Despesas</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
+      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmtShort(receitasPeriodo)}</div><div class="kpi-label">Receitas</div><div class="kpi-sub">no período</div></div>
+      <div class="card kpi"><span class="kpi-ico ${receitasPeriodo - total >= 0 ? 't-success' : 't-danger'}" data-ico="pie"></span><div class="kpi-value ${receitasPeriodo - total >= 0 ? 'green' : 'red'}">${fmtShort(receitasPeriodo - total)}</div><div class="kpi-label">Resultado</div><div class="kpi-sub">${receitasPeriodo > 0 ? Math.round((receitasPeriodo - total) / receitasPeriodo * 100) + '% da receita' : 'sem receita lançada'}</div></div>
+      <div class="card kpi"><span class="kpi-ico t-warning" data-ico="calendar"></span><div class="kpi-value">${fmtShort(total / Math.max(1, DB.elapsedDays(period)))}</div><div class="kpi-label">Média por dia</div><div class="kpi-sub">${DB.elapsedDays(period)} de ${DB.periodDays(period)} dias</div></div>
+    </div>
 
     <div class="card">
-      <div class="card-head"><div><b>Evolução — 12 meses</b><small>gasto total por período${income > 0 ? ' · tracejada = renda' : ''}</small></div></div>
-      ${svgBars(evo12, income)}
+      <div class="card-head">
+        <div><b>Evolução dos gastos</b><small>últimos 12 períodos${income > 0 ? ' · linha vermelha = renda mensal' : ''}</small></div>
+        <button class="btn ghost" id="btn-csv" style="width:auto;padding:8px 14px;display:flex;align-items:center;gap:7px"><span data-ico="download"></span>CSV</button>
+      </div>
+      ${svgBars(evo12, income, { height: 260 })}
+      ${(() => {
+        const vals = evo12.map(e => e.value).filter(v => v > 0);
+        if (vals.length < 2) return '';
+        const media = vals.reduce((a, b) => a + b, 0) / vals.length;
+        const ultimo = evo12[11].value, penultimo = evo12[10].value;
+        const var2 = penultimo > 0 ? Math.round((ultimo - penultimo) / penultimo * 100) : 0;
+        return `<div class="chart-foot">
+          <span>Média do período <b>${fmtShort(media)}</b></span>
+          <span>Maior <b>${fmtShort(Math.max(...vals))}</b></span>
+          <span>Menor <b>${fmtShort(Math.min(...vals))}</b></span>
+          <span>Vs. mês anterior <b class="${var2 > 0 ? 'txt-red' : 'txt-green'}">${var2 > 0 ? '▲' : var2 < 0 ? '▼' : ''} ${Math.abs(var2)}%</b></span>
+        </div>`;
+      })()}
     </div>
 
     <div class="card">
@@ -749,13 +892,52 @@ function renderRelatorios() {
 
     <div class="grid-2">
       <div class="card">
-        <div class="card-head"><div><b>Quem gastou</b><small>por membro no período</small></div></div>
+        <div class="card-head"><div><b>Para onde foi</b><small>divisão por categoria no período</small></div></div>
+        ${(() => {
+          const cats6 = catIds.slice(0, 6).map((cid, i) => ({ label: catLabel(cid === '_sem' ? null : cid), value: byCat[cid] || 0, color: PALETTE[i % PALETTE.length] })).filter(f => f.value > 0);
+          const outras = catIds.slice(6).reduce((s, cid) => s + (byCat[cid] || 0), 0);
+          if (outras > 0) cats6.push({ label: 'Outras', value: outras, color: '#c4cad4' });
+          if (!cats6.length) return '<div class="empty">Sem gastos no período.</div>';
+          return `<div class="donut-wrap">${svgDonut(cats6, total, { caption: 'no período' })}
+            <div class="legend">${cats6.map(f => `<div class="legend-row"><i class="legend-dot" style="background:${f.color}"></i>
+              <span class="legend-name">${esc(f.label)}</span><span class="legend-pct">${Math.round(f.value / total * 100)}%</span>
+              <span class="legend-val">${fmtShort(f.value)}</span></div>`).join('')}</div></div>`;
+        })()}
+      </div>
+      <div class="card">
+        <div class="card-head"><div><b>Necessidades × Desejos</b><small>equilíbrio dos gastos (regra 50/30/20)</small></div></div>
+        ${(() => {
+          const k = DB.spentByKind(period);
+          const soma = k.Essencial + k.Estilo;
+          if (!soma) return '<div class="empty">Sem gastos no período.</div>';
+          const fat = [
+            { label: 'Necessidades', value: k.Essencial, color: '#009ef7' },
+            { label: 'Desejos', value: k.Estilo, color: '#7239ea' },
+          ].filter(f => f.value > 0);
+          const pctD = Math.round(k.Estilo / soma * 100);
+          return `<div class="donut-wrap">${svgDonut(fat, soma, { caption: 'total de gastos' })}
+            <div class="legend">${fat.map(f => `<div class="legend-row"><i class="legend-dot" style="background:${f.color}"></i>
+              <span class="legend-name">${f.label}</span><span class="legend-pct">${Math.round(f.value / soma * 100)}%</span>
+              <span class="legend-val">${fmtShort(f.value)}</span></div>`).join('')}</div></div>
+            <div class="chart-foot"><span>${pctD <= 30 ? '✅ Desejos dentro do recomendado (até 30% da renda)' : `⚠️ Desejos em ${pctD}% dos gastos — vale revisar`}</span></div>`;
+        })()}
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><div><b>Quem gastou</b><small>por membro da família</small></div></div>
         ${hb(groupSum('member'))}
       </div>
       <div class="card">
-        <div class="card-head"><div><b>Como pagou</b><small>por método no período</small></div></div>
+        <div class="card-head"><div><b>Como pagou</b><small>por forma de pagamento</small></div></div>
         ${hb(groupSum('method'))}
       </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><b>Ranking de categorias</b><small>do maior para o menor gasto no período</small></div></div>
+      ${svgRanking(catIds.map(cid => [catLabel(cid === '_sem' ? null : cid), byCat[cid] || 0]).filter(e => e[1] > 0))}
     </div>
 
     <div class="grid-2">
@@ -862,11 +1044,17 @@ function bindView() {
   // Contas: tocar para atualizar o saldo (conciliação rápida)
   v.querySelectorAll('[data-acc]').forEach(el => el.onclick = () => openSaldoSheet(el.dataset.acc));
   const transf = $('#btn-transfer');
-  if (transf) transf.onclick = () => openTransferSheet();
-  const guardar = $('#btn-guardar');
-  if (guardar) guardar.onclick = () => {
-    const destino = DB.reserveAccounts()[0];
-    openTransferSheet(destino && destino.id, 'Guardar na reserva de emergência');
+  if (transf) transf.onclick = () => openTxSheet({ type: 'Transferência', date: todayISO(), description: '', amount: '', status: 'Pago', method: 'Transferência', scope: 'Família', member: MEMBRO_COMUM }, true);
+  const criarReserva = $('#btn-criar-reserva');
+  if (criarReserva) criarReserva.onclick = () => {
+    const alvo = Math.round(DB.avgMonthlySpend() * 6) || 0;
+    const id = DB.upsert('goals', {
+      name: 'Reserva de Emergência', icon: '🛡️', kind: 'Reserva',
+      target_amount: alvo, target_date: null, done: false,
+    });
+    Sync.autoSync(); render();
+    toast('Reserva criada — agora é só ir guardando 🛡️');
+    openAporteSheet(id);
   };
   const invAdjust = (key, sign) => {
     const card = DB.get('cards', key.split(':')[0]);
@@ -973,7 +1161,11 @@ function openTxSheet(tx, asNew) {
 
   openSheet(`
     <div class="sheet-title"><span id="sh-title">${isEdit ? 'Editar lançamento' : 'Novo lançamento'}</span><button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <div class="field">${chipGroup('g-type', [{ value: 'Despesa', label: '↓ Despesa' }, { value: 'Receita', label: '↑ Receita' }], tx.type || 'Despesa')}</div>
+    <div class="field">${chipGroup('g-type', [
+      { value: 'Despesa', label: '↓ Despesa' },
+      { value: 'Receita', label: '↑ Receita' },
+      { value: 'Transferência', label: '⇄ Transferência' },
+    ], tx.type || 'Despesa')}</div>
     <div class="field"><input class="amount-input" id="f-amount" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
     <div class="field"><label>Descrição</label>
       <input id="f-desc" list="tx-hist" autocomplete="off" placeholder="Ex: Mercado, Uber, Farmácia…" value="${esc(tx.description)}">
@@ -999,7 +1191,7 @@ function openTxSheet(tx, asNew) {
         <option value="A Pagar" ${tx.status === 'A Pagar' ? 'selected' : ''}>A Pagar</option>
       </select></div>
     </div>
-    <div class="field"><label id="lbl-method">Pagamento</label>${chipGroup('g-method', METHODS.map(m => ({ value: m, label: m })), METHODS.includes(tx.method) ? tx.method : 'PIX')}</div>
+    <div class="field" id="wrap-method"><label id="lbl-method">Pagamento</label>${chipGroup('g-method', METHODS.map(m => ({ value: m, label: m })), METHODS.includes(tx.method) ? tx.method : 'PIX')}</div>
     <div class="field" id="wrap-card" ${tx.method === 'Cartão de Crédito' ? '' : 'hidden'}>
       <label>Cartão <span class="muted">— a fatura é escolhida sozinha pelo fechamento</span></label>
       <select id="f-card">${cards.map(c => `<option value="${c.id}" ${tx.card_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('') || '<option value="">— cadastre um cartão em Configurações —</option>'}</select>
@@ -1012,9 +1204,14 @@ function openTxSheet(tx, asNew) {
     </div>`}
     <div class="field" id="wrap-account" ${tx.method === 'Cartão de Crédito' ? 'hidden' : ''}>
       <label id="lbl-account">Conta <span class="muted">— o saldo é ajustado sozinho</span></label>
-      <select id="f-account"><option value="">— não movimenta conta —</option>${accounts.map(a => `<option value="${a.id}" ${tx.account_id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
+      <select id="f-account"><option value="">— não movimenta conta —</option>${accounts.map(a => `<option value="${a.id}" ${tx.account_id === a.id ? 'selected' : ''}>${esc(a.name)}${DB.isReserveGoal({ name: a.name }) ? '' : ''} — ${fmtShort(a.balance)}</option>`).join('')}</select>
     </div>
-    <div class="field"><label>Âmbito</label>
+    <div class="field" id="wrap-to-account" hidden>
+      <label>Para qual conta</label>
+      <select id="f-to-account"><option value="">— selecione —</option>${accounts.map(a => `<option value="${a.id}" ${tx.to_account === a.id ? 'selected' : ''}>${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}</select>
+      <p class="muted" style="margin-top:6px">Mover dinheiro entre contas suas <b>não é gasto nem renda</b> — só ajusta os saldos, sem poluir os relatórios.</p>
+    </div>
+    <div class="field" id="wrap-scope"><label>Âmbito</label>
       ${chipGroup('g-scope', [{ value: 'Família', label: '👨‍👩‍👧 Da família' }, { value: 'Pessoal', label: '👤 Pessoal' }], tx.scope)}
     </div>
     <div class="field" id="wrap-member" hidden>
@@ -1033,14 +1230,31 @@ function openTxSheet(tx, asNew) {
   /* --- Formulário adaptativo: cada escolha reconfigura o resto --- */
   const applyType = v => {
     const isRec = v === 'Receita';
-    $('#sh-title').textContent = isEdit ? 'Editar lançamento' : (isRec ? 'Nova receita' : 'Novo lançamento');
-    $('#wrap-cat').hidden = isRec;                       // categorias são envelopes de gasto
-    $('#lbl-status').textContent = isRec ? 'Situação' : 'Situação';
-    $('#f-status').options[0].textContent = isRec ? 'Recebido' : 'Pago';
-    $('#f-status').options[1].textContent = isRec ? 'A Receber' : 'A Pagar';
+    const isTransf = v === 'Transferência';
+    $('#sh-title').textContent = isEdit ? 'Editar lançamento'
+      : isTransf ? 'Transferir entre contas' : isRec ? 'Nova receita' : 'Novo lançamento';
+    $('#wrap-cat').hidden = isRec || isTransf;           // categorias são envelopes de gasto
+    $('#wrap-to-account').hidden = !isTransf;
     $('#lbl-method').textContent = isRec ? 'Entrou por' : 'Pagamento';
     $('#lbl-rec').textContent = isRec ? 'Receita mensal fixa (ex: salário)?' : 'Custo fixo mensal (recorrente)?';
-    $('#f-desc').placeholder = isRec ? 'Ex: Salário, Freelance, Reembolso…' : 'Ex: Mercado, Uber, Farmácia…';
+    $('#f-desc').placeholder = isTransf ? 'Ex: Guardar na reserva, Poupança do mês…'
+      : isRec ? 'Ex: Salário, Freelance, Reembolso…' : 'Ex: Mercado, Uber, Farmácia…';
+    $('#f-status').options[0].textContent = isRec ? 'Recebido' : 'Pago';
+    $('#f-status').options[1].textContent = isRec ? 'A Receber' : 'A Pagar';
+
+    // Numa transferência, o que importa é de onde sai e para onde vai
+    for (const id of ['#lbl-status', '#wrap-scope', '#wrap-member', '#lbl-rec']) {
+      const el = $(id); if (el) el.hidden = isTransf;
+    }
+    $('#f-status').hidden = isTransf;
+    $('#f-rec').hidden = isTransf;
+    $('#wrap-method').hidden = isTransf;
+    $('#lbl-account').innerHTML = isTransf ? 'De qual conta' : 'Conta <span class="muted">— o saldo é ajustado sozinho</span>';
+    if (isTransf) {
+      $('#wrap-account').hidden = false;
+      $('#wrap-card').hidden = true;
+      if ($('#wrap-parc')) $('#wrap-parc').hidden = true;
+    }
     if (isRec && $('#wrap-parc')) $('#wrap-parc').hidden = true;
   };
 
@@ -1182,6 +1396,26 @@ function openTxSheet(tx, asNew) {
     if (!amount || amount <= 0) { $('#f-amount').focus(); return toast('Informe o valor'); }
     if (!descricao) { $('#f-desc').focus(); return toast('Informe a descrição'); }
 
+    // Transferência: só precisa de valor, origem e destino
+    if (chipValue('g-type') === 'Transferência') {
+      const de = $('#f-account').value, para = $('#f-to-account').value;
+      if (!de) { $('#f-account').focus(); return toast('Escolha de qual conta o dinheiro sai'); }
+      if (!para) { $('#f-to-account').focus(); return toast('Escolha para qual conta o dinheiro vai'); }
+      if (de === para) return toast('Escolha contas diferentes');
+      const transf = {
+        ...tx, description: descricao, amount, date: $('#f-date').value || todayISO(),
+        type: 'Transferência', status: 'Pago', method: 'Transferência',
+        account_id: de, to_account: para,
+        scope: 'Família', member: MEMBRO_COMUM,
+        category_id: null, card_id: null, invoice_key: '', recurring: false, adjustment: false,
+      };
+      if (orig) applyTxEffect(orig, -1);
+      DB.upsert('transactions', transf);
+      applyTxEffect(transf, +1);
+      closeSheet(); render(); Sync.autoSync();
+      return toast(`${fmt(amount)} transferido ✓`);
+    }
+
     // Âmbito e membro andam juntos: Família ⇒ comum; Pessoal ⇒ exige a pessoa
     const scope = chipValue('g-scope') || 'Família';
     let member = MEMBRO_COMUM;
@@ -1206,7 +1440,7 @@ function openTxSheet(tx, asNew) {
       recurring: !!$('#f-rec').value,
       type: isReceita ? 'Receita' : 'Despesa',
       adjustment: false,        // classificar um ajuste o transforma em lançamento normal
-      card_id: null, account_id: null, invoice_key: '',
+      card_id: null, account_id: null, to_account: null, invoice_key: '',
     };
     if (method === 'Cartão de Crédito') {
       const card = DB.get('cards', $('#f-card').value);
@@ -1241,9 +1475,9 @@ function openTxSheet(tx, asNew) {
     } else {
       rec.account_id = $('#f-account').value || null;
     }
-    if (orig) adjustBalance(orig.account_id, -txEffect(orig));   // reverte efeito antigo
+    if (orig) applyTxEffect(orig, -1);   // reverte efeito antigo (inclui transferências)
     DB.upsert('transactions', rec);
-    adjustBalance(rec.account_id, txEffect(rec));                 // aplica efeito novo
+    applyTxEffect(rec, +1);              // aplica efeito novo
     closeSheet(); render(); Sync.autoSync();
     toast(isEdit ? 'Lançamento atualizado ✓' : (isReceita ? 'Receita lançada ✓' : 'Gasto lançado ✓'));
   };
@@ -1264,12 +1498,12 @@ function openTxSheet(tx, asNew) {
     const irmas = tx.group_id ? DB.all('transactions').filter(t => t.group_id === tx.group_id) : [];
     if (irmas.length > 1) {
       if (confirm(`Faz parte de uma compra parcelada (${irmas.length}x). Excluir TODAS as parcelas?\n\nCancelar exclui só esta parcela.`)) {
-        irmas.forEach(g => { adjustBalance(g.account_id, -txEffect(g)); DB.remove('transactions', g.id); });
+        irmas.forEach(g => { applyTxEffect(g, -1); DB.remove('transactions', g.id); });
         closeSheet(); render(); Sync.autoSync();
         return toast(`${irmas.length} parcelas excluídas`);
       }
     } else if (!confirm('Excluir este lançamento?')) return;
-    if (orig) adjustBalance(orig.account_id, -txEffect(orig));   // devolve ao saldo
+    if (orig) applyTxEffect(orig, -1);   // devolve ao saldo
     DB.remove('transactions', tx.id);
     closeSheet(); render(); Sync.autoSync();
     toast('Excluído');
@@ -1532,7 +1766,7 @@ function openAporteSheet(goalId) {
     <div class="field"><label>Entrou em qual conta? <span class="muted">— onde o dinheiro ficou guardado</span></label>
       <select id="a-to"><option value="">— não movimentar contas —</option>
         ${DB.all('accounts').filter(a => a.active !== false).map(a =>
-          `<option value="${a.id}" ${ehReserva && DB.isReserveAccount(a) ? 'selected' : ''}>${esc(a.name)}${DB.isReserveAccount(a) ? ' (reserva)' : ''} — ${fmtShort(a.balance)}</option>`).join('')}
+          `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}
       </select></div>
     ${ehReserva ? '<p class="muted" style="margin-bottom:10px">🛡️ Esta é a sua meta de reserva: guarde o dinheiro numa conta marcada como reserva para a cobertura de meses subir no painel.</p>' : ''}
     <button class="btn" id="sh-save">Registrar aporte</button>
@@ -1610,11 +1844,6 @@ function openConfigSection(sec) {
           <div class="field"><label>Tipo</label><select id="c-type">${['Conta Corrente', 'Carteira Digital', 'Caixinha / Rendimento', 'Investimento'].map(t => `<option ${acc.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
           <div class="field"><label>Instituição</label><input id="c-inst" value="${esc(acc.institution)}"></div>
           <div class="field"><label>Saldo atual</label><input id="c-bal" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
-          <div class="field"><label style="display:flex;align-items:center;gap:9px;cursor:pointer">
-            <input type="checkbox" id="c-reserve" ${DB.isReserveAccount({ ...acc, active: true }) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--gold)">
-            Faz parte da reserva de emergência
-          </label>
-          <p class="muted" style="margin-top:6px">O dinheiro desta conta conta para a cobertura de meses no painel. Marque poupanças e caixinhas; deixe desmarcada a conta do dia a dia.</p></div>
           <button class="btn" id="md-save">Salvar</button>
           ${isEdit ? '<div class="btn-row"><button class="btn danger" id="md-del">Excluir</button></div>' : ''}
         `);
@@ -1626,7 +1855,7 @@ function openConfigSection(sec) {
           // Conta nova: o valor é o saldo de abertura. Conta existente: a diferença
           // vira um lançamento de ajuste, para o extrato continuar explicando o saldo.
           const saldoFinal = isEdit ? (Number(acc.balance) || 0) : saldoInformado;
-          DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value, balance: saldoFinal, is_reserve: !!$('#c-reserve').checked });
+          DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value, balance: saldoFinal });
           if (isEdit) reconcileBalance(DB.get('accounts', acc.id), saldoInformado);
           Sync.autoSync(); openConfigSection('accounts');
         };

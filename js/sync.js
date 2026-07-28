@@ -7,7 +7,7 @@ const SYNC_TABLES = {
   cards: ['name', 'brand', 'limit_amount', 'closing_day', 'due_day', 'account_id', 'active'],
   categories: ['name', 'icon', 'scope', 'monthly_budget', 'kind'],
   transactions: ['description', 'amount', 'date', 'scope', 'member', 'method', 'status', 'recurring', 'category_id', 'account_id', 'card_id', 'invoice_key', 'notes', 'type', 'fitid', 'group_id', 'installment', 'adjustment'],
-  goals: ['name', 'icon', 'target_amount', 'target_date', 'done'],
+  goals: ['name', 'icon', 'target_amount', 'target_date', 'done', 'kind'],
   goal_entries: ['goal_id', 'description', 'amount', 'date', 'from_account', 'to_account'],
   invoice_status: ['invoice_key', 'paid'],
   family_settings: ['members', 'month_start_day', 'monthly_income'],

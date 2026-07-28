@@ -197,10 +197,12 @@ const DB = {
   txOfPeriod(period) {
     return this.all('transactions').filter(t => this.inPeriod(t.date, period));
   },
-  // Ajustes de saldo aparecem no extrato (para auditoria), mas não são gasto nem
-  // renda de verdade — ficam fora de toda análise para não distorcer os números.
-  expensesOf(period) { return this.txOfPeriod(period).filter(t => this.isExpense(t) && !t.adjustment); },
-  incomesOf(period) { return this.txOfPeriod(period).filter(t => !this.isExpense(t) && !t.adjustment); },
+  isTransfer(t) { return !!t && t.type === 'Transferência'; },
+  // Transferências entre contas próprias e ajustes de saldo aparecem no extrato
+  // (para auditoria), mas não são gasto nem renda — ficam fora de toda análise.
+  isNeutral(t) { return !!t && (!!t.adjustment || this.isTransfer(t)); },
+  expensesOf(period) { return this.txOfPeriod(period).filter(t => this.isExpense(t) && !this.isNeutral(t)); },
+  incomesOf(period) { return this.txOfPeriod(period).filter(t => !this.isExpense(t) && !this.isNeutral(t)); },
   // Renda que realmente entrou na família. Estorno de cartão é receita no modelo
   // (abate a fatura), mas não é renda — por isso fica de fora daqui.
   realizedIncome(period) {
@@ -255,7 +257,7 @@ const DB = {
       for (const inv of this.invoicesOf(card))
         if (inv.status !== 'Paga') total += inv.total;
     for (const t of this.all('transactions'))
-      if (t.status === 'A Pagar' && !t.card_id && this.isExpense(t)) total += Number(t.amount) || 0;
+      if (t.status === 'A Pagar' && !t.card_id && this.isExpense(t) && !this.isNeutral(t)) total += Number(t.amount) || 0;
     return total;
   },
 
@@ -267,16 +269,11 @@ const DB = {
   // Disponível de verdade: o que está nas contas menos o que já está comprometido.
   available() { return this.accountsTotal() - this.committed(); },
 
-  // A reserva é o dinheiro guardado nas contas marcadas como reserva.
-  // Contas antigas (sem a marcação) seguem a regra anterior: caixinha e investimento.
-  isReserveAccount(a) {
-    if (!a || a.active === false) return false;
-    return a.is_reserve !== undefined && a.is_reserve !== null
-      ? !!a.is_reserve
-      : (a.type === 'Caixinha / Rendimento' || a.type === 'Investimento');
-  },
-  reserveAccounts() { return this.all('accounts').filter(a => this.isReserveAccount(a)); },
-  reserveTotal() { return this.reserveAccounts().reduce((s, a) => s + (Number(a.balance) || 0), 0); },
+  // A reserva é uma CAIXINHA: dinheiro que a família separou, não uma conta.
+  // Ela pode estar espalhada em qualquer conta — o que vale é o quanto foi guardado.
+  isReserveGoal(g) { return !!g && (g.kind === 'Reserva' || /reserva/i.test(g.name || '')); },
+  reserveGoals() { return this.all('goals').filter(g => this.isReserveGoal(g)); },
+  reserveTotal() { return this.reserveGoals().reduce((s, g) => s + this.goalTotal(g.id), 0); },
 
   // Gasto médio dos últimos n períodos completos (base p/ cobertura da reserva).
   avgMonthlySpend(n = 3) {

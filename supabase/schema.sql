@@ -81,6 +81,7 @@ create table if not exists transactions (
   category_id uuid,
   account_id uuid,
   card_id uuid,
+  to_account uuid,                        -- destino, quando é transferência entre contas
   invoice_key text default '',
   notes text default '',
   type text not null default 'Despesa',   -- 'Despesa' | 'Receita'
@@ -100,9 +101,11 @@ create table if not exists goals (
   target_amount numeric not null default 0,
   target_date date,
   done boolean not null default false,
+  kind text default 'Objetivo',   -- 'Reserva' identifica a reserva de emergência
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
+alter table goals add column if not exists kind text default 'Objetivo';
 
 create table if not exists goal_entries (
   id uuid primary key,

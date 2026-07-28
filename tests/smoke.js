@@ -51,7 +51,7 @@ eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
   state, fmt, fmtShort, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
-  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance });`);
+  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -91,7 +91,7 @@ check('fatura do cartão: compra menos estorno', DB.invoicesOf(DB.get('cards', c
 check('comprometido = fatura aberta + A Pagar', DB.committed(), 200 + 450);
 check('total em contas', DB.accountsTotal(), 17000);
 check('disponível = contas - comprometido', DB.available(), 17000 - 650);
-check('reserva conta só caixinha/investimento', DB.reserveTotal(), 12000);
+check('reserva zerada enquanto não houver caixinha de reserva', DB.reserveTotal(), 0);
 check('gasto por categoria: Alimentação', DB.spentByCategory(p)[cat('Aliment').id], 800);
 check('50/30/20 — necessidades', DB.spentByKind(p).Essencial, 800 + 450);
 check('50/30/20 — desejos', DB.spentByKind(p).Estilo, 300);
@@ -202,18 +202,71 @@ try {
   check('categoria salva é a que foi lançada', editando.category_id, alim);
 } catch (e) { console.log(` FALHA | formulário: ${e.message}`); fail++; }
 
-console.log('\n=== Reserva de emergência ===');
-check('caixinha entra na reserva por padrão', DB.isReserveAccount(DB.get('accounts', caixinha)), true);
-check('conta corrente fica fora por padrão', DB.isReserveAccount(DB.get('accounts', conta)), false);
-check('reserva soma só as contas de reserva', DB.reserveTotal(), 12000);
-DB.upsert('accounts', { ...DB.get('accounts', conta), is_reserve: true });      // marcação explícita
-check('marcar a corrente como reserva soma as duas', DB.reserveTotal(), 17000);
-DB.upsert('accounts', { ...DB.get('accounts', caixinha), is_reserve: false });  // desmarcar funciona
-check('desmarcar a caixinha a tira da reserva', DB.reserveTotal(), 5000);
-DB.upsert('accounts', { ...DB.get('accounts', conta), is_reserve: false });
-DB.upsert('accounts', { ...DB.get('accounts', caixinha), is_reserve: true });
-check('reserva volta ao normal', DB.reserveTotal(), 12000);
-check('painel explica como alimentar a reserva', renderInicio(p).includes('Guardar na reserva'), true);
+console.log('\n=== Nenhuma função inexistente é chamada (DB.x / OFX.x) ===');
+{
+  const fonte = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const quebradas = [];
+  for (const [, obj, met] of fonte.matchAll(/\b(DB|OFX|Sync|Auth|Notif)\.(\w+)\s*\(/g)) {
+    const alvo = { DB, OFX, Sync: global.Sync, Auth: global.Auth, Notif: typeof Notif !== 'undefined' ? Notif : {} }[obj];
+    if (alvo && typeof alvo[met] !== 'function' && !quebradas.includes(obj + '.' + met)) quebradas.push(obj + '.' + met);
+  }
+  const ignorar = ['Sync.rest', 'Sync.signIn', 'Sync.signUp', 'Sync.signOut', 'Sync.createFamily', 'Sync.joinFamily', 'Sync.syncAll', 'Sync.status', 'Auth.setPin', 'Auth.verify', 'Auth.removePin', 'Auth.lockNow', 'Auth.save', 'Notif.load', 'Notif.enable', 'Notif.disable', 'Notif.push', 'Notif.check', 'Notif.save', 'Notif.pushState', 'Notif.subscribePush', 'Notif.unsubscribePush', 'Notif.enabled', 'Notif.vapid', 'Notif.urlB64ToU8', 'Notif.registerFail', 'Notif.registerSuccess'];
+  const reais = quebradas.filter(q => !ignorar.includes(q));
+  check('todas as chamadas existem', reais.length ? reais.join(', ') : true, true);
+}
+
+console.log('\n=== Reserva de emergência (caixinha, sem conta fixa) ===');
+try {
+  const reservaId = DB.upsert('goals', { name: 'Reserva de Emergência', icon: '🛡️', kind: 'Reserva', target_amount: 30000 });
+  check('reserva reconhecida pelo tipo', DB.reserveGoals().length, 1);
+  check('reserva começa zerada (nada guardado ainda)', DB.reserveTotal(), 0);
+
+  // Guardar dinheiro: o aporte é o mecanismo, independente de conta
+  DB.upsert('goal_entries', { goal_id: reservaId, amount: 4000, date: dia(4), description: 'Depósito inicial' });
+  check('guardar dinheiro alimenta a reserva', DB.reserveTotal(), 4000);
+  check('não depende de marcar conta nenhuma', DB.reserveTotal() > 0 && !DB.reserveGoals()[0].account_id, true);
+
+  // Abrir a folha de aporte a partir do painel não pode quebrar
+  openAporteSheet(reservaId);
+  check('folha de aporte da reserva abre', el('#sheet').innerHTML.includes('Registrar aporte'), true);
+  el('#a-amount').dataset.cents = '100000';
+  el('#a-desc').value = 'Guardado do mês';
+  el('#a-date').value = dia(11);
+  el('#a-account').value = ''; el('#a-to').value = '';
+  el('#sh-save').click();
+  check('aporte pelo painel soma na reserva', DB.reserveTotal(), 5000);
+
+  const meses = DB.avgMonthlySpend() > 0 ? DB.reserveTotal() / DB.avgMonthlySpend() : 0;
+  check('cobertura em meses é calculada', meses > 0, true);
+  check('painel mostra o card da reserva', renderInicio(p).includes('Reserva de emergência'), true);
+
+  DB.remove('goals', reservaId);
+  DB.all('goal_entries').filter(e => e.goal_id === reservaId).forEach(e => DB.remove('goal_entries', e.id));
+  check('sem meta de reserva, painel convida a criar', renderInicio(p).includes('Criar minha reserva'), true);
+} catch (e) { console.log(` FALHA | reserva: ${e.message}`); fail++; }
+
+console.log('\n=== Transferência entre contas ===');
+try {
+  const antesA = DB.get('accounts', conta).balance;
+  const antesB = DB.get('accounts', caixinha).balance;
+  const gastoAntes = DB.statsFor(p).spent, receitaAntes = DB.realizedIncome(p);
+
+  const tr = { description: 'Guardar dinheiro', amount: 700, date: dia(7), type: 'Transferência',
+    status: 'Pago', method: 'Transferência', account_id: conta, to_account: caixinha, scope: 'Família', member: MEMBRO_COMUM };
+  const trId = DB.upsert('transactions', tr);
+  applyTxEffect(DB.get('transactions', trId), +1);
+
+  check('sai da conta de origem', DB.get('accounts', conta).balance, antesA - 700);
+  check('entra na conta de destino', DB.get('accounts', caixinha).balance, antesB + 700);
+  check('transferência NÃO é despesa', DB.statsFor(p).spent, gastoAntes);
+  check('transferência NÃO é receita', DB.realizedIncome(p), receitaAntes);
+  check('transferência aparece no extrato', renderExtrato(p).includes('Guardar dinheiro'), true);
+  check('não entra no comprometido', DB.committed(), 650);
+
+  applyTxEffect(DB.get('transactions', trId), -1);
+  DB.remove('transactions', trId);
+  check('desfazer devolve os dois saldos', DB.get('accounts', conta).balance + DB.get('accounts', caixinha).balance, antesA + antesB);
+} catch (e) { console.log(` FALHA | transferência: ${e.message}`); fail++; }
 
 console.log('\n=== Conciliação de saldo (ajuste vira lançamento) ===');
 try {
@@ -240,6 +293,30 @@ try {
 
   check('saldo já correto não gera lançamento', reconcileBalance(DB.get('accounts', conta), saldoAntes), 0);
 } catch (e) { console.log(` FALHA | conciliação: ${e.message}`); fail++; }
+
+console.log('\n=== Gráficos ===');
+try {
+  const barras = svgBars([{ label: 'jan', value: 100 }, { label: 'fev', value: 250, hint: '#009ef7' }], 300);
+  check('barras: SVG válido com grade e rótulos', barras.startsWith('<svg') && barras.includes('ch-grid') && barras.includes('fev'), true);
+  check('barras: linha de renda desenhada', barras.includes('ch-ref-line'), true);
+  check('escala arredonda para número redondo', niceCeil(2340), 2500);
+  check('escala funciona com valores pequenos', niceCeil(37), 40);
+
+  const d = svgDonut([{ label: 'Casa', value: 60, color: '#009ef7' }, { label: 'Comida', value: 40, color: '#50cd89' }], 100);
+  check('donut: dois arcos desenhados', (d.match(/<circle/g) || []).length, 3);   // 2 fatias + trilho
+  check('donut: mostra o total no centro', d.includes('dn-total'), true);
+  check('donut: legenda acessível por title', d.includes('Casa: '), true);
+
+  const r = svgRanking([['Mercado', 800], ['Uber', 200]]);
+  check('ranking: barras proporcionais', r.includes('width:100.0%') && r.includes('rank-row'), true);
+  check('ranking: mostra percentual do total', r.includes('80%'), true);
+  check('ranking vazio não quebra', svgRanking([]).includes('Sem dados'), true);
+
+  const burn = svgBurnup(p, 3000);
+  check('burn-up: área e linha desenhadas', burn.includes('gArea') && burn.includes('<path'), true);
+  check('painel usa o donut novo', renderInicio(p).includes('donut-svg'), true);
+  check('relatórios trazem os gráficos novos', renderRelatorios().includes('rank-row') && renderRelatorios().includes('donut-svg'), true);
+} catch (e) { console.log(` FALHA | gráficos: ${e.message}`); fail++; }
 
 console.log('\n=== Memória da navegação ===');
 state.tab = 'relatorios'; state.monthOffset = -2; state.memberFilter = 'Joctã';
