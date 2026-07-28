@@ -1263,6 +1263,65 @@ try {
   for (const t of DB.all('transactions').filter(t => /do dia$/.test(t.description))) DB.remove('transactions', t.id);
 } catch (e) { console.log(` FALHA | total do dia: ${e.message}`); fail++; }
 
+/* ---- Conferir uma conta contra o extrato do banco ----
+   No todo, transferência é neutra: o dinheiro não saiu da família, mudou de bolso.
+   Mas o extrato do banco de UMA conta mostra a transferência como débito, e ela
+   move o saldo dali. Filtrando por conta, o app precisa ler do mesmo jeito —
+   senão os números não fecham na conferência. */
+console.log('\n=== Extrato por conta bate com o do banco ===');
+try {
+  const cA = DB.upsert('accounts', { name: 'Conta Conf A', type: 'Conta Corrente', balance: 3000, active: true });
+  const cB = DB.upsert('accounts', { name: 'Conta Conf B', type: 'Conta Corrente', balance: 500, active: true });
+  const d = dia(25);
+  // applyTxEffect junto com o upsert: é o que o formulário faz ao salvar, e sem
+  // isso o saldo não reflete o lançamento
+  const gasto = { description: 'Mercado conf', amount: 100, date: d, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: cA };
+  DB.upsert('transactions', gasto);
+  applyTxEffect(gasto, +1);
+  const tr = { description: 'Envio conf', amount: 700, date: d, type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: cA, to_account: cB };
+  DB.upsert('transactions', tr);
+  applyTxEffect(tr, +1);
+
+  const pC = DB.monthPeriod(new Date());
+  const linhaDia = html => ((html.match(/<p class="tx-day">[\s\S]*?<\/p>/g) || [])
+    .find(l => l.includes(fmtDay(d))) || '');
+
+  // Sem filtro de conta: a família não perdeu os 700, só mudaram de lugar
+  state.filtros = { ...FILTROS_VAZIOS, busca: 'conf' };
+  let saida = renderExtrato(pC);
+  check('no todo, transferência não soma no dia', linhaDia(saida).includes(fmtShort(100)), true);
+  check('e não aparece como 800', linhaDia(saida).includes(fmtShort(800)), false);
+  check('no todo, a transferência não tem sinal', /transfer">\s*\d/.test(saida.replace(/&nbsp;/g, ' ')) || saida.includes('transfer">R$'), true);
+
+  // Filtrando pela conta de origem: o banco mostraria −100 e −700
+  state.filtros = { ...FILTROS_VAZIOS, conta: cA };
+  saida = renderExtrato(pC);
+  check('na conta, a saída inclui a transferência', linhaDia(saida).includes(fmtShort(800)), true);
+  check('o topo mostra o que saiu da conta', saida.includes('>Saiu<'), true);
+  check('e o saldo atual dela', saida.includes(fmtShort(DB.get('accounts', cA).balance)), true);
+  check('a linha ganha sinal de saída', /transfer">− /.test(saida), true);
+  check('dizendo para onde foi', saida.includes('para Conta Conf B'), true);
+  check('e avisa que a leitura mudou', saida.includes('transferências contam'), true);
+
+  // Filtrando pela conta de destino: o banco mostraria +700
+  state.filtros = { ...FILTROS_VAZIOS, conta: cB };
+  saida = renderExtrato(pC);
+  check('na conta de destino, a transferência entra', linhaDia(saida).includes(fmtShort(700)), true);
+  check('com sinal de entrada', /transfer">\+ /.test(saida), true);
+  check('dizendo de onde veio', saida.includes('de Conta Conf A'), true);
+  check('e o gasto da outra conta não aparece', saida.includes('Mercado conf'), false);
+
+  // O que o banco mostraria: saldo inicial − saídas + entradas = saldo final
+  const movimentoA = 100 + 700;
+  check('a soma do extrato explica o saldo da conta',
+    3000 - movimentoA, DB.get('accounts', cA).balance);
+  check('e o da conta de destino', 500 + 700, DB.get('accounts', cB).balance);
+
+  state.filtros = { ...FILTROS_VAZIOS };
+  for (const t of DB.all('transactions').filter(t => / conf$/.test(t.description))) DB.remove('transactions', t.id);
+  DB.remove('accounts', cA); DB.remove('accounts', cB);
+} catch (e) { console.log(` FALHA | conciliação por conta: ${e.message}`); fail++; }
+
 console.log('\n=== Transferência vista dos dois extratos ===');
 try {
   const contaA = DB.upsert('accounts', { name: 'Banco A', type: 'Conta Corrente', balance: 5000, active: true });

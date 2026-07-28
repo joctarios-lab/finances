@@ -738,18 +738,44 @@ function renderExtrato(period) {
   const total = txs.filter(t => DB.isExpense(t) && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
   const receitas = txs.filter(t => !DB.isExpense(t) && !t.card_id && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
 
+  /* Com uma conta filtrada, o extrato passa a ser o extrato DAQUELA CONTA — e aí
+     transferência não é neutra: ela tira ou põe dinheiro ali, exatamente como no
+     extrato do banco. Sem isso os números não fecham na conferência.
+
+     Sem filtro de conta, a leitura é da família inteira, e aí transferência é
+     neutra mesmo: o dinheiro não saiu, só mudou de bolso.
+
+     Devolve o quanto ESTA conta se moveu: negativo saiu, positivo entrou. */
+  const contaFiltrada = state.filtros.conta && DB.get('accounts', state.filtros.conta) ? state.filtros.conta : null;
+  const efeitoNaConta = t => {
+    if (!contaFiltrada || !DB.isTransfer(t)) return 0;
+    const v = Number(t.amount) || 0;
+    if (t.account_id === contaFiltrada) return -v;
+    if (t.to_account === contaFiltrada) return v;
+    return 0;
+  };
+
   /* Total do dia, somado sobre a lista JÁ FILTRADA: com um filtro ativo, um total
-     vindo de outra base não bateria com as linhas logo abaixo dele.
-     Transferência e conciliação ficam de fora — não são gasto nem entrada, só
-     dinheiro mudando de lugar. */
+     vindo de outra base não bateria com as linhas logo abaixo dele. */
   const porDia = {};
   for (const t of txs) {
-    if (DB.isNeutral(t)) continue;
     const d = (porDia[t.date] = porDia[t.date] || { saiu: 0, entrou: 0 });
     const v = Number(t.amount) || 0;
+    if (DB.isTransfer(t)) {
+      const efeito = efeitoNaConta(t);
+      if (efeito < 0) d.saiu += -efeito;
+      else if (efeito > 0) d.entrou += efeito;
+      continue;
+    }
+    if (t.adjustment) continue;              // conciliação não é gasto nem entrada
     if (DB.isExpense(t)) d.saiu += v;
     else if (!t.card_id) d.entrou += v;      // estorno de cartão abate a fatura, não entra na conta
   }
+
+  // Totais do período nesta conta: a soma dos dias, para o topo e a lista contarem
+  // a mesma história
+  const saiuNaConta = Object.values(porDia).reduce((s, d) => s + d.saiu, 0);
+  const entrouNaConta = Object.values(porDia).reduce((s, d) => s + d.entrou, 0);
 
   let list = '', lastDay = '';
   for (const t of txs) {
@@ -770,9 +796,13 @@ function renderExtrato(period) {
       : esc(t.method);
     const isExp = DB.isExpense(t);
     const isTr = DB.isTransfer(t);
-    const rota = isTr
-      ? `${esc((DB.get('accounts', t.account_id) || {}).name || '?')} → ${esc((DB.get('accounts', t.to_account) || {}).name || '?')}`
-      : '';
+    // Conferindo uma conta, o que importa é para onde foi (ou de onde veio) — o
+    // nome dela nos dois lados da seta seria ruído
+    const efeito = efeitoNaConta(t);
+    const rota = !isTr ? ''
+      : efeito < 0 ? `para ${esc((DB.get('accounts', t.to_account) || {}).name || '?')}`
+      : efeito > 0 ? `de ${esc((DB.get('accounts', t.account_id) || {}).name || '?')}`
+      : `${esc((DB.get('accounts', t.account_id) || {}).name || '?')} → ${esc((DB.get('accounts', t.to_account) || {}).name || '?')}`;
     list += `<div class="tx ${DB.isNeutral(t) ? 'tx-adj' : ''}" data-tx="${t.id}">
       <span class="tx-ico ${isTr ? 'i-transfer' : !isExp && !t.adjustment ? 'i-receita' : ''}">${isTr ? '⇄' : t.adjustment ? '⚖️' : isExp ? esc(c ? c.icon : '🧾') : '💵'}</span>
       <span class="tx-info"><span class="tx-name">${esc(t.description)}</span>
@@ -781,7 +811,9 @@ function renderExtrato(period) {
         : `${c ? esc(DB.categoryPath(t.category_id)) : (isExp ? 'Sem categoria' : 'Entrada sem origem')} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}`}</span>
       ${DB.tagsOf(t).length ? `<span class="tx-tags">${DB.tagsOf(t).map(tg =>
         `<button class="tx-tag" data-tag="${esc(tg)}" title="Filtrar por #${esc(tg)}">#${esc(tg)}</button>`).join('')}</span>` : ''}</span>
-      <span class="tx-amount ${isTr ? 'transfer' : !isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${isTr ? '' : isExp ? '− ' : '+ '}${fmt(t.amount)}</span>
+      <span class="tx-amount ${isTr ? 'transfer' : !isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${
+        isTr ? (efeitoNaConta(t) < 0 ? '− ' : efeitoNaConta(t) > 0 ? '+ ' : '')
+        : isExp ? '− ' : '+ '}${fmt(t.amount)}</span>
       ${t.status === 'A Pagar' ? `<button class="pay-btn" data-pay-tx="${t.id}" title="Marcar como ${isExp ? 'pago' : 'recebido'}"><span data-ico="check"></span></button>` : ''}
     </div>`;
   }
@@ -802,11 +834,21 @@ function renderExtrato(period) {
       <b>${period.label} · ${fmtShort(total)}</b>
       <button id="mn-next" aria-label="Próximo mês" data-ico="chevR"></button>
     </div>
+    ${contaFiltrada ? `
+    <!-- Conferindo uma conta: os números viram os DELA, com transferência
+         contando, para bater com o extrato do banco linha a linha. -->
+    <div class="mini-stats">
+      <div class="card"><small>Saiu</small><b class="txt-red">${fmtShort(saiuNaConta)}</b></div>
+      <div class="card"><small>Entrou</small><b class="txt-green">${fmtShort(entrouNaConta)}</b></div>
+      <div class="card"><small>Saldo hoje</small><b>${fmtShort((DB.get('accounts', contaFiltrada) || {}).balance || 0)}</b></div>
+    </div>
+    <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc((DB.get('accounts', contaFiltrada) || {}).name || '')}</b> — transferências contam, porque saem e entram nesta conta.</p>`
+    : `
     <div class="mini-stats">
       <div class="card"><small>Receitas</small><b class="txt-green">${fmtShort(receitas)}</b></div>
       <div class="card"><small>Média/dia</small><b>${fmtShort(st.dailyAvg)}</b></div>
       <div class="card"><small>${isCurrent ? 'Projeção' : 'Total'}</small><b>${fmtShort(isCurrent ? st.projection : st.spent)}</b></div>
-    </div>
+    </div>`}
     <div class="quick-add">
       <button class="qa qa-desp" data-novo="Despesa"><span data-ico="plus"></span>Despesa</button>
       <button class="qa qa-rec" data-novo="Receita"><span data-ico="plus"></span>Receita</button>
