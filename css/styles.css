@@ -21,6 +21,9 @@
   --shadow: 0 0 20px 0 rgba(76, 87, 125, .04), 0 1px 2px rgba(76, 87, 125, .06);
   --radius: 12px;
   --font-body: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  /* Altura coberta pelo teclado do celular. js/ui.js atualiza pelo visualViewport;
+     0 quando não há teclado, para o valor servir em calc() sem condicional. */
+  --teclado: 0px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -648,15 +651,22 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 }
 .fab:active { transform: scale(.93); }
 
+/* Com o teclado aberto a barra de abas fica prensada entre ele e o conteúdo,
+   roubando altura de quem está digitando — e ninguém troca de aba nesse momento.
+   O botão de novo lançamento vive dentro dela, então sai junto. */
+body.teclado-aberto .tabbar { display: none; }
+
 /* ---------- Sheet e Modal ---------- */
 .sheet-backdrop, .modal-backdrop { position: fixed; inset: 0; background: rgba(24, 28, 50, .35); z-index: 30; }
 /* A folha é sempre a camada mais interna — dá para abrir uma sobre um modal (ex.:
    etiquetas de uma linha da importação). Sem isto ela ficava atrás: os dois tinham
    z-index 31 e #modal vem depois no HTML, então vencia o empate. */
 .sheet-backdrop { z-index: 32; }
+/* bottom acompanha o teclado: apoiada nele, a folha mantém o botão de salvar à
+   vista. max-height desconta o teclado para o conteúdo continuar rolável. */
 .sheet {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 33;
-  max-width: 560px; margin: 0 auto; max-height: 90dvh; overflow-y: auto; overscroll-behavior: contain;
+  position: fixed; left: 0; right: 0; bottom: var(--teclado); z-index: 33;
+  max-width: 560px; margin: 0 auto; max-height: calc(90dvh - var(--teclado)); overflow-y: auto; overscroll-behavior: contain;
   background: var(--ink-2); border-radius: 16px 16px 0 0;
   padding: 20px 20px calc(22px + env(safe-area-inset-bottom));
   box-shadow: 0 -10px 50px rgba(24, 28, 50, .18);
@@ -665,7 +675,9 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 @keyframes sheetUp { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
 .modal {
   position: fixed; inset: 0; z-index: 31; overflow-y: auto; overscroll-behavior: contain;
-  background: var(--ink); padding: 18px 18px calc(28px + env(safe-area-inset-bottom));
+  /* O rodapé cresce com o teclado, senão o último campo e o botão de salvar ficam
+     inalcançáveis: o modal rola, mas não havia para onde rolar. */
+  background: var(--ink); padding: 18px 18px calc(28px + env(safe-area-inset-bottom) + var(--teclado));
   animation: fadeUp .2s ease;
 }
 .modal-inner { max-width: 560px; margin: 0 auto; }
@@ -717,6 +729,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 .ui-select:has(.ui-panel) .ui-select-arrow { transform: rotate(180deg); }
 .ui-date-ico { font-size: 15px; flex: none; opacity: .8; }
 
+/* Painel que não cabe embaixo do campo abre para cima, em vez de ficar atrás do
+   teclado. A altura da lista é calculada em js/ui.js, pelo espaço que sobrou. */
+.ui-panel.acima { top: auto; bottom: calc(100% + 6px); }
 .ui-panel {
   position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; right: 0;
   background: #fff; border: 1px solid var(--line); border-radius: 10px;

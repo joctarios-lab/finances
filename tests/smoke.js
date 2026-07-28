@@ -1033,6 +1033,80 @@ try {
   zerar();
 } catch (e) { console.log(` FALHA | etiquetas/filtros: ${e.message}`); fail++; }
 
+/* ---- Nada pode ficar embaixo do teclado ----
+   Com o teclado aberto o viewport visual encolhe, mas elemento position:fixed
+   segue ancorado no de layout. Sem tratar, o botão de salvar e a lista do
+   dropdown ficam atrás do teclado — existem e ninguém vê. */
+console.log('\n=== Teclado do celular não esconde nada ===');
+{
+  const uiSrc = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
+  const cssK = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+
+  check('mede pelo viewport visual, não pelo innerHeight', uiSrc.includes('window.visualViewport'), true);
+  check('reage a abrir e fechar o teclado', /vv\.addEventListener\('resize'[\s\S]{0,120}vv\.addEventListener\('scroll'/.test(uiSrc), true);
+  check('publica a altura coberta para o CSS', uiSrc.includes("setProperty('--teclado'"), true);
+  check('a variável tem valor neutro por padrão', /--teclado: 0px/.test(cssK), true);
+  check('folha se apoia acima do teclado', /\.sheet \{[^}]*bottom: var\(--teclado\)/.test(cssK), true);
+  check('e continua rolável', /\.sheet \{[^}]*max-height: calc\(90dvh - var\(--teclado\)\)/.test(cssK), true);
+  check('modal ganha rodapé do tamanho do teclado', /\.modal \{[^}]*\+ var\(--teclado\)\)/.test(cssK), true);
+  check('barra de abas sai de cena', /body\.teclado-aberto \.tabbar \{ display: none/.test(cssK), true);
+  check('painel pode abrir para cima', /\.ui-panel\.acima \{ top: auto; bottom:/.test(cssK), true);
+  check('campo em foco é trazido à vista', uiSrc.includes('scrollIntoView') && uiSrc.includes("'focusin'"), true);
+  check('o vigia é ligado na abertura', /init\(\)[\s\S]{0,400}this\.vigiarTeclado\(\)/.test(uiSrc), true);
+
+  /* Exercita posicionar() com geometria de verdade: campo no rodapé de um celular
+     de 800px, com 380px tomados pelo teclado. */
+  const UIreal = eval(uiSrc + '; UI');
+  const painelFalso = (temBusca, altura) => {
+    const cls = new Set();
+    const filhos = { '.ui-list': { style: {} }, '.ui-search': temBusca ? {} : null, '.ui-cal': null };
+    return {
+      style: {},
+      classList: { toggle: (c, on) => { on ? cls.add(c) : cls.delete(c); }, has: c => cls.has(c) },
+      _cls: cls,
+      querySelector: sel => filhos[sel] || null,
+      getBoundingClientRect: () => ({ top: 0, bottom: altura, left: 20, right: 340, width: 320, height: altura }),
+    };
+  };
+  const campoFalso = topo => ({ getBoundingClientRect: () => ({ top: topo, bottom: topo + 44, left: 20, right: 340, width: 320, height: 44 }) });
+
+  global.window.innerWidth = 360;
+  global.window.innerHeight = 800;
+
+  // Sem teclado, campo no alto: abre para baixo com a lista inteira
+  global.window.visualViewport = { height: 800, offsetTop: 0, addEventListener() {} };
+  let painel = painelFalso(true, 300);
+  UIreal.posicionar(painel, campoFalso(100));
+  check('campo no alto: painel abre para baixo', painel._cls.has('acima'), false);
+  check('e a lista usa a altura cheia', painel.querySelector('.ui-list').style.maxHeight, '260px');
+
+  // Sem teclado, campo colado no rodapé: abre para cima
+  painel = painelFalso(true, 300);
+  UIreal.posicionar(painel, campoFalso(700));
+  check('campo no rodapé: painel abre para cima', painel._cls.has('acima'), true);
+
+  // Teclado aberto (380px) e campo no meio: o que sobra embaixo é pouco, sobe
+  global.window.visualViewport = { height: 420, offsetTop: 0, addEventListener() {} };
+  painel = painelFalso(true, 300);
+  UIreal.posicionar(painel, campoFalso(330));
+  check('com teclado, painel foge da área coberta', painel._cls.has('acima'), true);
+  const altura = parseInt(painel.querySelector('.ui-list').style.maxHeight, 10);
+  check('e a lista cabe no espaço que restou', altura > 0 && altura <= 260, true);
+
+  // Teclado aberto e campo no topo: ainda cabe embaixo, não precisa virar
+  painel = painelFalso(true, 200);
+  UIreal.posicionar(painel, campoFalso(40));
+  check('com teclado, campo no topo continua abrindo para baixo', painel._cls.has('acima'), false);
+
+  // Nunca some por completo: mesmo apertado, sobra altura mínima utilizável
+  global.window.visualViewport = { height: 260, offsetTop: 0, addEventListener() {} };
+  painel = painelFalso(true, 300);
+  UIreal.posicionar(painel, campoFalso(200));
+  check('em espaço mínimo a lista não zera', parseInt(painel.querySelector('.ui-list').style.maxHeight, 10) >= 120, true);
+
+  delete global.window.visualViewport;
+}
+
 console.log('\n=== Selects no padrão Select2 ===');
 {
   const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');

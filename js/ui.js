@@ -230,16 +230,47 @@ const UI = {
   // fique espremido ou saia da tela: mede e desloca para dentro da janela.
   posicionar(painel, box) {
     if (typeof painel.getBoundingClientRect !== 'function') return;
+    if (!box || typeof box.getBoundingClientRect !== 'function') return;
+    const margem = 10;
+
+    // --- horizontal: não passar das bordas da tela ---
     painel.style.left = '0'; painel.style.right = 'auto';
     const r = painel.getBoundingClientRect();
-    const margem = 10, largura = window.innerWidth || 0;
-    if (!largura || !r.width) return;
-    if (r.right > largura - margem) {
-      const desloca = r.right - (largura - margem);
-      painel.style.left = `-${Math.round(desloca)}px`;
+    const largura = window.innerWidth || 0;
+    if (largura && r.width) {
+      if (r.right > largura - margem) {
+        painel.style.left = `-${Math.round(r.right - (largura - margem))}px`;
+      }
+      const novo = painel.getBoundingClientRect();
+      if (novo.left < margem) {
+        painel.style.left = `${Math.round(margem - (novo.left - parseFloat(painel.style.left || 0)))}px`;
+      }
     }
-    const novo = painel.getBoundingClientRect();
-    if (novo.left < margem) painel.style.left = `${Math.round(margem - (novo.left - parseFloat(painel.style.left || 0)))}px`;
+
+    /* --- vertical: caber no que o teclado deixou visível ---
+       Sem isto, campo perto do rodapé abria a lista atrás do teclado: a lista
+       existia, ninguém via. Mede pelo visualViewport, que é a área realmente
+       visível, e não pelo innerHeight, que ignora o teclado. */
+    const vv = window.visualViewport;
+    const alturaVisivel = (vv && vv.height) || window.innerHeight || 0;
+    const topoVisivel = (vv && vv.offsetTop) || 0;
+    if (!alturaVisivel) return;
+
+    const campo = box.getBoundingClientRect();
+    const lista = painel.querySelector && painel.querySelector('.ui-list');
+    const busca = painel.querySelector && painel.querySelector('.ui-search');
+    const cromo = (busca ? 52 : 0) + 12;          // caixa de busca + respiro do painel
+    const abaixo = (topoVisivel + alturaVisivel) - campo.bottom - margem;
+    const acima = campo.top - topoVisivel - margem;
+
+    // Abre para cima só quando lá caiba mais: virar por virar desorienta
+    const paraCima = abaixo < 200 && acima > abaixo;
+    painel.classList.toggle('acima', paraCima);
+    const disponivel = Math.max(120, (paraCima ? acima : abaixo) - cromo);
+    if (lista) lista.style.maxHeight = `${Math.round(Math.min(260, disponivel))}px`;
+    // Calendário não tem lista rolável: se não couber embaixo, sobe inteiro
+    const cal = painel.querySelector && painel.querySelector('.ui-cal');
+    if (cal && !lista) painel.classList.toggle('acima', painel.getBoundingClientRect().height > abaixo && acima > abaixo);
   },
 
   // Abre o painel de um campo por código (ex: ao escolher "Outra" nas categorias)
@@ -270,10 +301,53 @@ const UI = {
     (root || document).querySelectorAll('[data-ui="1"]').forEach(el => el._uiRefresh && el._uiRefresh());
   },
 
+  /* ---------------- Teclado do celular ----------------
+     A barra de digitação cobre a parte de baixo da tela, mas elemento com
+     position:fixed continua ancorado no viewport de layout — que não encolheu.
+     Resultado: o botão de salvar da folha ficava embaixo do teclado exatamente
+     quando havia um campo em foco, que é quando ele é necessário.
+
+     visualViewport informa a altura que sobrou. A variável --teclado leva isso ao
+     CSS, e daí a folha se apoia acima do teclado e o modal ganha espaço no rodapé. */
+  vigiarTeclado() {
+    const vv = typeof window !== 'undefined' && window.visualViewport;
+    if (!vv || typeof document === 'undefined' || !document.documentElement) return;
+    const aplicar = () => {
+      const total = window.innerHeight || 0;
+      const oculto = Math.max(0, Math.round(total - vv.height - vv.offsetTop));
+      document.documentElement.style.setProperty('--teclado', oculto + 'px');
+      // 120px separa teclado aberto de barrinhas do navegador aparecendo/sumindo
+      document.body.classList.toggle('teclado-aberto', oculto > 120);
+      // Painel aberto precisa ser recolocado: o espaço disponível mudou
+      if (this.aberto) this.posicionar(this.aberto.painel, this.aberto.box);
+    };
+    vv.addEventListener('resize', aplicar);
+    vv.addEventListener('scroll', aplicar);
+    aplicar();
+  },
+
+  /* Campo que recebe foco dentro de folha ou modal precisa continuar à vista.
+     O navegador faz isso sozinho no documento, mas não de forma confiável dentro
+     de contêiner com position:fixed e rolagem própria. */
+  vigiarFoco() {
+    document.addEventListener('focusin', e => {
+      const alvo = e.target;
+      if (!alvo || !alvo.closest) return;
+      if (!alvo.closest('.sheet, .modal')) return;
+      if (!/^(INPUT|TEXTAREA|SELECT)$/.test(alvo.tagName)) return;
+      // Espera o viewport assentar depois de o teclado subir
+      setTimeout(() => {
+        if (alvo.scrollIntoView) alvo.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }, 260);
+    });
+  },
+
   init() {
     document.addEventListener('click', e => {
       if (this.aberto && !this.aberto.box.contains(e.target)) this.fechar();
     });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') this.fechar(); });
+    this.vigiarTeclado();
+    this.vigiarFoco();
   },
 };
