@@ -967,6 +967,18 @@ for (const tabela of Object.keys(SYNC)) {
   check('há índice para buscar filhas', /create index if not exists idx_cat_parent on categories\(family_id, parent_id\)/i.test(schema), true);
 }
 
+/* O script de zerar precisa cobrir TODA tabela do schema. Se uma nova aparecer e
+   ficar de fora, o "teste do zero" começaria com resto de dado da rodada anterior. */
+{
+  const reset = fs.readFileSync(BASE + 'supabase/reset-teste.sql', 'utf8');
+  const criadas = [...schema.matchAll(/create table if not exists (\w+)/g)].map(m => m[1]);
+  const bloco = reset.slice(reset.indexOf('truncate table'), reset.indexOf('restart identity'));
+  const fora = criadas.filter(t => !bloco.includes(t));
+  check('reset-teste zera todas as tabelas do schema', fora.length ? fora.join(', ') : true, true);
+  check('reset-teste também apaga as contas', /delete from auth\.users/i.test(reset), true);
+  check('reset-teste avisa para limpar o aparelho', /Apagar dados deste aparelho/.test(reset), true);
+}
+
 check('push_subscriptions com RLS', /alter table push_subscriptions enable row level security/i.test(schema), true);
 check('notification_log com RLS', /alter table notification_log enable row level security/i.test(schema), true);
 check('função is_member definida antes das policies', schema.indexOf('function is_member') < schema.indexOf('create policy'), true);
