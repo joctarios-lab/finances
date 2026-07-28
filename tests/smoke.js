@@ -1308,10 +1308,13 @@ try {
      justamente na conferência contra o extrato do banco. */
   const cabecalho = renderExtrato(pD);
   check('cards do extrato em 2 colunas', cabecalho.includes('stat-2x2'), true);
-  check('receitas e despesas na linha de cima',
-    cabecalho.indexOf('>Receitas<') < cabecalho.indexOf('>Despesas<') &&
-    cabecalho.indexOf('>Despesas<') < cabecalho.indexOf('>Média/dia<'), true);
-  check('e o resultado embaixo', /Sobra prevista|>Resultado</.test(cabecalho), true);
+  // O que veio do mês anterior abre o cabeçalho: é a primeira linha de um extrato
+  check('saldo anterior vem primeiro',
+    cabecalho.indexOf('>Saldo anterior<') >= 0 &&
+    cabecalho.indexOf('>Saldo anterior<') < cabecalho.indexOf('>Receitas<'), true);
+  check('receitas antes de despesas',
+    cabecalho.indexOf('>Receitas<') < cabecalho.indexOf('>Despesas<'), true);
+  check('e diz o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(cabecalho), true);
   const apF = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   check('cards totalizadores usam centavos',
     /<small>Receitas<\/small><b[^>]*>\$\{fmt\(/.test(apF) && /<small>Despesas<\/small><b[^>]*>\$\{fmt\(/.test(apF), true);
@@ -1335,6 +1338,63 @@ try {
    Mas o extrato do banco de UMA conta mostra a transferência como débito, e ela
    move o saldo dali. Filtrando por conta, o app precisa ler do mesmo jeito —
    senão os números não fecham na conferência. */
+/* ---- O saldo atravessa os meses ----
+   Sem saldo anterior, cada mês parecia começar do zero: sobrar em junho não
+   aparecia em julho em lugar nenhum, e "entrou menos saiu" nunca fechava com o
+   saldo real da conta. É a primeira linha de qualquer extrato de banco. */
+console.log('\n=== Saldo passa de um mês para o outro ===');
+try {
+  const cM = DB.upsert('accounts', { name: 'Conta Mês', type: 'Conta Corrente', balance: 0, active: true });
+  const hoje = new Date();
+  const mesAtual = DB.monthPeriod(hoje);
+  const mesPassado = DB.monthPeriod(hoje, -1);
+  // Uma data dentro do mês anterior, respeitando o dia de início configurado
+  const noMesPassado = (() => {
+    const d = new Date(mesPassado.start.getTime() + 3 * 86400000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+
+  const lancar = o => { DB.upsert('transactions', o); applyTxEffect(o, +1); };
+  // Mês passado: sobrou 1.000
+  lancar({ description: 'Salário passado', amount: 3000, date: noMesPassado, type: 'Receita', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: cM });
+  lancar({ description: 'Contas passado', amount: 2000, date: noMesPassado, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: cM });
+  // Mês atual: gastou 300
+  lancar({ description: 'Mercado atual', amount: 300, date: dia(2), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: cM });
+
+  check('o saldo da conta acumula os dois meses', DB.get('accounts', cM).balance, 700);
+  const antesDoAtual = DB.saldoNaData([cM], DB.inicioISO(mesAtual));
+  check('o que sobrou do mês passado vira saldo anterior', antesDoAtual, 1000);
+  check('antes do mês passado não havia nada', DB.saldoNaData([cM], DB.inicioISO(mesPassado)), 0);
+
+  // A conta do extrato tem de fechar: anterior + entrou − saiu = saldo de hoje
+  check('anterior + movimento do mês = saldo atual', antesDoAtual - 300, DB.get('accounts', cM).balance);
+
+  // Na tela
+  state.filtros = { ...FILTROS_VAZIOS, contas: [cM] };
+  const tela = renderExtrato(mesAtual);
+  check('o extrato mostra o saldo anterior', tela.includes('>Saldo anterior<'), true);
+  check('com o valor que veio do mês passado', tela.includes(fmt(1000)), true);
+  check('e o saldo do mês fechando', tela.includes(fmt(700)), true);
+
+  // A pagar não entra: ainda não saiu da conta
+  DB.upsert('transactions', { description: 'Boleto futuro', amount: 500, date: dia(3), type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cM });
+  check('lançamento a pagar não muda o saldo anterior', DB.saldoNaData([cM], DB.inicioISO(mesAtual)), 1000);
+
+  // Sem filtro de conta, soma a família inteira
+  state.filtros = { ...FILTROS_VAZIOS };
+  const geral = DB.saldoNaData(null, DB.inicioISO(mesAtual));
+  const somaContas = DB.all('accounts').reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  check('a visão geral também tem saldo anterior', typeof geral, 'number');
+  check('e o geral inclui esta conta', geral !== 0 || somaContas === 0, true);
+  const telaGeral = renderExtrato(mesAtual);
+  check('a visão geral mostra o saldo anterior', telaGeral.includes('>Saldo anterior<'), true);
+  check('e explica o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(telaGeral), true);
+
+  for (const t of DB.all('transactions').filter(t => /passado$|atual$|futuro$/.test(t.description))) DB.remove('transactions', t.id);
+  DB.remove('accounts', cM);
+  state.filtros = { ...FILTROS_VAZIOS };
+} catch (e) { console.log(` FALHA | saldo entre meses: ${e.message}`); fail++; }
+
 console.log('\n=== Extrato por conta bate com o do banco ===');
 try {
   const cA = DB.upsert('accounts', { name: 'Conta Conf A', type: 'Conta Corrente', balance: 3000, active: true });
@@ -1368,7 +1428,7 @@ try {
   check('e o saldo atual dela', saida.includes(fmtShort(DB.get('accounts', cA).balance)), true);
   check('a linha ganha sinal de saída', /transfer">− /.test(saida), true);
   check('dizendo para onde foi', saida.includes('para Conta Conf B'), true);
-  check('e avisa que a leitura mudou', saida.includes('transferência conta quando entra ou sai'), true);
+  check('e explica o saldo anterior', saida.includes('o que veio do mês passado'), true);
 
   // Filtrando pela conta de destino: o banco mostraria +700
   state.filtros = { ...FILTROS_VAZIOS, contas: [cB] };

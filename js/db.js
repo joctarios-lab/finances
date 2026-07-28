@@ -415,6 +415,46 @@ const DB = {
   /* Gasto por envelope: o que foi lançado numa subcategoria sobe para o pai.
      Somar aqui, e não em cada tela, é o que faz donut, ranking, comparativo,
      barras de orçamento, conselheiro e notificação concordarem entre si. */
+  /* Saldo das contas ANTES de uma data — o que veio do mês anterior.
+
+     Sem isto o mês parecia começar do zero: um junho que sobrou não aparecia em
+     julho em lugar nenhum, e a conta do extrato ("entrou menos saiu") nunca
+     fechava com o saldo real. É o "saldo anterior" que todo extrato de banco traz
+     na primeira linha.
+
+     Calculado de trás para frente: o saldo atual menos tudo que se moveu de lá
+     para cá. O saldo atual é o número confiável — vem da conciliação com o banco. */
+  saldoNaData(contaIds, dataISO) {
+    const contas = (contaIds && contaIds.length)
+      ? contaIds
+      : this.all('accounts').map(a => a.id);
+    const dentro = id => contas.includes(id);
+    const atual = contas.reduce((s, id) => s + (Number((this.get('accounts', id) || {}).balance) || 0), 0);
+
+    let desde = 0;
+    for (const t of this.all('transactions')) {
+      if (t.status !== 'Pago') continue;              // a pagar ainda não mexeu no saldo
+      if (String(t.date) < dataISO) continue;
+      const v = Number(t.amount) || 0;
+      if (this.isTransfer(t)) {
+        // Transferência interna ao conjunto se anula: sai de um lado, entra no outro
+        if (dentro(t.account_id)) desde -= v;
+        if (dentro(t.to_account)) desde += v;
+        continue;
+      }
+      if (!dentro(t.account_id)) continue;
+      // Conciliação entra aqui de propósito: ela mexe no saldo de verdade
+      desde += this.isExpense(t) ? -v : v;
+    }
+    return atual - desde;
+  },
+
+  // Data de início do período no formato do banco, para comparar com t.date
+  inicioISO(period) {
+    const d = period.start;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  },
+
   spentByCategory(period) {
     const out = {};
     for (const t of this.expensesOf(period)) {

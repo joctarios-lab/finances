@@ -876,33 +876,38 @@ function renderExtrato(period) {
       const nomes = contasFiltradas.map(id => (DB.get('accounts', id) || {}).name).filter(Boolean);
       const saldo = contasFiltradas.reduce((s, id) => s + (Number((DB.get('accounts', id) || {}).balance) || 0), 0);
       const varias = contasFiltradas.length > 1;
-      // Entrou e saiu na linha de cima, porque é o par que se compara; média e
-      // saldo embaixo, que são leituras de apoio.
-      const resultadoConta = entrouNaConta - saiuNaConta;
+      /* Saldo anterior + entrou − saiu = saldo final: a mesma conta que o extrato
+         do banco mostra. É o que faz o resultado de um mês aparecer no seguinte,
+         em vez de cada mês parecer começar do zero. */
+      const anterior = DB.saldoNaData(contasFiltradas, DB.inicioISO(period));
+      const finalMes = anterior + entrouNaConta - saiuNaConta;
       return `
     <div class="stat-2x2">
+      <div class="card"><small>Saldo anterior</small><b class="${anterior >= 0 ? '' : 'txt-red'}">${fmt(anterior)}</b></div>
+      <div class="card"><small>${varias ? 'Saldo somado' : 'Saldo em'} ${esc(period.label.split(' de ')[0])}</small><b class="${finalMes >= 0 ? 'txt-green' : 'txt-red'}">${fmt(finalMes)}</b></div>
       <div class="card"><small>Entrou</small><b class="txt-green">${fmt(entrouNaConta)}</b></div>
       <div class="card"><small>Saiu</small><b class="txt-red">${fmt(saiuNaConta)}</b></div>
-      <div class="card"><small>Resultado do mês</small><b class="${resultadoConta >= 0 ? 'txt-green' : 'txt-red'}">${resultadoConta >= 0 ? '+' : '−'} ${fmt(Math.abs(resultadoConta))}</b></div>
-      <div class="card"><small>${varias ? 'Saldo somado' : 'Saldo hoje'}</small><b>${fmt(saldo)}</b></div>
     </div>
-    <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc(nomes.join(' + '))}</b> — transferência conta quando entra ou sai ${varias
-      ? 'do conjunto; entre estas contas ela não conta, porque o dinheiro não saiu daqui.'
-      : 'desta conta.'}</p>`;
+    <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc(nomes.join(' + '))}</b> — o saldo anterior é o que veio do mês passado${varias
+      ? '. Transferência entre estas contas não conta, porque o dinheiro não saiu daqui.' : '.'}</p>`;
     })()
     : (() => {
-      // Receitas e despesas lado a lado: é a comparação que responde "sobrou ou faltou".
+      /* Sem filtro de conta, o extrato é o de todo o dinheiro da família — e aí
+         o que sobrou do mês passado também precisa aparecer, senão cada mês
+         parece começar do zero e a soma nunca fecha com o saldo das contas. */
+      const anterior = DB.saldoNaData(null, DB.inicioISO(period));
       const resultado = receitas - total;
+      const finalMes = anterior + resultado;
       return `
     <div class="stat-2x2">
+      <div class="card"><small>Saldo anterior</small><b class="${anterior >= 0 ? '' : 'txt-red'}">${fmt(anterior)}</b></div>
+      <div class="card"><small>Saldo em ${esc(period.label.split(' de ')[0])}</small><b class="${finalMes >= 0 ? 'txt-green' : 'txt-red'}">${fmt(finalMes)}</b></div>
       <div class="card"><small>Receitas</small><b class="txt-green">${fmt(receitas)}</b></div>
       <div class="card"><small>Despesas</small><b class="txt-red">${fmt(total)}</b></div>
-      <div class="card"><small>Média/dia</small><b>${fmt(st.dailyAvg)}</b></div>
-      <div class="card"><small>${isCurrent ? 'Sobra prevista' : 'Resultado'}</small><b class="${
-        (isCurrent ? receitas - st.projection : resultado) >= 0 ? 'txt-green' : 'txt-red'}">${
-        (isCurrent ? receitas - st.projection : resultado) >= 0 ? '+' : '−'} ${
-        fmtShort(Math.abs(isCurrent ? receitas - st.projection : resultado))}</b></div>
-    </div>`;
+    </div>
+    <p class="muted" style="margin:-4px 0 2px">${resultado >= 0
+      ? `Sobrou <b class="txt-green">${fmt(resultado)}</b> neste mês, somados aos ${fmt(anterior)} que vieram do anterior.`
+      : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> neste mês, tirados dos ${fmt(anterior)} que vieram do anterior.`}</p>`;
     })()}
     <div class="quick-add">
       <button class="qa qa-desp" data-novo="Despesa"><span data-ico="plus"></span>Despesa</button>
