@@ -461,11 +461,11 @@ const Auth = {
         <div class="btn-row"><button class="btn ghost" id="lock-back">Voltar</button></div>
       </div>`;
     document.getElementById('lock-back').onclick = () => this.showLock(onDone);
-    document.getElementById('lock-wipe').onclick = () => {
+    // Mesmo caminho de limpeza usado em Configurações: antes daqui saíam só três
+    // chaves e sobravam login, preferências e cache — o app voltava pela metade.
+    document.getElementById('lock-wipe').onclick = async () => {
       if (!confirm('Apagar TODOS os dados locais deste aparelho? (a nuvem, se configurada, não é afetada)')) return;
-      localStorage.removeItem(DB_KEY);
-      localStorage.removeItem(this.key);
-      localStorage.removeItem(DB.ROTULO_KEY);
+      await DB.apagarTudo();
       location.reload();
     };
   },

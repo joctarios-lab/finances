@@ -340,6 +340,42 @@ const DB = {
     this.save();
   },
 
+  /* Apaga tudo o que o app guarda neste aparelho.
+     Existe porque "limpar dados do app" nas configurações do Android não resolve:
+     o app instalado é só um atalho (WebAPK) e o armazenamento pertence ao
+     navegador, na origem do site — a limpeza do sistema não o alcança.
+
+     Varre as chaves em vez de listá-las uma a uma: módulo novo que grave
+     "financas.*" já entra aqui sozinho, sem ninguém lembrar de atualizar a lista. */
+  async apagarTudo() {
+    const varrer = dep => {
+      try {
+        const chaves = [];
+        for (let i = 0; i < dep.length; i++) chaves.push(dep.key(i));
+        for (const k of chaves) if (k && k.startsWith('financas')) dep.removeItem(k);
+      } catch (_) {}
+    };
+    varrer(localStorage);
+    if (typeof sessionStorage !== 'undefined') varrer(sessionStorage);
+
+    // Sem limpar o cache e o service worker, o aparelho reabre na versão antiga
+    try {
+      if (typeof caches !== 'undefined') {
+        const nomes = await caches.keys();
+        await Promise.all(nomes.map(n => caches.delete(n)));
+      }
+    } catch (_) {}
+    try {
+      if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r => r.unregister()));
+      }
+    } catch (_) {}
+
+    this.data = null; this.key = null; this._encBlob = null; this.locked = false;
+    return true;
+  },
+
   /* ---------- Dados de fábrica ---------- */
   // Gasto do período dividido em Necessidades x Desejos (base da regra 50/30/20).
   spentByKind(period) {

@@ -3,12 +3,17 @@ const fs = require('fs');
 const BASE = 'D:/Projetos/meus-projetos/financas/';
 
 // ---- stubs mínimos de navegador ----
-const store = {};
-global.localStorage = {
-  getItem: k => (k in store ? store[k] : null),
-  setItem: (k, v) => { store[k] = String(v); },
-  removeItem: k => { delete store[k]; },
-};
+// key/length existem porque DB.apagarTudo varre as chaves em vez de listá-las
+const armazem = base => ({
+  getItem: k => (k in base ? base[k] : null),
+  setItem: (k, v) => { base[k] = String(v); },
+  removeItem: k => { delete base[k]; },
+  key: i => Object.keys(base)[i] ?? null,
+  get length() { return Object.keys(base).length; },
+});
+const store = {}, sessao = {};
+global.localStorage = armazem(store);
+global.sessionStorage = armazem(sessao);
 global.crypto = { randomUUID: () => 'id-' + Math.random().toString(36).slice(2, 12) };
 
 // DOM falso com registro por seletor: permite preencher campos e "clicar" nos botões,
@@ -783,5 +788,55 @@ check('push_subscriptions com RLS', /alter table push_subscriptions enable row l
 check('notification_log com RLS', /alter table notification_log enable row level security/i.test(schema), true);
 check('função is_member definida antes das policies', schema.indexOf('function is_member') < schema.indexOf('create policy'), true);
 
-console.log(`\n${fail === 0 ? '✅ TUDO CERTO' : '❌ PROBLEMAS ENCONTRADOS'} — ${ok} passaram, ${fail} falharam\n`);
-process.exit(fail ? 1 : 0);
+/* ---- Apagar de verdade ----
+   "Limpar dados do app" nas configurações do Android não alcança o
+   armazenamento (o app instalado é só um atalho), então a limpeza precisa
+   existir dentro do app e não pode esquecer nenhuma chave. */
+(async () => {
+  console.log('\n=== Apagar dados deste aparelho ===');
+
+  const dadosAntes = DB.data, storeAntes = { ...store };
+  store['financas.v1'] = '{}';
+  store['financas.sync.v1'] = '{"refresh_token":"abc"}';
+  store['financas.auth.v1'] = '{"pin":1}';
+  store['financas.ui.v1'] = '{"tab":"extrato"}';
+  store['financas.notif.v1'] = '{}';
+  store['financas.rotulo'] = 'Família';
+  store['outro-app.dados'] = 'não é meu';
+  sessao['financas.sessao'] = '{"k":"x"}';
+
+  const apagados = [];
+  let swFora = 0;
+  global.caches = { keys: async () => ['financas-19', 'financas-18'], delete: async n => { apagados.push(n); return true; } };
+  global.navigator.serviceWorker = { getRegistrations: async () => [{ unregister: async () => { swFora++; return true; } }] };
+
+  await DB.apagarTudo();
+
+  const sobrou = Object.keys(store).filter(k => k.startsWith('financas'));
+  check('nenhuma chave do app sobra', sobrou.length ? sobrou.join(', ') : true, true);
+  check('login na nuvem também é apagado', store['financas.sync.v1'] === undefined, true);
+  check('PIN e digital também são apagados', store['financas.auth.v1'] === undefined, true);
+  check('não mexe no que é de outro app', store['outro-app.dados'], 'não é meu');
+  check('sessão da aba é encerrada', sessao['financas.sessao'] === undefined, true);
+  check('cache do app é descartado', apagados.length, 2);
+  check('service worker é desregistrado', swFora, 1);
+  check('memória do app fica vazia', DB.data === null && DB.key === null, true);
+
+  // Um único caminho de limpeza: "Esqueci o PIN" apagava só 3 chaves e deixava o resto
+  const auW = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+  const apW = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('esqueci o PIN usa a limpeza completa', auW.includes('DB.apagarTudo()'), true);
+  check('não sobrou limpeza parcial por chave solta', !/removeItem\(DB_KEY\)/.test(auW), true);
+  check('configurações têm a opção de apagar', apW.includes(`data-go="reset"`) && apW.includes(`sec === 'reset'`), true);
+  check('a tela explica por que o Android não resolve', /WebAPK|é um atalho|é só um atalho/.test(apW), true);
+  check('apagar exige digitar a confirmação', /rs-conf[\s\S]{0,900}!== 'APAGAR'/.test(apW), true);
+  check('oferece backup antes de apagar', apW.includes('rs-export'), true);
+  check('avisa que a nuvem não é afetada', apW.includes('a nuvem não é afetada'), true);
+
+  DB.data = dadosAntes;   // devolve o cenário caso mais algo rode depois
+  for (const k of Object.keys(store)) delete store[k];
+  Object.assign(store, storeAntes);
+
+  console.log(`\n${fail === 0 ? '✅ TUDO CERTO' : '❌ PROBLEMAS ENCONTRADOS'} — ${ok} passaram, ${fail} falharam\n`);
+  process.exit(fail ? 1 : 0);
+})();

@@ -1880,6 +1880,7 @@ function openConfig() {
     <div class="settings-item" data-go="notif"><span class="cfg-left"><span class="cfg-ico" data-ico="bell"></span><span>Notificações<br><small>${Notif.enabled() ? 'Ativas — faturas, orçamentos e metas' : 'Desativadas'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="security"><span class="cfg-left"><span class="cfg-ico" data-ico="shield"></span><span>Segurança<br><small>${Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'Sem proteção local'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="backup"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Backup (exportar / importar)<br><small>Arquivo JSON local</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item danger-item" data-go="reset"><span class="cfg-left"><span class="cfg-ico t-danger" data-ico="trash"></span><span>Apagar dados deste aparelho<br><small>limpar pelas configurações do celular não funciona</small></span></span><span class="chev" data-ico="chev"></span></div>
   `);
   $('#md-close').onclick = closeModal;
   document.querySelectorAll('[data-go]').forEach(el => el.onclick = () => openConfigSection(el.dataset.go));
@@ -2186,6 +2187,42 @@ function openConfigSection(sec) {
       if (!confirm('Importar substitui TODOS os dados locais atuais. Continuar?')) return;
       try { DB.importJSON(await f.text()); toast('Backup importado ✓'); closeModal(); }
       catch (err) { toast('Falha: ' + err.message); }
+    };
+  }
+
+  if (sec === 'reset') {
+    const naNuvem = Sync.hasFamily();
+    openModal(`
+      <div class="modal-title">Apagar dados deste aparelho<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+      <div class="callout warn">
+        <b>Por que “limpar dados” do celular não resolve</b>
+        <p>O app instalado é um atalho: quem guarda as informações é o navegador, na origem do site.
+        A limpeza feita pelas configurações do Android apaga o atalho, não o armazenamento — por isso os dados voltam a aparecer.
+        O botão abaixo apaga de verdade.</p>
+      </div>
+      <p class="muted" style="margin:12px 0">Serão apagados deste aparelho: lançamentos, contas, cartões, categorias, metas, PIN, digital, login e o cache do app.</p>
+      ${naNuvem ? `<div class="callout info"><b>Atenção: a nuvem não é afetada</b>
+        <p>Os dados da família continuam no servidor. Se você entrar de novo com a mesma conta, eles voltam para cá — que é o esperado ao trocar de aparelho.
+        Para começar do zero de verdade, apague também pelo painel do Supabase.</p></div>` : ''}
+      <div class="field" style="margin-top:14px"><label>Digite <b>APAGAR</b> para confirmar</label><input id="rs-conf" placeholder="APAGAR" autocomplete="off"></div>
+      <button class="btn ghost" id="rs-export" style="margin-bottom:10px">⬇ Antes disso, exportar um backup</button>
+      <button class="btn danger" id="rs-go" disabled>Apagar tudo deste aparelho</button>
+    `);
+    $('#md-back').onclick = openConfig;
+    const conf = $('#rs-conf'), botao = $('#rs-go');
+    conf.oninput = () => { botao.disabled = conf.value.trim().toUpperCase() !== 'APAGAR'; };
+    $('#rs-export').onclick = () => {
+      const blob = new Blob([DB.exportJSON()], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `financas-backup-${todayISO()}.json`;
+      a.click();
+    };
+    botao.onclick = async () => {
+      if (conf.value.trim().toUpperCase() !== 'APAGAR') return;
+      botao.disabled = true; botao.textContent = 'Apagando…';
+      await DB.apagarTudo();
+      location.reload();
     };
   }
 }

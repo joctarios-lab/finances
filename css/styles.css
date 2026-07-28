@@ -698,6 +698,24 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 }
 .settings-item .chev { color: #c4cad4; }
 .settings-item .chev svg { width: 16px; height: 16px; }
+/* Ação destrutiva: vestida de vermelho desde a lista, para não ser tocada por engano */
+.danger-item { border-color: rgba(241, 65, 108, .25); color: var(--red); }
+.danger-item:hover { border-color: var(--red); background: rgba(241, 65, 108, .03); }
+.danger-item small { color: rgba(241, 65, 108, .75); }
+/* precisa vir depois de .cfg-ico, senão o fundo neutro dela vence a tinta vermelha */
+.danger-item .cfg-ico { background: rgba(241, 65, 108, .1); color: var(--red); }
+
+/* Aviso em bloco dentro de folhas e modais */
+.callout {
+  border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+  border-left: 3px solid var(--paper-dim); background: var(--ink-3);
+}
+.callout b { display: block; font-size: 13px; margin-bottom: 4px; }
+.callout p { font-size: 12.5px; line-height: 1.55; color: var(--paper-dim); }
+.callout.warn { border-left-color: var(--red); background: rgba(241, 65, 108, .06); }
+.callout.warn b { color: var(--red); }
+.callout.info { border-left-color: var(--gold); background: rgba(0, 158, 247, .06); }
+.callout.info b { color: var(--gold); }
 
 .sheet-handle { width: 40px; height: 4px; border-radius: 2px; background: #dfe5ea; margin: -6px auto 14px; }
 
