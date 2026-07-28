@@ -2446,6 +2446,8 @@ function openSyncConfig() {
     <p class="muted">Conectado como <b>${esc(c.user_email || '')}</b></p>
     ${blocoConvite()}
     <button class="btn ghost" id="s-now" style="margin-top:10px">Sincronizar agora</button>
+    <button class="btn ghost" id="s-diag" style="margin-top:8px">Verificar conexão e banco</button>
+    <div id="s-diag-out"></div>
     <hr class="sep"><button class="btn danger" id="s-logout">Sair da conta</button>`;
 
   openModal(`<div class="modal-title">☁️ Sincronização<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>${body}`);
@@ -2501,6 +2503,22 @@ function openSyncConfig() {
     } catch (e) { toast(e.message); }
   });
   on('#s-now', async () => { try { await Sync.syncAll(); render(); } catch (_) {} });
+  on('#s-diag', async () => {
+    const caixa = $('#s-diag-out');
+    caixa.innerHTML = '<p class="muted" style="margin-top:10px">Verificando…</p>';
+    const linhas = await Sync.diagnosticar();
+    const ruins = linhas.filter(l => !l.ok);
+    caixa.innerHTML = `
+      <div class="diag">
+        ${linhas.map(l => `<div class="diag-row ${l.ok ? 'ok' : 'ruim'}">
+          <b>${l.ok ? '✓' : '✕'} ${esc(l.tabela)}</b><small>${esc(l.msg)}</small></div>`).join('')}
+      </div>
+      ${ruins.length ? `<div class="callout warn" style="margin-top:10px">
+        <b>O banco está atrás do app</b>
+        <p>Abra o Supabase → SQL Editor e rode o <b>supabase/schema.sql</b> deste projeto inteiro. Ele é seguro de rodar de novo: só cria o que falta.</p></div>`
+      : `<p class="muted" style="margin-top:10px">Tudo certo — o banco aceita todos os campos que o app usa.</p>`}
+      ${Sync._descartados ? `<p class="muted" style="margin-top:8px">⚠️ ${Sync._descartados} registro(s) antigo(s) com dado inválido ficaram de fora do envio. Abra o lançamento e salve de novo para corrigir.</p>` : ''}`;
+  });
   on('#s-logout', () => { if (confirm('Sair da conta? Os dados locais permanecem no aparelho.')) { Sync.signOut(); openSyncConfig(); } });
 }
 

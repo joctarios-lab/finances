@@ -14,7 +14,18 @@ const armazem = base => ({
 const store = {}, sessao = {};
 global.localStorage = armazem(store);
 global.sessionStorage = armazem(sessao);
-global.crypto = { randomUUID: () => 'id-' + Math.random().toString(36).slice(2, 12) };
+// uuid de verdade: o banco tem colunas uuid, e a auditoria de schema confere o formato
+global.crypto = {
+  randomUUID: () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  }),
+};
+// família de teste: precisa ser uuid, porque family_id é uuid no banco
+const FAM_TESTE = '11111111-1111-4111-8111-111111111111';
+const ID_ANTIGA = '22222222-2222-4222-8222-222222222222';
+const ID_NOVA = '33333333-3333-4333-8333-333333333333';
+const ID_FILHA = '44444444-4444-4444-8444-444444444444';
 
 // DOM falso com registro por seletor: permite preencher campos e "clicar" nos botões,
 // exercitando os fluxos reais do app (não só as funções de renderização).
@@ -275,7 +286,7 @@ try {
     idsFilhas.every(id => DB.data.categories.find(c => c.id === id).dirty === true), true);
 
   // Se o pai desaparece sem levar a filha, ela não pode sumir do relatório
-  const orfa = DB.upsert('categories', { name: 'Órfã', icon: '❓', parent_id: 'pai-que-nao-existe', monthly_budget: 0 });
+  const orfa = DB.upsert('categories', { name: 'Órfã', icon: '❓', parent_id: '99999999-9999-4999-8999-999999999999', monthly_budget: 0 });
   check('subcategoria sem pai vira o próprio envelope', DB.categoryRootId(orfa), orfa);
   check('e ainda tem um caminho legível', DB.categoryPath(orfa), 'Órfã');
   DB.remove('categories', orfa);
@@ -973,7 +984,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
     S.GIRO_MINIMO = 0;   // sem espera artificial: o teste quer o estado final
     S.cfg = {
       url: 'https://exemplo.supabase.co', anonKey: 'k', access_token: 'a',
-      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: 'fam-1',
+      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: FAM_TESTE,
     };
     S.saveCfg = () => {};
     global.navigator.onLine = true;
@@ -1010,6 +1021,229 @@ check('função is_member definida antes das policies', schema.indexOf('function
     check('e para ao terminar o envio', vistos[vistos.length - 1] !== 'sync', true);
   }
 
+  /* ---- Auditoria da sincronização inteira ----
+     Um PostgREST simulado com as regras reais do Postgres, alimentado pelo próprio
+     schema.sql. Serve para achar o que o app manda e o banco recusa — em QUALQUER
+     tabela, não só na que estourou por último. */
+  console.log('\n=== Auditoria: o banco aceita tudo o que o app envia? ===');
+  {
+    // --- 1. Le o schema de verdade: tipo, not null e presenca de default ---
+    const esquema = {};
+    const sql = fs.readFileSync(BASE + 'supabase/schema.sql', 'utf8');
+    for (const m of sql.matchAll(/create table if not exists (\w+) \(([\s\S]*?)\n\);/g)) {
+      const cols = {};
+      for (const linha of m[2].split('\n')) {
+        const t = linha.trim().replace(/,$/, '').replace(/\s*--.*$/, '');
+        const c = t.match(/^"?(\w+)"?\s+(uuid|text|numeric|date|boolean|timestamptz|jsonb|int|bigserial)\b/i);
+        if (!c) continue;
+        if (/^(primary|unique|foreign|constraint|check)$/i.test(c[1])) continue;
+        const pk = /primary key/i.test(t);
+      cols[c[1]] = { tipo: c[2].toLowerCase(), notNull: pk || /not null/i.test(t), temDefault: !pk && /default/i.test(t) };
+      }
+      esquema[m[1]] = cols;
+    }
+    for (const m of sql.matchAll(/alter table (\w+) add column if not exists (\w+) (uuid|text|numeric|date|boolean|timestamptz|jsonb|int)\b([^;]*);/gi)) {
+      const [, tab, col, tipo, resto] = m;
+      esquema[tab] = esquema[tab] || {};
+      esquema[tab][col] = { tipo: tipo.toLowerCase(), notNull: /not null/i.test(resto), temDefault: /default/i.test(resto) };
+    }
+
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const DATA = /^\d{4}-\d{2}-\d{2}$/;
+
+    // --- 2. Valida um valor contra a coluna, como o Postgres faria ---
+    const violacao = (tabela, col, valor) => {
+      const def = esquema[tabela] && esquema[tabela][col];
+      if (!def) return `PGRST204: coluna "${col}" não existe em ${tabela}`;
+      if (valor === null) {
+        return def.notNull ? `23502: ${tabela}.${col} é NOT NULL e recebeu null` : null;
+      }
+      switch (def.tipo) {
+        case 'uuid':
+          return UUID.test(String(valor)) ? null
+            : `22P02: ${tabela}.${col} é uuid e recebeu ${JSON.stringify(valor)}`;
+        case 'numeric': case 'int':
+          return (typeof valor === 'number' && Number.isFinite(valor)) ? null
+            : `22P02: ${tabela}.${col} é ${def.tipo} e recebeu ${JSON.stringify(valor)}`;
+        case 'date':
+          return DATA.test(String(valor)) ? null
+            : `22007: ${tabela}.${col} é date e recebeu ${JSON.stringify(valor)}`;
+        case 'boolean':
+          return typeof valor === 'boolean' ? null
+            : `22P02: ${tabela}.${col} é boolean e recebeu ${JSON.stringify(valor)}`;
+        case 'jsonb':
+          return (valor && typeof valor === 'object') ? null
+            : `22P02: ${tabela}.${col} é jsonb e recebeu ${JSON.stringify(valor)}`;
+        case 'timestamptz':
+          return isNaN(Date.parse(String(valor)))
+            ? `22007: ${tabela}.${col} é timestamptz e recebeu ${JSON.stringify(valor)}` : null;
+        default:
+          return typeof valor === 'string' ? null
+            : `22P02: ${tabela}.${col} é text e recebeu ${JSON.stringify(valor)}`;
+      }
+    };
+
+    // --- 3. Um registro inteiro, com as regras de NOT NULL sem default ---
+    const conferirRegistro = (tabela, obj) => {
+      const erros = [];
+      for (const [col, valor] of Object.entries(obj)) {
+        const v = violacao(tabela, col, valor);
+        if (v) erros.push(v);
+      }
+      for (const [col, def] of Object.entries(esquema[tabela] || {})) {
+        if (def.notNull && !def.temDefault && !(col in obj) && col !== 'id') {
+          erros.push(`23502: ${tabela}.${col} é obrigatório e não foi enviado`);
+        }
+      }
+      return erros;
+    };
+
+    check('schema lido para todas as tabelas sincronizadas',
+      Object.keys(SYNC).every(t => esquema[t] && Object.keys(esquema[t]).length > 4), true);
+
+    /* O mapa COLUNAS do sync.js declara tipo e nulidade de cada coluna. Se ele
+       divergir do schema, o higienizador manda null onde não pode — ou deixa de
+       mandar onde deveria. Aqui os dois são confrontados coluna por coluna. */
+    {
+      const fonte = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
+      const bloco = fonte.match(/const COLUNAS = \{([\s\S]*?)\n\};/)[1];
+      const mapa = {};
+      for (const m of bloco.matchAll(/(\w+): '(\w+)([!#]?)'/g)) mapa[m[1]] = { tipo: m[2], marca: m[3] };
+      check('mapa de colunas foi lido', Object.keys(mapa).length > 20, true);
+
+      const equivale = { uuid: 'uuid', num: 'numeric', int: 'int', date: 'date', bool: 'boolean', json: 'jsonb', ts: 'timestamptz', text: 'text' };
+      const divergencias = [];
+      for (const [tabela, cols] of Object.entries(SYNC)) {
+        for (const col of [...cols, 'id', 'family_id', 'updated_at', 'deleted']) {
+          const real = esquema[tabela] && esquema[tabela][col];
+          if (!real) continue;
+          const decl = mapa[col] || { tipo: 'text', marca: '' };
+          if (equivale[decl.tipo] !== real.tipo) {
+            divergencias.push(`${tabela}.${col}: mapa diz ${decl.tipo}, banco tem ${real.tipo}`);
+            continue;
+          }
+          // text/bool/json nunca produzem null, então não precisam de marca
+          if (['text', 'bool', 'json'].includes(decl.tipo)) continue;
+          const esperada = !real.notNull ? '' : real.temDefault ? '#' : '!';
+          if (decl.marca !== esperada) {
+            divergencias.push(`${tabela}.${col}: marca "${decl.marca}" mas o banco pede "${esperada}"`);
+          }
+        }
+      }
+      check('mapa de tipos concorda com o schema', divergencias.length ? divergencias.slice(0, 3).join(' | ') : true, true);
+    }
+
+    // --- 4. O PostgREST falso: aplica as mesmas recusas do servico real ---
+    const recusas = [];
+    const respostaErro = msg => ({
+      ok: false, status: 400, json: async () => ({}),
+      text: async () => JSON.stringify({ code: msg.split(':')[0], message: msg }),
+    });
+    const postgrestFalso = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('/auth/v1/')) {
+        return { ok: true, status: 200, text: async () => '', json: async () => ({
+          access_token: 'a', refresh_token: 'r', expires_in: 3600, user: { id: 'u-1', email: 'a@b.c' } }) };
+      }
+      const tabela = (u.match(/\/rest\/v1\/(\w+)/) || [])[1];
+      if (!opts || opts.method === 'GET') return { ok: true, status: 200, json: async () => [], text: async () => '' };
+      if (opts.method === 'POST' && opts.body) {
+        const corpo = JSON.parse(opts.body);
+        const lote = Array.isArray(corpo) ? corpo : [corpo];
+        // Regra do PostgREST em insercao em lote
+        const assinaturas = new Set(lote.map(o => Object.keys(o).sort().join(',')));
+        if (lote.length > 1 && assinaturas.size > 1) {
+          const msg = `PGRST102: All object keys must match (${tabela})`;
+          recusas.push(msg); return respostaErro(msg);
+        }
+        for (const obj of lote) {
+          const erros = conferirRegistro(tabela, obj);
+          if (erros.length) { recusas.push(...erros); return respostaErro(erros[0]); }
+        }
+      }
+      return { ok: true, status: 200, json: async () => [], text: async () => '' };
+    };
+
+    // --- 5. Base realista: registro atual, registro de versao antiga e apagado ---
+    const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S.saveCfg = () => {}; S.GIRO_MINIMO = 0;
+    S.cfg = { url: 'https://x.supabase.co', anonKey: 'k', access_token: 'a',
+      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: FAM_TESTE };
+
+    const uid = () => DB.uuid();
+    const env = extra => ({ id: uid(), updated_at: DB.now(), deleted: false, dirty: true, ...extra });
+    const hojeISO = iso(new Date());
+    const contaId = uid(), cartaoId = uid(), metaId = uid(), envelopeId = uid();
+
+    const dadosAntes = DB.data;
+    DB.data = {
+      meta: { seeded: true, lastSync: null },
+      accounts: [
+        env({ id: contaId, name: 'Conta', type: 'Conta Corrente', institution: '', balance: 1000, active: true, is_reserve: false }),
+        env({ name: 'Antiga', type: 'Poupança', balance: 50, active: true }),           // versão sem is_reserve/institution
+      ],
+      cards: [
+        env({ id: cartaoId, name: 'Cartão', brand: '', limit_amount: 5000, closing_day: 25, due_day: 5, account_id: contaId, active: true }),
+        env({ name: 'Sem conta', brand: '', limit_amount: 0, closing_day: 1, due_day: 10, account_id: null, active: true }),
+      ],
+      categories: [
+        env({ id: envelopeId, name: 'Alimentação', icon: '🍽️', scope: 'Família', monthly_budget: 900, kind: 'Essencial', parent_id: null }),
+        env({ name: 'Mercado', icon: '🍽️', scope: 'Família', monthly_budget: 0, kind: 'Essencial', parent_id: envelopeId }),
+        env({ name: 'Legado', icon: '🏷️', scope: 'Família', monthly_budget: 10, kind: 'Essencial' }),   // sem parent_id
+      ],
+      transactions: [
+        env({ description: 'Mercado', amount: 120.5, date: hojeISO, scope: 'Família', member: 'Comum / Família',
+          method: 'Débito', status: 'Pago', recurring: false, category_id: envelopeId, account_id: contaId,
+          card_id: null, to_account: null, invoice_key: '', notes: '', type: 'Despesa', fitid: '',
+          group_id: null, installment: '', adjustment: false }),
+        env({ description: 'Antigo', amount: 30, date: hojeISO, scope: 'Família', member: '', method: 'PIX',
+          status: 'Pago', recurring: false, category_id: null, account_id: contaId }),   // versão sem type/fitid/etc
+        env({ description: 'Apagado', amount: 9, date: hojeISO, scope: 'Família', member: '', method: 'PIX',
+          status: 'Pago', recurring: false, type: 'Despesa', account_id: contaId, deleted: true }),
+      ],
+      goals: [
+        env({ id: metaId, name: 'Viagem', icon: '✈️', target_amount: 8000, target_date: null, done: false, kind: 'Objetivo' }),
+        env({ name: 'Meta antiga', icon: '🎯', target_amount: 100, done: false }),
+      ],
+      goal_entries: [
+        env({ goal_id: metaId, description: 'Aporte', amount: 200, date: hojeISO, from_account: contaId, to_account: contaId }),
+        env({ goal_id: metaId, description: 'Aporte', amount: 50, date: hojeISO }),
+      ],
+      invoice_status: [env({ invoice_key: cartaoId + ':2026-07', paid: true })],
+      family_settings: [
+        env({ members: ['Ana', 'Carlos'], month_start_day: 1, monthly_income: 9000, family_name: 'Casa' }),
+      ],
+    };
+
+    const totalPendente = S.pendentes();
+    global.navigator.onLine = true;
+    global.fetch = postgrestFalso;
+
+    let falhou = null;
+    await S.syncAll(false).catch(e => { falhou = e.message; });
+
+    check('sincronização completa sem recusa do banco', falhou, null);
+    check('nenhuma violação de schema em nenhuma tabela', recusas.length ? recusas.slice(0, 3).join(' | ') : true, true);
+    check('todos os registros pendentes foram enviados', totalPendente > 10 && S.pendentes() === 0, true);
+    clearTimeout(S._debounce);
+
+    /* --- 6. E o que os fluxos reais do app gravaram? ---
+       O cenário montado no começo deste arquivo passou por openTxSheet, aportes,
+       transferência, conciliação e importação. Se algum deles gravar '' num campo
+       uuid, o Postgres recusa o lote inteiro — e nada mais sincroniza. */
+    DB.data = dadosAntes;
+    const problemasReais = [];
+    for (const [tabela, cols] of Object.entries(SYNC)) {
+      for (const r of DB.data[tabela] || []) {
+        const row = { id: r.id, family_id: FAM_TESTE, updated_at: r.updated_at, deleted: !!r.deleted };
+        for (const c of cols) if (r[c] !== undefined) row[c] = r[c];
+        for (const e of conferirRegistro(tabela, row)) problemasReais.push(`${r.description || r.name || r.id}: ${e}`);
+      }
+    }
+    check('o que os fluxos do app gravaram é aceito pelo banco',
+      problemasReais.length ? problemasReais.slice(0, 4).join(' | ') : true, true);
+  }
+
   /* ---- Lote de envio precisa ter chaves uniformes ----
      O Supabase recusa com 400 PGRST102 quando os objetos de um POST em lote não
      têm as mesmas chaves. Aqui o fetch falso reproduz essa recusa. */
@@ -1019,7 +1253,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
     S.saveCfg = () => {}; S.GIRO_MINIMO = 0;
     S.cfg = {
       url: 'https://exemplo.supabase.co', anonKey: 'k', access_token: 'a',
-      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: 'fam-1',
+      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: FAM_TESTE,
     };
 
     const dadosAntes = DB.data;
@@ -1030,9 +1264,9 @@ check('função is_member definida antes das policies', schema.indexOf('function
       meta: { seeded: true, lastSync: null },
       accounts: [], cards: [], transactions: [], goals: [], goal_entries: [], invoice_status: [], family_settings: [],
       categories: [
-        { id: 'c-antiga', name: 'Alimentação / Mercado', icon: '🍽️', scope: 'Família', monthly_budget: 1500, kind: 'Essencial', ...envelope },
-        { id: 'c-nova', name: 'Pets', icon: '🐾', scope: 'Família', monthly_budget: 150, kind: 'Essencial', parent_id: null, ...envelope },
-        { id: 'c-filha', name: 'Ração', icon: '🐾', scope: 'Família', monthly_budget: 0, kind: 'Essencial', parent_id: 'c-nova', ...envelope },
+        { id: ID_ANTIGA, name: 'Alimentação / Mercado', icon: '🍽️', scope: 'Família', monthly_budget: 1500, kind: 'Essencial', ...envelope },
+        { id: ID_NOVA, name: 'Pets', icon: '🐾', scope: 'Família', monthly_budget: 150, kind: 'Essencial', parent_id: null, ...envelope },
+        { id: ID_FILHA, name: 'Ração', icon: '🐾', scope: 'Família', monthly_budget: 0, kind: 'Essencial', parent_id: ID_NOVA, ...envelope },
       ],
     };
 
@@ -1062,12 +1296,197 @@ check('função is_member definida antes das policies', schema.indexOf('function
     check('cada lote tem chaves uniformes',
       enviados.every(l => new Set(l.map(o => Object.keys(o).sort().join(','))).size === 1), true);
     check('registro antigo não ganha parent_id nulo à força',
-      enviados.flat().find(o => o.id === 'c-antiga').parent_id === undefined, true);
-    check('a filha leva o pai', enviados.flat().find(o => o.id === 'c-filha').parent_id, 'c-nova');
+      enviados.flat().find(o => o.id === ID_ANTIGA).parent_id === undefined, true);
+    check('a filha leva o pai', enviados.flat().find(o => o.id === ID_FILHA).parent_id, ID_NOVA);
     check('nada fica pendente depois do envio', S.pendentes(), 0);
 
     DB.data = dadosAntes;
     clearTimeout(S._debounce);
+  }
+
+  /* ---- Dados gravados por versões antigas do app ----
+     O formulário usava '' para "nada escolhido", e o banco tem uuid e date nessas
+     colunas. Um registro assim recusava o lote e travava tudo. */
+  console.log('\n=== Base com dados de versões antigas ===');
+  {
+    const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S.saveCfg = () => {}; S.GIRO_MINIMO = 0;
+    S.cfg = { url: 'https://x.supabase.co', anonKey: 'k', access_token: 'a',
+      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: FAM_TESTE };
+
+    const uu = () => DB.uuid();
+    const contaOk = uu(), metaOk = uu();
+    const dadosAntes = DB.data;
+    const base = extra => ({ id: uu(), updated_at: DB.now(), deleted: false, dirty: true, ...extra });
+    DB.data = {
+      meta: { seeded: true, lastSync: null },
+      accounts: [base({ name: 'Conta', type: 'Conta Corrente', balance: 100, active: true })],
+      cards: [base({ name: 'Cartão', account_id: '', limit_amount: '', closing_day: '25', due_day: '5', active: true })],
+      categories: [base({ name: 'Mercado', icon: '🛒', scope: 'Família', monthly_budget: '', kind: 'Essencial', parent_id: '' })],
+      transactions: [
+        base({ description: 'Compra antiga', amount: '120.50', date: '2026-07-10', scope: 'Família', member: '',
+          method: 'Débito', status: 'Pago', category_id: '', account_id: contaOk, card_id: '', group_id: '', to_account: '',
+          recurring: 0, adjustment: '', type: 'Despesa', invoice_key: '', installment: '' }),
+        base({ description: 'Sem data', amount: 10, date: '', scope: 'Família', method: 'PIX', status: 'Pago', type: 'Despesa' }),
+      ],
+      goals: [base({ id: metaOk, name: 'Viagem', icon: '✈️', target_amount: '', target_date: '', done: false })],
+      goal_entries: [base({ goal_id: metaOk, description: 'Aporte', amount: 200, date: '2026-07-11', from_account: '', to_account: '' })],
+      invoice_status: [base({ invoice_key: 'x:2026-07', paid: 1 })],
+      family_settings: [base({ members: ['Ana'], month_start_day: '1', monthly_income: '', family_name: 'Casa' })],
+    };
+
+    // Mesmo PostgREST rigoroso da auditoria, montado de novo aqui
+    const recusas2 = [], enviados2 = [];
+    global.navigator.onLine = true;
+    global.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('/auth/v1/')) return { ok: true, status: 200, text: async () => '', json: async () => ({}) };
+      if (!opts || opts.method === 'GET') return { ok: true, status: 200, json: async () => [], text: async () => '' };
+      const tabela = (u.match(/\/rest\/v1\/(\w+)/) || [])[1];
+      const lote = JSON.parse(opts.body);
+      enviados2.push(lote);
+      const assinaturas = new Set(lote.map(o => Object.keys(o).sort().join(',')));
+      if (lote.length > 1 && assinaturas.size > 1) { recusas2.push(`${tabela}: chaves diferentes`); }
+      for (const o of lote) {
+        for (const [k, v] of Object.entries(o)) {
+          const eUuid = /(^id$|_id$|^family_id$|^to_account$|^from_account$)/.test(k);
+          if (eUuid && v !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(v))) {
+            recusas2.push(`${tabela}.${k} = ${JSON.stringify(v)} não é uuid`);
+          }
+          if (/^(date|target_date)$/.test(k) && v !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+            recusas2.push(`${tabela}.${k} = ${JSON.stringify(v)} não é data`);
+          }
+          if (/^(amount|balance|monthly_budget|limit_amount|target_amount|monthly_income)$/.test(k) && typeof v !== 'number' && v !== null) {
+            recusas2.push(`${tabela}.${k} = ${JSON.stringify(v)} não é número`);
+          }
+        }
+      }
+      return { ok: true, status: 200, json: async () => [], text: async () => '' };
+    };
+
+    let erro2 = null;
+    const res = await S.syncAll(false).catch(e => { erro2 = e.message; return null; });
+    check('base suja sincroniza sem erro', erro2, null);
+    check('nada inválido chegou ao banco', recusas2.length ? recusas2.slice(0, 3).join(' | ') : true, true);
+
+    const todos = enviados2.flat();
+    const compra = todos.find(o => o.description === 'Compra antiga');
+    check('"" em uuid virou null', compra.category_id === null && compra.card_id === null, true);
+    check('"120.50" virou número', compra.amount, 120.5);
+    check('0 em booleano virou false', compra.recurring, false);
+    check('"" em booleano virou false', compra.adjustment, false);
+    const cartao = todos.find(o => o.name === 'Cartão');
+    check('"" em uuid de conta virou null', cartao.account_id === null, true);
+    check('"25" em inteiro virou 25', cartao.closing_day, 25);
+    // limit_amount é NOT NULL com default: null seria recusado, então a coluna sai
+    // do envio e o banco preenche o default. Comparar com 0 esconderia null.
+    check('"" em NOT NULL com default sai do envio', 'limit_amount' in cartao, false);
+    const meta = todos.find(o => o.name === 'Viagem');
+    check('"" em data opcional virou null', meta.target_date === null, true);
+    check('"" em NOT NULL com default não vira null',
+      todos.every(o => !('limit_amount' in o && o.limit_amount === null) &&
+                       !('monthly_budget' in o && o.monthly_budget === null) &&
+                       !('balance' in o && o.balance === null)), true);
+    const cfg = todos.find(o => o.family_name === 'Casa');
+    check('membros seguem como lista', Array.isArray(cfg.members), true);
+    // O lançamento sem data não tem conserto (date é NOT NULL): sai de fora,
+    // mas não pode impedir o resto de subir
+    check('registro sem conserto fica de fora', S._descartados, 1);
+    check('e todo o resto foi enviado', res && res.enviados, 8);
+    check('nada mais fica pendente além do descartado', S.pendentes(), 1);
+
+    DB.data = dadosAntes;
+    clearTimeout(S._debounce);
+  }
+
+  /* ---- Uma tabela com problema não pode parar as outras ----
+     Era isso que dava a impressão de que "a sincronização inteira parou": a
+     função abortava na primeira recusa e nem chegava nas demais tabelas. */
+  console.log('\n=== Falha em uma tabela não derruba o resto ===');
+  {
+    const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S.saveCfg = () => {}; S.GIRO_MINIMO = 0;
+    S.cfg = { url: 'https://x.supabase.co', anonKey: 'k', access_token: 'a',
+      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: FAM_TESTE };
+
+    const dadosAntes = DB.data;
+    const b = extra => ({ id: DB.uuid(), updated_at: DB.now(), deleted: false, dirty: true, ...extra });
+    DB.data = {
+      meta: { seeded: true, lastSync: null },
+      accounts: [b({ name: 'Conta', type: 'Conta Corrente', balance: 10, active: true })],
+      cards: [], goals: [], goal_entries: [], invoice_status: [], family_settings: [],
+      // categories recusada pelo servidor (simula coluna faltando no banco)
+      categories: [b({ name: 'Mercado', icon: '🛒', scope: 'Família', monthly_budget: 10, kind: 'Essencial', parent_id: null })],
+      transactions: [b({ description: 'Pão', amount: 8, date: '2026-07-12', scope: 'Família', method: 'PIX', status: 'Pago', type: 'Despesa' })],
+    };
+
+    const tabelasEnviadas = [];
+    global.navigator.onLine = true;
+    global.fetch = async (url, opts) => {
+      const u = String(url);
+      const tabela = (u.match(/\/rest\/v1\/(\w+)/) || [])[1];
+      if (opts && opts.method === 'POST') {
+        tabelasEnviadas.push(tabela);
+        if (tabela === 'categories') {
+          return { ok: false, status: 400, json: async () => ({}),
+            text: async () => JSON.stringify({ code: 'PGRST204', message: "Could not find the 'parent_id' column of 'categories' in the schema cache" }) };
+        }
+      }
+      return { ok: true, status: 200, json: async () => [], text: async () => '' };
+    };
+
+    let msg = null;
+    const r = await S.syncAll(false).catch(e => { msg = e.message; return null; });
+    check('a falha é reportada', !!msg, true);
+    check('a mensagem nomeia a tabela', /categories/.test(msg), true);
+    check('e diz o que fazer', /schema\.sql/.test(msg), true);
+    check('as outras tabelas foram enviadas mesmo assim',
+      tabelasEnviadas.includes('accounts') && tabelasEnviadas.includes('transactions'), true);
+    check('o que subiu deixou de estar pendente', DB.data.transactions[0].dirty === undefined, true);
+    check('só a tabela recusada continua pendente', S.pendentes(), 1);
+    // Avançar o marcador esconderia para sempre o que não foi lido
+    check('marcador de leitura não avança com falha', DB.data.meta.lastSync, null);
+
+    DB.data = dadosAntes;
+    clearTimeout(S._debounce);
+  }
+
+  /* ---- Diagnóstico: o app precisa dizer o que está errado ---- */
+  console.log('\n=== Diagnóstico da sincronização ===');
+  {
+    const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S.saveCfg = () => {};
+
+    S.cfg = {};
+    check('sem configuração, aponta o servidor', (await S.diagnosticar())[0].tabela, 'servidor');
+    S.cfg = { url: 'https://x.supabase.co', anonKey: 'k' };
+    check('sem login, aponta a conta', (await S.diagnosticar())[0].tabela, 'conta');
+    S.cfg = { ...S.cfg, refresh_token: 'r', access_token: 'a', token_exp: Date.now() + 600000 };
+    check('sem família, aponta a família', (await S.diagnosticar())[0].tabela, 'família');
+
+    S.cfg.family_id = FAM_TESTE;
+    const pedidos = [];
+    global.fetch = async url => {
+      const u = String(url);
+      pedidos.push(u);
+      if (u.includes('categories')) {
+        return { ok: false, status: 400, json: async () => ({}),
+          text: async () => JSON.stringify({ code: 'PGRST204', message: "column categories.parent_id does not exist" }) };
+      }
+      return { ok: true, status: 200, json: async () => [], text: async () => '' };
+    };
+    const linhas = await S.diagnosticar();
+    check('verifica todas as tabelas', linhas.length, Object.keys(SYNC).length);
+    check('pede as colunas nome por nome', pedidos.some(u => u.includes('select=') && u.includes('parent_id')), true);
+    const cat = linhas.find(l => l.tabela === 'categories');
+    check('acha a tabela com problema', cat.ok, false);
+    check('e explica o que fazer', /schema\.sql/.test(cat.msg), true);
+    check('as saudáveis aparecem como ok', linhas.filter(l => l.ok).length, Object.keys(SYNC).length - 1);
+    check('diagnóstico não grava nada', pedidos.every(u => !u.includes('on_conflict')), true);
+
+    const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+    check('há botão de verificação na tela', ap.includes('s-diag') && ap.includes('Sync.diagnosticar()'), true);
+    check('avisa sobre registros descartados', ap.includes('Sync._descartados'), true);
   }
 
   /* ---- Login numa conta que já tem família ---- */

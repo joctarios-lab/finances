@@ -785,6 +785,20 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .chev-min { display: inline-flex; vertical-align: middle; color: #c4cad4; }
 .chev-min svg { width: 13px; height: 13px; }
 
+/* Diagnóstico da sincronização: uma linha por tabela, verde ou vermelha */
+.diag { margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.diag-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12.5px;
+}
+.diag-row:last-child { border-bottom: none; }
+.diag-row b { font-weight: 600; font-size: 12.5px; }
+.diag-row small { color: var(--paper-dim); text-align: right; word-break: break-word; max-width: 62%; }
+.diag-row.ok b { color: #47be7d; }
+.diag-row.ruim { background: rgba(241, 65, 108, .05); }
+.diag-row.ruim b { color: var(--red); }
+.diag-row.ruim small { color: var(--red); }
+
 /* Convite para a família: o código precisa parecer algo para compartilhar,
    não um detalhe técnico perdido em cinza no rodapé de uma tela de ajustes. */
 .convite {

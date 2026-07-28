@@ -13,6 +13,70 @@ const SYNC_TABLES = {
   family_settings: ['members', 'month_start_day', 'monthly_income', 'family_name'],
 };
 
+/* Tipo de cada coluna do banco, por nome (nenhum nome se repete com tipo
+   diferente — o teste confere isso contra o schema.sql).
+
+   Existe porque versões antigas do app gravaram '' onde o banco espera uuid ou
+   data: o formulário usava '' para "nada escolhido". O Postgres recusa ('' não é
+   uuid) e a recusa derruba o lote inteiro — um registro velho travava a
+   sincronização de tudo, em todas as tabelas.
+
+   O sufixo diz o que fazer quando o valor não tem conserto, e vem da nulidade
+   real da coluna no schema:
+     (nada) coluna aceita null      -> manda null
+     #      NOT NULL com default    -> omite a coluna e deixa o banco preencher
+     !      NOT NULL sem default    -> não há saída; o registro sai do lote
+
+   text, bool e json não levam sufixo porque nunca produzem null: viram '',
+   false e [] respectivamente, o que já satisfaz qualquer NOT NULL. */
+const COLUNAS = {
+  id: 'uuid!', family_id: 'uuid!', updated_at: 'ts#',
+  goal_id: 'uuid!',
+  category_id: 'uuid', account_id: 'uuid', card_id: 'uuid', to_account: 'uuid',
+  from_account: 'uuid', group_id: 'uuid', parent_id: 'uuid',
+  amount: 'num!',
+  balance: 'num#', monthly_budget: 'num#', limit_amount: 'num#',
+  target_amount: 'num#', monthly_income: 'num#',
+  closing_day: 'int#', due_day: 'int#', month_start_day: 'int#',
+  date: 'date!', target_date: 'date',
+  deleted: 'bool', active: 'bool', is_reserve: 'bool', recurring: 'bool',
+  adjustment: 'bool', paid: 'bool', done: 'bool',
+  members: 'json',
+};
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/* Devolve { ok:true, valor }, { omitir:true } ou { ok:false }.
+   ok:false só acontece em NOT NULL sem default: aí o registro sai do lote, em
+   vez de fazer o banco recusar todos os outros junto. */
+function higienizar(col, bruto) {
+  const decl = COLUNAS[col] || 'text';
+  const marca = /[!#]$/.test(decl) ? decl.slice(-1) : '';
+  const tipo = marca ? decl.slice(0, -1) : decl;
+  const semSaida = marca === '!' ? { ok: false } : marca === '#' ? { omitir: true } : { ok: true, valor: null };
+
+  switch (tipo) {
+    case 'uuid':
+      return (bruto && UUID_RE.test(String(bruto))) ? { ok: true, valor: String(bruto) } : semSaida;
+    case 'num': case 'int': {
+      if (bruto === null || bruto === undefined || bruto === '') return semSaida;
+      const n = tipo === 'int' ? parseInt(bruto, 10) : Number(bruto);
+      return Number.isFinite(n) ? { ok: true, valor: n } : semSaida;
+    }
+    case 'date':
+      return DATA_RE.test(String(bruto)) ? { ok: true, valor: String(bruto) } : semSaida;
+    case 'ts':
+      return isNaN(Date.parse(String(bruto))) ? semSaida : { ok: true, valor: String(bruto) };
+    case 'bool':
+      return { ok: true, valor: !!bruto };
+    case 'json':
+      return { ok: true, valor: (bruto && typeof bruto === 'object') ? bruto : [] };
+    default:
+      return { ok: true, valor: bruto == null ? '' : String(bruto) };
+  }
+}
+
 const Sync = {
   cfgKey: 'financas.sync.v1',
   cfg: null,
@@ -118,10 +182,29 @@ const Sync = {
     });
     if (!res.ok) {
       const t = await res.text().catch(() => '');
-      throw new Error(`Supabase ${res.status}: ${t.slice(0, 200)}`);
+      throw new Error(this.explicar(res.status, t, path));
     }
     if (res.status === 204) return null;
     return res.json().catch(() => null);
+  },
+
+  /* "Supabase 400: {code:PGRST102…}" não diz nem a tabela nem o que fazer.
+     Aqui a mensagem nomeia a tabela e, nos erros conhecidos, aponta a saída. */
+  explicar(status, corpo, path) {
+    const tabela = String(path).split('?')[0];
+    let dado = {};
+    try { dado = JSON.parse(corpo) || {}; } catch (_) {}
+    const codigo = dado.code || '';
+    const msg = dado.message || String(corpo).slice(0, 160);
+    if (codigo === 'PGRST204' || /column .* does not exist|schema cache/i.test(msg)) {
+      return `${tabela}: o banco não tem uma coluna que o app usa (${msg}). Abra o Supabase → SQL Editor e rode o supabase/schema.sql mais recente.`;
+    }
+    if (codigo === 'PGRST102') return `${tabela}: o servidor recusou o formato do envio — ${msg}`;
+    if (codigo === '23502') return `${tabela}: campo obrigatório vazio — ${msg}`;
+    if (codigo === '22P02' || codigo === '22007') return `${tabela}: valor de tipo inválido — ${msg}`;
+    if (codigo === '23503') return `${tabela}: referência para registro que não existe — ${msg}`;
+    if (status === 401 || status === 403) return `${tabela}: sem permissão (${status}). Entre na conta novamente em Configurações → Sincronização.`;
+    return `${tabela}: Supabase ${status} — ${msg}`;
   },
 
   // Cria a família e já vira membro dela numa operação só (função create_family no banco).
@@ -149,6 +232,27 @@ const Sync = {
     this.saveCfg();
   },
 
+  /* Testa cada tabela contra o servidor e diz, uma por uma, o que está errado.
+     Pede as colunas nome por nome no select: se alguma não existir no banco, o
+     PostgREST aponta exatamente qual — é o jeito de descobrir schema desatualizado
+     sem gravar nada. Existe porque "Falha ao sincronizar" sozinho não deixa agir. */
+  async diagnosticar() {
+    if (!this.configured()) return [{ tabela: 'servidor', ok: false, msg: 'URL e chave não configuradas' }];
+    if (!this.loggedIn()) return [{ tabela: 'conta', ok: false, msg: 'Não está conectado' }];
+    if (!this.hasFamily()) return [{ tabela: 'família', ok: false, msg: 'Nenhuma família selecionada' }];
+    const saida = [];
+    for (const [table, cols] of Object.entries(SYNC_TABLES)) {
+      try {
+        await this.rest(`${table}?select=${['id', 'family_id', 'updated_at', 'deleted', ...cols].join(',')}&limit=1`, { method: 'GET' });
+        const pend = (DB.data && (DB.data[table] || []).filter(r => r.dirty).length) || 0;
+        saida.push({ tabela: table, ok: true, msg: pend ? `${pend} a enviar` : 'em dia' });
+      } catch (e) {
+        saida.push({ tabela: table, ok: false, msg: e.message });
+      }
+    }
+    return saida;
+  },
+
   async syncAll(silencioso = false) {
     if (!this.hasFamily()) throw new Error('Configure a sincronização primeiro');
     if (this.busy) return null;
@@ -166,48 +270,82 @@ const Sync = {
       if (!silencioso) this.status('Sincronizando…');
       const fid = this.cfg.family_id;
 
+      /* Cada tabela é tratada por conta própria. Antes, uma tabela recusada
+         abortava a função e nada mais era enviado nem recebido — foi por isso que
+         um problema só nas categorias deu a impressão de que a sincronização
+         inteira havia parado. Agora as falhas são reunidas no fim. */
+      const falhas = [];
+      let descartados = 0;
+
       // PUSH: registros dirty
       for (const [table, cols] of Object.entries(SYNC_TABLES)) {
         const dirty = DB.data[table].filter(r => r.dirty);
         if (!dirty.length) continue;
-        enviados += dirty.length;
 
-        /* O PostgREST exige que todos os objetos de um lote tenham as MESMAS
-           chaves — senão responde 400 PGRST102 "All object keys must match".
+        /* Dois cuidados no mesmo lugar:
 
-           E os registros não têm as mesmas chaves: cada um leva só os campos que
-           possui, para que campo ausente assuma o default do banco em vez de virar
-           null (monthly_budget, name e outros são NOT NULL). Registro gravado por
-           uma versão antiga do app não conhece coluna nova nenhuma — foi o que
-           aconteceu quando parent_id entrou: categoria antiga sem a chave e
-           categoria nova com ela caíam no mesmo lote e a sincronização parava.
+           1. O PostgREST exige que todos os objetos de um lote tenham as MESMAS
+              chaves (400 PGRST102 "All object keys must match"). Os registros não
+              têm: cada um leva só os campos que possui, de propósito, para que
+              campo ausente assuma o default do banco em vez de virar null.
+              Registro gravado por versão antiga do app não conhece coluna nova.
+              Agrupar por assinatura de chaves deixa cada requisição uniforme.
 
-           Agrupar por assinatura de chaves resolve os dois lados: cada requisição
-           fica uniforme e cada registro continua enviando só o que tem. */
+           2. O valor precisa ser do tipo da coluna. '' não é uuid nem data, e o
+              Postgres recusa o lote todo por causa de um registro velho. */
         const lotes = new Map();
+        const enviaveis = [];
         for (const r of dirty) {
-          const row = { id: r.id, family_id: fid, updated_at: r.updated_at, deleted: !!r.deleted };
-          for (const c of cols) if (r[c] !== undefined) row[c] = r[c];
+          const row = {};
+          let vivo = true;
+          for (const [c, bruto] of [['id', r.id], ['family_id', fid], ['updated_at', r.updated_at], ['deleted', !!r.deleted]]) {
+            const h = higienizar(c, bruto);
+            if (h.omitir) continue;
+            if (!h.ok) { vivo = false; break; }
+            row[c] = h.valor;
+          }
+          if (vivo) {
+            for (const c of cols) {
+              if (r[c] === undefined) continue;      // ausente segue ausente: default do banco
+              const h = higienizar(c, r[c]);
+              if (h.omitir) continue;                // NOT NULL com default: o banco preenche
+              if (!h.ok) { vivo = false; break; }
+              row[c] = h.valor;
+            }
+          }
+          // Registro que nem higienizado serve fica de fora: um dado corrompido
+          // não pode impedir a família de sincronizar o resto.
+          if (!vivo) { descartados++; continue; }
+          enviaveis.push(r);
           const assinatura = Object.keys(row).sort().join(',');
           if (!lotes.has(assinatura)) lotes.set(assinatura, []);
           lotes.get(assinatura).push(row);
         }
-        for (const lote of lotes.values()) {
-          await this.rest(`${table}?on_conflict=id`, {
-            method: 'POST',
-            headers: { 'Prefer': 'resolution=merge-duplicates' },
-            body: JSON.stringify(lote),
-          });
+
+        try {
+          for (const lote of lotes.values()) {
+            await this.rest(`${table}?on_conflict=id`, {
+              method: 'POST',
+              headers: { 'Prefer': 'resolution=merge-duplicates' },
+              body: JSON.stringify(lote),
+            });
+          }
+          enviados += enviaveis.length;
+          for (const r of enviaveis) delete r.dirty;
+        } catch (e) {
+          falhas.push(e.message);   // segue para a próxima tabela
         }
-        for (const r of dirty) delete r.dirty;
       }
 
       // PULL: incremental por updated_at (inclui deletados para propagar remoções)
       const since = DB.data.meta.lastSync || '1970-01-01T00:00:00Z';
       for (const table of Object.keys(SYNC_TABLES)) {
-        const rows = await this.rest(
-          `${table}?family_id=eq.${fid}&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc&limit=2000`,
-          { method: 'GET' });
+        let rows;
+        try {
+          rows = await this.rest(
+            `${table}?family_id=eq.${fid}&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc&limit=2000`,
+            { method: 'GET' });
+        } catch (e) { falhas.push(e.message); continue; }
         for (const remote of rows || []) {
           const i = DB.data[table].findIndex(r => r.id === remote.id);
           const local = i >= 0 ? DB.data[table][i] : null;
@@ -220,8 +358,15 @@ const Sync = {
         }
       }
 
-      DB.data.meta.lastSync = DB.now();
+      // Avançar o marcador com alguma leitura falhada faria as linhas dessa
+      // tabela nunca mais serem buscadas: a próxima consulta já as ignoraria.
+      if (!falhas.length) DB.data.meta.lastSync = DB.now();
       DB.save();
+      if (descartados) this._descartados = descartados;
+      if (falhas.length) {
+        const unicas = [...new Set(falhas)];
+        throw new Error(unicas.slice(0, 2).join(' · ') + (unicas.length > 2 ? ` (+${unicas.length - 2})` : ''));
+      }
       this.cfg.lastOk = Date.now(); this.saveCfg();
       this._retry = 0; this._ultimoErro = null;
       if (silencioso) this.status(''); else this.status('Sincronizado ✓');
