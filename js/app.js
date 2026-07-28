@@ -70,15 +70,25 @@ const lerTagsFixas = () => tagsFixas;   // let de módulo: o teste precisa do va
 // escolha: reabrir o app num mês antigo é o que faz alguém ler o saldo errado.
 function persistUI() {
   try {
-    localStorage.setItem(UI_KEY, JSON.stringify({ tab: state.tab, tagsFixas }));
+    localStorage.setItem(UI_KEY, JSON.stringify({ tagsFixas }));
   } catch (_) {}
 }
 
+/* Abrir o app SEMPRE começa no Painel, qualquer que tenha sido a última tela.
+   Abrir é o momento de perguntar "como estamos?", e a resposta é o Painel —
+   cair em Relatórios ou Cartões porque foi lá que a sessão anterior terminou faz
+   o app parecer que guardou um estado que já não vale.
+
+   Bloquear e desbloquear dentro da mesma sessão não passa por aqui: state.tab
+   segue em memória, e voltar para onde se estava é o certo naquele caso.
+
+   As etiquetas fixadas continuam sendo lembradas: são decisão de quem lança
+   ("estou registrando os gastos da viagem"), não jeito de olhar a tela. */
 function restoreUI() {
   zerarEstadoDaTela();
+  state.tab = 'inicio';
   try {
     const s = JSON.parse(localStorage.getItem(UI_KEY));
-    if (s && TABS.includes(s.tab)) state.tab = s.tab;
     if (s && Array.isArray(s.tagsFixas)) tagsFixas = s.tagsFixas.filter(t => typeof t === 'string');
   } catch (_) {}
 }

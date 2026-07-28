@@ -1934,17 +1934,27 @@ console.log('\n=== Voltar para a tela zera o estado ===');
   check('redesenhar a mesma tela preserva o mês', state.monthOffset, -2);
   check('redesenhar a mesma tela preserva o filtro', state.filtros.membro, 'Joctã');
 
-  // Reabrir o app: lembra a aba, esquece mês e filtros
+  /* Reabrir o app começa SEMPRE no Painel. Abrir é o momento de perguntar "como
+     estamos?", e cair em Relatórios porque foi lá que a sessão anterior terminou
+     faz o app parecer que guardou um estado que já não vale. */
   state.tab = 'relatorios'; state.monthOffset = -4; state.filtros.membro = 'Joctã'; state.repOffset = -1;
   persistUI();
   restoreUI();
-  check('reabrir volta para a mesma aba', state.tab, 'relatorios');
+  check('reabrir começa no Painel', state.tab, 'inicio');
   check('reabrir mostra o mês corrente', state.monthOffset, 0);
   check('reabrir esquece o filtro de membro', state.filtros.membro, 'Todos');
   check('reabrir esquece o mês do relatório', state.repOffset, 0);
 
+  // Mesmo tendo terminado em outra aba, e mesmo várias vezes seguidas
+  for (const aba of ['extrato', 'cartoes', 'metas', 'relatorios']) {
+    state.tab = aba; persistUI(); restoreUI();
+    check(`terminando em ${aba}, reabre no Painel`, state.tab, 'inicio');
+  }
+
   const gravado = JSON.parse(store['financas.ui.v1']);
-  check('grava a aba e a fixação de etiqueta', Object.keys(gravado).sort().join(','), 'tab,tagsFixas');
+  check('a aba nem é gravada', Object.keys(gravado).join(','), 'tagsFixas');
+  const apA = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('o Painel é fixado ao abrir', /function restoreUI\(\)[\s\S]{0,400}state\.tab = 'inicio';/.test(apA), true);
   const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   check('não grava mais a cada rolagem', /addEventListener\('scroll'[\s\S]{0,120}persistUI/.test(ap), false);
   check('volta ao topo ao trocar de tela', /if \(trocou\) \{[\s\S]{0,140}scrollTo\(0, 0\)/.test(ap), true);
