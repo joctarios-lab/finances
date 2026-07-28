@@ -384,6 +384,37 @@ console.log('\n=== Primeiro acesso (ordem das etapas) ===');
   check('showFirstRun antigo foi removido', !au.includes('showFirstRun'), true);
 }
 
+console.log('\n=== App bloqueado (dados cifrados, DB.data nulo) ===');
+{
+  // Reproduz o estado real da tela de bloqueio: dados existem, mas ainda cifrados.
+  const salvo = DB.data;
+  DB.data = null; DB.locked = true;
+  const tentar = (nome, fn) => {
+    try { const r = fn(); check(nome, r !== undefined, true); }
+    catch (e) { console.log(` FALHA | ${nome.padEnd(52)} ${e.message}`); fail++; }
+  };
+  tentar('all() não estoura', () => DB.all('family_settings'));
+  tentar('get() não estoura', () => DB.get('accounts', 'qualquer'));
+  tentar('settings() devolve padrão', () => DB.settings());
+  tentar('familyName() não estoura', () => DB.familyName());
+  tentar('familyLabel() não estoura — o erro relatado', () => DB.familyLabel());
+  tentar('remove() é ignorado em silêncio', () => { DB.remove('accounts', 'x'); return true; });
+  check('settings bloqueado não inventa membros', DB.settings().members.length, 0);
+  check('gravar bloqueado é recusado com mensagem clara', (() => {
+    try { DB.upsert('accounts', { name: 'x' }); return 'gravou!'; }
+    catch (e) { return /bloqueados/i.test(e.message); }
+  })(), true);
+
+  // O rótulo fica fora da parte cifrada, para a tela de bloqueio cumprimentar pelo nome
+  DB.lembrarRotulo('Nossa Casa');
+  check('nome da família disponível mesmo bloqueado', DB.familyLabel(), 'Nossa Casa');
+  DB.lembrarRotulo('');
+  check('sem rótulo guardado, usa o neutro', DB.familyLabel(), 'Minha família');
+
+  DB.data = salvo; DB.locked = false;
+  check('destravado volta a ler dos dados', DB.settings().members !== undefined, true);
+}
+
 console.log('\n=== Identidade visual (logo) ===');
 {
   const svg = fs.readFileSync(BASE + 'icons/icon.svg', 'utf8');

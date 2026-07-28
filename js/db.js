@@ -64,6 +64,7 @@ const DB = {
     this.key = cryptoKey;
     this.locked = false;
     this._encBlob = null;
+    this.lembrarRotulo(this.familyName());   // deixa o rótulo pronto para o próximo bloqueio
   },
 
   setKey(cryptoKey) { this.key = cryptoKey; this.save(); },
@@ -91,11 +92,17 @@ const DB = {
 
   now() { return new Date().toISOString(); },
 
-  all(store) { return this.data[store].filter(r => !r.deleted); },
+  // Enquanto os dados estão cifrados (antes do PIN), não há o que ler: devolve vazio
+  // em vez de estourar. A tela de bloqueio roda exatamente nesse estado.
+  all(store) { return this.data ? this.data[store].filter(r => !r.deleted) : []; },
 
-  get(store, id) { return this.data[store].find(r => r.id === id && !r.deleted) || null; },
+  get(store, id) {
+    if (!this.data) return null;
+    return this.data[store].find(r => r.id === id && !r.deleted) || null;
+  },
 
   upsert(store, record) {
+    if (!this.data) throw new Error('Dados bloqueados — desbloqueie antes de gravar');
     record.id = record.id || this.uuid();
     record.updated_at = this.now();
     record.deleted = !!record.deleted;
@@ -103,20 +110,26 @@ const DB = {
     const i = this.data[store].findIndex(r => r.id === record.id);
     if (i >= 0) this.data[store][i] = { ...this.data[store][i], ...record };
     else this.data[store].push(record);
+    // Mantém a cópia do rótulo em dia, inclusive quando ele chega pela sincronização
+    if (store === 'family_settings' && record.family_name !== undefined) this.lembrarRotulo(record.family_name);
     this.save();
     return record.id;
   },
 
   remove(store, id) {
+    if (!this.data) return;
     const r = this.data[store].find(x => x.id === id);
     if (r) { r.deleted = true; r.updated_at = this.now(); r.dirty = true; this.save(); }
   },
 
   /* ---------- Configurações da família ---------- */
+  PADRAO: { family_name: '', members: [], month_start_day: 1, monthly_income: 0 },
+
   settings() {
+    if (!this.data) return { ...this.PADRAO };   // bloqueado: valores neutros, sem gravar nada
     let s = this.all('family_settings')[0];
     if (!s) {
-      s = { id: this.uuid(), family_name: '', members: [], month_start_day: 1, monthly_income: 0, updated_at: this.now(), deleted: false, dirty: true };
+      s = { id: this.uuid(), ...this.PADRAO, updated_at: this.now(), deleted: false, dirty: true };
       this.data.family_settings.push(s);
       this.save();
     }
@@ -125,9 +138,21 @@ const DB = {
     return s;
   },
 
-  // Nome escolhido por quem usa. Enquanto não houver, o app fala de forma neutra.
-  familyName() { return (this.settings().family_name || '').trim(); },
+  /* Nome escolhido por quem usa. Fica também numa cópia fora da parte cifrada,
+     para a tela de bloqueio poder cumprimentar pelo nome antes de haver acesso
+     aos dados. É só o rótulo do app — nenhum valor ou lançamento sai daqui. */
+  ROTULO_KEY: 'financas.rotulo',
+  familyName() {
+    if (this.data) return (this.settings().family_name || '').trim();
+    try { return (localStorage.getItem(this.ROTULO_KEY) || '').trim(); } catch (_) { return ''; }
+  },
   familyLabel() { return this.familyName() || 'Minha família'; },
+  lembrarRotulo(nome) {
+    try {
+      if (nome) localStorage.setItem(this.ROTULO_KEY, nome);
+      else localStorage.removeItem(this.ROTULO_KEY);
+    } catch (_) {}
+  },
 
   /* ---------- Ciclo do mês (dia de início configurável) ---------- */
   // Retorna { start, end, label } do período que contém a data ref (Date).

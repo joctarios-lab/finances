@@ -367,6 +367,7 @@ const Auth = {
       if (!confirm('Apagar TODOS os dados locais deste aparelho? (a nuvem, se configurada, não é afetada)')) return;
       localStorage.removeItem(DB_KEY);
       localStorage.removeItem(this.key);
+      localStorage.removeItem(DB.ROTULO_KEY);
       location.reload();
     };
   },
