@@ -263,6 +263,18 @@ body {
 .tx-meta { font-size: 11.5px; color: var(--paper-dim); }
 .tx-amount { font-weight: 800; font-size: 14.5px; white-space: nowrap; }
 .tx-amount.pending { color: var(--amber); }
+.tx-amount.income { color: var(--green); }
+
+/* Importação OFX */
+.ofx-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px dashed var(--line); }
+.ofx-row input[type="checkbox"] { width: 18px; height: 18px; flex: none; accent-color: var(--gold); }
+.ofx-main { flex: 1; min-width: 0; }
+.ofx-main b { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ofx-main small { color: var(--paper-dim); font-size: 11.5px; }
+.ofx-row select { width: 130px; flex: none; padding: 6px 8px; font-size: 12px; }
+.ofx-val { font-weight: 700; font-size: 13px; white-space: nowrap; }
+.ofx-list { max-height: 46vh; overflow-y: auto; margin: 10px 0; }
+.ofx-dup { opacity: .5; }
 
 .month-nav { display: flex; align-items: center; justify-content: space-between; }
 .month-nav b { font-size: 15px; font-weight: 700; }

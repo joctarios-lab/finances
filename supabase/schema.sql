@@ -81,6 +81,10 @@ create table if not exists transactions (
   card_id uuid,
   invoice_key text default '',
   notes text default '',
+  type text not null default 'Despesa',   -- 'Despesa' | 'Receita'
+  fitid text default '',                  -- id do lançamento no extrato OFX (evita reimportar)
+  group_id uuid,                          -- agrupa parcelas de uma mesma compra
+  installment text default '',            -- ex: '3/12'
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
@@ -128,8 +132,35 @@ create table if not exists family_settings (
 );
 alter table family_settings add column if not exists monthly_income numeric not null default 0;
 
+alter table transactions add column if not exists type text not null default 'Despesa';
+alter table transactions add column if not exists fitid text default '';
+alter table transactions add column if not exists group_id uuid;
+alter table transactions add column if not exists installment text default '';
+
+-- Inscrições de push (um registro por navegador/aparelho)
+create table if not exists push_subscriptions (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  user_id uuid not null default auth.uid(),
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  created_at timestamptz not null default now()
+);
+
+-- Trava diária: impede repetir o mesmo aviso no mesmo dia
+create table if not exists notification_log (
+  id bigserial primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  key text not null,
+  sent_on date not null default current_date,
+  unique (family_id, key, sent_on)
+);
+
 create index if not exists idx_tx_family_date on transactions(family_id, date);
 create index if not exists idx_tx_family_upd on transactions(family_id, updated_at);
+create index if not exists idx_tx_fitid on transactions(family_id, fitid);
+create index if not exists idx_push_family on push_subscriptions(family_id);
 
 -- RLS
 alter table families enable row level security;
@@ -142,6 +173,12 @@ alter table goals enable row level security;
 alter table goal_entries enable row level security;
 alter table invoice_status enable row level security;
 alter table family_settings enable row level security;
+alter table push_subscriptions enable row level security;
+alter table notification_log enable row level security;   -- sem policies: só a Edge Function (service_role) acessa
+
+drop policy if exists push_rw on push_subscriptions;
+create policy push_rw on push_subscriptions for all to authenticated
+  using (is_member(family_id)) with check (is_member(family_id) and user_id = auth.uid());
 
 drop policy if exists fam_insert on families;
 create policy fam_insert on families for insert to authenticated with check (true);

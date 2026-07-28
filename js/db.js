@@ -164,12 +164,13 @@ const DB = {
   },
 
   // Todas as faturas existentes (derivadas das transações) de um cartão.
+  // Receitas no cartão (estornos) entram com sinal negativo, reduzindo a fatura.
   invoicesOf(card) {
     const map = {};
     for (const t of this.all('transactions')) {
       if (t.card_id !== card.id || !t.invoice_key) continue;
       if (!map[t.invoice_key]) map[t.invoice_key] = { key: t.invoice_key, total: 0, count: 0 };
-      map[t.invoice_key].total += Number(t.amount) || 0;
+      map[t.invoice_key].total += (this.isExpense(t) ? 1 : -1) * (Number(t.amount) || 0);
       map[t.invoice_key].count += 1;
     }
     const today = new Date();
@@ -190,13 +191,26 @@ const DB = {
   },
 
   /* ---------- Agregações ---------- */
+  // Um lançamento é despesa por padrão; 'Receita' representa entrada de dinheiro.
+  isExpense(t) { return (t && t.type) !== 'Receita'; },
+
   txOfPeriod(period) {
     return this.all('transactions').filter(t => this.inPeriod(t.date, period));
+  },
+  expensesOf(period) { return this.txOfPeriod(period).filter(t => this.isExpense(t)); },
+  incomesOf(period) { return this.txOfPeriod(period).filter(t => !this.isExpense(t)); },
+  realizedIncome(period) {
+    return this.incomesOf(period).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  },
+
+  // Evita reimportar o mesmo lançamento de um extrato OFX (FITID é único no banco).
+  hasFitid(fitid) {
+    return !!fitid && this.data.transactions.some(t => t.fitid === fitid && !t.deleted);
   },
 
   spentByCategory(period) {
     const out = {};
-    for (const t of this.txOfPeriod(period)) {
+    for (const t of this.expensesOf(period)) {
       const k = t.category_id || '_sem';
       out[k] = (out[k] || 0) + (Number(t.amount) || 0);
     }
@@ -219,7 +233,7 @@ const DB = {
 
   // Run-rate: gasto até agora + média diária × dias restantes.
   statsFor(period) {
-    const txs = this.txOfPeriod(period);
+    const txs = this.expensesOf(period);
     const spent = txs.reduce((s, t) => s + (Number(t.amount) || 0), 0);
     const total = this.periodDays(period);
     const elapsed = this.elapsedDays(period);
@@ -235,7 +249,7 @@ const DB = {
       for (const inv of this.invoicesOf(card))
         if (inv.status !== 'Paga') total += inv.total;
     for (const t of this.all('transactions'))
-      if (t.status === 'A Pagar' && !t.card_id) total += Number(t.amount) || 0;
+      if (t.status === 'A Pagar' && !t.card_id && this.isExpense(t)) total += Number(t.amount) || 0;
     return total;
   },
 
@@ -259,7 +273,7 @@ const DB = {
     const vals = [];
     for (let i = 1; i <= n; i++) {
       const p = this.monthPeriod(new Date(), -i);
-      const v = this.txOfPeriod(p).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+      const v = this.expensesOf(p).reduce((s, t) => s + (Number(t.amount) || 0), 0);
       if (v > 0) vals.push(v);
     }
     if (!vals.length) return this.statsFor(this.monthPeriod(new Date())).projection || 0;
@@ -292,7 +306,7 @@ const DB = {
   // Gasto do período dividido em Necessidades x Desejos (base da regra 50/30/20).
   spentByKind(period) {
     const out = { Essencial: 0, Estilo: 0 };
-    for (const t of this.txOfPeriod(period)) {
+    for (const t of this.expensesOf(period)) {
       const c = this.get('categories', t.category_id);
       const kind = (c && c.kind) === 'Estilo' ? 'Estilo' : 'Essencial';
       out[kind] += Number(t.amount) || 0;

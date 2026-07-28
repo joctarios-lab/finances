@@ -60,7 +60,9 @@ function adjustBalance(accountId, delta) {
   if (a) DB.upsert('accounts', { ...a, balance: (Number(a.balance) || 0) + delta });
 }
 function txEffect(t) {
-  return (t && t.status === 'Pago' && t.account_id && !t.card_id) ? -(Number(t.amount) || 0) : 0;
+  if (!t || t.status !== 'Pago' || !t.account_id || t.card_id) return 0;
+  const v = Number(t.amount) || 0;
+  return DB.isExpense(t) ? -v : v;   // despesa debita, receita credita
 }
 
 function catOf(id) { return DB.get('categories', id); }
@@ -155,7 +157,8 @@ function renderInicio(period) {
   const stats = DB.statsFor(period);
   const committed = DB.committed();
   const available = saldo - committed;
-  const income = Number(DB.settings().monthly_income) || 0;
+  const realized = DB.realizedIncome(period);              // receitas realmente lançadas
+  const income = realized > 0 ? realized : (Number(DB.settings().monthly_income) || 0);
   const budgetTotal = DB.all('categories').reduce((s, c) => s + (Number(c.monthly_budget) || 0), 0);
   const refLimit = income > 0 ? income : budgetTotal;
   const health = healthOf(stats, refLimit, available);
@@ -228,11 +231,12 @@ function renderInicio(period) {
   const projCard = `
     <div class="card">
       <div class="card-head"><div><b>Projeção do mês</b><small>no ritmo atual de gastos (${fmtShort(stats.dailyAvg)}/dia)</small></div><span class="kpi-ico t-warning" data-ico="calendar" style="width:34px;height:34px;margin:0"></span></div>
+      ${realized > 0 ? `<div class="proj-row"><span>Receitas lançadas no período</span><b class="txt-green">${fmtShort(realized)}</b></div>` : ''}
       <div class="proj-row"><span>Gasto até hoje (dia ${stats.elapsedDays} de ${stats.totalDays})</span><b>${fmtShort(stats.spent)}</b></div>
       <div class="proj-row"><span>Fechamento projetado</span><b class="${refLimit > 0 && stats.projection > refLimit ? 'txt-red' : 'txt-green'}">${fmtShort(stats.projection)}</b></div>
       ${refLimit > 0 ? `
         <div class="bar ${barClass(projPct)}" style="margin:8px 0 4px"><i style="width:${Math.min(100, projPct)}%"></i></div>
-        <div class="proj-row muted"><span>${projPct}% do ${income > 0 ? 'da renda familiar' : 'orçamento total'} (${fmtShort(refLimit)})</span>
+        <div class="proj-row muted"><span>${projPct}% ${income > 0 ? (realized > 0 ? 'das receitas do período' : 'da renda familiar') : 'do orçamento total'} (${fmtShort(refLimit)})</span>
         ${savingsRate !== null ? `<span>Poupança projetada: <b class="${savingsRate >= 20 ? 'txt-green' : savingsRate >= 0 ? 'txt-amber' : 'txt-red'}">${savingsRate}%</b></span>` : ''}</div>
       ` : `<p class="muted" style="margin-top:6px">Cadastre a renda familiar em Configurações → Membros &amp; ciclo para ver % da renda e taxa de poupança (especialistas recomendam poupar ≥ 20%).</p>`}
     </div>`;
@@ -360,7 +364,8 @@ function renderExtrato(period) {
   const txs = DB.txOfPeriod(period)
     .filter(t => state.filter === 'Todos' || t.scope === state.filter)
     .sort((a, b) => b.date.localeCompare(a.date));
-  const total = txs.reduce((s, t) => s + Number(t.amount || 0), 0);
+  const total = txs.filter(t => DB.isExpense(t)).reduce((s, t) => s + Number(t.amount || 0), 0);
+  const receitas = txs.filter(t => !DB.isExpense(t)).reduce((s, t) => s + Number(t.amount || 0), 0);
 
   let list = '', lastDay = '';
   for (const t of txs) {
@@ -369,11 +374,12 @@ function renderExtrato(period) {
     const via = t.method === 'Cartão de Crédito'
       ? `💳 ${esc((DB.get('cards', t.card_id) || {}).name || 'Cartão')}`
       : esc(t.method);
+    const isExp = DB.isExpense(t);
     list += `<div class="tx" data-tx="${t.id}">
-      <span class="tx-ico">${esc(c ? c.icon : '🧾')}</span>
+      <span class="tx-ico">${isExp ? esc(c ? c.icon : '🧾') : '💵'}</span>
       <span class="tx-info"><span class="tx-name">${esc(t.description)}</span>
-      <span class="tx-meta">${esc(c ? c.name : 'Sem categoria')} · ${via}${t.member ? ' · ' + esc(t.member) : ''}</span></span>
-      <span class="tx-amount ${t.status === 'A Pagar' ? 'pending' : ''}">${fmt(t.amount)}</span>
+      <span class="tx-meta">${isExp ? esc(c ? c.name : 'Sem categoria') : 'Receita'} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}</span></span>
+      <span class="tx-amount ${!isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${isExp ? '' : '+ '}${fmt(t.amount)}</span>
     </div>`;
   }
   if (!txs.length) list = `<div class="empty"><b>Sem lançamentos</b>Nada registrado neste período com esse filtro.</div>`;
@@ -387,8 +393,8 @@ function renderExtrato(period) {
       <button id="mn-next" aria-label="Próximo mês" data-ico="chevR"></button>
     </div>
     <div class="mini-stats">
+      <div class="card"><small>Receitas</small><b class="txt-green">${fmtShort(receitas)}</b></div>
       <div class="card"><small>Média/dia</small><b>${fmtShort(st.dailyAvg)}</b></div>
-      <div class="card"><small>Lançamentos</small><b>${st.count}</b></div>
       <div class="card"><small>${isCurrent ? 'Projeção' : 'Total'}</small><b>${fmtShort(isCurrent ? st.projection : st.spent)}</b></div>
     </div>
     <input id="tx-search" type="search" placeholder="🔎 Buscar no período…" autocomplete="off" style="margin-bottom:2px">
@@ -721,7 +727,8 @@ function openTxSheet(tx) {
   const members = ['Comum / Família', ...DB.settings().members];
 
   openSheet(`
-    <div class="sheet-title">${isEdit ? 'Editar lançamento' : 'Lançar gasto'}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="sheet-title">${isEdit ? 'Editar lançamento' : 'Novo lançamento'}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="field">${chipGroup('g-type', [{ value: 'Despesa', label: '↓ Despesa' }, { value: 'Receita', label: '↑ Receita' }], tx.type || 'Despesa')}</div>
     <div class="field"><input class="amount-input" id="f-amount" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
     <div class="field"><label>Descrição</label><input id="f-desc" placeholder="Ex: Mercado, Uber, Farmácia…" value="${esc(tx.description)}"></div>
     <div class="field"><label>Categoria</label>${chipGroup('g-cat', cats.map(c => ({ value: c.id, label: `${c.icon} ${c.name}` })), tx.category_id)}</div>
@@ -734,6 +741,11 @@ function openTxSheet(tx) {
       <label>Cartão (fatura atribuída automaticamente pelo fechamento)</label>
       <select id="f-card">${cards.map(c => `<option value="${c.id}" ${tx.card_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('') || '<option value="">— cadastre um cartão em ⚙︎ —</option>'}</select>
     </div>
+    ${isEdit ? '' : `<div class="field" id="wrap-parc" ${tx.method === 'Cartão de Crédito' ? '' : 'hidden'}>
+      <label>Parcelas</label>
+      <select id="f-parc">${Array.from({ length: 24 }, (_, i) => `<option value="${i + 1}">${i === 0 ? 'À vista' : `${i + 1}x`}</option>`).join('')}</select>
+      <p class="muted" id="parc-hint" style="margin-top:6px">Informe o <b>valor total</b> da compra — o app divide nas faturas seguintes.</p>
+    </div>`}
     <div class="field" id="wrap-account" ${tx.method === 'Cartão de Crédito' ? 'hidden' : ''}>
       <label>Conta</label>
       <select id="f-account"><option value="">—</option>${accounts.map(a => `<option value="${a.id}" ${tx.account_id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
@@ -747,12 +759,26 @@ function openTxSheet(tx) {
     ${isEdit ? '<div class="btn-row"><button class="btn danger" id="sh-del">Excluir</button></div>' : ''}
   `);
 
-  bindChips('g-cat'); bindChips('g-scope');
+  bindChips('g-cat'); bindChips('g-scope'); bindChips('g-type');
   bindChips('g-method', v => {
-    $('#wrap-card').hidden = v !== 'Cartão de Crédito';
-    $('#wrap-account').hidden = v === 'Cartão de Crédito';
+    const isCard = v === 'Cartão de Crédito';
+    $('#wrap-card').hidden = !isCard;
+    $('#wrap-account').hidden = isCard;
+    if ($('#wrap-parc')) $('#wrap-parc').hidden = !isCard;
   });
   initMoney('#f-amount', tx.amount);
+  const parcSel = $('#f-parc');
+  if (parcSel) {
+    const showParc = () => {
+      const n = parseInt(parcSel.value) || 1;
+      const v = moneyVal('#f-amount');
+      $('#parc-hint').innerHTML = n > 1 && v > 0
+        ? `${n}x de <b>${fmt(v / n)}</b> — uma parcela por fatura, a partir desta compra.`
+        : 'Informe o <b>valor total</b> da compra — o app divide nas faturas seguintes.';
+    };
+    parcSel.onchange = showParc;
+    $('#f-amount').addEventListener('input', showParc);
+  }
   $('#sh-close').onclick = closeSheet;
   setTimeout(() => $('#f-amount').focus(), 80);
 
@@ -770,6 +796,7 @@ function openTxSheet(tx) {
       member: $('#f-member').value,
       category_id: chipValue('g-cat') || null,
       recurring: !!$('#f-rec').value,
+      type: chipValue('g-type') || 'Despesa',
       card_id: null, account_id: null, invoice_key: '',
     };
     if (method === 'Cartão de Crédito') {
@@ -777,6 +804,31 @@ function openTxSheet(tx) {
       if (!card) return toast('Cadastre um cartão em ⚙︎ primeiro');
       rec.card_id = card.id;
       rec.invoice_key = DB.invoiceKeyFor(card, rec.date);
+
+      // Compra parcelada: gera uma parcela por fatura, com os centavos ajustados na 1ª
+      const parcelas = Math.max(1, Math.min(24, parseInt((parcSel || {}).value) || 1));
+      if (!isEdit && parcelas > 1) {
+        const group = DB.uuid();
+        const cents = Math.round(amount * 100);
+        const base = Math.floor(cents / parcelas);
+        const resto = cents - base * parcelas;
+        const d0 = new Date(rec.date + 'T12:00:00');
+        for (let i = 0; i < parcelas; i++) {
+          const di = new Date(d0.getFullYear(), d0.getMonth() + i, d0.getDate());
+          const iso = `${di.getFullYear()}-${String(di.getMonth() + 1).padStart(2, '0')}-${String(di.getDate()).padStart(2, '0')}`;
+          DB.upsert('transactions', {
+            ...rec, id: null,
+            description: `${desc} (${i + 1}/${parcelas})`,
+            amount: (base + (i === 0 ? resto : 0)) / 100,
+            date: iso,
+            invoice_key: DB.invoiceKeyFor(card, iso),
+            group_id: group, installment: `${i + 1}/${parcelas}`,
+          });
+        }
+        closeSheet(); render(); Sync.autoSync();
+        toast(`Parcelado em ${parcelas}x de ${fmtShort(amount / parcelas)} ✓`);
+        return;
+      }
     } else {
       rec.account_id = $('#f-account').value || null;
     }
@@ -788,7 +840,14 @@ function openTxSheet(tx) {
   };
   const del = $('#sh-del');
   if (del) del.onclick = () => {
-    if (!confirm('Excluir este lançamento?')) return;
+    const irmas = tx.group_id ? DB.all('transactions').filter(t => t.group_id === tx.group_id) : [];
+    if (irmas.length > 1) {
+      if (confirm(`Faz parte de uma compra parcelada (${irmas.length}x). Excluir TODAS as parcelas?\n\nCancelar exclui só esta parcela.`)) {
+        irmas.forEach(g => { adjustBalance(g.account_id, -txEffect(g)); DB.remove('transactions', g.id); });
+        closeSheet(); render(); Sync.autoSync();
+        return toast(`${irmas.length} parcelas excluídas`);
+      }
+    } else if (!confirm('Excluir este lançamento?')) return;
     if (orig) adjustBalance(orig.account_id, -txEffect(orig));   // devolve ao saldo
     DB.remove('transactions', tx.id);
     closeSheet(); render(); Sync.autoSync();
@@ -876,6 +935,7 @@ function openConfig() {
     <div class="settings-item" data-go="categories"><span class="cfg-left"><span class="cfg-ico" data-ico="pie"></span><span>Categorias &amp; orçamentos<br><small>${DB.all('categories').length} categoria(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Membros &amp; ciclo do mês<br><small>Início no dia ${DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="sync"><span class="cfg-left"><span class="cfg-ico" data-ico="cloud"></span><span>Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="ofx"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Importar extrato OFX<br><small>traga os lançamentos do banco ou cartão de uma vez</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="notif"><span class="cfg-left"><span class="cfg-ico" data-ico="bell"></span><span>Notificações<br><small>${Notif.enabled() ? 'Ativas — faturas, orçamentos e metas' : 'Desativadas'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="security"><span class="cfg-left"><span class="cfg-ico" data-ico="shield"></span><span>Segurança<br><small>${Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'Sem proteção local'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="backup"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Backup (exportar / importar)<br><small>Arquivo JSON local</small></span></span><span class="chev" data-ico="chev"></span></div>
@@ -1021,18 +1081,43 @@ function openConfigSection(sec) {
 
   if (sec === 'sync') openSyncConfig();
 
+  if (sec === 'ofx') openOfxImport();
+
   if (sec === 'notif') {
     openModal(`
       <div class="modal-title">🔔 Notificações<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
       <p class="muted" style="margin-bottom:12px">Avisos de ações importantes: fatura fechando/vencendo/vencida, orçamento estourado e meta atingida. Cada aviso sai no máximo 1x por dia.</p>
-      <p class="muted" style="margin-bottom:12px"><b>Como funciona de verdade:</b> sem um servidor de push, os avisos disparam quando o app é aberto ou sincroniza. Quando desativadas (ou no iPhone sem instalar o app), os mesmos avisos aparecem como mensagens dentro do app.</p>
+
+      <p class="section-title" style="margin-bottom:8px">1. Avisos ao abrir o app</p>
       ${Notif.enabled()
-        ? '<button class="btn danger" id="nt-off">Desativar notificações</button>'
-        : '<button class="btn" id="nt-on">Ativar notificações</button>'}
+        ? '<button class="btn danger" id="nt-off">Desativar</button>'
+        : '<button class="btn" id="nt-on">Ativar</button>'}
       <div class="btn-row"><button class="btn ghost" id="nt-test">Testar agora</button></div>
+
+      <hr class="sep">
+      <p class="section-title" style="margin-bottom:8px">2. Push automático (app fechado)</p>
+      <p class="muted" style="margin-bottom:10px">O servidor verifica suas faturas e orçamentos todo dia e avisa mesmo com o app fechado. Exige sincronização configurada e o passo a passo do README (Edge Function + cron no Supabase).</p>
+      <p class="muted" style="margin-bottom:10px">Estado deste aparelho: <b id="nt-push-state">verificando…</b></p>
+      <button class="btn" id="nt-push-on">Ativar push neste aparelho</button>
+      <div class="btn-row"><button class="btn ghost" id="nt-push-off">Desativar push aqui</button></div>
+      <p class="muted" style="margin-top:10px">📱 No iPhone, o push só funciona depois de adicionar o app à tela de início (iOS 16.4+).</p>
     `);
     $('#md-back').onclick = openConfig;
     const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+    Notif.pushState().then(st => {
+      const el = $('#nt-push-state');
+      if (el) el.textContent = st === 'on' ? 'ativo ✓' : st === 'unsupported' ? 'não suportado neste navegador' : 'inativo';
+    });
+    on('#nt-push-on', async () => {
+      try { await Notif.subscribePush(); toast('Push ativado neste aparelho ✓'); }
+      catch (e) { toast(e.message); }
+      openConfigSection('notif');
+    });
+    on('#nt-push-off', async () => {
+      try { await Notif.unsubscribePush(); toast('Push desativado neste aparelho'); }
+      catch (e) { toast(e.message); }
+      openConfigSection('notif');
+    });
     on('#nt-on', async () => {
       const ok = await Notif.enable();
       toast(ok ? 'Notificações ativas ✓' : 'Permissão negada pelo navegador');
@@ -1183,8 +1268,117 @@ function openSyncConfig() {
   on('#s-logout', () => { if (confirm('Sair da conta? Os dados locais permanecem no aparelho.')) { Sync.signOut(); openSyncConfig(); } });
 }
 
+/* ---------- Importação de extrato OFX ---------- */
+function openOfxImport() {
+  const accounts = DB.all('accounts').filter(a => a.active !== false);
+  const cards = DB.all('cards').filter(c => c.active !== false);
+  openModal(`
+    <div class="modal-title">Importar extrato OFX<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+    <p class="muted" style="margin-bottom:12px">No app do seu banco ou cartão, procure por <b>exportar extrato / OFX</b> e baixe o arquivo. Lançamentos já importados antes são reconhecidos e ignorados automaticamente.</p>
+    <button class="btn" id="ofx-pick">Escolher arquivo .ofx</button>
+    <input type="file" id="ofx-file" accept=".ofx,.OFX,.qfx,text/plain" hidden>
+    <div id="ofx-result"></div>
+  `);
+  $('#md-back').onclick = openConfig;
+  $('#ofx-pick').onclick = () => $('#ofx-file').click();
+  $('#ofx-file').onchange = async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const parsed = OFX.parse(await OFX.readText(file));
+      if (!parsed.txs.length) return toast('Nenhum lançamento encontrado no arquivo');
+      renderOfxPreview(parsed, accounts, cards);
+    } catch (err) {
+      toast('Não consegui ler o arquivo: ' + err.message);
+    }
+  };
+}
+
+function renderOfxPreview(parsed, accounts, cards) {
+  const cats = DB.all('categories');
+  const novos = parsed.txs.filter(t => !DB.hasFitid(t.fitid));
+  const dups = parsed.txs.length - novos.length;
+  const destOpts = `
+    ${cards.length ? `<optgroup label="Cartões de crédito">${cards.map(c => `<option value="card:${c.id}" ${parsed.isCard ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
+    ${accounts.length ? `<optgroup label="Contas">${accounts.map(a => `<option value="acc:${a.id}" ${!parsed.isCard ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>` : ''}`;
+
+  const rows = novos.map((t, i) => {
+    const isExp = t.amount < 0;
+    const guess = isExp ? OFX.guessCategoryId(t.memo, cats) : '';
+    return `<div class="ofx-row">
+      <input type="checkbox" data-i="${i}" checked>
+      <span class="ofx-main"><b>${esc(t.memo)}</b><small>${fmtDay(t.date)} · ${isExp ? 'saída' : 'entrada'}</small></span>
+      ${isExp ? `<select data-cat="${i}"><option value="">Sem categoria</option>${cats.map(c => `<option value="${c.id}" ${guess === c.id ? 'selected' : ''}>${esc(c.icon)} ${esc(c.name)}</option>`).join('')}</select>` : '<span class="muted" style="width:130px;font-size:12px">receita</span>'}
+      <span class="ofx-val ${isExp ? '' : 'txt-green'}">${isExp ? '' : '+'}${fmtShort(Math.abs(t.amount))}</span>
+    </div>`;
+  }).join('');
+
+  $('#ofx-result').innerHTML = `
+    <hr class="sep">
+    <div class="mini-stats" style="margin-bottom:12px">
+      <div class="card"><small>Novos</small><b>${novos.length}</b></div>
+      <div class="card"><small>Já importados</small><b>${dups}</b></div>
+      <div class="card"><small>Do arquivo</small><b>${parsed.txs.length}</b></div>
+    </div>
+    ${!novos.length ? '<div class="empty"><b>Tudo já importado</b>Nenhum lançamento novo neste arquivo.</div>' : `
+      <div class="field"><label>Lançar em</label><select id="ofx-dest">${destOpts}</select></div>
+      ${parsed.balance !== null ? `<div class="field"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="ofx-bal" checked style="width:18px;height:18px;accent-color:var(--gold)">Atualizar saldo da conta para ${fmt(parsed.balance)} (informado pelo banco)</label></div>` : ''}
+      <div class="btn-row" style="margin-bottom:4px">
+        <button class="btn ghost" id="ofx-all">Marcar todos</button>
+        <button class="btn ghost" id="ofx-none">Desmarcar todos</button>
+      </div>
+      <div class="ofx-list">${rows}</div>
+      <button class="btn" id="ofx-go">Importar selecionados</button>
+    `}`;
+
+  if (!novos.length) return;
+  const boxes = () => document.querySelectorAll('#ofx-result [data-i]');
+  $('#ofx-all').onclick = () => boxes().forEach(b => { b.checked = true; });
+  $('#ofx-none').onclick = () => boxes().forEach(b => { b.checked = false; });
+
+  $('#ofx-go').onclick = () => {
+    const [kind, id] = $('#ofx-dest').value.split(':');
+    const card = kind === 'card' ? DB.get('cards', id) : null;
+    const account = kind === 'acc' ? DB.get('accounts', id) : null;
+    if (!card && !account) return toast('Escolha onde lançar');
+
+    let n = 0;
+    boxes().forEach(box => {
+      if (!box.checked) return;
+      const t = novos[Number(box.dataset.i)];
+      const isExp = t.amount < 0;
+      const catSel = document.querySelector(`#ofx-result [data-cat="${box.dataset.i}"]`);
+      DB.upsert('transactions', {
+        description: t.memo,
+        amount: Math.abs(t.amount),
+        date: t.date,
+        type: isExp ? 'Despesa' : 'Receita',
+        status: 'Pago',
+        scope: 'Família',
+        member: DB.settings().members[0] || '',
+        method: OFX.guessMethod(t.memo, !!card),
+        category_id: (catSel && catSel.value) || null,
+        fitid: t.fitid,
+        card_id: card ? card.id : null,
+        account_id: account ? account.id : null,
+        invoice_key: card ? DB.invoiceKeyFor(card, t.date) : '',
+        recurring: false,
+      });
+      n++;
+    });
+
+    // Saldo pelo valor informado pelo banco — mais confiável que somar lançamentos importados
+    const balBox = $('#ofx-bal');
+    if (account && balBox && balBox.checked && parsed.balance !== null) {
+      DB.upsert('accounts', { ...account, balance: parsed.balance });
+    }
+    Sync.autoSync(); closeModal();
+    toast(`${n} lançamento(s) importado(s) ✓`);
+  };
+}
+
 /* ---------- Notificações de ações importantes ----------
-   Sem servidor de push, elas disparam quando o app abre/atualiza (limitação honesta da web).
+   Locais (app aberto) + push real via Supabase Edge Function (app fechado).
    Cada aviso sai no máximo 1x por dia. */
 const Notif = {
   key: 'financas.notif.v1',
@@ -1200,6 +1394,51 @@ const Notif = {
     return this.cfg.enabled;
   },
   disable() { this.cfg.enabled = false; this.save(); },
+
+  vapid() { return (window.FINANCAS_SUPABASE || {}).vapidPublicKey || ''; },
+
+  urlB64ToU8(b64) {
+    const pad = '='.repeat((4 - b64.length % 4) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, c => c.charCodeAt(0));
+  },
+
+  async pushState() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return 'unsupported';
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) return 'off';
+    return (await reg.pushManager.getSubscription()) ? 'on' : 'off';
+  },
+
+  // Registra este aparelho no Supabase para receber avisos com o app fechado.
+  async subscribePush() {
+    if (!this.vapid()) throw new Error('Chave VAPID não configurada em js/config.js');
+    if (!Sync.hasFamily()) throw new Error('Configure a sincronização com a família primeiro');
+    if (Notification.permission !== 'granted') {
+      const ok = await this.enable();
+      if (!ok) throw new Error('Permissão de notificação negada no navegador');
+    }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription()
+      || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: this.urlB64ToU8(this.vapid()) });
+    const j = sub.toJSON();
+    await Sync.rest('push_subscriptions?on_conflict=endpoint', {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify({ id: DB.uuid(), family_id: Sync.cfg.family_id, endpoint: j.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth }),
+    });
+  },
+
+  async unsubscribePush() {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
+    if (!sub) return;
+    const endpoint = sub.endpoint;
+    await sub.unsubscribe();
+    if (Sync.hasFamily()) {
+      try { await Sync.rest(`push_subscriptions?endpoint=eq.${encodeURIComponent(endpoint)}`, { method: 'DELETE' }); } catch (_) {}
+    }
+  },
   push(id, title, body) {
     const today = todayISO();
     this.cfg.sent = this.cfg.sent || {};
