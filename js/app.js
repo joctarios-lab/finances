@@ -452,7 +452,7 @@ function renderInicio(period) {
   // Tocar numa barra abre o detalhe: saber que "Alimentação" estourou só ajuda
   // quando dá para ver se foi mercado ou delivery.
   let budgets = '';
-  for (const c of DB.rootCategories().sort((a, b) => (byCat[b.id] || 0) - (byCat[a.id] || 0))) {
+  for (const c of DB.rootCategories('Despesa').sort((a, b) => (byCat[b.id] || 0) - (byCat[a.id] || 0))) {
     const spent = byCat[c.id] || 0;
     if (!c.monthly_budget && !spent) continue;
     const pct = c.monthly_budget > 0 ? Math.round(spent / c.monthly_budget * 100) : 0;
@@ -543,7 +543,7 @@ function renderInicio(period) {
   // --- Conselheiro: insights automáticos por regras de especialista ---
   const tips = [];
   if (available < 0) tips.push({ cls: 'red', txt: `Compromissos superam o saldo em ${fmtShort(-available)} — priorize quitar ou remanejar.` });
-  for (const c of DB.rootCategories()) {
+  for (const c of DB.rootCategories('Despesa')) {
     if (!c.monthly_budget) continue;
     const pct = Math.round((byCat[c.id] || 0) / c.monthly_budget * 100);
     const pace = Math.round(stats.elapsedDays / Math.max(stats.totalDays, 1) * 100);
@@ -755,7 +755,7 @@ function renderExtrato(period) {
       <span class="tx-info"><span class="tx-name">${esc(t.description)}</span>
       <span class="tx-meta">${isTr ? `Transferência · ${rota}`
         : t.adjustment ? 'Conciliação — fora das análises · toque para classificar'
-        : `${isExp ? esc(c ? DB.categoryPath(t.category_id) : 'Sem categoria') : 'Receita'} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}`}</span>
+        : `${c ? esc(DB.categoryPath(t.category_id)) : (isExp ? 'Sem categoria' : 'Entrada sem origem')} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}`}</span>
       ${DB.tagsOf(t).length ? `<span class="tx-tags">${DB.tagsOf(t).map(tg =>
         `<button class="tx-tag" data-tag="${esc(tg)}" title="Filtrar por #${esc(tg)}">#${esc(tg)}</button>`).join('')}</span>` : ''}</span>
       <span class="tx-amount ${isTr ? 'transfer' : !isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${isTr ? '' : isExp ? '− ' : '+ '}${fmt(t.amount)}</span>
@@ -1083,6 +1083,27 @@ function renderRelatorios() {
       <div class="card-head"><div><b>Ranking de categorias</b><small>do maior para o menor gasto no período</small></div></div>
       ${svgRanking(catIds.map(cid => [catLabel(cid === '_sem' ? null : cid), byCat[cid] || 0]).filter(e => e[1] > 0))}
     </div>
+
+    <!-- De onde vem o dinheiro. Separar salário de empréstimo recebido é o ponto:
+         os dois entram na conta, e só um é ganho. -->
+    ${(() => {
+      const porOrigem = DB.incomeByCategory(period);
+      const linhas = Object.entries(porOrigem).sort((a, b) => b[1] - a[1]);
+      if (!linhas.length) return '';
+      const total = linhas.reduce((s, l) => s + l[1], 0);
+      const emprestado = linhas
+        .filter(([id]) => /emprest/i.test((catOf(id) || {}).name || ''))
+        .reduce((s, l) => s + l[1], 0);
+      return `
+    <div class="card">
+      <div class="card-head"><div><b>De onde vem o dinheiro</b><small>entradas do período por origem</small></div>
+        <span class="kpi-ico t-success" data-ico="trend" style="width:34px;height:34px;margin:0"></span></div>
+      ${svgRanking(linhas.map(([id, v]) => [id === '_sem' ? 'Sem origem' : catLabel(id), v]))}
+      <div class="chart-foot"><span>${emprestado > 0
+        ? `⚠️ ${fmtShort(emprestado)} vieram de empréstimo — entram na conta, mas não são ganho: viram dívida a pagar.`
+        : `${fmtShort(total)} de entradas classificadas no período.`}</span></div>
+    </div>`;
+    })()}
 
     <!-- Etiqueta só compensa se der para ver o total dela. É aqui que "separar do
          todo" acontece: quanto custou a viagem, somando categorias diferentes. -->
@@ -1438,12 +1459,15 @@ function selectChip(id, value) {
 /* Categorias mais usadas primeiro (as 3 viram botões; o resto fica no dropdown).
    Só folhas entram: com subcategorias, oferecer o envelope como atalho faria o
    gasto cair no nível de cima e o detalhe nunca acontecer. */
-function topCategoryIds(limit = 3, incluir) {
-  const folhas = DB.leafCategories();
+function topCategoryIds(limit = 3, incluir, tipo = 'Despesa') {
+  const folhas = DB.leafCategories(tipo);
   const ehFolha = id => folhas.some(c => c.id === id);
   const uso = {};
+  const querReceita = tipo === 'Receita';
   for (const t of DB.all('transactions')) {
-    if (!t.category_id || !DB.isExpense(t)) continue;
+    if (!t.category_id) continue;
+    // As mais usadas em gastos não dizem nada sobre as mais usadas em entradas
+    if (DB.isExpense(t) === querReceita) continue;
     if (!ehFolha(t.category_id)) continue;
     uso[t.category_id] = (uso[t.category_id] || 0) + 1;
   }
@@ -1473,7 +1497,6 @@ function openTxSheet(tx, asNew) {
   const accounts = DB.all('accounts').filter(a => a.active !== false);
   const pessoas = DB.settings().members;
   const historico = txHistory();
-  const topCats = topCategoryIds(3, tx.category_id);
 
   openSheet(`
     <div class="sheet-title"><span id="sh-title">${isEdit ? 'Editar lançamento' : 'Novo lançamento'}</span><button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
@@ -1487,16 +1510,13 @@ function openTxSheet(tx, asNew) {
       <input id="f-desc" list="tx-hist" autocomplete="off" placeholder="Ex: Mercado, Uber, Farmácia…" value="${esc(tx.description)}">
       <datalist id="tx-hist">${historico.map(h => `<option value="${esc(h.description)}">`).join('')}</datalist>
     </div>
+    <!-- A categoria vale para os dois lados: gasto responde "no que foi" e entrada
+         responde "de onde veio". A lista troca junto com o tipo, porque as duas
+         perguntas têm respostas diferentes. -->
     <div class="field" id="wrap-cat">
-      <label>Categoria <span class="muted" id="cat-auto"></span></label>
-      <div class="chips" id="g-cat">
-        ${topCats.map(id => { const c = DB.get('categories', id); return c ? `<button type="button" class="chip ${tx.category_id === id ? 'active' : ''}" data-v="${id}" title="${esc(DB.categoryPath(id))}">${esc(DB.categoryIcon(id))} ${esc(c.name)}</button>` : ''; }).join('')}
-        <button type="button" class="chip chip-more" id="cat-other" data-v="">Outra ▾</button>
-      </div>
-      <select id="f-cat-more" hidden style="margin-top:8px">
-        <option value="">— escolha a categoria —</option>
-        ${optionsCategorias(tx.category_id)}
-      </select>
+      <label id="lbl-cat">Categoria <span class="muted" id="cat-auto"></span></label>
+      <div class="chips" id="g-cat"></div>
+      <select id="f-cat-more" hidden style="margin-top:8px"></select>
     </div>
     <div class="row2">
       <div class="field"><label>Data</label><input id="f-date" type="date" value="${tx.date}">
@@ -1574,7 +1594,10 @@ function openTxSheet(tx, asNew) {
     const isTransf = v === 'Transferência';
     $('#sh-title').textContent = isEdit ? 'Editar lançamento'
       : isTransf ? 'Transferir entre contas' : isRec ? 'Nova receita' : 'Novo lançamento';
-    $('#wrap-cat').hidden = isRec || isTransf;           // categorias são envelopes de gasto
+    // Transferência não tem categoria: o dinheiro só muda de lugar
+    $('#wrap-cat').hidden = isTransf;
+    $('#lbl-cat').innerHTML = (isRec ? 'De onde veio' : 'Categoria') + ' <span class="muted" id="cat-auto"></span>';
+    if (!isTransf) montarCategorias(isRec ? 'Receita' : 'Despesa');
     $('#wrap-to-account').hidden = !isTransf;
     $('#lbl-method').textContent = isRec ? 'Entrou por' : 'Pagamento';
     $('#lbl-rec').textContent = isRec ? 'Receita mensal fixa (ex: salário)?' : 'Custo fixo mensal (recorrente)?';
@@ -1631,6 +1654,30 @@ function openTxSheet(tx, asNew) {
   };
 
   /* Categoria: 3 botões mais usados + "Outra" abrindo a lista completa */
+  /* Monta chips e dropdown para o tipo pedido. Reconstruir em vez de guardar as
+     duas listas prontas: são poucas dezenas de opções, e assim "as 3 mais usadas"
+     é calculado sobre o lado certo — as mais usadas em gastos não têm relação com
+     as mais usadas em entradas. */
+  let tipoCatAtual = null;
+  const montarCategorias = tipo => {
+    if (tipoCatAtual === tipo) return;             // já está montado: não mexe na escolha
+    tipoCatAtual = tipo;
+    const escolhida = DB.get('categories', tx.category_id) && DB.categoryType(DB.categoryRoot(tx.category_id)) === tipo
+      ? tx.category_id : '';
+    const top = topCategoryIds(3, escolhida, tipo);
+    $('#g-cat').innerHTML = top.map(id => {
+      const c = DB.get('categories', id);
+      return c ? `<button type="button" class="chip" data-v="${id}" title="${esc(DB.categoryPath(id))}">${esc(DB.categoryIcon(id))} ${esc(c.name)}</button>` : '';
+    }).join('') + '<button type="button" class="chip chip-more" id="cat-other" data-v="">Outra ▾</button>';
+    $('#f-cat-more').innerHTML = `<option value="">— escolha a categoria —</option>${optionsCategorias(escolhida, tipo)}`;
+    if (typeof UI !== 'undefined') {
+      $('#f-cat-more').removeAttribute('data-ui');   // o select mudou: precisa ser reembrulhado
+      UI.enhance($('#wrap-cat'));
+    }
+    ligarChipsCategoria();
+    setCategory(escolhida);
+  };
+
   const setCategory = id => {
     let achou = false;
     document.querySelectorAll('#g-cat .chip').forEach(ch => {
@@ -1660,21 +1707,23 @@ function openTxSheet(tx, asNew) {
   let catManual = !!tx.category_id;
   let methodManual = isEdit;
 
-  bindChips('g-cat', v => {
-    $('#cat-auto').textContent = '';
-    if (v) catManual = true;                       // escolheu um dos botões
-    // O seletor completo só existe quando a pessoa pede por ele em "Outra"
-    const abriu = $('#cat-other').classList.contains('active') && !$('#cat-other').dataset.v;
-    $('#f-cat-more').hidden = !abriu;
-    if (abriu && typeof UI !== 'undefined') setTimeout(() => UI.open($('#f-cat-more')), 30);
-  });
-  $('#f-cat-more').onchange = e => {
-    if (!e.target.value) return;
-    catManual = true;                              // escolheu pelo dropdown
-    $('#cat-auto').textContent = '';
-    setCategory(e.target.value);
-  };
-  setCategory(tx.category_id);
+  // Reatribuído a cada remontagem da lista, porque os chips são recriados
+  function ligarChipsCategoria() {
+    bindChips('g-cat', v => {
+      const auto = $('#cat-auto'); if (auto) auto.textContent = '';
+      if (v) catManual = true;                       // escolheu um dos botões
+      // O seletor completo só existe quando a pessoa pede por ele em "Outra"
+      const abriu = $('#cat-other').classList.contains('active') && !$('#cat-other').dataset.v;
+      $('#f-cat-more').hidden = !abriu;
+      if (abriu && typeof UI !== 'undefined') setTimeout(() => UI.open($('#f-cat-more')), 30);
+    });
+    $('#f-cat-more').onchange = e => {
+      if (!e.target.value) return;
+      catManual = true;                              // escolheu pelo dropdown
+      const auto = $('#cat-auto'); if (auto) auto.textContent = '';
+      setCategory(e.target.value);
+    };
+  }
 
   /* Etiquetas: os chips ligam e desligam, e o campo cria novas. Chip em vez de
      texto separado por vírgula porque assim as que já existem na família são
@@ -1825,7 +1874,7 @@ function openTxSheet(tx, asNew) {
       description: descricao, amount, date: $('#f-date').value || todayISO(),
       status: $('#f-status').value, method,
       scope, member,
-      category_id: isReceita ? null : (chipValue('g-cat') || null),
+      category_id: chipValue('g-cat') || null,
       recurring: !!$('#f-rec').value,
       type: isReceita ? 'Receita' : 'Despesa',
       tags: tagsEscolhidas(),
@@ -2527,11 +2576,11 @@ function openConfigSection(sec) {
    cabeçalho de grupo. Melhor que repetir "Alimentação › " em cada linha: o nome
    do envelope aparece uma vez, e a busca do painel também procura por ele.
    Folha sem envelope (categoria simples) fica solta no fim, sem cabeçalho. */
-function optionsCategorias(selecionado) {
+function optionsCategorias(selecionado, tipo) {
   const opcao = (c, rotulo) =>
     `<option value="${c.id}"${selecionado === c.id ? ' selected' : ''}>${esc(rotulo)}</option>`;
   const soltas = [], grupos = [];
-  for (const raiz of DB.rootCategories().sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))) {
+  for (const raiz of DB.rootCategories(tipo).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))) {
     const filhas = DB.subcategoriesOf(raiz.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
     if (!filhas.length) { soltas.push(raiz); continue; }   // envelope sem detalhe é ele mesmo a folha
     grupos.push(`<optgroup label="${esc(raiz.icon)} ${esc(raiz.name)}">${
@@ -2600,22 +2649,41 @@ function openCategoriesConfig() {
   const raizes = DB.rootCategories().sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
   const semCat = '<div class="empty">Nada cadastrado ainda.</div>';
 
-  const linhas = raizes.map(r => {
-    const filhas = DB.subcategoriesOf(r.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-    const cabeca = `
+  const arvoreDe = tipo => DB.rootCategories(tipo)
+    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
+    .map(r => {
+      const filhas = DB.subcategoriesOf(r.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+      const detalhe = tipo === 'Receita'
+        ? `${filhas.length} origem(ns)`
+        : `${esc(r.scope)} · ${r.monthly_budget ? fmtShort(r.monthly_budget) + '/mês' : 'sem orçamento'} · ${filhas.length} subcategoria(s)`;
+      const cabeca = `
       <div class="settings-item" data-edit="${r.id}">
         <span class="cfg-left"><span class="cfg-ico">${esc(r.icon)}</span>
-          <span>${esc(r.name)}<br><small>${esc(r.scope)} · ${r.monthly_budget ? fmtShort(r.monthly_budget) + '/mês' : 'sem orçamento'} · ${filhas.length} subcategoria(s)</small></span></span>
+          <span>${esc(r.name)}<br><small>${detalhe}</small></span></span>
         <span class="chev" data-ico="chev"></span>
       </div>`;
-    const netas = filhas.map(f => `
+      const netas = filhas.map(f => `
       <div class="settings-item sub-item" data-edit="${f.id}">
         <span class="cfg-left"><span class="sub-traco"></span><span>${esc(f.name)}</span></span>
         <span class="chev" data-ico="chev"></span>
       </div>`).join('');
-    const novaFilha = `<button class="btn ghost btn-sub" data-nova-sub="${r.id}">＋ Subcategoria em ${esc(r.name)}</button>`;
-    return cabeca + netas + novaFilha;
-  }).join('');
+      const novaFilha = `<button class="btn ghost btn-sub" data-nova-sub="${r.id}">＋ Subcategoria em ${esc(r.name)}</button>`;
+      return cabeca + netas + novaFilha;
+    }).join('');
+
+  // Gasto e entrada em blocos separados: são perguntas diferentes ("no que foi" x
+  // "de onde veio"), e só o lado do gasto tem orçamento.
+  const entradas = arvoreDe('Receita');
+  const linhas = `
+    <p class="section-title">Saídas — onde o dinheiro é gasto</p>
+    ${arvoreDe('Despesa') || semCat}
+    <p class="section-title" style="margin-top:18px">Entradas — de onde o dinheiro vem</p>
+    ${entradas || `<div class="callout info">
+      <b>Classifique também o que entra</b>
+      <p>Sem isto, toda entrada fica junta e não dá para separar salário de empréstimo recebido — que entra na conta mas não é ganho.</p>
+      <button class="btn" id="md-entradas" style="margin-top:10px">Criar categorias de entrada sugeridas</button>
+    </div>`}
+    <button class="btn ghost" id="md-new-rec" style="margin-top:10px">＋ Nova origem de entrada</button>`;
 
   // Base criada antes das subcategorias: o seed não roda de novo, então a opção
   // fica aqui, explícita — preencher sozinho mudaria os relatórios da família sem aviso.
@@ -2629,7 +2697,7 @@ function openCategoriesConfig() {
       <p>Seus envelopes ainda não têm subcategorias. Dá para preencher as sugeridas de uma vez — por exemplo Mercado, Restaurante e Delivery dentro de Alimentação — e depois ajustar. Nada do que você já lançou muda de lugar.</p>
       <button class="btn" id="md-sugerir" style="margin-top:10px">Adicionar subcategorias sugeridas</button>
     </div>` : ''}
-    <button class="btn ghost" id="md-new" style="margin-bottom:12px">＋ Novo envelope</button>
+    <button class="btn ghost" id="md-new" style="margin-bottom:12px">＋ Novo envelope de gasto</button>
     ${linhas || semCat}
   `);
   $('#md-back').onclick = openConfig;
@@ -2640,25 +2708,42 @@ function openCategoriesConfig() {
     toast(n ? `${n} subcategoria(s) criada(s) ✓` : 'Nenhum envelope conhecido para detalhar');
     openConfigSection('categories');
   };
-  $('#md-new').onclick = () => openCategoryEditor(null, null);
+  const criarEntradas = $('#md-entradas');
+  if (criarEntradas) criarEntradas.onclick = () => {
+    const n = DB.criarCategoriasDeEntrada();
+    Sync.autoSync();
+    toast(n ? `${n} categoria(s) de entrada criada(s) ✓` : 'Já existem categorias de entrada');
+    openConfigSection('categories');
+  };
+  $('#md-new').onclick = () => openCategoryEditor(null, null, 'Despesa');
+  $('#md-new-rec').onclick = () => openCategoryEditor(null, null, 'Receita');
   document.querySelectorAll('[data-edit]').forEach(el =>
     el.onclick = () => openCategoryEditor(DB.get('categories', el.dataset.edit), null));
   document.querySelectorAll('[data-nova-sub]').forEach(el =>
     el.onclick = () => openCategoryEditor(null, el.dataset.novaSub));
 }
 
-// paiFixo: id do envelope quando se está criando uma subcategoria a partir dele
-function openCategoryEditor(cat, paiFixo) {
+/* paiFixo: id do envelope quando se cria uma subcategoria a partir dele.
+   tipoNovo: 'Despesa' ou 'Receita' ao criar do zero — o tipo de uma categoria que
+   já existe vem do envelope dela, nunca é reescolhido aqui. */
+function openCategoryEditor(cat, paiFixo, tipoNovo) {
   const isEdit = !!cat;
-  cat = cat || { name: '', icon: '🏷️', scope: 'Família', monthly_budget: 0, parent_id: paiFixo || null };
+  const tipo = isEdit ? DB.categoryType(DB.categoryRoot(cat.id) || cat)
+    : paiFixo ? DB.categoryType(DB.get('categories', paiFixo))
+    : (tipoNovo || 'Despesa');
+  const ehEntrada = tipo === 'Receita';
+  cat = cat || { name: '', icon: ehEntrada ? '💵' : '🏷️', scope: 'Família', monthly_budget: 0, parent_id: paiFixo || null, type: tipo };
   const temFilhas = isEdit && DB.subcategoriesOf(cat.id).length > 0;
   // Um envelope que já tem subcategorias não pode virar subcategoria de outro:
   // isso criaria três níveis, que o resto do app não modela.
   const podeTerPai = !temFilhas;
-  const paisPossiveis = DB.rootCategories().filter(r => r.id !== cat.id);
+  // Só envelopes do mesmo lado: origem de entrada dentro de envelope de gasto
+  // faria o valor entrar no orçamento como se fosse despesa.
+  const paisPossiveis = DB.rootCategories(tipo).filter(r => r.id !== cat.id);
 
   openModal(`
-    <div class="modal-title">${isEdit ? 'Editar' : (cat.parent_id ? 'Nova subcategoria' : 'Novo envelope')}<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+    <div class="modal-title">${isEdit ? 'Editar' : (cat.parent_id ? 'Nova subcategoria' : ehEntrada ? 'Nova origem de entrada' : 'Novo envelope')}<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+    ${ehEntrada ? '<p class="muted" style="margin-bottom:12px">Categoria de <b>entrada</b>: diz de onde o dinheiro veio. Não tem orçamento nem entra na regra 50/30/20.</p>' : ''}
     <div class="row2">
       <div class="field"><label>Ícone</label><input id="c-icon" maxlength="4" value="${esc(cat.icon)}"></div>
       <div class="field"><label>Nome</label><input id="c-name" value="${esc(cat.name)}"></div>
@@ -2671,7 +2756,7 @@ function openCategoryEditor(cat, paiFixo) {
       </select>
       <p class="muted" style="margin-top:6px">Escolher um envelope transforma isto numa subcategoria: o gasto soma no limite dele.</p>
     </div>` : `<p class="muted" style="margin-bottom:12px">Este envelope tem subcategorias, então ele não pode virar subcategoria de outro.</p>`}
-    <div id="wrap-envelope" ${cat.parent_id ? 'hidden' : ''}>
+    <div id="wrap-envelope" ${cat.parent_id || ehEntrada ? 'hidden' : ''}>
       <div class="row2">
         <div class="field"><label>Âmbito</label><select id="c-scope"><option ${cat.scope === 'Família' ? 'selected' : ''}>Família</option><option ${cat.scope === 'Pessoal' ? 'selected' : ''}>Pessoal</option></select></div>
         <div class="field"><label>Orçamento mensal</label><input id="c-budget" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
@@ -2701,13 +2786,14 @@ function openCategoryEditor(cat, paiFixo) {
     if (!nome) return toast('Informe o nome');
     const pai = sel ? (sel.value || null) : (cat.parent_id || null);
     const envelope = pai ? DB.get('categories', pai) : null;
+    const semEnvelope = pai || ehEntrada;   // entrada não tem orçamento nem 50/30/20
     DB.upsert('categories', {
-      ...cat, name: nome, icon: $('#c-icon').value || '🏷️', parent_id: pai,
+      ...cat, name: nome, icon: $('#c-icon').value || '🏷️', parent_id: pai, type: tipo,
       // Subcategoria segue o envelope: guardar cópia divergente aqui só criaria
       // dois lugares dizendo coisas diferentes sobre o mesmo gasto.
-      scope: pai ? (envelope ? envelope.scope : 'Família') : $('#c-scope').value,
-      kind: pai ? (envelope ? envelope.kind : 'Essencial') : $('#c-kind').value,
-      monthly_budget: pai ? 0 : moneyVal('#c-budget'),
+      scope: semEnvelope ? (envelope ? envelope.scope : 'Família') : $('#c-scope').value,
+      kind: semEnvelope ? (envelope ? envelope.kind : 'Essencial') : $('#c-kind').value,
+      monthly_budget: semEnvelope ? 0 : moneyVal('#c-budget'),
     });
     Sync.autoSync(); openConfigSection('categories');
   };
@@ -2914,16 +3000,19 @@ function renderOfxPreview(parsed, accounts, cards) {
 
   const rows = novos.map((t, i) => {
     const isExp = t.amount < 0;
-    const guess = isExp ? OFX.guessCategoryId(t.memo, cats) : '';
+    const guess = OFX.guessCategoryId(t.memo, cats, isExp ? 'Despesa' : 'Receita');
     // Ordem no HTML igual à ordem de leitura: marcar, ler a descrição, ver o valor,
     // e só então escolher a categoria — que fica na linha de baixo, com espaço.
     return `<div class="ofx-row">
       <input type="checkbox" data-i="${i}" checked>
       <span class="ofx-main"><b>${esc(t.memo)}</b><small>${fmtDay(t.date)} · ${isExp ? 'saída' : 'entrada'}</small></span>
       <span class="ofx-val ${isExp ? '' : 'txt-green'}">${isExp ? '' : '+'}${fmtShort(Math.abs(t.amount))}</span>
-      <span class="ofx-cat">${isExp
-        ? `<select data-cat="${i}"><option value="">Sem categoria</option>${optionsCategorias(guess)}</select>`
-        : '<span class="muted">receita — entra sem categoria</span>'}</span>
+      <!-- Entrada também é classificada: sem isso não dá para separar salário de
+           empréstimo recebido, que entra na conta e não é ganho. -->
+      <span class="ofx-cat"><select data-cat="${i}">
+        <option value="">${isExp ? 'Sem categoria' : 'Sem origem'}</option>
+        ${optionsCategorias(guess, isExp ? 'Despesa' : 'Receita')}
+      </select></span>
       <button type="button" class="ofx-tag-btn" data-tagbtn="${i}" title="Etiquetas deste lançamento"><span data-ico="tag"></span><span class="ofx-tag-txt"></span></button>
     </div>`;
   }).join('');
@@ -3151,7 +3240,7 @@ const Notif = {
     }
     const period = DB.monthPeriod(new Date());
     const byCat = DB.spentByCategory(period);
-    for (const c of DB.rootCategories()) {
+    for (const c of DB.rootCategories('Despesa')) {
       if (!c.monthly_budget) continue;
       const pct = Math.round((byCat[c.id] || 0) / c.monthly_budget * 100);
       if (pct >= 100) this.push(`orc-${c.id}-${period.label}`, '⚠️ Orçamento estourado', `${c.icon} ${c.name} chegou a ${pct}% do limite do mês.`);

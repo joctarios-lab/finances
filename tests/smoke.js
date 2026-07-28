@@ -352,15 +352,17 @@ console.log('\n=== Subcategorias nas telas ===');
   check('a categoria escolhida vem marcada', (marcado.match(/selected/g) || []).length, 1);
   check('formulário e OFX usam o mesmo gerador',
     (ap.match(/optionsCategorias\(/g) || []).length >= 3, true);
-  check('chips das 3 mais usadas só consideram folhas', /const folhas = DB\.leafCategories\(\)/.test(ap), true);
+  check('chips das 3 mais usadas só consideram folhas', /const folhas = DB\.leafCategories\(tipo\)/.test(ap), true);
   check('adivinhação recebe a lista completa (precisa dos pais)', ap.includes('OFX.guessCategoryId(texto, DB.all(\'categories\'))'), true);
-  check('extrato mostra o caminho', /esc\(c \? DB\.categoryPath\(t\.category_id\) : 'Sem categoria'\)/.test(ap), true);
+  check('extrato mostra o caminho', /c \? esc\(DB\.categoryPath\(t\.category_id\)\) :/.test(ap), true);
+  check('entrada sem origem também é sinalizada', ap.includes("'Entrada sem origem'"), true);
   check('CSV exporta o caminho', /DB\.categoryPath\(t\.category_id\), t\.scope/.test(ap), true);
   check('barra de orçamento abre o detalhe', ap.includes('openEnvelopeDetail') && ap.includes('data-envelope='), true);
   check('cadastro de categoria em árvore', ap.includes('openCategoriesConfig') && ap.includes('sub-item'), true);
   check('dá para criar subcategoria dentro do envelope', ap.includes('data-nova-sub'), true);
-  check('subcategoria não pede orçamento próprio', /monthly_budget: pai \? 0 :/.test(ap), true);
-  check('subcategoria herda âmbito e tipo do envelope', /scope: pai \?[\s\S]{0,120}kind: pai \?/.test(ap), true);
+  check('subcategoria não pede orçamento próprio', /monthly_budget: semEnvelope \? 0 :/.test(ap), true);
+  check('subcategoria herda âmbito e tipo do envelope', /scope: semEnvelope \?[\s\S]{0,180}kind: semEnvelope \?/.test(ap), true);
+  check('entrada também não tem orçamento', /const semEnvelope = pai \|\| ehEntrada;/.test(ap), true);
   check('base antiga recebe a oferta de migração', ap.includes('md-sugerir') && ap.includes('DB.sugerirSubcategorias()'), true);
 
   const nt = fs.readFileSync(BASE + 'supabase/functions/notify/index.ts', 'utf8');
@@ -371,6 +373,96 @@ console.log('\n=== Subcategorias nas telas ===');
   const cssS = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
   check('subcategoria recuada na lista', /\.sub-item \{[^}]*margin-left/.test(cssS), true);
 }
+
+/* ---- Categorias de entrada ----
+   Entrada tem origem, não envelope: sem separar, empréstimo recebido viraria renda,
+   inflando taxa de poupança e a base do 50/30/20 — e a dívida desapareceria. */
+console.log('\n=== Categorias de entrada ===');
+try {
+  const contaE = DB.all('accounts')[0].id;
+  const raizesRec = DB.rootCategories('Receita');
+  check('vêm categorias de entrada de fábrica', raizesRec.length >= 5, true);
+  check('empréstimos ficam em grupo próprio', raizesRec.some(c => c.name === 'Empréstimos'), true);
+  check('trabalho também', raizesRec.some(c => c.name === 'Trabalho'), true);
+
+  const trabalho = raizesRec.find(c => c.name === 'Trabalho');
+  const salario = DB.subcategoriesOf(trabalho.id).find(c => c.name === 'Salário');
+  const emprestimos = raizesRec.find(c => c.name === 'Empréstimos');
+  const empRecebido = DB.subcategoriesOf(emprestimos.id).find(c => /recebido/.test(c.name));
+
+  check('a subcategoria de entrada herda o tipo', DB.categoryType(salario), 'Receita');
+  check('gasto e entrada não se misturam',
+    DB.rootCategories('Despesa').some(c => DB.categoryType(c) === 'Receita'), false);
+  check('a lista sem tipo traz os dois lados',
+    DB.rootCategories().length > DB.rootCategories('Despesa').length, true);
+
+  // Orçamento e 50/30/20 não conhecem entrada
+  check('entrada não tem orçamento', raizesRec.every(c => !c.monthly_budget), true);
+  const totalOrcado = DB.budgetTotal();
+  check('total orçado ignora entradas',
+    totalOrcado, DB.rootCategories('Despesa').reduce((s, c) => s + (Number(c.monthly_budget) || 0), 0));
+
+  // Classificar a entrada
+  const p3 = DB.monthPeriod(new Date());
+  const kindAntes = DB.spentByKind(p3);
+  DB.upsert('transactions', { description: 'Salário do mês', amount: 7000, date: dia(5), type: 'Receita', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaE, category_id: salario.id });
+  DB.upsert('transactions', { description: 'Empréstimo do banco', amount: 3000, date: dia(6), type: 'Receita', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaE, category_id: empRecebido.id });
+
+  const porOrigem = DB.incomeByCategory(p3);
+  check('entrada soma no grupo de origem', porOrigem[trabalho.id], 7000);
+  check('empréstimo fica separado do trabalho', porOrigem[emprestimos.id], 3000);
+  check('entrada classificada não entra no 50/30/20',
+    DB.spentByKind(p3).Essencial + DB.spentByKind(p3).Estilo,
+    kindAntes.Essencial + kindAntes.Estilo);
+  check('entrada não aparece como gasto por categoria',
+    DB.spentByCategory(p3)[trabalho.id] === undefined, true);
+
+  // Só folhas do lado certo entram nos seletores
+  const folhasRec = DB.leafCategories('Receita');
+  check('folhas de entrada são só de entrada', folhasRec.every(c => DB.categoryType(DB.categoryRoot(c.id)) === 'Receita'), true);
+  check('o envelope de entrada com filhas não é folha', folhasRec.some(c => c.id === trabalho.id), false);
+
+  // As 3 mais usadas de cada lado são calculadas separadamente
+  const topRec = topCategoryIds(3, null, 'Receita');
+  check('atalhos de entrada só trazem entrada',
+    topRec.every(id => DB.categoryType(DB.categoryRoot(id)) === 'Receita'), true);
+  const topDesp = topCategoryIds(3, null, 'Despesa');
+  check('atalhos de gasto seguem só de gasto',
+    topDesp.every(id => DB.categoryType(DB.categoryRoot(id)) === 'Despesa'), true);
+
+  // Dropdown agrupado por origem
+  const optRec = optionsCategorias(null, 'Receita');
+  check('dropdown de entrada agrupa por origem', /<optgroup label="[^"]*Trabalho/.test(optRec), true);
+  check('e não oferece categoria de gasto', /Alimenta/.test(optRec), false);
+
+  // Adivinhação do OFX pelo lado certo
+  const todas = DB.all('categories');
+  check('crédito de salário cai em Salário', OFX.guessCategoryId('PAGAMENTO DE SALARIO ACME', todas, 'Receita'), salario.id);
+  check('crédito de empréstimo cai em Empréstimos', OFX.guessCategoryId('CREDITO EMPRESTIMO CONSIGNADO', todas, 'Receita'), empRecebido.id);
+  check('entrada nunca cai em categoria de gasto',
+    DB.categoryType(DB.categoryRoot(OFX.guessCategoryId('ALUGUEL RECEBIDO', todas, 'Receita') || salario.id)), 'Receita');
+  const palpiteGasto = OFX.guessCategoryId('SUPERMERCADO BOM PRECO', todas, 'Despesa');
+  check('gasto continua caindo em categoria de gasto', DB.categoryType(DB.categoryRoot(palpiteGasto)), 'Despesa');
+
+  // Formulário: trocar o tipo troca a lista
+  const ap3 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('formulário monta a lista pelo tipo', /montarCategorias\(isRec \? 'Receita' : 'Despesa'\)/.test(ap3), true);
+  check('categoria deixou de ser escondida na receita', /wrap-cat'\)\.hidden = isRec/.test(ap3), false);
+  check('receita grava a categoria escolhida', /category_id: chipValue\('g-cat'\) \|\| null/.test(ap3), true);
+  check('rótulo muda para "De onde veio"', ap3.includes("'De onde veio'"), true);
+  check('relatório mostra a origem das entradas', ap3.includes('De onde vem o dinheiro'), true);
+  check('e avisa quando parte veio de empréstimo', ap3.includes('não são ganho'), true);
+
+  // Migração de quem já usava o app
+  const guardadas2 = DB.data.categories;
+  DB.data.categories = DB.data.categories.filter(c => DB.categoryType(c) !== 'Receita');
+  check('base sem entradas fica sem nenhuma', DB.rootCategories('Receita').length, 0);
+  const criadas2 = DB.criarCategoriasDeEntrada();
+  check('a migração cria as categorias de entrada', criadas2 > 10, true);
+  check('e agora existem os grupos', DB.rootCategories('Receita').length >= 5, true);
+  check('rodar de novo não duplica', DB.criarCategoriasDeEntrada(), 0);
+  DB.data.categories = guardadas2;
+} catch (e) { console.log(` FALHA | entradas: ${e.message}`); fail++; }
 
 console.log('\n=== Nenhuma função inexistente é chamada (DB.x / OFX.x) ===');
 {
@@ -1346,6 +1438,7 @@ for (const tabela of Object.keys(SYNC)) {
     check(`transactions.${col} com ALTER seguro`, new RegExp(`add column if not exists ${col}\\b`, 'i').test(schema), true);
   }
   check('categories.parent_id com ALTER seguro', /alter table categories add column if not exists parent_id/i.test(schema), true);
+  check('categories.type com ALTER seguro', /alter table categories add column if not exists type text not null default/i.test(schema), true);
   check('transactions.tags com ALTER seguro', /alter table transactions add column if not exists tags jsonb not null default/i.test(schema), true);
   check('parent_id aponta para categories', /parent_id uuid references categories\(id\)/i.test(schema), true);
   check('apagar o pai no banco não leva o histórico', /parent_id uuid references categories\(id\) on delete set null/i.test(schema), true);

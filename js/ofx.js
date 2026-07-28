@@ -106,23 +106,51 @@ const OFX = {
     [['iptu'], 'imposto', 'servic'],
   ],
 
+  /* Palavras que identificam ORIGEM de entrada. Separadas das de gasto porque a
+     pergunta é outra: "TED RECEBIDA" não é categoria de despesa nenhuma, e
+     empréstimo recebido precisa cair em Empréstimos, não virar renda. */
+  KEYWORDS_ENTRADA: [
+    [['salario', 'sal.', 'folha de pagamento', 'pagamento de salario', 'remuneracao'], 'salario', 'trabalho'],
+    [['13o', 'decimo terceiro'], '13', 'trabalho'],
+    [['ferias'], 'ferias', 'trabalho'],
+    [['plr', 'bonus', 'participacao nos lucros'], 'bonus', 'trabalho'],
+    [['comissao'], 'comissao', 'trabalho'],
+    [['freelance', 'nota fiscal', 'nfe servico', 'autonomo'], 'freelance', 'trabalho'],
+    [['rendimento', 'juros', 'cdb', 'tesouro', 'poupanca rend', 'selic'], 'rendimento', 'investiment'],
+    [['dividendo', 'jcp', 'provento'], 'dividendo', 'investiment'],
+    [['resgate'], 'resgate', 'investiment'],
+    [['emprestimo', 'consignado', 'credito pessoal'], 'emprestimo recebido', 'emprestim'],
+    [['aluguel receb', 'locacao'], 'aluguel', 'aluguei'],
+    [['restituicao', 'irpf'], 'restituicao', 'benefici'],
+    [['auxilio', 'bolsa familia', 'inss', 'beneficio'], 'auxilio', 'benefici'],
+    [['pensao'], 'pensao', 'benefici'],
+    [['indenizacao', 'sinistro', 'seguro receb'], 'seguro', 'benefici'],
+    [['reembolso', 'ressarcimento'], 'reembolso', 'outras entradas'],
+    [['estorno', 'devolucao'], 'estorno', 'outras entradas'],
+  ],
+
   /* Devolve a categoria mais específica que a família realmente tem.
      Recebe TODAS as categorias (não só as folhas): sem os pais na lista não há
      como saber se a subcategoria encontrada pertence ao envelope esperado —
-     "Manutenção" existe em Moradia e em Transporte. */
-  guessCategoryId(memo, categories) {
+     "Manutenção" existe em Moradia e em Transporte.
+
+     tipo escolhe o conjunto de palavras e restringe o resultado ao lado certo:
+     um crédito no extrato nunca deve cair numa categoria de gasto. */
+  guessCategoryId(memo, categories, tipo = 'Despesa') {
     const m = this.norm(memo);
+    const doLado = c => ((c.type === 'Receita' ? 'Receita' : 'Despesa') === tipo);
+    const lista = categories.filter(doLado);
     const nome = c => this.norm(c.name);
-    const paiDe = c => categories.find(p => p.id === c.parent_id);
-    for (const [words, sub, raiz] of this.KEYWORDS) {
+    const paiDe = c => lista.find(p => p.id === c.parent_id);
+    for (const [words, sub, raiz] of (tipo === 'Receita' ? this.KEYWORDS_ENTRADA : this.KEYWORDS)) {
       if (!words.some(w => m.includes(w))) continue;
       // 1) subcategoria dentro do envelope esperado — a resposta mais precisa
-      let hit = categories.find(c => c.parent_id && nome(c).includes(sub) &&
+      let hit = lista.find(c => c.parent_id && nome(c).includes(sub) &&
         (p => p && nome(p).includes(raiz))(paiDe(c)));
       // 2) qualquer subcategoria com esse nome
-      if (!hit) hit = categories.find(c => c.parent_id && nome(c).includes(sub));
+      if (!hit) hit = lista.find(c => c.parent_id && nome(c).includes(sub));
       // 3) o envelope, quando a família não detalhou essa parte
-      if (!hit) hit = categories.find(c => !c.parent_id && nome(c).includes(raiz));
+      if (!hit) hit = lista.find(c => !c.parent_id && nome(c).includes(raiz));
       if (hit) return hit.id;
     }
     return '';

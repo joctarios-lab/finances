@@ -62,6 +62,9 @@ create table if not exists categories (
   scope text not null default 'Família',
   monthly_budget numeric not null default 0,
   kind text not null default 'Essencial',   -- 'Essencial' | 'Estilo' (regra 50/30/20)
+  -- 'Despesa' | 'Receita': separa envelope de gasto de origem de entrada. Orçamento
+  -- e regra 50/30/20 só valem para Despesa.
+  type text not null default 'Despesa',
   -- Sem parent_id é envelope (o orçamento vive nele); com parent_id é subcategoria.
   -- set null em vez de cascade: o app apaga as filhas por conta própria (soft delete),
   -- e um delete físico do pai não deve levar histórico embora sem aviso.
@@ -71,6 +74,7 @@ create table if not exists categories (
 );
 alter table categories add column if not exists kind text not null default 'Essencial';
 alter table categories add column if not exists parent_id uuid references categories(id) on delete set null;
+alter table categories add column if not exists type text not null default 'Despesa';
 
 create table if not exists transactions (
   id uuid primary key,

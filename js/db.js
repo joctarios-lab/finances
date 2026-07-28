@@ -137,7 +137,20 @@ const DB = {
      envelopes, então "Mercado" e "Restaurante" somam no limite de
      "Alimentação". Dois níveis bastam: a terceira camada só traria trabalho
      de manutenção sem melhorar nenhuma decisão de dinheiro. */
-  rootCategories() { return this.all('categories').filter(c => !c.parent_id); },
+  /* Categoria de entrada é outra coisa que categoria de gasto: "Salário" e
+     "Empréstimo recebido" não têm orçamento nem entram no 50/30/20 — dizem de onde
+     o dinheiro veio. Por isso um tipo na categoria, e não uma lista só: misturadas,
+     as entradas apareceriam nas barras de orçamento pedindo um teto que não existe.
+
+     Sem argumento devolve tudo (a tela de cadastro mostra os dois lados). Passar
+     'Despesa' ou 'Receita' é o que separa. */
+  rootCategories(tipo) {
+    return this.all('categories')
+      .filter(c => !c.parent_id && (!tipo || this.categoryType(c) === tipo));
+  },
+  categoryType(c) { return (c && c.type) === 'Receita' ? 'Receita' : 'Despesa'; },
+  isIncomeCategory(id) { return this.categoryType(this.get('categories', id)) === 'Receita'; },
+
   subcategoriesOf(parentId) {
     if (!parentId) return [];
     return this.all('categories').filter(c => c.parent_id === parentId);
@@ -154,8 +167,10 @@ const DB = {
 
   // Categorias que podem receber lançamento: as folhas. Um envelope que já tem
   // subcategorias sai da lista — classificar nele deixaria o detalhe pela metade.
-  leafCategories() {
-    return this.all('categories').filter(c => c.parent_id || !this.subcategoriesOf(c.id).length);
+  leafCategories(tipo) {
+    return this.all('categories').filter(c =>
+      (c.parent_id || !this.subcategoriesOf(c.id).length) &&
+      (!tipo || this.categoryType(this.categoryRoot(c.id) || c) === tipo));
   },
 
   // "Alimentação › Mercado" — o caminho todo, porque "Mercado" sozinho não diz de qual envelope saiu
@@ -387,9 +402,24 @@ const DB = {
       .reduce((s, t) => s + (Number(t.amount) || 0), 0);
   },
 
-  // Soma dos limites: só os envelopes. Contar pai e filha dobraria o orçamento total.
+  // Soma dos limites: só os envelopes de GASTO. Contar pai e filha dobraria o
+  // total; incluir entrada somaria um teto que não existe.
   budgetTotal() {
-    return this.rootCategories().reduce((s, c) => s + (Number(c.monthly_budget) || 0), 0);
+    return this.rootCategories('Despesa').reduce((s, c) => s + (Number(c.monthly_budget) || 0), 0);
+  },
+
+  /* Entradas por categoria, com o mesmo roll-up do gasto: subcategoria sobe para o
+     envelope. Serve para responder de onde vem o dinheiro — e principalmente para
+     separar o que é renda do que é empréstimo ou devolução, que entra na conta mas
+     não é ganho. */
+  incomeByCategory(period) {
+    const out = {};
+    for (const t of this.incomesOf(period)) {
+      if (t.card_id) continue;                    // estorno de cartão não é entrada de dinheiro
+      const k = this.categoryRootId(t.category_id) || '_sem';
+      out[k] = (out[k] || 0) + (Number(t.amount) || 0);
+    }
+    return out;
   },
 
   goalTotal(goalId) {
@@ -544,13 +574,31 @@ const DB = {
     [['Gastos Pessoais', '👤', 600, 'Estilo', 'Pessoal'], ['Beleza / Cabelo', 'Cuidados pessoais', 'Diversos']],
   ],
 
+  /* Entradas: sem orçamento e sem 50/30/20 — o que importa aqui é a ORIGEM.
+     "Empréstimos" está separado de propósito: dinheiro emprestado entra na conta e
+     não é ganho; somado à renda, infla a taxa de poupança e a base do 50/30/20, e
+     some a dívida que ficou. Separado, dá para ver quanto entrou de verdade. */
+  ARVORE_ENTRADAS: [
+    [['Trabalho', '💼'], ['Salário', '13º salário', 'Férias', 'Bônus / PLR', 'Comissão', 'Freelance / Extra']],
+    [['Investimentos', '📈'], ['Rendimento', 'Dividendos', 'Resgate', 'Venda de ativo']],
+    [['Empréstimos', '🤝'], ['Empréstimo recebido', 'Devolução de empréstimo', 'Parcela recebida']],
+    [['Aluguéis', '🏘️'], ['Aluguel recebido']],
+    [['Benefícios', '🧾'], ['Auxílio', 'Pensão', 'Restituição de imposto', 'Seguro / Indenização']],
+    [['Outras entradas', '💵'], ['Reembolso', 'Venda de usados', 'Presente recebido', 'Estorno', 'Diversos']],
+  ],
+
   seed() {
     if (this.data.meta.seeded) return;
-    const cat = (name, icon, budget, kind, scope = 'Família') =>
-      ({ id: this.uuid(), name, icon, monthly_budget: budget, kind, scope, parent_id: null, updated_at: this.now(), deleted: false, dirty: true });
+    this.data.categories = [...this.montarArvore(this.ARVORE_PADRAO, 'Despesa'), ...this.montarArvore(this.ARVORE_ENTRADAS, 'Receita')];
+    this.data.meta.seeded = true;
+    this.save();
+  },
 
+  montarArvore(arvore, tipo) {
+    const cat = (name, icon, budget = 0, kind = 'Essencial', scope = 'Família') =>
+      ({ id: this.uuid(), name, icon, monthly_budget: budget, kind, scope, type: tipo, parent_id: null, updated_at: this.now(), deleted: false, dirty: true });
     const lista = [];
-    for (const [pai, filhas] of this.ARVORE_PADRAO) {
+    for (const [pai, filhas] of arvore) {
       const raiz = cat(...pai);
       lista.push(raiz);
       for (const nome of filhas) {
@@ -559,9 +607,31 @@ const DB = {
         lista.push(f);
       }
     }
-    this.data.categories = lista;
-    this.data.meta.seeded = true;
-    this.save();
+    return lista;
+  },
+
+  /* Base criada antes das categorias de entrada não tem nenhuma, e o seed não roda
+     de novo. Cria as que faltam sem tocar no que já existe. */
+  criarCategoriasDeEntrada() {
+    if (!this.data) return 0;
+    const existentes = this.rootCategories('Receita').map(c => this._semAcento(c.name));
+    let criadas = 0;
+    for (const [pai, filhas] of this.ARVORE_ENTRADAS) {
+      if (existentes.includes(this._semAcento(pai[0]))) continue;
+      const raiz = this.upsert('categories', {
+        name: pai[0], icon: pai[1], type: 'Receita', scope: 'Família',
+        kind: 'Essencial', monthly_budget: 0, parent_id: null,
+      });
+      criadas++;
+      for (const nome of filhas) {
+        this.upsert('categories', {
+          name: nome, icon: pai[1], type: 'Receita', scope: 'Família',
+          kind: 'Essencial', monthly_budget: 0, parent_id: raiz,
+        });
+        criadas++;
+      }
+    }
+    return criadas;
   },
 
   _semAcento(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim(); },
