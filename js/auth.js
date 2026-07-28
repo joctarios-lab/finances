@@ -565,8 +565,28 @@ const Auth = {
       });
     };
 
+    /* Passo 3b — a conta já tem família: só trazer o que ela já registrou */
+    const passoFamiliaExistente = () => {
+      tela(3, 4, 'Família encontrada',
+        'Esta conta já faz parte de uma família. Estamos trazendo os lançamentos para este aparelho.',
+        '', '<button class="btn" id="ob-fam-ok" disabled>Trazendo dados…</button>');
+      const seguir = () => {
+        const b = document.getElementById('ob-fam-ok');
+        if (b) {
+          b.disabled = false;
+          b.textContent = `Continuar como ${DB.familyLabel()}`;
+          b.onclick = passoPin;
+        }
+      };
+      const puxar = window.puxarTudoDaFamilia;
+      (puxar ? puxar() : Promise.resolve()).then(seguir).catch(seguir);
+    };
+
     /* Passo 3b — família */
     const passoFamilia = () => {
+      // Reinstalou o app ou entrou em outro aparelho: a conta já pertence a uma
+      // família. Pedir para criar outra aqui partia os dados do casal em duas.
+      if (Sync.hasFamily()) return passoFamiliaExistente();
       tela(3, 4, 'Sua família',
         'Escolha como querem chamar a família — é o nome que aparece no app. Ou entre na família que já existe, com o código do outro aparelho.',
         `<div class="ob-field"><label>Nome da família</label><input id="ob-fam" placeholder="Ex: Nossa casa, Família Silva…" autocomplete="off"></div>`,

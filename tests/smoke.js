@@ -210,15 +210,43 @@ try {
 
 console.log('\n=== Nenhuma função inexistente é chamada (DB.x / OFX.x) ===');
 {
+  // Confere contra o módulo real, não contra o stub do teste. Antes era o stub, e
+  // como ele não tem quase nada, 35 métodos ficavam numa lista de exceções — onde
+  // um erro de digitação passaria despercebido para sempre.
+  const membrosDe = (arquivo, nome) => {
+    const src = fs.readFileSync(BASE + arquivo, 'utf8');
+    const ini = src.indexOf(`const ${nome} = {`);
+    if (ini < 0) return null;
+    const resto = src.slice(ini);
+    const fim = resto.indexOf('\n};');
+    const membros = new Set();
+    for (const m of resto.slice(0, fim < 0 ? resto.length : fim).matchAll(/^ {2}(?:async )?(\w+)\s*[(:]/gm)) membros.add(m[1]);
+    return membros;
+  };
+  const declarados = obj => new Set(Object.keys(obj));
+  const conhecidos = {
+    DB: declarados(DB), OFX: declarados(OFX),
+    Sync: membrosDe('js/sync.js', 'Sync'),
+    Auth: membrosDe('js/auth.js', 'Auth'),
+    Notif: membrosDe('js/app.js', 'Notif'),
+  };
+  for (const [nome, set] of Object.entries(conhecidos)) check(`${nome}: membros localizados`, !!set && set.size > 3, true);
+
   const fonte = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   const quebradas = [];
   for (const [, obj, met] of fonte.matchAll(/\b(DB|OFX|Sync|Auth|Notif)\.(\w+)\s*\(/g)) {
-    const alvo = { DB, OFX, Sync: global.Sync, Auth: global.Auth, Notif: typeof Notif !== 'undefined' ? Notif : {} }[obj];
-    if (alvo && typeof alvo[met] !== 'function' && !quebradas.includes(obj + '.' + met)) quebradas.push(obj + '.' + met);
+    const alvo = conhecidos[obj];
+    if (alvo && !alvo.has(met) && !quebradas.includes(obj + '.' + met)) quebradas.push(obj + '.' + met);
   }
-  const ignorar = ['Auth.fluxoPin', 'Auth.pinPad', 'Auth.hide', 'Sync.startAuto', 'Auth.bioAtiva', 'Auth.ativarBio', 'Auth.desativarBio', 'Auth.desbloquearComBio', 'Auth.bioSuportadaNoAparelho', 'Sync.rest', 'Sync.signIn', 'Sync.signUp', 'Sync.signOut', 'Sync.createFamily', 'Sync.joinFamily', 'Sync.syncAll', 'Sync.status', 'Auth.setPin', 'Auth.verify', 'Auth.removePin', 'Auth.lockNow', 'Auth.save', 'Notif.load', 'Notif.enable', 'Notif.disable', 'Notif.push', 'Notif.check', 'Notif.save', 'Notif.pushState', 'Notif.subscribePush', 'Notif.unsubscribePush', 'Notif.enabled', 'Notif.vapid', 'Notif.urlB64ToU8', 'Notif.registerFail', 'Notif.registerSuccess'];
-  const reais = quebradas.filter(q => !ignorar.includes(q));
-  check('todas as chamadas existem', reais.length ? reais.join(', ') : true, true);
+  check('todas as chamadas existem', quebradas.length ? quebradas.join(', ') : true, true);
+
+  // auth.js também chama Sync e DB — e é lá que mora o primeiro acesso
+  const fonteAuth = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+  const quebradasAuth = [];
+  for (const [, obj, met] of fonteAuth.matchAll(/\b(DB|Sync)\.(\w+)\s*\(/g)) {
+    if (!conhecidos[obj].has(met) && !quebradasAuth.includes(obj + '.' + met)) quebradasAuth.push(obj + '.' + met);
+  }
+  check('chamadas do primeiro acesso existem', quebradasAuth.length ? quebradasAuth.join(', ') : true, true);
 }
 
 console.log('\n=== Reserva de emergência (caixinha, sem conta fixa) ===');
@@ -836,6 +864,79 @@ check('função is_member definida antes das policies', schema.indexOf('function
     await S.syncAll(true);
     check('envio pendente gira mesmo em silêncio', vistos.includes('sync'), true);
     check('e para ao terminar o envio', vistos[vistos.length - 1] !== 'sync', true);
+  }
+
+  /* ---- Login numa conta que já tem família ---- */
+  console.log('\n=== Refazer login não cria família nova ===');
+  {
+    const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S.saveCfg = () => {};
+    const base = { url: 'https://exemplo.supabase.co', anonKey: 'k', access_token: 'a', refresh_token: 'r', token_exp: Date.now() + 600000 };
+
+    // Aparelho novo: logado, sem família local, mas o servidor já tem uma
+    S.cfg = { ...base, user_id: 'u-1' };
+    let pedido = '';
+    global.fetch = async url => {
+      pedido = String(url);
+      return { ok: true, status: 200, json: async () => [{ family_id: 'fam-antiga' }], text: async () => '' };
+    };
+    const achou = await S.detectarFamilia();
+    check('encontra a família que a conta já tem', achou, 'fam-antiga');
+    check('não pede mais para criar família', S.hasFamily(), true);
+    check('pergunta só pelas famílias desta conta', pedido.includes('user_id=eq.u-1'), true);
+
+    // Conta realmente nova: nada a adotar
+    S.cfg = { ...base, user_id: 'u-2' };
+    global.fetch = async () => ({ ok: true, status: 200, json: async () => [], text: async () => '' });
+    check('conta sem família segue para o cadastro', await S.detectarFamilia(), null);
+
+    // Já tem família local: não gasta chamada
+    S.cfg = { ...base, user_id: 'u-1', family_id: 'fam-local' };
+    let chamou = false;
+    global.fetch = async () => { chamou = true; return { ok: true, status: 200, json: async () => [], text: async () => '' }; };
+    check('quem já tem família não consulta de novo', await S.detectarFamilia(), 'fam-local');
+    check('e não faz chamada à toa', chamou, false);
+
+    // A busca da família é comodidade: se ela falhar, o login ainda tem de valer.
+    // Autentica normalmente e derruba só a consulta de family_members.
+    S.cfg = { ...base, access_token: undefined, refresh_token: undefined, token_exp: 0 };
+    global.fetch = async url => {
+      if (String(url).includes('/auth/v1/')) {
+        return { ok: true, status: 200, text: async () => '', json: async () => ({
+          access_token: 'a2', refresh_token: 'r2', expires_in: 3600, user: { id: 'u-9', email: 'a@b.c' },
+        }) };
+      }
+      throw new Error('sem rede');
+    };
+    let caiu = false;
+    await S.signIn('a@b.c', 'x').catch(() => { caiu = true; });
+    check('login vale mesmo se a busca da família falhar', caiu, false);
+    check('e a sessão fica gravada', S.cfg.access_token, 'a2');
+    check('o id do usuário vem do login', S.cfg.user_id, 'u-9');
+
+    const srcS = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
+    check('o id do usuário é guardado no login', srcS.includes('this.cfg.user_id = (d.user && d.user.id)'), true);
+
+    const srcA = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+    check('primeiro acesso pula a criação de família', /passoFamilia = \(\) => \{[\s\S]{0,240}if \(Sync\.hasFamily\(\)\) return passoFamiliaExistente\(\)/.test(srcA), true);
+    check('e baixa o que a família já tem', srcA.includes('puxarTudoDaFamilia'), true);
+  }
+
+  /* ---- O código da família precisa ser fácil de achar ---- */
+  console.log('\n=== Código da família visível ===');
+  {
+    const srcApp = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+    const usos = (srcApp.match(/\$\{blocoConvite\(\)\}/g) || []).length;
+    check('o bloco de convite aparece em mais de um lugar', usos >= 2, true);
+    check('aparece em Família & ciclo', /sec === 'family'[\s\S]{0,600}\$\{blocoConvite\(\)\}/.test(srcApp), true);
+    check('aparece em Sincronização', /step === 4[\s\S]{0,300}\$\{blocoConvite\(\)\}/.test(srcApp), true);
+    check('a lista de configurações avisa onde está', srcApp.includes('código para convidar'), true);
+    check('dá para compartilhar direto (WhatsApp etc.)', srcApp.includes('navigator.share'), true);
+    check('e copiar quando não há compartilhamento', /navigator\.clipboard\.writeText\(codigo\(\)\)/.test(srcApp), true);
+    check('tocar no código copia', /on\('#cv-cod', copiar\)/.test(srcApp), true);
+    check('o convite é ligado onde é exibido', (srcApp.match(/ligarConvite\(\);/g) || []).length >= 2, true);
+    const cssC = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+    check('o código tem destaque próprio', /\.convite-cod \{[^}]*font-family: monospace/.test(cssC), true);
   }
 
   console.log('\n=== Apagar dados deste aparelho ===');

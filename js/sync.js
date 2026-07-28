@@ -60,13 +60,15 @@ const Sync = {
 
   async signUp(email, password) {
     const d = await this.authRequest('signup', { email, password });
-    if (d.access_token) this.setSession(d);
+    if (d.access_token) { this.setSession(d); await this.detectarFamilia().catch(() => {}); }
     return d;
   },
 
   async signIn(email, password) {
     const d = await this.authRequest('token?grant_type=password', { email, password });
     this.setSession(d);
+    // Não pode falhar o login por causa disto; é uma comodidade, não um requisito
+    await this.detectarFamilia().catch(() => {});
     return d;
   },
 
@@ -75,7 +77,24 @@ const Sync = {
     this.cfg.refresh_token = d.refresh_token;
     this.cfg.token_exp = Date.now() + ((d.expires_in || 3600) - 60) * 1000;
     this.cfg.user_email = (d.user && d.user.email) || this.cfg.user_email;
+    this.cfg.user_id = (d.user && d.user.id) || this.cfg.user_id;
     this.saveCfg();
+  },
+
+  /* O servidor já sabe se esta conta pertence a alguma família (family_members).
+     Sem perguntar a ele, quem reinstala o app ou entra em outro aparelho caía na
+     tela de "criar família" e criava uma segunda, separada da primeira — com os
+     dados do casal partidos em duas famílias sem ninguém perceber. */
+  async detectarFamilia() {
+    if (!this.loggedIn() || this.cfg.family_id) return this.cfg.family_id || null;
+    const filtro = this.cfg.user_id ? `&user_id=eq.${this.cfg.user_id}` : '';
+    const rows = await this.rest(
+      `family_members?select=family_id&order=created_at.asc&limit=1${filtro}`, { method: 'GET' });
+    const fid = rows && rows[0] && rows[0].family_id;
+    if (!fid) return null;
+    this.cfg.family_id = fid;
+    this.saveCfg();
+    return fid;
   },
 
   signOut() {

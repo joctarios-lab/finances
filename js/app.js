@@ -1874,7 +1874,7 @@ function openConfig() {
     <div class="settings-item" data-go="accounts"><span class="cfg-left"><span class="cfg-ico" data-ico="wallet"></span><span>Contas<br><small>${DB.all('accounts').length} cadastrada(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="cards"><span class="cfg-left"><span class="cfg-ico" data-ico="card"></span><span>Cartões de crédito<br><small>${DB.all('cards').length} cadastrado(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="categories"><span class="cfg-left"><span class="cfg-ico" data-ico="pie"></span><span>Categorias &amp; orçamentos<br><small>${DB.all('categories').length} categoria(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Família &amp; ciclo do mês<br><small>${esc(DB.familyLabel())} · início no dia ${DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Família &amp; ciclo do mês<br><small>${esc(DB.familyLabel())}${Sync.hasFamily() ? ' · código para convidar' : ' · início no dia ' + DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="sync"><span class="cfg-left"><span class="cfg-ico" data-ico="cloud"></span><span>Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="ofx"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Importar extrato OFX<br><small>traga os lançamentos do banco ou cartão de uma vez</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="notif"><span class="cfg-left"><span class="cfg-ico" data-ico="bell"></span><span>Notificações<br><small>${Notif.enabled() ? 'Ativas — faturas, orçamentos e metas' : 'Desativadas'}</small></span></span><span class="chev" data-ico="chev"></span></div>
@@ -2010,6 +2010,7 @@ function openConfigSection(sec) {
     const s = DB.settings();
     openModal(`
       <div class="modal-title">Família & ciclo<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+      ${blocoConvite()}
       <div class="field"><label>Nome da família</label><input id="f-famname" placeholder="Ex: Nossa casa, Família Silva…" value="${esc(s.family_name || '')}">
         <p class="muted" style="margin-top:6px">Aparece no topo do app e no menu lateral.</p></div>
       <div class="field"><label>Membros (um por linha)</label><textarea id="f-members" rows="4" placeholder="Ex:&#10;Ana&#10;Carlos">${esc((s.members || []).join('\n'))}</textarea>
@@ -2021,6 +2022,7 @@ function openConfigSection(sec) {
       <button class="btn" id="md-save">Salvar</button>
     `);
     initMoney('#f-income', s.monthly_income);
+    ligarConvite();
     $('#md-back').onclick = openConfig;
     $('#md-save').onclick = () => {
       const members = $('#f-members').value.split('\n').map(x => x.trim()).filter(Boolean);
@@ -2227,6 +2229,55 @@ function openConfigSection(sec) {
   }
 }
 
+/* ---------- Convite para a família ----------
+   O código é o que permite o cônjuge ver os mesmos lançamentos. Ficava só na tela
+   de Sincronização, em cinza pequeno, e quem não o copiasse na hora do cadastro
+   não o encontrava mais. Agora é um bloco só, usado em todo lugar que faz sentido. */
+function blocoConvite() {
+  if (!Sync.hasFamily()) return '';
+  return `
+    <div class="convite">
+      <div class="convite-topo"><span class="cfg-ico t-primary" data-ico="users"></span>
+        <div><b>Código da família</b><small>quem usar este código passa a ver os mesmos lançamentos</small></div></div>
+      <div class="convite-cod" id="cv-cod" title="Toque para copiar">${esc(Sync.cfg.family_id)}</div>
+      <div class="btn-row">
+        <button class="btn" id="cv-share">Convidar alguém</button>
+        <button class="btn ghost" id="cv-copy">Copiar</button>
+      </div>
+    </div>`;
+}
+
+function ligarConvite() {
+  if (!Sync.hasFamily()) return;
+  const codigo = () => Sync.cfg.family_id;
+  const copiar = async () => {
+    try { await navigator.clipboard.writeText(codigo()); toast('Código copiado ✓'); }
+    catch (_) { toast('Não consegui copiar — selecione o código na tela'); }
+  };
+  const on = (id, fn) => { const e = $(id); if (e) e.onclick = fn; };
+  on('#cv-copy', copiar);
+  on('#cv-cod', copiar);   // tocar no próprio código copia
+  on('#cv-share', async () => {
+    const texto = `Entre na nossa família no app de finanças com este código:\n\n${codigo()}\n\n` +
+      `No app, vá em Configurações → Sincronização e cole em "código da família".`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Código da família', text: texto }); }
+      catch (_) { /* cancelou o compartilhamento */ }
+      return;
+    }
+    copiar();
+  });
+}
+
+// Aparelho novo entrando numa família que já existe: precisa baixar tudo,
+// não só o que mudou desde a última sincronização (que aqui nunca houve).
+async function puxarTudoDaFamilia() {
+  if (!Sync.hasFamily() || !DB.data) return;
+  DB.data.meta.lastSync = null; DB.save();
+  try { await Sync.syncAll(); } catch (_) {}
+}
+window.puxarTudoDaFamilia = puxarTudoDaFamilia;
+
 function openSyncConfig() {
   const c = Sync.cfg || {};
   const step = !Sync.configured() ? 1 : !Sync.loggedIn() ? 2 : !Sync.hasFamily() ? 3 : 4;
@@ -2251,14 +2302,24 @@ function openSyncConfig() {
     <button class="btn ghost" id="s-join-fam">Entrar na família</button>`;
   if (step === 4) body = `
     <p class="muted">Conectado como <b>${esc(c.user_email || '')}</b></p>
-    <p class="muted" style="margin:10px 0 4px">Código da família (compartilhe com quem vai usar junto):</p>
-    <p class="mono">${esc(c.family_id)}</p>
-    <button class="btn ghost" id="s-copy" style="margin:12px 0 10px">Copiar código</button>
-    <button class="btn" id="s-now">Sincronizar agora</button>
+    ${blocoConvite()}
+    <button class="btn ghost" id="s-now" style="margin-top:10px">Sincronizar agora</button>
     <hr class="sep"><button class="btn danger" id="s-logout">Sair da conta</button>`;
 
   openModal(`<div class="modal-title">☁️ Sincronização<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>${body}`);
   $('#md-back').onclick = openConfig;
+  ligarConvite();
+
+  // Reinstalação ou aparelho novo: se o servidor já tem família para esta conta,
+  // não faz sentido pedir para criar outra — adota a que existe e baixa os dados.
+  if (step === 3) {
+    Sync.detectarFamilia().then(async fid => {
+      if (!fid) return;
+      toast('Você já faz parte de uma família — trazendo os dados ✓');
+      await puxarTudoDaFamilia();
+      render(); openSyncConfig();
+    }).catch(() => {});
+  }
 
   const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
   on('#s-save-cfg', () => {
@@ -2293,11 +2354,10 @@ function openSyncConfig() {
   on('#s-join-fam', async () => {
     try {
       await Sync.joinFamily($('#s-fam-code').value);
-      DB.data.meta.lastSync = null; DB.save();     // puxa tudo da família
-      await Sync.syncAll(); toast('Você entrou na família ✓'); openSyncConfig();
+      await puxarTudoDaFamilia();
+      toast('Você entrou na família ✓'); render(); openSyncConfig();
     } catch (e) { toast(e.message); }
   });
-  on('#s-copy', () => { navigator.clipboard.writeText(Sync.cfg.family_id); toast('Código copiado'); });
   on('#s-now', async () => { try { await Sync.syncAll(); render(); } catch (_) {} });
   on('#s-logout', () => { if (confirm('Sair da conta? Os dados locais permanecem no aparelho.')) { Sync.signOut(); openSyncConfig(); } });
 }
