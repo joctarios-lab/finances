@@ -740,6 +740,30 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .lock-card img { width: 62px; height: 62px; border-radius: 14px; margin-bottom: 14px; }
 .lock-card h2 { font-size: 19px; font-weight: 800; margin-bottom: 4px; }
 .lock-card p { color: var(--paper-dim); font-size: 13px; margin-bottom: 18px; }
+/* ---------- Desbloqueio por digital ---------- */
+.bio-alvo {
+  width: 104px; height: 104px; margin: 6px auto 14px; display: grid; place-items: center;
+  border-radius: 50%; border: none; cursor: pointer;
+  background: rgba(0, 158, 247, .1); color: var(--gold);
+  -webkit-tap-highlight-color: transparent;
+  transition: background .18s ease, transform .12s ease, color .18s ease;
+  position: relative;
+}
+.bio-alvo svg { width: 54px; height: 54px; }
+.bio-alvo:hover { background: rgba(0, 158, 247, .16); }
+.bio-alvo:active { transform: scale(.94); }
+/* Anel pulsante enquanto o leitor espera o dedo */
+.bio-alvo::after {
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid var(--gold); opacity: 0;
+}
+.bio-alvo.lendo::after { animation: bioPulso 1.4s ease-out infinite; }
+.bio-alvo.lendo { background: rgba(0, 158, 247, .18); }
+@keyframes bioPulso {
+  0% { opacity: .55; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.35); }
+}
+
 /* ---------- Teclado numérico do PIN ---------- */
 .lock-pin-card { max-width: 340px; padding: 28px 22px 24px; }
 .lock-pin-card p { margin-bottom: 20px; }

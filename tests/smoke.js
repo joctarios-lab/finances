@@ -524,7 +524,7 @@ console.log('\n=== Teclado do PIN ===');
   check('teclado físico também funciona', au.includes('document.onkeydown') && au.includes('Backspace'), true);
   check('erro sacode o cartão', cssL.includes('@keyframes tremer') && au.includes("'tremer"), true);
   check('criar PIN em duas etapas, sem campos empilhados', /passoPin = \(primeiro/.test(au) && !au.includes('ob-pin2'), true);
-  check('desbloqueio usa o teclado novo', /showLock[\s\S]{0,200}pinPad/.test(au), true);
+  check('desbloqueio usa o teclado novo', /telaPin\(onDone\) \{[\s\S]{0,120}pinPad/.test(au), true);
   check('some com o teclado ao sair da tela', au.includes('document.onkeydown = null'), true);
   check('cabe em tela baixa', cssL.includes('max-height: 680px'), true);
   // O teclado é o mesmo em todo o app — nada de campo de texto para PIN
@@ -559,7 +559,19 @@ console.log('\n=== Desbloqueio por digital ===');
   check('recusa aparelho sem PRF em vez de fingir segurança', au.includes('falta suporte a PRF'), true);
   check('chave guardada cifrada pelo segredo do leitor', au.includes('bioKey') && /bioKey = await KCrypto\.enc/.test(au), true);
   check('nunca guarda o PIN em claro', !au.includes('cfg.bioPin'), true);
-  check('PIN segue valendo como alternativa', /showLock[\s\S]{0,900}tryPin\(valor\)/.test(au) && au.includes('lock-bio'), true);
+  check('PIN segue valendo como alternativa', au.includes('telaPin') && au.includes('tryPin(valor)'), true);
+
+  // Com digital configurada, ela e o caminho principal
+  const cssB = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('digital vem primeiro quando existe', /bioAtiva\(\)\s*\)?\s*this\.telaDigital/.test(au), true);
+  check('sem digital, vai direto para o PIN', /else this\.telaPin\(onDone\)/.test(au), true);
+  check('leitor é oferecido assim que a tela abre', /setTimeout\(\(\) => \{ if \(!this\.unlocked\) pedirDigital\(\)/.test(au), true);
+  check('alvo grande para tocar e tentar de novo', /\.bio-alvo\s*\{[^}]*width:\s*104px/.test(cssB), true);
+  check('anel pulsa enquanto o leitor espera', cssB.includes('bioPulso') && au.includes("classList.add('lendo')"), true);
+  check('saída para o PIN em caso de dificuldade', au.includes('bio-pin') && /bio-pin'\)\.onclick[\s\S]{0,60}telaPin/.test(au), true);
+  check('e volta para a digital se quiser', /lock-bio[\s\S]{0,220}telaDigital/.test(au), true);
+  check('falha na digital não trava a tela', au.includes('toque para tentar de novo'), true);
+  check('uma só função abre os dados nos dois caminhos', (au.match(/aplicarChave\(/g) || []).length >= 3, true);
   check('remover o PIN também remove a digital', fs.readFileSync(BASE + 'js/app.js', 'utf8').includes('Auth.desativarBio()'), true);
 }
 

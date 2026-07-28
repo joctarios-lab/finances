@@ -314,12 +314,82 @@ const Auth = {
     return { limpar: () => { valor = ''; desenhar(); }, erro: err };
   },
 
+  /* Abre os dados com a chave recebida (do PIN ou da digital). */
+  async aplicarChave(chave, onDone) {
+    try {
+      if (DB.locked) await DB.unlock(chave);
+      else DB.setKey(chave);
+    } catch (_) { return false; }
+    this.registerSuccess();
+    this.guardarSessao(chave);   // um F5 daqui em diante não pede nada de novo
+    this.vigiarAtividade();
+    this.unlocked = true;
+    this.hide();
+    if (onDone) onDone();
+    return true;
+  },
+
+  /* Com a digital configurada, ela é o caminho principal; o PIN fica como saída
+     para quando o leitor não colaborar (dedo molhado, luva, sensor sujo). */
   showLock(onDone) {
     this.unlocked = false;
-    const pad = this.pinPad({
-      titulo: DB.familyLabel(),
+    if (this.bioAtiva()) this.telaDigital(onDone);
+    else this.telaPin(onDone);
+  },
+
+  telaDigital(onDone) {
+    const el = this.el();
+    el.innerHTML = `
+      <div class="lock-card">
+        <img src="icons/icon-192.png" alt="">
+        <h2>${this.esc(DB.familyLabel())}</h2>
+        <p>Confirme sua digital para entrar.</p>
+        <button type="button" class="bio-alvo" id="bio-go" aria-label="Usar a digital">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 11a1 1 0 0 1 1 1c0 2.5-.4 4.9-1.2 7.2"/>
+            <path d="M9 12a3 3 0 0 1 6 0c0 3-.5 5.9-1.6 8.6"/>
+            <path d="M6 12a6 6 0 0 1 12 0c0 1.6-.1 3.2-.4 4.7"/>
+            <path d="M3.5 13.5c-.1-.5-.1-1-.1-1.5a8.6 8.6 0 0 1 4.4-7.5"/>
+            <path d="M20.4 9.2A8.6 8.6 0 0 0 11 3.5"/>
+            <path d="M6.3 19.5c.7-1.2 1.2-2.5 1.5-3.9"/>
+          </svg>
+        </button>
+        <p class="lock-err" id="lock-err"></p>
+        <div class="btn-row"><button class="btn ghost" id="bio-pin">Usar o PIN</button></div>
+      </div>`;
+    el.hidden = false;
+    document.onkeydown = null;
+
+    const alvo = document.getElementById('bio-go');
+    const err = m => { const e = document.getElementById('lock-err'); if (e) e.textContent = m || ''; };
+
+    const pedirDigital = async () => {
+      err('');
+      alvo.classList.add('lendo');
+      try {
+        const chave = await this.desbloquearComBio();
+        if (!(await this.aplicarChave(chave, onDone))) {
+          err('Falha ao decifrar os dados. Use o PIN ou restaure um backup.');
+        }
+      } catch (e) {
+        err(e.name === 'NotAllowedError' ? 'Digital não reconhecida — toque para tentar de novo' : e.message);
+      } finally {
+        alvo.classList.remove('lendo');
+      }
+    };
+
+    alvo.onclick = pedirDigital;
+    document.getElementById('bio-pin').onclick = () => this.telaPin(onDone);
+    // Oferece o leitor de imediato; se o navegador exigir um toque, o alvo está ali
+    setTimeout(() => { if (!this.unlocked) pedirDigital(); }, 300);
+  },
+
+  telaPin(onDone) {
+    this.pinPad({
+      titulo: this.esc(DB.familyLabel()),
       texto: 'Seus dados estão criptografados neste aparelho.<br>Digite o PIN para desbloquear.',
-      rodape: `${this.bioAtiva() ? '<div class="btn-row"><button class="btn ghost" id="lock-bio">👆 Entrar com a digital</button></div>' : ''}
+      rodape: `${this.bioAtiva() ? '<div class="btn-row"><button class="btn ghost" id="lock-bio">👆 Voltar para a digital</button></div>' : ''}
                <div class="btn-row"><button class="btn ghost" id="lock-forgot">Esqueci o PIN</button></div>`,
       aoConfirmar: async valor => {
         const espera = this.blockedSecs();
@@ -330,40 +400,12 @@ const Auth = {
           const w = this.blockedSecs();
           return w ? `PIN incorreto. Bloqueado por ${w}s.` : 'PIN incorreto';
         }
-        return (await entrar(chave)) ? null : 'Falha ao decifrar os dados. Restaure um backup ou use "Esqueci o PIN".';
+        return (await this.aplicarChave(chave, onDone))
+          ? null : 'Falha ao decifrar os dados. Restaure um backup ou use "Esqueci o PIN".';
       },
     });
-    const el = this.el();
-    const err = pad.erro;
-
-    const entrar = async chave => {
-      try {
-        if (DB.locked) await DB.unlock(chave);
-        else DB.setKey(chave);
-      } catch (_) {
-        err('Falha ao decifrar os dados. Restaure um backup ou use "Esqueci o PIN".');
-        return false;
-      }
-      this.registerSuccess();
-      this.guardarSessao(chave);   // um F5 daqui em diante não pede o PIN de novo
-      this.vigiarAtividade();
-      this.unlocked = true;
-      this.hide();
-      if (onDone) onDone();
-      return true;
-    };
-
-    const bioBtn = document.getElementById('lock-bio');
-    if (bioBtn) {
-      const usarBio = async () => {
-        err('');
-        try { await entrar(await this.desbloquearComBio()); }
-        catch (e) { err(e.name === 'NotAllowedError' ? 'Digital não confirmada' : e.message); }
-      };
-      bioBtn.onclick = usarBio;
-      setTimeout(usarBio, 350);   // já oferece o leitor ao abrir, sem esperar o toque
-    }
-
+    const voltar = document.getElementById('lock-bio');
+    if (voltar) voltar.onclick = () => this.telaDigital(onDone);
     document.getElementById('lock-forgot').onclick = () => this.showForgot(onDone);
   },
 
