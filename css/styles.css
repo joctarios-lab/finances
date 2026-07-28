@@ -251,17 +251,27 @@ svg:hover .ch-bar-on { fill: #005a92; }
 /* Ranking em barras horizontais */
 .rank { display: flex; flex-direction: column; gap: 11px; }
 .rank-row { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+/* Quebra em duas linhas em vez de cortar: as barras continuam alinhadas entre si,
+   só a altura da linha cresce. "Serviços & Taxas" não caberia em uma linha. */
 .rank-name {
-  width: 116px; flex: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  width: 140px; flex: none; overflow-wrap: anywhere; line-height: 1.3;
   color: var(--paper); font-weight: 600;
 }
 .rank-bar { flex: 1; min-width: 0; height: 10px; border-radius: 5px; background: var(--ink-3); overflow: hidden; }
 .rank-bar > i { display: block; height: 100%; border-radius: 5px; transition: width .5s ease; }
 .rank-val { width: 96px; flex: none; text-align: right; font-weight: 700; white-space: nowrap; }
 .rank-val small { color: var(--paper-dim); font-weight: 500; margin-left: 6px; }
+/* No celular o nome sobe para a própria linha e usa a largura toda; a barra e o
+   valor descem juntos. Nome em coluna de 84px não servia para nome nenhum. */
 @media (max-width: 480px) {
-  .rank-name { width: 84px; }
-  .rank-val { width: 84px; font-size: 12px; }
+  .rank-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "nome nome" "barra valor";
+    gap: 5px 10px;
+  }
+  .rank-name { grid-area: nome; width: auto; }
+  .rank-bar { grid-area: barra; }
+  .rank-val { grid-area: valor; width: auto; font-size: 12px; }
 }
 
 /* Tabelas de relatório */
@@ -271,7 +281,10 @@ svg:hover .ch-bar-on { fill: #005a92; }
   text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
   color: var(--paper-dim); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line);
 }
-.rep-table td { padding: 9px 10px; border-bottom: 1px dashed var(--line); }
+/* A primeira coluna é a descrição do lançamento: quebra em vez de esticar a
+   tabela e empurrar o valor para fora da área visível */
+.rep-table td { padding: 9px 10px; border-bottom: 1px dashed var(--line); overflow-wrap: anywhere; }
+.rep-table td:first-child { min-width: 150px; }
 .rep-table tr:last-child td { border-bottom: 0; }
 .rep-table .num { text-align: right; white-space: nowrap; }
 .rep-table th:nth-child(n+2) { text-align: right; }
@@ -319,9 +332,10 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .dn-cap { font-size: 11px; fill: var(--paper-dim); font-family: var(--font-body); }
 .dn-sub { font-size: 10px; fill: #b5bcc9; font-family: var(--font-body); }
 .legend { display: flex; flex-direction: column; gap: 10px; flex: 1 1 200px; min-width: 0; }
-.legend-row { display: flex; align-items: center; gap: 10px; font-size: 13.5px; }
-.legend-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
-.legend-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--paper); font-weight: 500; }
+.legend-row { display: flex; align-items: flex-start; gap: 10px; font-size: 13.5px; }
+.legend-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; margin-top: 5px; }
+/* Nome inteiro: a legenda é o que dá sentido às cores do donut */
+.legend-name { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.35; color: var(--paper); font-weight: 500; }
 .legend-val { font-weight: 700; white-space: nowrap; }
 .legend-pct { color: var(--paper-dim); font-weight: 500; font-size: 12px; width: 34px; text-align: right; flex: none; }
 
@@ -347,9 +361,14 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .tx:hover { border-color: #d8e3ea; }
 .tx-ico { font-size: 19px; width: 40px; height: 40px; border-radius: 9px; background: var(--ink-3); display: grid; place-items: center; flex: none; }
 .tx-info { flex: 1; min-width: 0; }
-.tx-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tx-meta { font-size: 11.5px; color: var(--paper-dim); }
-.tx-amount { font-weight: 800; font-size: 14.5px; white-space: nowrap; }
+/* O nome não é cortado: é ele que identifica o lançamento. Extrato de banco traz
+   descrição longa ("COMPRA CARTAO 1234 MERCADO SAO JOAO"), e truncar no meio
+   deixava linhas diferentes com a mesma aparência. Melhor a linha crescer.
+   display:block porque em <span> inline o overflow nem se aplica de forma previsível. */
+.tx-name { display: block; font-weight: 600; overflow-wrap: anywhere; line-height: 1.35; }
+.tx-meta { display: block; font-size: 11.5px; color: var(--paper-dim); overflow-wrap: anywhere; line-height: 1.4; }
+/* flex:none para o valor nunca ser espremido pelo nome que agora ocupa mais espaço */
+.tx-amount { font-weight: 800; font-size: 14.5px; white-space: nowrap; flex: none; }
 /* Extrato: a cor do valor diz o que aconteceu com o dinheiro */
 .tx-amount { color: var(--red); }                 /* saiu */
 .tx-amount.pending { color: var(--amber); }       /* ainda vai sair */
@@ -360,14 +379,28 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .tx-adj { border-style: dashed; background: var(--ink-3); }
 .tx-adj .tx-amount { color: var(--paper-dim); }
 
-/* Importação OFX */
-.ofx-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px dashed var(--line); }
-.ofx-row input[type="checkbox"] { width: 18px; height: 18px; flex: none; accent-color: var(--gold); }
-.ofx-main { flex: 1; min-width: 0; }
-.ofx-main b { display: block; font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ofx-main small { color: var(--paper-dim); font-size: 11.5px; }
-.ofx-row select { width: 130px; flex: none; padding: 6px 8px; font-size: 12px; }
-.ofx-val { font-weight: 700; font-size: 13px; white-space: nowrap; }
+/* Importação OFX — duas linhas, não quatro colunas.
+   Em quatro colunas na largura do celular a descrição ficava com ~100px, e é
+   justamente ela que a pessoa precisa ler para decidir a categoria. Aqui a
+   descrição ganha a linha de cima quase inteira e o seletor fica na de baixo,
+   com largura total (o caminho "Alimentação › Mercado" também não cabia em 130px). */
+.ofx-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start; gap: 4px 10px;
+  padding: 10px 0; border-bottom: 1px dashed var(--line);
+}
+.ofx-row input[type="checkbox"] {
+  grid-column: 1; grid-row: 1; margin-top: 2px;
+  width: 18px; height: 18px; accent-color: var(--gold);
+}
+.ofx-main { grid-column: 2; grid-row: 1; min-width: 0; }
+.ofx-main b { display: block; font-size: 13px; font-weight: 600; overflow-wrap: anywhere; line-height: 1.35; }
+.ofx-main small { display: block; color: var(--paper-dim); font-size: 11.5px; }
+.ofx-val { grid-column: 3; grid-row: 1; font-weight: 700; font-size: 13px; white-space: nowrap; text-align: right; }
+.ofx-cat { grid-column: 2 / -1; grid-row: 2; min-width: 0; }
+.ofx-cat select { width: 100%; padding: 6px 8px; font-size: 12px; }
+.ofx-cat .muted { font-size: 11.5px; }
 .ofx-list { max-height: 46vh; overflow-y: auto; margin: 10px 0; }
 .ofx-dup { opacity: .5; }
 

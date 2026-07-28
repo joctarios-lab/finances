@@ -819,6 +819,40 @@ try {
    As faixas de 3 colunas (.hero-stats, .mini-stats) dividem a largura do
    celular por 3. Rotulo comprido quebrava em duas linhas e desalinhava os
    valores vizinhos — foi o que aconteceu com "Projeção do mês". */
+/* ---- Nome de transação não pode ser cortado ----
+   Extrato de banco traz descrição longa; truncada, duas compras diferentes viram
+   a mesma linha na tela. O teste vale para toda tela que lista lançamento. */
+console.log('\n=== Nome do lançamento nunca é cortado ===');
+{
+  const cssT = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const regra = sel => {
+    const m = cssT.match(new RegExp(`\\${sel} \\{([^}]*)\\}`));
+    return m ? m[1] : '';
+  };
+  // Classes que carregam texto que identifica o lançamento ou a categoria
+  for (const sel of ['.tx-name', '.tx-meta', '.ofx-main b', '.legend-name', '.rank-name']) {
+    const r = regra(sel);
+    check(`${sel}: existe no CSS`, r.length > 0, true);
+    check(`${sel}: não corta com reticências`, /text-overflow/.test(r), false);
+    check(`${sel}: pode quebrar linha`, /nowrap/.test(r), false);
+    check(`${sel}: quebra palavra sem espaço`, /overflow-wrap:\s*anywhere/.test(r), true);
+  }
+  // O valor não pode encolher agora que o nome ocupa mais espaço
+  check('.tx-amount não é espremido', /flex:\s*none/.test(regra('.tx-amount')), true);
+
+  // OFX: descrição na linha de cima, seletor na de baixo com largura inteira
+  check('linha do OFX é grade de duas linhas', /\.ofx-row \{[^}]*grid-template-columns/.test(cssT), true);
+  check('seletor de categoria ocupa a linha inteira', /\.ofx-cat \{[^}]*grid-column: 2 \/ -1/.test(cssT), true);
+  check('seletor não é mais fixo em 130px', /\.ofx-cat select \{[^}]*width: 100%/.test(cssT), true);
+  check('markup do OFX usa o contêiner novo', ap.includes('class="ofx-cat"'), true);
+
+  // Todas as telas que listam lançamento usam a mesma classe, então a correção alcança todas
+  const usos = (ap.match(/class="tx-name"/g) || []).length;
+  check('todas as listas de lançamento usam tx-name', usos >= 3, true);
+  check('tabela de relatório também quebra', /\.rep-table td \{[^}]*overflow-wrap:\s*anywhere/.test(cssT), true);
+}
+
 console.log('\n=== Layout no celular ===');
 {
   const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');

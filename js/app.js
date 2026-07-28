@@ -2561,11 +2561,15 @@ function renderOfxPreview(parsed, accounts, cards) {
   const rows = novos.map((t, i) => {
     const isExp = t.amount < 0;
     const guess = isExp ? OFX.guessCategoryId(t.memo, cats) : '';
+    // Ordem no HTML igual à ordem de leitura: marcar, ler a descrição, ver o valor,
+    // e só então escolher a categoria — que fica na linha de baixo, com espaço.
     return `<div class="ofx-row">
       <input type="checkbox" data-i="${i}" checked>
       <span class="ofx-main"><b>${esc(t.memo)}</b><small>${fmtDay(t.date)} · ${isExp ? 'saída' : 'entrada'}</small></span>
-      ${isExp ? `<select data-cat="${i}"><option value="">Sem categoria</option>${folhas.map(c => `<option value="${c.id}" ${guess === c.id ? 'selected' : ''}>${esc(DB.categoryIcon(c.id))} ${esc(DB.categoryPath(c.id))}</option>`).join('')}</select>` : '<span class="muted" style="width:130px;font-size:12px">receita</span>'}
       <span class="ofx-val ${isExp ? '' : 'txt-green'}">${isExp ? '' : '+'}${fmtShort(Math.abs(t.amount))}</span>
+      <span class="ofx-cat">${isExp
+        ? `<select data-cat="${i}"><option value="">Sem categoria</option>${folhas.map(c => `<option value="${c.id}" ${guess === c.id ? 'selected' : ''}>${esc(DB.categoryIcon(c.id))} ${esc(DB.categoryPath(c.id))}</option>`).join('')}</select>`
+        : '<span class="muted">receita — entra sem categoria</span>'}</span>
     </div>`;
   }).join('');
 
