@@ -16,8 +16,29 @@ let state = { tab: 'inicio', monthOffset: 0, repOffset: 0, filtros: null };
    lista está vazia?" que painéis fechados costumam causar. */
 const FILTROS_VAZIOS = {
   busca: '', scope: 'Todos', membro: 'Todos', tipo: 'Todos', situacao: 'Todos',
-  categoria: '', tag: '', metodo: '', conta: '', valorMin: '', valorMax: '', recorrente: false,
+  categoria: '', tag: '', metodo: '', contas: [], valorMin: '', valorMax: '', recorrente: false,
 };
+
+/* Quanto uma transferência moveu DENTRO do conjunto de contas em análise.
+
+   A regra vale para qualquer tamanho de conjunto: se as duas pontas estão dentro
+   dele, o dinheiro não entrou nem saiu — só trocou de lugar entre contas que você
+   está olhando juntas, e contar seria inventar movimento. Se só uma ponta está
+   dentro, houve saída ou entrada de verdade.
+
+   "No todo" é o mesmo princípio com o conjunto sendo todas as contas: por isso lá
+   toda transferência é neutra. Um conjunto vazio (sem filtro) significa exatamente
+   isso — está se olhando a família inteira. */
+function efeitoDaTransferencia(t, contas) {
+  if (!DB.isTransfer(t) || !contas || !contas.length) return 0;
+  const v = Number(t.amount) || 0;
+  const saiuDaqui = contas.includes(t.account_id);
+  const entrouAqui = contas.includes(t.to_account);
+  if (saiuDaqui && entrouAqui) return 0;    // interna ao conjunto
+  if (saiuDaqui) return -v;
+  if (entrouAqui) return v;
+  return 0;
+}
 
 /* Estado de dentro da tela: mês em análise, filtros, aba de relatório.
    É transitório de propósito. Ver março e voltar depois achando que é o mês
@@ -691,9 +712,9 @@ function filtrosAtivos() {
   if (f.categoria) add('categoria', DB.categoryPath(f.categoria) || 'Categoria');
   if (f.tag) add('tag', '#' + f.tag);
   if (f.metodo) add('metodo', f.metodo);
-  if (f.conta) {
-    const a = DB.get('accounts', f.conta) || DB.get('cards', f.conta);
-    add('conta', (a && a.name) || 'Conta');
+  if (f.contas && f.contas.length) {
+    const nomes = f.contas.map(id => (DB.get('accounts', id) || DB.get('cards', id) || {}).name).filter(Boolean);
+    add('contas', nomes.length <= 2 ? nomes.join(' + ') : `${nomes.length} contas`);
   }
   if (f.valorMin) add('valorMin', `a partir de ${fmtShort(f.valorMin)}`);
   if (f.valorMax) add('valorMax', `até ${fmtShort(f.valorMax)}`);
@@ -716,7 +737,8 @@ function txsFiltradas(period) {
     if (f.categoria && DB.categoryRootId(t.category_id) !== DB.categoryRootId(f.categoria)) return false;
     if (f.tag && !DB.tagsOf(t).includes(f.tag)) return false;
     if (f.metodo && t.method !== f.metodo) return false;
-    if (f.conta && t.account_id !== f.conta && t.card_id !== f.conta && t.to_account !== f.conta) return false;
+    if (f.contas && f.contas.length &&
+        !f.contas.some(id => t.account_id === id || t.card_id === id || t.to_account === id)) return false;
     if (f.valorMin && Number(t.amount) < Number(f.valorMin)) return false;
     if (f.valorMax && Number(t.amount) > Number(f.valorMax)) return false;
     if (f.recorrente && !t.recurring) return false;
@@ -738,22 +760,15 @@ function renderExtrato(period) {
   const total = txs.filter(t => DB.isExpense(t) && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
   const receitas = txs.filter(t => !DB.isExpense(t) && !t.card_id && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
 
-  /* Com uma conta filtrada, o extrato passa a ser o extrato DAQUELA CONTA — e aí
-     transferência não é neutra: ela tira ou põe dinheiro ali, exatamente como no
-     extrato do banco. Sem isso os números não fecham na conferência.
+  /* Com contas filtradas, o extrato vira o extrato DELAS — e aí transferência
+     deixa de ser neutra por padrão: ela tira ou põe dinheiro no conjunto,
+     exatamente como no extrato do banco. Sem isso os números não fecham.
 
-     Sem filtro de conta, a leitura é da família inteira, e aí transferência é
-     neutra mesmo: o dinheiro não saiu, só mudou de bolso.
-
-     Devolve o quanto ESTA conta se moveu: negativo saiu, positivo entrou. */
-  const contaFiltrada = state.filtros.conta && DB.get('accounts', state.filtros.conta) ? state.filtros.conta : null;
-  const efeitoNaConta = t => {
-    if (!contaFiltrada || !DB.isTransfer(t)) return 0;
-    const v = Number(t.amount) || 0;
-    if (t.account_id === contaFiltrada) return -v;
-    if (t.to_account === contaFiltrada) return v;
-    return 0;
-  };
+     Entre duas contas que estão AMBAS no filtro, porém, o dinheiro continua sem
+     entrar nem sair: contar seria inventar movimento. Ver efeitoDaTransferencia. */
+  const contasFiltradas = (state.filtros.contas || []).filter(id => DB.get('accounts', id));
+  const efeitoNaConta = t => efeitoDaTransferencia(t, contasFiltradas);
+  const contaFiltrada = contasFiltradas.length ? contasFiltradas : null;
 
   /* Total do dia, somado sobre a lista JÁ FILTRADA: com um filtro ativo, um total
      vindo de outra base não bateria com as linhas logo abaixo dele. */
@@ -834,15 +849,22 @@ function renderExtrato(period) {
       <b>${period.label} · ${fmtShort(total)}</b>
       <button id="mn-next" aria-label="Próximo mês" data-ico="chevR"></button>
     </div>
-    ${contaFiltrada ? `
-    <!-- Conferindo uma conta: os números viram os DELA, com transferência
-         contando, para bater com o extrato do banco linha a linha. -->
+    ${contaFiltrada ? (() => {
+      // Conferindo contas: os números viram os DELAS, para bater com o extrato do
+      // banco linha a linha.
+      const nomes = contasFiltradas.map(id => (DB.get('accounts', id) || {}).name).filter(Boolean);
+      const saldo = contasFiltradas.reduce((s, id) => s + (Number((DB.get('accounts', id) || {}).balance) || 0), 0);
+      const varias = contasFiltradas.length > 1;
+      return `
     <div class="mini-stats">
       <div class="card"><small>Saiu</small><b class="txt-red">${fmtShort(saiuNaConta)}</b></div>
       <div class="card"><small>Entrou</small><b class="txt-green">${fmtShort(entrouNaConta)}</b></div>
-      <div class="card"><small>Saldo hoje</small><b>${fmtShort((DB.get('accounts', contaFiltrada) || {}).balance || 0)}</b></div>
+      <div class="card"><small>${varias ? 'Saldo somado' : 'Saldo hoje'}</small><b>${fmtShort(saldo)}</b></div>
     </div>
-    <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc((DB.get('accounts', contaFiltrada) || {}).name || '')}</b> — transferências contam, porque saem e entram nesta conta.</p>`
+    <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc(nomes.join(' + '))}</b> — transferência conta quando entra ou sai ${varias
+      ? 'do conjunto; entre estas contas ela não conta, porque o dinheiro não saiu daqui.'
+      : 'desta conta.'}</p>`;
+    })()
     : `
     <div class="mini-stats">
       <div class="card"><small>Receitas</small><b class="txt-green">${fmtShort(receitas)}</b></div>
@@ -1408,10 +1430,13 @@ function openFiltrosSheet() {
       <select id="fl-metodo"><option value="">Todas</option>${metodos.map(m => `<option value="${esc(m)}"${f.metodo === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>
     </div>
     <div class="field"><label>Conta ou cartão</label>
-      <select id="fl-conta"><option value="">Todos</option>
-        ${contas.length ? `<optgroup label="Contas">${contas.map(a => `<option value="${a.id}"${f.conta === a.id ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>` : ''}
-        ${cartoes.length ? `<optgroup label="Cartões">${cartoes.map(c => `<option value="${c.id}"${f.conta === c.id ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
-      </select>
+      <!-- Chips em vez de select: escolher várias contas é o que permite conferir
+           duas contas juntas, e aí transferência entre elas deixa de contar. -->
+      <div class="chips" id="fl-contas">
+        ${[...contas, ...cartoes].map(o =>
+          `<button type="button" class="chip ${(f.contas || []).includes(o.id) ? 'active' : ''}" data-v="${o.id}">${esc(o.name)}</button>`).join('')}
+      </div>
+      <p class="muted" style="margin-top:6px">Escolhendo mais de uma, transferência entre elas não conta como saída nem entrada — o dinheiro não saiu do conjunto.</p>
     </div>
     <div class="row2">
       <div class="field"><label>Valor a partir de</label><input id="fl-min" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
@@ -1428,6 +1453,10 @@ function openFiltrosSheet() {
   initMoney('#fl-max', f.valorMax || 0);
   $('#sh-close').onclick = closeSheet;
   bindChips('fl-tipo'); bindChips('fl-sit'); bindChips('fl-scope');
+  // Contas alternam de forma independente: bindChips deixaria só uma ativa
+  document.querySelectorAll('#fl-contas .chip').forEach(c => {
+    c.onclick = () => c.classList.toggle('active');
+  });
 
   $('#fl-limpar').onclick = () => {
     state.filtros = { ...FILTROS_VAZIOS };
@@ -1444,7 +1473,7 @@ function openFiltrosSheet() {
       categoria: $('#fl-cat').value || '',
       tag: ($('#fl-tag') || {}).value || '',
       metodo: $('#fl-metodo').value || '',
-      conta: $('#fl-conta').value || '',
+      contas: [...document.querySelectorAll('#fl-contas .chip.active')].map(c => c.dataset.v),
       valorMin: val('#fl-min'),
       valorMax: val('#fl-max'),
       recorrente: !!$('#fl-rec').value,

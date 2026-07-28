@@ -68,7 +68,7 @@ eval(appSrc + `; Object.assign(global, {
   state, fmt, fmtShort, fmtDay, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
-  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
+  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -1132,7 +1132,7 @@ try {
   check('filtra por valor mínimo', txsFiltradas(p2).every(t => t.amount >= 800), true);
   zerar(); state.filtros.valorMax = 100;
   check('filtra por valor máximo', txsFiltradas(p2).every(t => t.amount <= 100), true);
-  zerar(); state.filtros.conta = contaT;
+  zerar(); state.filtros.contas = [contaT];
   check('filtra por conta', txsFiltradas(p2).every(t => t.account_id === contaT || t.card_id === contaT || t.to_account === contaT), true);
 
   // Categoria filtra pelo envelope, então subcategoria entra junto
@@ -1196,7 +1196,7 @@ try {
   zerar();
   openFiltrosSheet();
   const folha = els['#sheet'].innerHTML;
-  for (const campo of ['fl-tipo', 'fl-sit', 'fl-scope', 'fl-membro', 'fl-cat', 'fl-tag', 'fl-metodo', 'fl-conta', 'fl-min', 'fl-max', 'fl-rec']) {
+  for (const campo of ['fl-tipo', 'fl-sit', 'fl-scope', 'fl-membro', 'fl-cat', 'fl-tag', 'fl-metodo', 'fl-contas', 'fl-min', 'fl-max', 'fl-rec']) {
     check(`painel tem ${campo}`, folha.includes(campo), true);
   }
   check('painel oferece limpar tudo', folha.includes('fl-limpar'), true);
@@ -1294,17 +1294,17 @@ try {
   check('no todo, a transferência não tem sinal', /transfer">\s*\d/.test(saida.replace(/&nbsp;/g, ' ')) || saida.includes('transfer">R$'), true);
 
   // Filtrando pela conta de origem: o banco mostraria −100 e −700
-  state.filtros = { ...FILTROS_VAZIOS, conta: cA };
+  state.filtros = { ...FILTROS_VAZIOS, contas: [cA] };
   saida = renderExtrato(pC);
   check('na conta, a saída inclui a transferência', linhaDia(saida).includes(fmtShort(800)), true);
   check('o topo mostra o que saiu da conta', saida.includes('>Saiu<'), true);
   check('e o saldo atual dela', saida.includes(fmtShort(DB.get('accounts', cA).balance)), true);
   check('a linha ganha sinal de saída', /transfer">− /.test(saida), true);
   check('dizendo para onde foi', saida.includes('para Conta Conf B'), true);
-  check('e avisa que a leitura mudou', saida.includes('transferências contam'), true);
+  check('e avisa que a leitura mudou', saida.includes('transferência conta quando entra ou sai'), true);
 
   // Filtrando pela conta de destino: o banco mostraria +700
-  state.filtros = { ...FILTROS_VAZIOS, conta: cB };
+  state.filtros = { ...FILTROS_VAZIOS, contas: [cB] };
   saida = renderExtrato(pC);
   check('na conta de destino, a transferência entra', linhaDia(saida).includes(fmtShort(700)), true);
   check('com sinal de entrada', /transfer">\+ /.test(saida), true);
@@ -1321,6 +1321,66 @@ try {
   for (const t of DB.all('transactions').filter(t => / conf$/.test(t.description))) DB.remove('transactions', t.id);
   DB.remove('accounts', cA); DB.remove('accounts', cB);
 } catch (e) { console.log(` FALHA | conciliação por conta: ${e.message}`); fail++; }
+
+/* ---- Duas contas filtradas juntas ----
+   Transferência entre elas não é saída nem entrada: o dinheiro não deixou o
+   conjunto que se está olhando. Transferência para fora, sim. É a mesma regra do
+   "no todo" — lá o conjunto é toda a família, por isso lá tudo é neutro. */
+console.log('\n=== Duas contas conferidas juntas ===');
+try {
+  const x = DB.upsert('accounts', { name: 'Conta X', type: 'Conta Corrente', balance: 4000, active: true });
+  const y = DB.upsert('accounts', { name: 'Conta Y', type: 'Conta Corrente', balance: 2000, active: true });
+  const z = DB.upsert('accounts', { name: 'Conta Z', type: 'Conta Corrente', balance: 1000, active: true });
+  const dd = dia(26);
+  const criar = o => { DB.upsert('transactions', o); applyTxEffect(o, +1); return o; };
+
+  const entreXY = criar({ description: 'XY interna', amount: 300, date: dd, type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: x, to_account: y });
+  criar({ description: 'XZ saida', amount: 500, date: dd, type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: x, to_account: z });
+  criar({ description: 'ZY entrada', amount: 200, date: dd, type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: z, to_account: y });
+  criar({ description: 'XW gasto', amount: 40, date: dd, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: x });
+
+  // A regra, direto na função: mesma transferência, conjuntos diferentes
+  check('entre duas do conjunto, não move nada', efeitoDaTransferencia(entreXY, [x, y]), 0);
+  check('com só a origem no conjunto, é saída', efeitoDaTransferencia(entreXY, [x]), -300);
+  check('com só o destino no conjunto, é entrada', efeitoDaTransferencia(entreXY, [y]), 300);
+  check('fora do conjunto, não aparece', efeitoDaTransferencia(entreXY, [z]), 0);
+  check('sem conjunto (no todo), é neutra', efeitoDaTransferencia(entreXY, []), 0);
+
+  const pXY = DB.monthPeriod(new Date());
+  const linhaDoDia = html => ((html.match(/<p class="tx-day">[\s\S]*?<\/p>/g) || [])
+    .find(l => l.includes(fmtDay(dd))) || '');
+
+  // X e Y juntas: sai 500 (para Z) + 40 (gasto), entra 200 (de Z). A interna some.
+  state.filtros = { ...FILTROS_VAZIOS, contas: [x, y] };
+  let saida = renderExtrato(pXY);
+  check('saída do conjunto soma só o que saiu de verdade', linhaDoDia(saida).includes(fmtShort(540)), true);
+  check('entrada soma só o que veio de fora', linhaDoDia(saida).includes(fmtShort(200)), true);
+  check('a transferência interna continua listada', saida.includes('XY interna'), true);
+  check('mas sem sinal, porque não moveu o conjunto', /transfer">\s*R\$/.test(saida), true);
+  check('o topo soma o saldo das duas', saida.includes('Saldo somado'), true);
+  check('e explica por que a interna não conta', saida.includes('o dinheiro não saiu daqui'), true);
+
+  // Só X: agora a interna É uma saída
+  state.filtros = { ...FILTROS_VAZIOS, contas: [x] };
+  saida = renderExtrato(pXY);
+  check('só a origem: a interna vira saída', linhaDoDia(saida).includes(fmtShort(840)), true);
+  check('e some o que não passou por X', saida.includes('ZY entrada'), false);
+
+  // Só Y: a interna É uma entrada
+  state.filtros = { ...FILTROS_VAZIOS, contas: [y] };
+  saida = renderExtrato(pXY);
+  check('só o destino: a interna vira entrada', linhaDoDia(saida).includes(fmtShort(500)), true);
+
+  // A conferência tem de fechar com o banco em qualquer recorte
+  check('X: saldo inicial − saídas = saldo atual', 4000 - 300 - 500 - 40, DB.get('accounts', x).balance);
+  check('Y: saldo inicial + entradas = saldo atual', 2000 + 300 + 200, DB.get('accounts', y).balance);
+  check('o conjunto X+Y fecha com saiu e entrou', 4000 + 2000 - 540 + 200,
+    DB.get('accounts', x).balance + DB.get('accounts', y).balance);
+
+  state.filtros = { ...FILTROS_VAZIOS };
+  for (const t of DB.all('transactions').filter(t => /^(XY|XZ|ZY|XW) /.test(t.description))) DB.remove('transactions', t.id);
+  for (const id of [x, y, z]) DB.remove('accounts', id);
+} catch (e) { console.log(` FALHA | duas contas: ${e.message}`); fail++; }
 
 console.log('\n=== Transferência vista dos dois extratos ===');
 try {
