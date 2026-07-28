@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Finanças da Família</title>
+<meta name="description" content="Gestão financeira da família — offline, rápida e sincronizada.">
+<meta name="theme-color" content="#0e1512">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div id="app">
+  <header class="topbar">
+    <div>
+      <p class="topbar-hello" id="topbar-hello">Finanças da Família</p>
+      <h1 class="topbar-month" id="topbar-month">—</h1>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="btn-sync" title="Sincronizar" aria-label="Sincronizar">⇅</button>
+      <button class="icon-btn" id="btn-config" title="Configurações" aria-label="Configurações">⚙︎</button>
+    </div>
+  </header>
+
+  <p id="sync-status" class="sync-status" hidden></p>
+
+  <main id="view" class="view"><!-- renderizado por app.js --></main>
+
+  <nav class="tabbar" aria-label="Navegação principal">
+    <button data-tab="inicio" class="tab active"><span class="tab-ico">◈</span>Início</button>
+    <button data-tab="extrato" class="tab"><span class="tab-ico">☰</span>Extrato</button>
+    <button id="fab" class="fab" aria-label="Lançar gasto">＋</button>
+    <button data-tab="cartoes" class="tab"><span class="tab-ico">▤</span>Cartões</button>
+    <button data-tab="metas" class="tab"><span class="tab-ico">◎</span>Metas</button>
+  </nav>
+</div>
+
+<!-- Folha de lançamento rápido -->
+<div id="sheet-backdrop" class="sheet-backdrop" hidden></div>
+<section id="sheet" class="sheet" hidden aria-label="Lançamento rápido"></section>
+
+<!-- Modal genérico (config, edições) -->
+<div id="modal-backdrop" class="modal-backdrop" hidden></div>
+<section id="modal" class="modal" hidden></section>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="js/db.js"></script>
+<script src="js/sync.js"></script>
+<script src="js/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
+  }
+</script>
+</body>
+</html>
