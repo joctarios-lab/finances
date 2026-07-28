@@ -51,22 +51,78 @@ const OFX = {
     };
   },
 
-  // Palavras-chave → trecho do nome da categoria (comparação sem acento/caixa)
+  /* Palavras-chave → [trecho do nome da subcategoria, trecho do nome do envelope].
+     Com dois níveis dá para acertar o detalhe: "IPIRANGA" não é só Transporte, é
+     Combustível. Se a subcategoria não existir na família, cai no envelope. */
   KEYWORDS: [
-    [['mercado', 'supermerc', 'atacad', 'carrefour', 'pao de acucar', 'assai', 'hortifruti', 'padaria', 'acougue', 'ifood', 'rappi', 'restaurante', 'lanche', 'pizzar', 'burger', 'mcdonald', 'subway', 'delivery'], 'aliment'],
-    [['posto', 'ipiranga', 'shell', 'combustivel', 'gasolina', 'etanol', 'uber', '99app', 'cabify', 'taxi', 'estacionament', 'pedagio', 'sem parar', 'conectcar', 'onibus', 'metro', 'oficina', 'pneu'], 'transp'],
-    [['farmacia', 'drogaria', 'drogasil', 'pacheco', 'raia', 'hospital', 'clinica', 'laborator', 'odonto', 'dentista', 'unimed', 'amil', 'psicolog', 'exame'], 'saud'],
-    [['netflix', 'spotify', 'prime video', 'amazon prime', 'disney', 'hbo', 'globoplay', 'deezer', 'youtube', 'icloud', 'google one', 'microsoft', 'adobe', 'assinatura', 'chatgpt', 'openai'], 'assinat'],
-    [['cinema', 'teatro', 'show ', 'ingresso', 'balada', 'hotel', 'airbnb', 'decolar', 'latam', 'steam', 'playstation', 'xbox', 'nintendo', 'viagem'], 'lazer'],
-    [['aluguel', 'condominio', 'energia', 'enel', 'cemig', 'light serv', 'copel', 'celesc', 'sabesp', 'sanepar', 'copasa', 'comgas', 'internet', 'vivo', 'claro', 'oi fibra', 'iptu', 'seguro resid', 'agua'], 'morad'],
-    [['escola', 'colegio', 'faculdade', 'universidade', 'curso', 'udemy', 'alura', 'livraria', 'papelaria', 'mensalidade'], 'educ'],
+    // Alimentação
+    [['mercado', 'supermerc', 'atacad', 'carrefour', 'pao de acucar', 'assai', 'hortifruti', 'big bompreco'], 'mercado', 'aliment'],
+    [['padaria'], 'padaria', 'aliment'],
+    [['acougue', 'feira livre', 'sacolao'], 'feira', 'aliment'],
+    [['ifood', 'rappi', 'delivery', 'zedelivery'], 'delivery', 'aliment'],
+    [['restaurante', 'pizzar', 'burger', 'mcdonald', 'subway', 'outback', 'habibs'], 'restaurante', 'aliment'],
+    [['starbucks', 'cafeteria', 'lanche'], 'cafe', 'aliment'],
+    // Transporte
+    [['posto', 'ipiranga', 'shell', 'combustivel', 'gasolina', 'etanol'], 'combustivel', 'transp'],
+    [['uber', '99app', '99 pop', 'cabify', 'taxi'], 'aplicativo', 'transp'],
+    [['estacionament', 'pedagio', 'sem parar', 'conectcar', 'veloe'], 'estacionamento', 'transp'],
+    [['onibus', 'metro ', 'bilhete unico', 'cptm'], 'transporte publico', 'transp'],
+    [['oficina', 'pneu', 'mecanic', 'autocenter'], 'manutencao', 'transp'],
+    [['ipva', 'licenciament', 'detran'], 'ipva', 'transp'],
+    // Saúde
+    [['farmacia', 'drogaria', 'drogasil', 'pacheco', 'raia', 'panvel'], 'farmacia', 'saud'],
+    [['unimed', 'amil', 'sulamerica', 'plano de saude', 'hapvida'], 'plano de saude', 'saud'],
+    [['hospital', 'clinica', 'consulta', 'psicolog'], 'consulta', 'saud'],
+    [['laborator', 'exame', 'fleury', 'dasa'], 'exames', 'saud'],
+    [['odonto', 'dentista'], 'dentista', 'saud'],
+    [['academia', 'smartfit', 'smart fit', 'bodytech'], 'academia', 'saud'],
+    // Assinaturas
+    [['netflix', 'disney', 'hbo', 'max.com', 'globoplay', 'prime video', 'amazon prime', 'paramount'], 'streaming', 'assinat'],
+    [['spotify', 'deezer', 'apple music', 'tidal'], 'musica', 'assinat'],
+    [['icloud', 'google one', 'dropbox', 'onedrive'], 'nuvem', 'assinat'],
+    [['microsoft', 'adobe', 'chatgpt', 'openai', 'assinatura', 'youtube premium'], 'aplicativo', 'assinat'],
+    // Lazer
+    [['cinema', 'teatro', 'show ', 'ingresso', 'cinemark'], 'cinema', 'lazer'],
+    [['balada', 'pub ', 'cervej', 'choperia'], 'bar', 'lazer'],
+    [['hotel', 'airbnb', 'decolar', 'latam', 'azul viagens', 'booking', 'viagem'], 'viagem', 'lazer'],
+    [['steam', 'playstation', 'xbox', 'nintendo'], 'jogos', 'lazer'],
+    // Moradia
+    [['aluguel', 'imobiliaria'], 'aluguel', 'morad'],
+    [['condominio'], 'condominio', 'morad'],
+    [['energia', 'enel', 'cemig', 'light serv', 'copel', 'celesc', 'equatorial', 'neoenergia'], 'luz', 'morad'],
+    [['sabesp', 'sanepar', 'copasa', 'cedae', 'agua'], 'agua', 'morad'],
+    [['comgas', 'gas natural', 'ultragaz'], 'gas', 'morad'],
+    [['internet', 'vivo fibra', 'claro', 'oi fibra', 'net serv'], 'internet', 'morad'],
+    [['seguro resid'], 'seguro', 'servic'],
+    // Educação
+    [['escola', 'colegio', 'faculdade', 'universidade', 'mensalidade'], 'escola', 'educ'],
+    [['curso', 'udemy', 'alura', 'coursera'], 'curso', 'educ'],
+    [['livraria', 'amazon livr'], 'livro', 'educ'],
+    [['papelaria'], 'material', 'educ'],
+    // Outros envelopes
+    [['petz', 'cobasi', 'veterinar', 'racao'], 'racao', 'pet'],
+    [['renner', 'riachuelo', 'zara ', 'marisa', 'centauro', 'netshoes'], 'roupa', 'vestuario'],
+    [['tarifa', 'anuidade', 'cesta de servico'], 'tarifa', 'servic'],
+    [['iptu'], 'imposto', 'servic'],
   ],
 
+  /* Devolve a categoria mais específica que a família realmente tem.
+     Recebe TODAS as categorias (não só as folhas): sem os pais na lista não há
+     como saber se a subcategoria encontrada pertence ao envelope esperado —
+     "Manutenção" existe em Moradia e em Transporte. */
   guessCategoryId(memo, categories) {
     const m = this.norm(memo);
-    for (const [words, catToken] of this.KEYWORDS) {
+    const nome = c => this.norm(c.name);
+    const paiDe = c => categories.find(p => p.id === c.parent_id);
+    for (const [words, sub, raiz] of this.KEYWORDS) {
       if (!words.some(w => m.includes(w))) continue;
-      const hit = categories.find(c => this.norm(c.name).includes(catToken));
+      // 1) subcategoria dentro do envelope esperado — a resposta mais precisa
+      let hit = categories.find(c => c.parent_id && nome(c).includes(sub) &&
+        (p => p && nome(p).includes(raiz))(paiDe(c)));
+      // 2) qualquer subcategoria com esse nome
+      if (!hit) hit = categories.find(c => c.parent_id && nome(c).includes(sub));
+      // 3) o envelope, quando a família não detalhou essa parte
+      if (!hit) hit = categories.find(c => !c.parent_id && nome(c).includes(raiz));
       if (hit) return hit.id;
     }
     return '';

@@ -62,10 +62,15 @@ create table if not exists categories (
   scope text not null default 'Família',
   monthly_budget numeric not null default 0,
   kind text not null default 'Essencial',   -- 'Essencial' | 'Estilo' (regra 50/30/20)
+  -- Sem parent_id é envelope (o orçamento vive nele); com parent_id é subcategoria.
+  -- set null em vez de cascade: o app apaga as filhas por conta própria (soft delete),
+  -- e um delete físico do pai não deve levar histórico embora sem aviso.
+  parent_id uuid references categories(id) on delete set null,
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
 alter table categories add column if not exists kind text not null default 'Essencial';
+alter table categories add column if not exists parent_id uuid references categories(id) on delete set null;
 
 create table if not exists transactions (
   id uuid primary key,
@@ -174,6 +179,7 @@ create table if not exists notification_log (
 create index if not exists idx_tx_family_date on transactions(family_id, date);
 create index if not exists idx_tx_family_upd on transactions(family_id, updated_at);
 create index if not exists idx_tx_fitid on transactions(family_id, fitid);
+create index if not exists idx_cat_parent on categories(family_id, parent_id);
 create index if not exists idx_push_family on push_subscriptions(family_id);
 
 -- RLS

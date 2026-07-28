@@ -121,6 +121,55 @@ const DB = {
     if (!this.data) return;
     const r = this.data[store].find(x => x.id === id);
     if (r) { r.deleted = true; r.updated_at = this.now(); r.dirty = true; this.save(); }
+    // Apagar um envelope sem levar as subcategorias deixaria filhas apontando para
+    // um pai que não existe mais — órfãs invisíveis na tela e vivas no banco.
+    if (store === 'categories') {
+      for (const filha of this.subcategoriesOf(id)) {
+        filha.deleted = true; filha.updated_at = this.now(); filha.dirty = true;
+      }
+      this.save();
+    }
+  },
+
+  /* ---------- Categorias em dois níveis ----------
+     Sem parent_id, a categoria é um envelope: é nela que vive o orçamento.
+     Com parent_id, é uma subcategoria — detalha o gasto sem multiplicar
+     envelopes, então "Mercado" e "Restaurante" somam no limite de
+     "Alimentação". Dois níveis bastam: a terceira camada só traria trabalho
+     de manutenção sem melhorar nenhuma decisão de dinheiro. */
+  rootCategories() { return this.all('categories').filter(c => !c.parent_id); },
+  subcategoriesOf(parentId) {
+    if (!parentId) return [];
+    return this.all('categories').filter(c => c.parent_id === parentId);
+  },
+
+  // De qualquer categoria para o envelope que a governa (ela mesma, se for raiz)
+  categoryRoot(id) {
+    const c = this.get('categories', id);
+    if (!c) return null;
+    if (!c.parent_id) return c;
+    return this.get('categories', c.parent_id) || c;   // pai apagado: ela vira o próprio envelope
+  },
+  categoryRootId(id) { const r = this.categoryRoot(id); return r ? r.id : null; },
+
+  // Categorias que podem receber lançamento: as folhas. Um envelope que já tem
+  // subcategorias sai da lista — classificar nele deixaria o detalhe pela metade.
+  leafCategories() {
+    return this.all('categories').filter(c => c.parent_id || !this.subcategoriesOf(c.id).length);
+  },
+
+  // "Alimentação › Mercado" — o caminho todo, porque "Mercado" sozinho não diz de qual envelope saiu
+  categoryPath(id) {
+    const c = this.get('categories', id);
+    if (!c) return '';
+    const pai = c.parent_id ? this.get('categories', c.parent_id) : null;
+    return pai ? `${pai.name} › ${c.name}` : c.name;
+  },
+  // O ícone é do envelope: subcategoria herda, para a leitura do extrato ficar estável
+  categoryIcon(id) {
+    const r = this.categoryRoot(id);
+    const c = this.get('categories', id);
+    return (c && c.icon) || (r && r.icon) || '';
   },
 
   /* ---------- Configurações da família ---------- */
@@ -247,13 +296,41 @@ const DB = {
     return !!fitid && this.data.transactions.some(t => t.fitid === fitid && !t.deleted);
   },
 
+  /* Gasto por envelope: o que foi lançado numa subcategoria sobe para o pai.
+     Somar aqui, e não em cada tela, é o que faz donut, ranking, comparativo,
+     barras de orçamento, conselheiro e notificação concordarem entre si. */
   spentByCategory(period) {
     const out = {};
     for (const t of this.expensesOf(period)) {
-      const k = t.category_id || '_sem';
+      const k = this.categoryRootId(t.category_id) || '_sem';
       out[k] = (out[k] || 0) + (Number(t.amount) || 0);
     }
     return out;
+  },
+
+  // Detalhe dentro de um envelope. Sem rootId, devolve todas as subcategorias
+  // com gasto no período — o que o lançamento apontou, sem subir para o pai.
+  spentBySubcategory(period, rootId) {
+    const out = {};
+    for (const t of this.expensesOf(period)) {
+      const c = this.get('categories', t.category_id);
+      if (!c || !c.parent_id) continue;
+      if (rootId && c.parent_id !== rootId) continue;
+      out[c.id] = (out[c.id] || 0) + (Number(t.amount) || 0);
+    }
+    return out;
+  },
+
+  // Quanto do envelope foi lançado direto nele, sem escolher subcategoria
+  spentDirectly(period, rootId) {
+    return this.expensesOf(period)
+      .filter(t => t.category_id === rootId)
+      .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  },
+
+  // Soma dos limites: só os envelopes. Contar pai e filha dobraria o orçamento total.
+  budgetTotal() {
+    return this.rootCategories().reduce((s, c) => s + (Number(c.monthly_budget) || 0), 0);
   },
 
   goalTotal(goalId) {
@@ -381,24 +458,81 @@ const DB = {
   spentByKind(period) {
     const out = { Essencial: 0, Estilo: 0 };
     for (const t of this.expensesOf(period)) {
-      const c = this.get('categories', t.category_id);
+      // Necessidade x desejo é decisão do envelope: a subcategoria herda dele,
+      // senão uma filha sem kind cairia em "Essencial" e torceria a regra 50/30/20
+      const c = this.categoryRoot(t.category_id);
       const kind = (c && c.kind) === 'Estilo' ? 'Estilo' : 'Essencial';
       out[kind] += Number(t.amount) || 0;
     }
     return out;
   },
 
+  /* Envelope (com limite) e suas subcategorias. As filhas não têm limite próprio:
+     o teto é do envelope, e é isso que evita orçamento contado duas vezes. */
+  ARVORE_PADRAO: [
+    [['Moradia', '🏠', 1800, 'Essencial'], ['Aluguel / Financiamento', 'Condomínio', 'Luz', 'Água', 'Gás', 'Internet / TV', 'Manutenção']],
+    [['Alimentação', '🍽️', 1500, 'Essencial'], ['Mercado', 'Feira / Açougue', 'Restaurante', 'Delivery', 'Padaria', 'Café / Lanche']],
+    [['Transporte', '🚗', 500, 'Essencial'], ['Combustível', 'Aplicativo / Táxi', 'Transporte público', 'Estacionamento', 'Manutenção', 'IPVA / Licenciamento', 'Seguro']],
+    [['Saúde', '💊', 400, 'Essencial'], ['Plano de saúde', 'Farmácia', 'Consulta', 'Exames', 'Dentista', 'Academia']],
+    [['Lazer', '🎮', 350, 'Estilo'], ['Viagem', 'Cinema / Show', 'Bar', 'Passeio', 'Jogos', 'Hobby']],
+    [['Assinaturas', '🔁', 150, 'Estilo'], ['Streaming', 'Música', 'Aplicativos', 'Nuvem', 'Revista / Jornal']],
+    [['Educação', '📚', 300, 'Essencial'], ['Escola / Faculdade', 'Curso', 'Material', 'Livros']],
+    [['Filhos', '🧒', 400, 'Essencial'], ['Escola', 'Roupas', 'Brinquedos', 'Atividades', 'Saúde']],
+    [['Vestuário', '👕', 250, 'Estilo'], ['Roupas', 'Calçados', 'Acessórios']],
+    [['Serviços & Taxas', '🧾', 200, 'Essencial'], ['Tarifas bancárias', 'Impostos', 'Seguros', 'Cartório / Documentos', 'Doações']],
+    [['Presentes', '🎁', 150, 'Estilo'], ['Aniversários', 'Datas comemorativas']],
+    [['Pets', '🐾', 150, 'Essencial'], ['Ração', 'Veterinário', 'Banho e tosa']],
+    [['Gastos Pessoais', '👤', 600, 'Estilo', 'Pessoal'], ['Beleza / Cabelo', 'Cuidados pessoais', 'Diversos']],
+  ],
+
   seed() {
     if (this.data.meta.seeded) return;
     const cat = (name, icon, budget, kind, scope = 'Família') =>
-      ({ id: this.uuid(), name, icon, monthly_budget: budget, kind, scope, updated_at: this.now(), deleted: false, dirty: true });
-    this.data.categories = [
-      cat('Moradia', '🏠', 1800, 'Essencial'), cat('Alimentação / Mercado', '🍽️', 1500, 'Essencial'),
-      cat('Transporte', '🚗', 500, 'Essencial'), cat('Saúde', '💊', 400, 'Essencial'),
-      cat('Lazer', '🎮', 350, 'Estilo'), cat('Assinaturas', '🔁', 150, 'Estilo'),
-      cat('Educação', '📚', 300, 'Essencial'), cat('Gastos Pessoais', '👤', 600, 'Estilo', 'Pessoal'),
-    ];
+      ({ id: this.uuid(), name, icon, monthly_budget: budget, kind, scope, parent_id: null, updated_at: this.now(), deleted: false, dirty: true });
+
+    const lista = [];
+    for (const [pai, filhas] of this.ARVORE_PADRAO) {
+      const raiz = cat(...pai);
+      lista.push(raiz);
+      for (const nome of filhas) {
+        const f = cat(nome, raiz.icon, 0, raiz.kind, raiz.scope);
+        f.parent_id = raiz.id;
+        lista.push(f);
+      }
+    }
+    this.data.categories = lista;
     this.data.meta.seeded = true;
     this.save();
+  },
+
+  _semAcento(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim(); },
+
+  /* Quem já usava o app antes das subcategorias tem só a lista plana, e o seed
+     não roda de novo. Isto preenche as subcategorias sugeridas nos envelopes que
+     dão para reconhecer pelo nome, sem tocar nos que a família criou por conta.
+
+     Não é automático de propósito: injetar dezenas de categorias na base
+     compartilhada sem pedir mudaria os relatórios de todo mundo sem aviso. */
+  sugerirSubcategorias() {
+    if (!this.data) return 0;
+    let criadas = 0;
+    for (const raiz of this.rootCategories()) {
+      const alvo = this._semAcento(raiz.name);
+      const molde = this.ARVORE_PADRAO.find(([pai]) => {
+        const nome = this._semAcento(pai[0]);
+        return alvo === nome || alvo.includes(nome) || nome.includes(alvo);
+      });
+      if (!molde) continue;
+      const existentes = this.subcategoriesOf(raiz.id).map(c => this._semAcento(c.name));
+      for (const nome of molde[1]) {
+        if (existentes.includes(this._semAcento(nome))) continue;
+        this.upsert('categories', {
+          name: nome, icon: raiz.icon, scope: raiz.scope, kind: raiz.kind,
+          monthly_budget: 0, parent_id: raiz.id,
+        });
+        criadas++;
+      }
+    }
+    return criadas;
   },
 };

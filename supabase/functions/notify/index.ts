@@ -44,7 +44,7 @@ function alertsFor(
   cards: Card[],
   txs: Tx[],
   paidKeys: Set<string>,
-  categories: { id: string; name: string; icon: string; monthly_budget: number }[],
+  categories: { id: string; name: string; icon: string; monthly_budget: number; parent_id: string | null }[],
   monthStartDay: number,
 ): Alert[] {
   const out: Alert[] = [];
@@ -88,14 +88,21 @@ function alertsFor(
   const end = new Date(Date.UTC(y, m + 1, startDay, 0));
   const label = `${start.getUTCFullYear()}-${start.getUTCMonth() + 1}`;
 
+  // Gasto de subcategoria sobe para o envelope, igual ao DB.spentByCategory do app.
+  // Sem isto o servidor avisaria com números diferentes dos que a tela mostra.
+  const paiDe = new Map(categories.map(c => [c.id, c.parent_id || null]));
+  const envelopeDe = (id: string) => paiDe.get(id) ?? id;
+
   const spent = new Map<string, number>();
   for (const t of txs) {
     if (t.type === 'Receita' || !t.category_id) continue;
     const d = new Date(t.date + 'T12:00:00Z');
     if (d < start || d >= end) continue;
-    spent.set(t.category_id, (spent.get(t.category_id) ?? 0) + Number(t.amount || 0));
+    const k = envelopeDe(t.category_id);
+    spent.set(k, (spent.get(k) ?? 0) + Number(t.amount || 0));
   }
   for (const c of categories) {
+    if (c.parent_id) continue;         // o limite vive no envelope
     if (!c.monthly_budget) continue;
     const used = spent.get(c.id) ?? 0;
     const pct = Math.round(used / c.monthly_budget * 100);
@@ -125,7 +132,7 @@ Deno.serve(async () => {
       db.from('cards').select('id,name,closing_day,due_day,limit_amount').eq('family_id', familyId).eq('deleted', false).eq('active', true),
       db.from('transactions').select('amount,card_id,invoice_key,category_id,date,type').eq('family_id', familyId).eq('deleted', false),
       db.from('invoice_status').select('invoice_key,paid').eq('family_id', familyId).eq('deleted', false),
-      db.from('categories').select('id,name,icon,monthly_budget').eq('family_id', familyId).eq('deleted', false),
+      db.from('categories').select('id,name,icon,monthly_budget,parent_id').eq('family_id', familyId).eq('deleted', false),
       db.from('family_settings').select('month_start_day').eq('family_id', familyId).eq('deleted', false).limit(1),
     ]);
 

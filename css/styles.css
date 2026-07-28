@@ -771,6 +771,20 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .muted { color: var(--paper-dim); font-size: 12.5px; }
 .mono { font-family: monospace; font-size: 12px; word-break: break-all; color: var(--paper-dim); background: var(--ink-3); padding: 8px 10px; border-radius: 8px; }
 
+/* Categorias em árvore: a subcategoria recua e ganha um traço de ligação, para
+   ficar claro a qual envelope ela pertence sem repetir o nome do pai em cada linha */
+.sub-item { margin-left: 22px; padding: 9px 14px; font-weight: 500; font-size: 13px; }
+.sub-item .cfg-left { gap: 8px; }
+.sub-traco { width: 14px; height: 1px; background: #c9d4de; flex: none; }
+.btn-sub {
+  margin: 2px 0 14px 22px; width: calc(100% - 22px);
+  font-size: 12.5px; padding: 8px 12px; color: var(--paper-dim);
+}
+.budget-row.clicavel { cursor: pointer; }
+.budget-row.clicavel:hover .budget-head b { color: var(--gold); }
+.chev-min { display: inline-flex; vertical-align: middle; color: #c4cad4; }
+.chev-min svg { width: 13px; height: 13px; }
+
 /* Convite para a família: o código precisa parecer algo para compartilhar,
    não um detalhe técnico perdido em cinza no rodapé de uma tela de ajustes. */
 .convite {

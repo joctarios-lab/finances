@@ -57,7 +57,7 @@ eval(appSrc + `; Object.assign(global, {
   state, fmt, fmtShort, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
-  Voltar, setTab, closeSheet, toast });`);
+  Voltar, setTab, closeSheet, toast, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -197,7 +197,11 @@ try {
     if (catManual) return 'MANTEM';
     return OFX.guessCategoryId(texto, DB.all('categories')) || 'MANTEM';
   };
-  check('sem escolha manual, sugere pela palavra-chave', decidir({ catManual: false, texto: 'Supermercado' }), alim);
+  // Com dois níveis a sugestão passou a acertar o detalhe: "Supermercado" não é
+  // só Alimentação, é a subcategoria Mercado dentro dela.
+  const subMercado = DB.subcategoriesOf(alim).find(c => c.name === 'Mercado');
+  check('sugestão desce até a subcategoria', decidir({ catManual: false, texto: 'Supermercado' }), subMercado.id);
+  check('e a subcategoria pertence ao envelope certo', DB.categoryRootId(subMercado.id), alim);
   check('sem escolha manual, repete o lançamento igual', decidir({ catManual: false, texto: 'Mercado' }), alim);
   check('COM escolha manual, digitar palavra-chave NÃO troca', decidir({ catManual: true, texto: 'Supermercado' }), 'MANTEM');
   check('COM escolha manual, descrição repetida NÃO troca', decidir({ catManual: true, texto: 'Mercado' }), 'MANTEM');
@@ -207,6 +211,142 @@ try {
   check('ao editar, a categoria salva é preservada', !!editando.category_id, true);
   check('categoria salva é a que foi lançada', editando.category_id, alim);
 } catch (e) { console.log(` FALHA | formulário: ${e.message}`); fail++; }
+
+/* ---- Categoria e subcategoria ----
+   O risco todo está na agregação: gasto de subcategoria tem de subir para o
+   envelope, e o orçamento não pode ser contado duas vezes. */
+console.log('\n=== Categoria e subcategoria ===');
+try {
+  const alimento = cat('Aliment');
+  const filhas = DB.subcategoriesOf(alimento.id);
+  check('envelope de fábrica vem com subcategorias', filhas.length > 3, true);
+  check('envelope não tem pai', !alimento.parent_id, true);
+  check('subcategoria aponta para o envelope', DB.categoryRootId(filhas[0].id), alimento.id);
+  check('caminho mostra os dois níveis', DB.categoryPath(filhas[0].id).includes(' › '), true);
+  check('envelope mostra só o próprio nome', DB.categoryPath(alimento.id), alimento.name);
+
+  // Envelope com filhas sai da lista de folhas: lançar nele deixaria o detalhe vazio
+  const folhas = DB.leafCategories();
+  check('envelope com subcategorias não é folha', folhas.some(c => c.id === alimento.id), false);
+  check('subcategorias são folhas', folhas.some(c => c.id === filhas[0].id), true);
+
+  // Agregação: o que foi lançado na filha aparece no pai
+  const mercado = filhas.find(c => c.name === 'Mercado');
+  const delivery = filhas.find(c => c.name === 'Delivery');
+  const antes = DB.spentByCategory(p)[alimento.id] || 0;
+  DB.upsert('transactions', { description: 'Compra da semana', amount: 250, date: dia(12), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: conta, category_id: mercado.id });
+  DB.upsert('transactions', { description: 'Pedido de pizza', amount: 90, date: dia(13), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: conta, category_id: delivery.id });
+  check('gasto da subcategoria sobe para o envelope', DB.spentByCategory(p)[alimento.id], antes + 250 + 90);
+  check('subcategoria não aparece como envelope próprio', DB.spentByCategory(p)[mercado.id] === undefined, true);
+
+  // Detalhe dentro do envelope
+  const detalhe = DB.spentBySubcategory(p, alimento.id);
+  check('detalhe separa mercado', detalhe[mercado.id], 250);
+  check('detalhe separa delivery', detalhe[delivery.id], 90);
+  check('lançado direto no envelope fica visível à parte', DB.spentDirectly(p, alimento.id), antes);
+
+  // Orçamento: só o envelope conta
+  const somaTudo = DB.all('categories').reduce((s, c) => s + (Number(c.monthly_budget) || 0), 0);
+  check('total orçado usa só envelopes', DB.budgetTotal() <= somaTudo, true);
+  check('subcategoria de fábrica não tem orçamento próprio', filhas.every(f => !f.monthly_budget), true);
+  check('total orçado bate com a soma dos envelopes',
+    DB.budgetTotal(), DB.rootCategories().reduce((s, c) => s + (Number(c.monthly_budget) || 0), 0));
+
+  // 50/30/20 herda do envelope
+  const lazer = DB.rootCategories().find(c => c.name === 'Lazer');
+  const subLazer = DB.subcategoriesOf(lazer.id)[0];
+  const kindAntes = DB.spentByKind(p).Estilo;
+  DB.upsert('transactions', { description: 'Cinema sábado', amount: 60, date: dia(14), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: conta, category_id: subLazer.id });
+  check('subcategoria herda necessidade/desejo do envelope', DB.spentByKind(p).Estilo, kindAntes + 60);
+
+  // Nomes repetidos entre envelopes: o caminho é o que desfaz a ambiguidade
+  const comManutencao = DB.all('categories').filter(c => c.parent_id && c.name === 'Manutenção');
+  check('nome de folha pode repetir entre envelopes', comManutencao.length >= 2, true);
+  check('e os caminhos ficam diferentes',
+    new Set(comManutencao.map(c => DB.categoryPath(c.id))).size, comManutencao.length);
+
+  // Apagar envelope leva as filhas: senão sobram órfãs vivas no banco
+  const pets = DB.rootCategories().find(c => c.name === 'Pets');
+  const idsFilhas = DB.subcategoriesOf(pets.id).map(c => c.id);
+  check('envelope a apagar tinha subcategorias', idsFilhas.length > 0, true);
+  DB.remove('categories', pets.id);
+  check('apagar o envelope apaga as subcategorias', idsFilhas.every(id => !DB.get('categories', id)), true);
+  check('as filhas apagadas vão sincronizar a remoção',
+    idsFilhas.every(id => DB.data.categories.find(c => c.id === id).dirty === true), true);
+
+  // Se o pai desaparece sem levar a filha, ela não pode sumir do relatório
+  const orfa = DB.upsert('categories', { name: 'Órfã', icon: '❓', parent_id: 'pai-que-nao-existe', monthly_budget: 0 });
+  check('subcategoria sem pai vira o próprio envelope', DB.categoryRootId(orfa), orfa);
+  check('e ainda tem um caminho legível', DB.categoryPath(orfa), 'Órfã');
+  DB.remove('categories', orfa);
+
+  // As telas novas precisam abrir de verdade, não só existir no código
+  const modal = () => els['#modal'].innerHTML;
+  openCategoriesConfig();
+  check('cadastro em árvore abre', modal().includes('Categorias'), true);
+  check('e mostra as subcategorias recuadas', modal().includes('sub-item'), true);
+  check('e oferece criar subcategoria no envelope', modal().includes('data-nova-sub'), true);
+  openCategoryEditor(null, alimento.id);
+  check('editor de subcategoria abre', modal().includes('Nova subcategoria'), true);
+  check('e esconde os campos de envelope', /id="wrap-envelope" hidden/.test(modal()), true);
+  openCategoryEditor(alimento, null);
+  check('editor de envelope com filhas não oferece virar filha', modal().includes('não pode virar subcategoria'), true);
+  openEnvelopeDetail(alimento.id);
+  check('detalhe do envelope abre com o ranking', els['#sheet'].innerHTML.includes('rank-row'), true);
+  check('e nomeia as subcategorias gastas', els['#sheet'].innerHTML.includes('Mercado'), true);
+
+  /* Migração de quem já usava o app: a base antiga é plana e o seed não roda de
+     novo, então as subcategorias precisam poder ser preenchidas depois. */
+  const guardadas = DB.data.categories;
+  const plana = (nome, icon, kind, scope) =>
+    ({ id: DB.uuid(), name: nome, icon, monthly_budget: 100, kind, scope, updated_at: DB.now(), deleted: false });
+  DB.data.categories = [
+    plana('Alimentação / Mercado', '🍽️', 'Essencial', 'Família'),   // nome do seed antigo
+    plana('Transporte', '🚗', 'Essencial', 'Família'),
+    plana('Barco', '⛵', 'Estilo', 'Família'),                        // criada pela família: não é do molde
+  ];
+  check('base antiga não tem subcategoria nenhuma', DB.all('categories').every(c => !c.parent_id), true);
+  const criadas = DB.sugerirSubcategorias();
+  check('a migração cria subcategorias', criadas > 5, true);
+  const alimAntigo = DB.all('categories').find(c => c.name === 'Alimentação / Mercado');
+  check('reconhece o envelope pelo nome antigo', DB.subcategoriesOf(alimAntigo.id).length > 3, true);
+  check('não inventa nada em envelope que a família criou',
+    DB.subcategoriesOf(DB.all('categories').find(c => c.name === 'Barco').id).length, 0);
+  check('as novas herdam o tipo do envelope',
+    DB.subcategoriesOf(alimAntigo.id).every(f => f.kind === 'Essencial'), true);
+  check('e não ganham orçamento próprio',
+    DB.subcategoriesOf(alimAntigo.id).every(f => !f.monthly_budget), true);
+  const denovo = DB.sugerirSubcategorias();
+  check('rodar de novo não duplica nada', denovo, 0);
+  DB.data.categories = guardadas;   // devolve o cenário para as seções seguintes
+} catch (e) { console.log(` FALHA | subcategorias: ${e.message}`); fail++; }
+
+console.log('\n=== Subcategorias nas telas ===');
+{
+  const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  // O formulário não pode oferecer o envelope como atalho: o gasto cairia no
+  // nível de cima e o detalhe nunca aconteceria
+  check('formulário lista só folhas', /const cats = DB\.leafCategories\(\)/.test(ap), true);
+  check('dropdown mostra o caminho inteiro', /DB\.categoryPath\(c\.id\)/.test(ap), true);
+  check('chips das 3 mais usadas só consideram folhas', /const folhas = DB\.leafCategories\(\)/.test(ap), true);
+  check('adivinhação recebe a lista completa (precisa dos pais)', ap.includes('OFX.guessCategoryId(texto, DB.all(\'categories\'))'), true);
+  check('extrato mostra o caminho', /esc\(c \? DB\.categoryPath\(t\.category_id\) : 'Sem categoria'\)/.test(ap), true);
+  check('CSV exporta o caminho', /DB\.categoryPath\(t\.category_id\), t\.scope/.test(ap), true);
+  check('barra de orçamento abre o detalhe', ap.includes('openEnvelopeDetail') && ap.includes('data-envelope='), true);
+  check('cadastro de categoria em árvore', ap.includes('openCategoriesConfig') && ap.includes('sub-item'), true);
+  check('dá para criar subcategoria dentro do envelope', ap.includes('data-nova-sub'), true);
+  check('subcategoria não pede orçamento próprio', /monthly_budget: pai \? 0 :/.test(ap), true);
+  check('subcategoria herda âmbito e tipo do envelope', /scope: pai \?[\s\S]{0,120}kind: pai \?/.test(ap), true);
+  check('base antiga recebe a oferta de migração', ap.includes('md-sugerir') && ap.includes('DB.sugerirSubcategorias()'), true);
+
+  const nt = fs.readFileSync(BASE + 'supabase/functions/notify/index.ts', 'utf8');
+  check('aviso do servidor também soma no envelope', nt.includes('envelopeDe(t.category_id)'), true);
+  check('aviso do servidor não repete o limite da filha', /if \(c\.parent_id\) continue;/.test(nt), true);
+  check('servidor busca parent_id', nt.includes("select('id,name,icon,monthly_budget,parent_id')"), true);
+
+  const cssS = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('subcategoria recuada na lista', /\.sub-item \{[^}]*margin-left/.test(cssS), true);
+}
 
 console.log('\n=== Nenhuma função inexistente é chamada (DB.x / OFX.x) ===');
 {
@@ -810,6 +950,10 @@ for (const tabela of Object.keys(SYNC)) {
   for (const col of ['type', 'fitid', 'group_id', 'installment', 'adjustment', 'to_account']) {
     check(`transactions.${col} com ALTER seguro`, new RegExp(`add column if not exists ${col}\\b`, 'i').test(schema), true);
   }
+  check('categories.parent_id com ALTER seguro', /alter table categories add column if not exists parent_id/i.test(schema), true);
+  check('parent_id aponta para categories', /parent_id uuid references categories\(id\)/i.test(schema), true);
+  check('apagar o pai no banco não leva o histórico', /parent_id uuid references categories\(id\) on delete set null/i.test(schema), true);
+  check('há índice para buscar filhas', /create index if not exists idx_cat_parent on categories\(family_id, parent_id\)/i.test(schema), true);
 }
 
 check('push_subscriptions com RLS', /alter table push_subscriptions enable row level security/i.test(schema), true);
