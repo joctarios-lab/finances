@@ -475,6 +475,53 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .qa-tr:hover { border-color: var(--blue); box-shadow: 0 4px 14px rgba(114, 57, 234, .16); }
 
 /* Linha de filtro rotulada (extrato) */
+/* Barra de busca + botão de filtros. Só estes dois ficam sempre na tela; os
+   outros dez controles moram no painel, senão a lista sairia da primeira dobra. */
+.busca-row { display: flex; gap: 8px; align-items: stretch; }
+.busca-row input { flex: 1; min-width: 0; }
+.btn-filtros {
+  display: flex; align-items: center; gap: 7px; flex: none; cursor: pointer;
+  padding: 0 14px; border-radius: 8px; font-family: var(--font-body);
+  font-size: 13px; font-weight: 600; white-space: nowrap;
+  background: var(--ink-2); border: 1px solid var(--line); color: var(--paper-dim);
+  box-shadow: var(--shadow);
+}
+.btn-filtros:hover { border-color: #d8e3ea; color: var(--paper); }
+.btn-filtros svg { width: 15px; height: 15px; }
+.btn-filtros.tem { border-color: var(--gold); color: var(--gold); background: rgba(0, 158, 247, .06); }
+.filtros-num {
+  background: var(--gold); color: #fff; border-radius: 9px; min-width: 18px;
+  height: 18px; display: grid; place-items: center; font-size: 11px; padding: 0 5px;
+}
+
+/* Filtros aplicados, sempre à vista: painel fechado esconde os controles, não o
+   que está filtrando — senão a lista fica curta sem explicação. */
+.ativos { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tag-ativa {
+  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+  background: rgba(0, 158, 247, .1); color: var(--gold); border: 1px solid transparent;
+  border-radius: 20px; padding: 5px 10px; font-size: 12px; font-weight: 600;
+  font-family: var(--font-body); max-width: 100%; overflow-wrap: anywhere;
+}
+.tag-ativa span { font-size: 14px; line-height: 1; opacity: .7; }
+.tag-ativa:hover { background: rgba(0, 158, 247, .18); }
+.tag-limpar {
+  background: none; border: none; cursor: pointer; font-family: var(--font-body);
+  font-size: 12px; font-weight: 600; color: var(--paper-dim); text-decoration: underline;
+  padding: 5px 4px;
+}
+.tag-limpar:hover { color: var(--red); }
+
+/* Etiquetas do lançamento, na própria linha do extrato */
+.tx-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.tx-tag {
+  background: var(--ink-3); color: var(--paper-dim); border: 1px solid var(--line);
+  border-radius: 20px; padding: 2px 8px; font-size: 10.5px; font-weight: 600;
+  cursor: pointer; font-family: var(--font-body);
+}
+.tx-tag:hover { border-color: var(--gold); color: var(--gold); }
+.chip-tag { font-size: 12.5px; }
+
 .filter-row { display: flex; align-items: center; gap: 10px; max-width: 100%; }
 .filter-lbl {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;

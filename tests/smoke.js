@@ -68,7 +68,7 @@ eval(appSrc + `; Object.assign(global, {
   state, fmt, fmtShort, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
-  Voltar, setTab, closeSheet, toast, optionsCategorias, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
+  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -839,6 +839,123 @@ try {
    O enhance roda em openSheet/openModal. Trecho montado por innerHTML DEPOIS que a
    tela abriu não é alcançado — foi o caso do preview do OFX, que ficou com selects
    nativos por meses. O teste cobra o enhance em cada ponto desses. */
+/* ---- Etiquetas e o painel de filtros do extrato ---- */
+console.log('\n=== Etiquetas nos lançamentos ===');
+try {
+  const contaT = DB.all('accounts')[0].id;
+  const alim = cat('Aliment');
+  const mercado = DB.subcategoriesOf(alim.id).find(c => c.name === 'Mercado');
+  const tx1 = DB.upsert('transactions', { description: 'Passagem Bahia', amount: 900, date: dia(15), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaT, tags: ['viagem'] });
+  const tx2 = DB.upsert('transactions', { description: 'Pousada', amount: 600, date: dia(16), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaT, tags: ['viagem', 'lazer'] });
+
+  check('etiquetas são lidas do lançamento', DB.tagsOf(DB.get('transactions', tx1)).join(','), 'viagem');
+  check('lançamento antigo sem o campo não quebra', DB.tagsOf({ description: 'x' }).length, 0);
+  check('valor inválido em tags não quebra', DB.tagsOf({ tags: 'viagem' }).length, 0);
+  check('etiquetas em uso vêm das mais usadas', DB.allTags()[0], 'viagem');
+  check('contagem por etiqueta', DB.tagCount('viagem'), 2);
+  check('# e espaços são limpos', DB.normTag('  #Viagem  '), 'Viagem');
+  check('etiqueta muito longa é cortada', DB.normTag('a'.repeat(40)).length, 24);
+
+  // A etiqueta cruza envelopes: é para isso que ela existe
+  const idsViagem = DB.all('transactions').filter(t => DB.tagsOf(t).includes('viagem'));
+  check('etiqueta agrupa gastos de categorias diferentes', idsViagem.length, 2);
+
+  console.log('\n=== Painel de filtros do extrato ===');
+  const p2 = DB.monthPeriod(new Date());
+  const zerar = () => { state.filtros = { ...FILTROS_VAZIOS }; };
+  const qtd = () => txsFiltradas(p2).length;
+
+  zerar();
+  const totalPeriodo = qtd();
+  check('sem filtro, traz tudo do período', totalPeriodo > 5, true);
+
+  zerar(); state.filtros.tag = 'viagem';
+  check('filtra por etiqueta', qtd(), 2);
+  zerar(); state.filtros.tipo = 'Receita';
+  check('filtra por tipo', txsFiltradas(p2).every(t => !DB.isExpense(t)), true);
+  zerar(); state.filtros.situacao = 'A Pagar';
+  check('filtra por situação', txsFiltradas(p2).every(t => t.status === 'A Pagar'), true);
+  zerar(); state.filtros.scope = 'Pessoal';
+  check('filtra por âmbito', txsFiltradas(p2).every(t => t.scope === 'Pessoal'), true);
+  zerar(); state.filtros.membro = 'Joctã';
+  check('filtra por membro', txsFiltradas(p2).every(t => t.member === 'Joctã'), true);
+  zerar(); state.filtros.metodo = 'PIX';
+  check('filtra por forma de pagamento', txsFiltradas(p2).every(t => t.method === 'PIX'), true);
+  zerar(); state.filtros.valorMin = 800;
+  check('filtra por valor mínimo', txsFiltradas(p2).every(t => t.amount >= 800), true);
+  zerar(); state.filtros.valorMax = 100;
+  check('filtra por valor máximo', txsFiltradas(p2).every(t => t.amount <= 100), true);
+  zerar(); state.filtros.conta = contaT;
+  check('filtra por conta', txsFiltradas(p2).every(t => t.account_id === contaT || t.card_id === contaT || t.to_account === contaT), true);
+
+  // Categoria filtra pelo envelope, então subcategoria entra junto
+  DB.upsert('transactions', { description: 'Feira', amount: 70, date: dia(17), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaT, category_id: mercado.id });
+  zerar(); state.filtros.categoria = alim.id;
+  const porEnvelope = txsFiltradas(p2);
+  check('filtrar envelope traz as subcategorias', porEnvelope.some(t => t.category_id === mercado.id), true);
+  zerar(); state.filtros.categoria = mercado.id;
+  check('filtrar subcategoria também sobe ao envelope', txsFiltradas(p2).length, porEnvelope.length);
+
+  // Busca sem acento, em vários campos
+  zerar(); state.filtros.busca = 'pousada';
+  check('busca pela descrição', qtd(), 1);
+  // A busca varre descrição, categoria, etiqueta, membro e forma de pagamento. Como
+  // existe a subcategoria "Viagem", procurar por viagem acha os dois etiquetados e
+  // também o classificado nela — que é justamente o que se espera de uma busca ampla.
+  zerar(); state.filtros.busca = 'VIAGEM';
+  const achados = txsFiltradas(p2);
+  check('busca não liga para maiúscula', achados.length >= 2, true);
+  check('busca acha pela etiqueta', achados.filter(t => DB.tagsOf(t).includes('viagem')).length, 2);
+  check('e também pela categoria de mesmo nome', achados.some(t => !DB.tagsOf(t).includes('viagem')), true);
+  zerar(); state.filtros.busca = 'alimentacao';
+  check('busca acha pela categoria, sem acento', qtd() > 0, true);
+  zerar(); state.filtros.busca = 'zzzz';
+  check('busca sem resultado devolve vazio', qtd(), 0);
+
+  // Filtros combinam
+  zerar(); state.filtros.tag = 'viagem'; state.filtros.valorMin = 700;
+  check('filtros se somam', qtd(), 1);
+
+  // Etiquetas do que está ativo
+  zerar();
+  check('sem filtro, nenhuma etiqueta ativa', filtrosAtivos().length, 0);
+  state.filtros.tag = 'viagem'; state.filtros.scope = 'Família'; state.filtros.busca = 'x';
+  const rot = filtrosAtivos();
+  check('cada filtro ativo gera uma etiqueta', rot.length, 3);
+  check('a etiqueta mostra o nome legível', rot.some(r => r.texto === '#viagem'), true);
+  check('cada etiqueta sabe qual filtro limpar', rot.every(r => r.chave in FILTROS_VAZIOS), true);
+
+  // A tela: só busca e âmbito ficam fora do painel
+  zerar();
+  const ext = renderExtrato(p2);
+  check('busca fica na tela', ext.includes('id="tx-search"'), true);
+  check('âmbito fica na tela', ext.includes('id="scope-chips"'), true);
+  check('botão de filtros fica na tela', ext.includes('id="btn-filtros"'), true);
+  check('chips de membro saíram da tela', ext.includes('id="member-chips"'), false);
+  state.filtros.tag = 'viagem';
+  const comFiltro = renderExtrato(p2);
+  check('contador aparece no botão', /filtros-num">1</.test(comFiltro), true);
+  check('etiqueta removível aparece', comFiltro.includes('data-limpa="tag"'), true);
+  check('há como limpar tudo', comFiltro.includes('id="limpar-filtros"'), true);
+  check('etiquetas do lançamento aparecem na linha', comFiltro.includes('data-tag="viagem"'), true);
+
+  // Vazio por filtro tem de se distinguir de vazio de verdade
+  zerar(); state.filtros.busca = 'zzzz';
+  const vazio = renderExtrato(p2);
+  check('vazio por filtro explica o motivo', vazio.includes('Nenhum lançamento com esses filtros'), true);
+  check('e oferece limpar', vazio.includes('id="limpar-vazio"'), true);
+
+  // O painel abre com os controles todos
+  zerar();
+  openFiltrosSheet();
+  const folha = els['#sheet'].innerHTML;
+  for (const campo of ['fl-tipo', 'fl-sit', 'fl-scope', 'fl-membro', 'fl-cat', 'fl-tag', 'fl-metodo', 'fl-conta', 'fl-min', 'fl-max', 'fl-rec']) {
+    check(`painel tem ${campo}`, folha.includes(campo), true);
+  }
+  check('painel oferece limpar tudo', folha.includes('fl-limpar'), true);
+  zerar();
+} catch (e) { console.log(` FALHA | etiquetas/filtros: ${e.message}`); fail++; }
+
 console.log('\n=== Selects no padrão Select2 ===');
 {
   const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
@@ -995,11 +1112,12 @@ console.log('\n=== Voltar para a tela zera o estado ===');
 {
   // Trocar de tela: o que o usuário havia ajustado na anterior não sobrevive
   setTab('extrato');
-  state.monthOffset = -3; state.memberFilter = 'Joctã'; state.filter = 'A Pagar';
+  state.monthOffset = -3; state.filtros.membro = 'Joctã'; state.filtros.situacao = 'A Pagar'; state.filtros.busca = 'mer';
   setTab('cartoes');
   check('trocar de tela zera o mês', state.monthOffset, 0);
-  check('trocar de tela zera o filtro de membro', state.memberFilter, 'Todos');
-  check('trocar de tela zera o filtro de situação', state.filter, 'Todos');
+  check('trocar de tela zera o filtro de membro', state.filtros.membro, 'Todos');
+  check('trocar de tela zera o filtro de situação', state.filtros.situacao, 'Todos');
+  check('trocar de tela zera a busca', state.filtros.busca, '');
   setTab('inicio');
   state.monthOffset = -5;
   setTab('extrato'); setTab('inicio');
@@ -1007,18 +1125,18 @@ console.log('\n=== Voltar para a tela zera o estado ===');
 
   // Redesenho da MESMA tela não pode perder o que está sendo olhado
   setTab('extrato');
-  state.monthOffset = -2; state.memberFilter = 'Joctã';
+  state.monthOffset = -2; state.filtros.membro = 'Joctã';
   setTab('extrato');                       // é o que a sincronização faz ao trazer dado novo
   check('redesenhar a mesma tela preserva o mês', state.monthOffset, -2);
-  check('redesenhar a mesma tela preserva o filtro', state.memberFilter, 'Joctã');
+  check('redesenhar a mesma tela preserva o filtro', state.filtros.membro, 'Joctã');
 
   // Reabrir o app: lembra a aba, esquece mês e filtros
-  state.tab = 'relatorios'; state.monthOffset = -4; state.memberFilter = 'Joctã'; state.repOffset = -1;
+  state.tab = 'relatorios'; state.monthOffset = -4; state.filtros.membro = 'Joctã'; state.repOffset = -1;
   persistUI();
   restoreUI();
   check('reabrir volta para a mesma aba', state.tab, 'relatorios');
   check('reabrir mostra o mês corrente', state.monthOffset, 0);
-  check('reabrir esquece o filtro de membro', state.memberFilter, 'Todos');
+  check('reabrir esquece o filtro de membro', state.filtros.membro, 'Todos');
   check('reabrir esquece o mês do relatório', state.repOffset, 0);
 
   const gravado = JSON.parse(store['financas.ui.v1']);
@@ -1076,6 +1194,7 @@ for (const tabela of Object.keys(SYNC)) {
     check(`transactions.${col} com ALTER seguro`, new RegExp(`add column if not exists ${col}\\b`, 'i').test(schema), true);
   }
   check('categories.parent_id com ALTER seguro', /alter table categories add column if not exists parent_id/i.test(schema), true);
+  check('transactions.tags com ALTER seguro', /alter table transactions add column if not exists tags jsonb not null default/i.test(schema), true);
   check('parent_id aponta para categories', /parent_id uuid references categories\(id\)/i.test(schema), true);
   check('apagar o pai no banco não leva o histórico', /parent_id uuid references categories\(id\) on delete set null/i.test(schema), true);
   check('há índice para buscar filhas', /create index if not exists idx_cat_parent on categories\(family_id, parent_id\)/i.test(schema), true);

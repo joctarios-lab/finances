@@ -94,6 +94,7 @@ create table if not exists transactions (
   group_id uuid,                          -- agrupa parcelas de uma mesma compra
   installment text default '',            -- ex: '3/12'
   adjustment boolean not null default false,  -- conciliação de saldo: fica fora das análises
+  tags jsonb not null default '[]'::jsonb,    -- etiquetas livres, para filtrar por assunto
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
@@ -155,6 +156,7 @@ alter table transactions add column if not exists group_id uuid;
 alter table transactions add column if not exists installment text default '';
 alter table transactions add column if not exists adjustment boolean not null default false;
 alter table transactions add column if not exists to_account uuid;
+alter table transactions add column if not exists tags jsonb not null default '[]'::jsonb;
 
 -- Inscrições de push (um registro por navegador/aparelho)
 create table if not exists push_subscriptions (

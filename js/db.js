@@ -296,6 +296,29 @@ const DB = {
     return !!fitid && this.data.transactions.some(t => t.fitid === fitid && !t.deleted);
   },
 
+  /* ---------- Etiquetas ----------
+     Texto livre, ao lado da categoria em vez de no lugar dela: categoria responde
+     "que tipo de gasto é" e tem orçamento; etiqueta responde "de que assunto isto
+     faz parte" e cruza envelopes — uma viagem tem transporte, comida e hospedagem.
+     Registro antigo não tem o campo, então tudo aqui tolera ausente. */
+  tagsOf(tx) {
+    const t = tx && tx.tags;
+    return Array.isArray(t) ? t.filter(x => typeof x === 'string' && x.trim()) : [];
+  },
+  normTag(s) { return String(s || '').trim().replace(/^#+/, '').slice(0, 24); },
+
+  // Todas as etiquetas em uso, das mais usadas para as menos
+  allTags() {
+    const uso = {};
+    for (const t of this.all('transactions')) {
+      for (const tag of this.tagsOf(t)) uso[tag] = (uso[tag] || 0) + 1;
+    }
+    return Object.keys(uso).sort((a, b) => uso[b] - uso[a] || a.localeCompare(b, 'pt-BR'));
+  },
+  tagCount(tag) {
+    return this.all('transactions').filter(t => this.tagsOf(t).includes(tag)).length;
+  },
+
   /* Gasto por envelope: o que foi lançado numa subcategoria sobe para o pai.
      Somar aqui, e não em cada tela, é o que faz donut, ranking, comparativo,
      barras de orçamento, conselheiro e notificação concordarem entre si. */

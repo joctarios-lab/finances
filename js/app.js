@@ -7,14 +7,27 @@ const METHODS = ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto'];
 const MEMBRO_COMUM = 'Comum / Família';   // usado sempre que o âmbito é Família
 const PALETTE = ['#009ef7', '#50cd89', '#7239ea', '#f1416c', '#ffc700', '#43ced7', '#fd7e14', '#8950fc', '#1bc5bd', '#6c7293'];
 
-let state = { tab: 'inicio', monthOffset: 0, filter: 'Todos', memberFilter: 'Todos', repOffset: 0 };
+let state = { tab: 'inicio', monthOffset: 0, repOffset: 0, filtros: null };
+
+/* Filtros do extrato. Os dois primeiros ficam na tela (são os que se usa toda
+   hora); o resto vive no painel, para a tela não virar um formulário. Tudo o que
+   estiver ativo aparece como etiqueta removível acima da lista, então nenhum
+   filtro fica escondido depois de aplicado — é isso que evita o "por que essa
+   lista está vazia?" que painéis fechados costumam causar. */
+const FILTROS_VAZIOS = {
+  busca: '', scope: 'Todos', membro: 'Todos', tipo: 'Todos', situacao: 'Todos',
+  categoria: '', tag: '', metodo: '', conta: '', valorMin: '', valorMax: '', recorrente: false,
+};
 
 /* Estado de dentro da tela: mês em análise, filtros, aba de relatório.
    É transitório de propósito. Ver março e voltar depois achando que é o mês
    corrente leva a conclusão errada sobre o dinheiro — o risco é grande e o custo
    de reabrir o mês antigo é um toque. Zera ao trocar de tela e ao abrir o app. */
-const ESTADO_DA_TELA = { monthOffset: 0, filter: 'Todos', memberFilter: 'Todos', repOffset: 0 };
-function zerarEstadoDaTela() { Object.assign(state, ESTADO_DA_TELA); }
+const ESTADO_DA_TELA = { monthOffset: 0, repOffset: 0 };
+function zerarEstadoDaTela() {
+  Object.assign(state, ESTADO_DA_TELA);
+  state.filtros = { ...FILTROS_VAZIOS };
+}
 
 /* ---------- Memória da navegação: recarregar volta para a mesma aba ---------- */
 const UI_KEY = 'financas.ui.v1';
@@ -654,12 +667,65 @@ function renderInicio(period) {
 }
 
 /* ---------- Extrato ---------- */
+/* Um pipeline só de filtros: a lista e os totais do cabeçalho saem daqui, então
+   o valor no topo sempre corresponde ao que está listado embaixo. Antes a busca
+   apenas escondia linhas pelo CSS, e o total continuava contando o que sumiu. */
+function filtrosAtivos() {
+  const f = state.filtros || FILTROS_VAZIOS;
+  const rotulos = [];
+  const add = (chave, texto) => rotulos.push({ chave, texto });
+  if (f.busca) add('busca', `“${f.busca}”`);
+  if (f.scope !== 'Todos') add('scope', f.scope);
+  if (f.membro !== 'Todos') add('membro', f.membro === MEMBRO_COMUM ? 'Comum' : f.membro);
+  if (f.tipo !== 'Todos') add('tipo', f.tipo);
+  if (f.situacao !== 'Todos') add('situacao', f.situacao);
+  if (f.categoria) add('categoria', DB.categoryPath(f.categoria) || 'Categoria');
+  if (f.tag) add('tag', '#' + f.tag);
+  if (f.metodo) add('metodo', f.metodo);
+  if (f.conta) {
+    const a = DB.get('accounts', f.conta) || DB.get('cards', f.conta);
+    add('conta', (a && a.name) || 'Conta');
+  }
+  if (f.valorMin) add('valorMin', `a partir de ${fmtShort(f.valorMin)}`);
+  if (f.valorMax) add('valorMax', `até ${fmtShort(f.valorMax)}`);
+  if (f.recorrente) add('recorrente', 'Só custos fixos');
+  return rotulos;
+}
+
+function txsFiltradas(period) {
+  const f = state.filtros || FILTROS_VAZIOS;
+  const busca = DB._semAcento(f.busca);
+  return DB.txOfPeriod(period).filter(t => {
+    if (f.scope !== 'Todos' && t.scope !== f.scope) return false;
+    if (f.membro !== 'Todos' && (t.member || MEMBRO_COMUM) !== f.membro) return false;
+    if (f.tipo !== 'Todos') {
+      const tipo = DB.isTransfer(t) ? 'Transferência' : DB.isExpense(t) ? 'Despesa' : 'Receita';
+      if (tipo !== f.tipo) return false;
+    }
+    if (f.situacao !== 'Todos' && t.status !== f.situacao) return false;
+    // Categoria filtra pelo envelope: escolher "Alimentação" traz mercado e delivery
+    if (f.categoria && DB.categoryRootId(t.category_id) !== DB.categoryRootId(f.categoria)) return false;
+    if (f.tag && !DB.tagsOf(t).includes(f.tag)) return false;
+    if (f.metodo && t.method !== f.metodo) return false;
+    if (f.conta && t.account_id !== f.conta && t.card_id !== f.conta && t.to_account !== f.conta) return false;
+    if (f.valorMin && Number(t.amount) < Number(f.valorMin)) return false;
+    if (f.valorMax && Number(t.amount) > Number(f.valorMax)) return false;
+    if (f.recorrente && !t.recurring) return false;
+    if (busca) {
+      const alvo = DB._semAcento([
+        t.description, t.notes, t.member, t.method, t.installment,
+        DB.categoryPath(t.category_id), DB.tagsOf(t).join(' '),
+      ].join(' '));
+      if (!alvo.includes(busca)) return false;
+    }
+    return true;
+  }).sort((a, b) => b.date.localeCompare(a.date));
+}
+
 function renderExtrato(period) {
-  const quem = state.memberFilter || 'Todos';
-  const txs = DB.txOfPeriod(period)
-    .filter(t => state.filter === 'Todos' || t.scope === state.filter)
-    .filter(t => quem === 'Todos' || (t.member || MEMBRO_COMUM) === quem)
-    .sort((a, b) => b.date.localeCompare(a.date));
+  if (!state.filtros) state.filtros = { ...FILTROS_VAZIOS };
+  const ativos = filtrosAtivos();
+  const txs = txsFiltradas(period);
   const total = txs.filter(t => DB.isExpense(t) && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
   const receitas = txs.filter(t => !DB.isExpense(t) && !t.card_id && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
 
@@ -680,12 +746,20 @@ function renderExtrato(period) {
       <span class="tx-info"><span class="tx-name">${esc(t.description)}</span>
       <span class="tx-meta">${isTr ? `Transferência · ${rota}`
         : t.adjustment ? 'Conciliação — fora das análises · toque para classificar'
-        : `${isExp ? esc(c ? DB.categoryPath(t.category_id) : 'Sem categoria') : 'Receita'} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}`}</span></span>
+        : `${isExp ? esc(c ? DB.categoryPath(t.category_id) : 'Sem categoria') : 'Receita'} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}`}</span>
+      ${DB.tagsOf(t).length ? `<span class="tx-tags">${DB.tagsOf(t).map(tg =>
+        `<button class="tx-tag" data-tag="${esc(tg)}" title="Filtrar por #${esc(tg)}">#${esc(tg)}</button>`).join('')}</span>` : ''}</span>
       <span class="tx-amount ${isTr ? 'transfer' : !isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${isTr ? '' : isExp ? '− ' : '+ '}${fmt(t.amount)}</span>
       ${t.status === 'A Pagar' ? `<button class="pay-btn" data-pay-tx="${t.id}" title="Marcar como ${isExp ? 'pago' : 'recebido'}"><span data-ico="check"></span></button>` : ''}
     </div>`;
   }
-  if (!txs.length) list = `<div class="empty"><b>Sem lançamentos</b>Nada registrado neste período com esse filtro.</div>`;
+  // Vazio com filtro ativo é ambíguo: pode ser que não haja nada, ou que o filtro
+  // esteja escondendo tudo. A mensagem diz qual dos dois é, e oferece a saída.
+  if (!txs.length) {
+    list = ativos.length
+      ? `<div class="empty"><b>Nenhum lançamento com esses filtros</b>Há ${DB.txOfPeriod(period).length} no período. <button class="btn ghost" id="limpar-vazio" style="margin-top:10px">Limpar os filtros</button></div>`
+      : `<div class="empty"><b>Sem lançamentos</b>Nada registrado neste período ainda.</div>`;
+  }
 
   const st = DB.statsFor(period);
   const isCurrent = state.monthOffset === 0;
@@ -700,30 +774,29 @@ function renderExtrato(period) {
       <div class="card"><small>Média/dia</small><b>${fmtShort(st.dailyAvg)}</b></div>
       <div class="card"><small>${isCurrent ? 'Projeção' : 'Total'}</small><b>${fmtShort(isCurrent ? st.projection : st.spent)}</b></div>
     </div>
-    <input id="tx-search" type="search" placeholder="🔎 Buscar no período…" autocomplete="off" style="margin-bottom:2px">
     <div class="quick-add">
       <button class="qa qa-desp" data-novo="Despesa"><span data-ico="plus"></span>Despesa</button>
       <button class="qa qa-rec" data-novo="Receita"><span data-ico="plus"></span>Receita</button>
       <button class="qa qa-tr" data-novo="Transferência"><span data-ico="sync"></span>Transferir</button>
     </div>
+
+    <!-- Na tela ficam só a busca e o atalho de âmbito, que é o filtro do dia a dia.
+         O resto abre no painel, para o extrato continuar sendo uma lista. -->
+    <div class="busca-row">
+      <input id="tx-search" type="search" placeholder="Buscar descrição, categoria, etiqueta…" autocomplete="off" value="${esc(state.filtros.busca)}">
+      <button class="btn-filtros ${ativos.length ? 'tem' : ''}" id="btn-filtros">
+        <span data-ico="filter"></span>Filtros${ativos.length ? `<span class="filtros-num">${ativos.length}</span>` : ''}
+      </button>
+    </div>
     <div class="filter-row">
-      <span class="filter-lbl">Âmbito</span>
       <div class="chips" id="scope-chips">
-        ${['Todos', 'Família', 'Pessoal'].map(f => `<button class="chip ${state.filter === f ? 'active' : ''}" data-f="${f}">${f}</button>`).join('')}
+        ${['Todos', 'Família', 'Pessoal'].map(f => `<button class="chip ${state.filtros.scope === f ? 'active' : ''}" data-f="${f}">${f}</button>`).join('')}
       </div>
     </div>
-    <div class="filter-row">
-      <span class="filter-lbl">Quem</span>
-      <div class="chips" id="member-chips">
-        ${['Todos', MEMBRO_COMUM, ...DB.settings().members].map(m => {
-          const gasto = DB.expensesOf(period)
-            .filter(t => m === 'Todos' || (t.member || MEMBRO_COMUM) === m)
-            .reduce((s, t) => s + (Number(t.amount) || 0), 0);
-          const label = m === MEMBRO_COMUM ? '👨‍👩‍👧 Comum' : m === 'Todos' ? 'Todos' : esc(m);
-          return `<button class="chip ${quem === m ? 'active' : ''}" data-m="${esc(m)}">${label} <span class="chip-num">${fmtShort(gasto)}</span></button>`;
-        }).join('')}
-      </div>
-    </div>
+    ${ativos.length ? `<div class="ativos">
+      ${ativos.map(a => `<button class="tag-ativa" data-limpa="${a.chave}">${esc(a.texto)}<span>×</span></button>`).join('')}
+      <button class="tag-limpar" id="limpar-filtros">Limpar tudo</button>
+    </div>` : ''}
     ${isCurrent ? '<button class="btn ghost" id="btn-recur" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="sync"></span>Lançar custos fixos deste mês</button>' : ''}
     <div id="tx-list">${list}</div>
   `;
@@ -1032,13 +1105,39 @@ function bindView() {
   v.querySelectorAll('[data-setup]').forEach(b => b.onclick = () => openConfigSection(b.dataset.setup));
 
   // Busca instantânea no extrato (filtra sem re-renderizar, mantendo o foco)
+  // Busca entra no mesmo pipeline dos outros filtros, então o total do topo
+  // acompanha. Espera curta para não redesenhar a cada tecla.
   const search = $('#tx-search');
-  if (search) search.oninput = () => {
-    const q = search.value.trim().toLowerCase();
-    v.querySelectorAll('#tx-list .tx').forEach(row => {
-      row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none';
-    });
-  };
+  if (search) {
+    search.oninput = () => {
+      clearTimeout(search._t);
+      search._t = setTimeout(() => {
+        const foco = document.activeElement === search;
+        state.filtros.busca = search.value.trim();
+        render();
+        if (foco) { const novo = $('#tx-search'); if (novo) { novo.focus(); novo.setSelectionRange(novo.value.length, novo.value.length); } }
+      }, 260);
+    };
+  }
+  const btnFiltros = $('#btn-filtros');
+  if (btnFiltros) btnFiltros.onclick = openFiltrosSheet;
+  const limpar = () => { state.filtros = { ...FILTROS_VAZIOS }; render(); };
+  const btnLimpar = $('#limpar-filtros');
+  if (btnLimpar) btnLimpar.onclick = limpar;
+  const btnLimparVazio = $('#limpar-vazio');
+  if (btnLimparVazio) btnLimparVazio.onclick = limpar;
+  // Cada etiqueta ativa remove só o próprio filtro
+  v.querySelectorAll('[data-limpa]').forEach(el => el.onclick = () => {
+    const chave = el.dataset.limpa;
+    state.filtros[chave] = FILTROS_VAZIOS[chave];
+    render();
+  });
+  // Tocar numa etiqueta do lançamento filtra por ela
+  v.querySelectorAll('[data-tag]').forEach(el => el.onclick = e => {
+    e.stopPropagation();
+    state.filtros.tag = el.dataset.tag;
+    render();
+  });
 
   // Custos fixos do mês em 1 clique: copia recorrentes que ainda não existem no período
   const recurBtn = $('#btn-recur');
@@ -1087,8 +1186,7 @@ function bindView() {
     a.click();
     toast('CSV exportado ✓');
   };
-  v.querySelectorAll('#scope-chips .chip').forEach(ch => ch.onclick = () => { state.filter = ch.dataset.f; render(); });
-  v.querySelectorAll('#member-chips .chip').forEach(ch => ch.onclick = () => { state.memberFilter = ch.dataset.m; render(); });
+  v.querySelectorAll('#scope-chips .chip').forEach(ch => ch.onclick = () => { state.filtros.scope = ch.dataset.f; render(); });
   v.querySelectorAll('[data-novo]').forEach(b => b.onclick = () => openTxSheet({
     type: b.dataset.novo, date: todayISO(), description: '', amount: '',
     status: 'Pago', method: b.dataset.novo === 'Transferência' ? 'Transferência' : 'PIX',
@@ -1151,6 +1249,84 @@ function bindView() {
 }
 
 /* ---------- Sheet: lançamento rápido ---------- */
+/* Painel de filtros do extrato. Fica numa folha em vez de na tela porque são dez
+   controles: na tela, empurrariam a lista para fora da primeira dobra — e o
+   extrato existe para mostrar a lista. Aplicar fecha e a tela mostra o que
+   está ativo em etiquetas, então nada fica escondido depois de escolhido. */
+function openFiltrosSheet() {
+  const f = { ...(state.filtros || FILTROS_VAZIOS) };
+  const membros = ['Todos', MEMBRO_COMUM, ...DB.settings().members];
+  const contas = DB.all('accounts').filter(a => a.active !== false);
+  const cartoes = DB.all('cards').filter(c => c.active !== false);
+  const tags = DB.allTags();
+  const metodos = ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto', 'Transferência'];
+
+  openSheet(`
+    <div class="sheet-title">Filtrar extrato<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+
+    <div class="field"><label>Tipo</label>${chipGroup('fl-tipo', ['Todos', 'Despesa', 'Receita', 'Transferência'].map(v => ({ value: v, label: v })), f.tipo)}</div>
+    <div class="field"><label>Situação</label>${chipGroup('fl-sit', ['Todos', 'Pago', 'A Pagar'].map(v => ({ value: v, label: v })), f.situacao)}</div>
+    <div class="field"><label>Âmbito</label>${chipGroup('fl-scope', ['Todos', 'Família', 'Pessoal'].map(v => ({ value: v, label: v })), f.scope)}</div>
+
+    <div class="field"><label>De quem</label>
+      <select id="fl-membro">${membros.map(m => `<option value="${esc(m)}"${f.membro === m ? ' selected' : ''}>${m === MEMBRO_COMUM ? 'Comum / Família' : esc(m)}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label>Categoria</label>
+      <select id="fl-cat"><option value="">Todas</option>${optionsCategorias(f.categoria)}</select>
+      <p class="muted" style="margin-top:6px">Escolher um envelope traz também as subcategorias dele.</p>
+    </div>
+    ${tags.length ? `<div class="field"><label>Etiqueta</label>
+      <select id="fl-tag"><option value="">Todas</option>${tags.map(t => `<option value="${esc(t)}"${f.tag === t ? ' selected' : ''}>#${esc(t)} (${DB.tagCount(t)})</option>`).join('')}</select>
+    </div>` : ''}
+    <div class="field"><label>Forma de pagamento</label>
+      <select id="fl-metodo"><option value="">Todas</option>${metodos.map(m => `<option value="${esc(m)}"${f.metodo === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>
+    </div>
+    <div class="field"><label>Conta ou cartão</label>
+      <select id="fl-conta"><option value="">Todos</option>
+        ${contas.length ? `<optgroup label="Contas">${contas.map(a => `<option value="${a.id}"${f.conta === a.id ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>` : ''}
+        ${cartoes.length ? `<optgroup label="Cartões">${cartoes.map(c => `<option value="${c.id}"${f.conta === c.id ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
+      </select>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Valor a partir de</label><input id="fl-min" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
+      <div class="field"><label>Valor até</label><input id="fl-max" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
+    </div>
+    <div class="field"><label>Só custos fixos (recorrentes)</label>
+      <select id="fl-rec"><option value=""${f.recorrente ? '' : ' selected'}>Não</option><option value="1"${f.recorrente ? ' selected' : ''}>Sim</option></select>
+    </div>
+
+    <button class="btn" id="sh-save">Aplicar filtros</button>
+    <div class="btn-row"><button class="btn ghost" id="fl-limpar">Limpar tudo</button></div>
+  `);
+  initMoney('#fl-min', f.valorMin || 0);
+  initMoney('#fl-max', f.valorMax || 0);
+  $('#sh-close').onclick = closeSheet;
+  bindChips('fl-tipo'); bindChips('fl-sit'); bindChips('fl-scope');
+
+  $('#fl-limpar').onclick = () => {
+    state.filtros = { ...FILTROS_VAZIOS };
+    closeSheet(); render();
+  };
+  $('#sh-save').onclick = () => {
+    const val = id => moneyVal(id) || '';
+    state.filtros = {
+      ...state.filtros,
+      tipo: chipValue('fl-tipo') || 'Todos',
+      situacao: chipValue('fl-sit') || 'Todos',
+      scope: chipValue('fl-scope') || 'Todos',
+      membro: $('#fl-membro').value || 'Todos',
+      categoria: $('#fl-cat').value || '',
+      tag: ($('#fl-tag') || {}).value || '',
+      metodo: $('#fl-metodo').value || '',
+      conta: $('#fl-conta').value || '',
+      valorMin: val('#fl-min'),
+      valorMax: val('#fl-max'),
+      recorrente: !!$('#fl-rec').value,
+    };
+    closeSheet(); render();
+  };
+}
+
 /* Detalhe de um envelope: para onde foi o dinheiro dele dentro do período.
    É a resposta que faltava quando uma barra de orçamento estourava. */
 function openEnvelopeDetail(rootId) {
@@ -1323,6 +1499,19 @@ function openTxSheet(tx, asNew) {
       </select>
       <p class="muted" id="member-hint" style="margin-top:6px"></p>
     </div>
+    <!-- Etiquetas: assunto que atravessa envelopes. "Viagem Bahia" junta passagem,
+         comida e hospedagem, que estão em três categorias diferentes. -->
+    <div class="field"><label>Etiquetas <span class="muted">— opcional, para agrupar por assunto</span></label>
+      <div class="chips" id="g-tags">
+        ${(() => {
+          const atuais = DB.tagsOf(tx);
+          const sugeridas = DB.allTags().filter(t => !atuais.includes(t)).slice(0, 6);
+          return [...atuais.map(t => ({ t, on: true })), ...sugeridas.map(t => ({ t, on: false }))]
+            .map(({ t, on }) => `<button type="button" class="chip chip-tag ${on ? 'active' : ''}" data-v="${esc(t)}">#${esc(t)}</button>`).join('');
+        })()}
+      </div>
+      <input id="f-tag-nova" placeholder="Nova etiqueta e Enter (ex: viagem, reforma)" autocomplete="off" maxlength="24" style="margin-top:8px">
+    </div>
     <div class="field"><label id="lbl-rec">Custo fixo mensal (recorrente)?</label><select id="f-rec"><option value="">Não</option><option value="1" ${tx.recurring ? 'selected' : ''}>Sim — entra nos custos fixos e no lançamento em 1 clique</option></select></div>
     <button class="btn" id="sh-save">${isEdit ? 'Salvar alterações' : 'Lançar'}</button>
     ${isEdit ? '<div class="btn-row"><button class="btn ghost" id="sh-dup">Repetir</button><button class="btn danger" id="sh-del">Excluir</button></div>' : ''}
@@ -1436,6 +1625,35 @@ function openTxSheet(tx, asNew) {
   };
   setCategory(tx.category_id);
 
+  /* Etiquetas: os chips ligam e desligam, e o campo cria novas. Chip em vez de
+     texto separado por vírgula porque assim as que já existem na família são
+     reaproveitadas, em vez de virarem "viagem", "Viagem" e "viagens". */
+  const chipsTags = () => $('#g-tags');
+  const addTag = nome => {
+    const tag = DB.normTag(nome);
+    if (!tag) return;
+    const existe = [...chipsTags().querySelectorAll('.chip-tag')]
+      .find(c => DB._semAcento(c.dataset.v) === DB._semAcento(tag));
+    if (existe) { existe.classList.add('active'); return; }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip chip-tag active';
+    b.dataset.v = tag;
+    b.textContent = '#' + tag;
+    b.onclick = () => b.classList.toggle('active');
+    chipsTags().appendChild(b);
+  };
+  chipsTags().querySelectorAll('.chip-tag').forEach(c => { c.onclick = () => c.classList.toggle('active'); });
+  const campoTag = $('#f-tag-nova');
+  campoTag.onkeydown = e => {
+    if (e.key !== 'Enter' && e.key !== ',') return;
+    e.preventDefault(); e.stopPropagation();      // Enter aqui não pode salvar a folha
+    addTag(campoTag.value); campoTag.value = '';
+  };
+  campoTag.onblur = () => { if (campoTag.value.trim()) { addTag(campoTag.value); campoTag.value = ''; } };
+  const tagsEscolhidas = () =>
+    [...chipsTags().querySelectorAll('.chip-tag.active')].map(c => c.dataset.v);
+
   // A folha inteira veste a cor do tipo escolhido (faixa, valor e botão salvar)
   const pintarTipo = v => { $('#sheet').dataset.tipo = v || 'Despesa'; };
   bindChips('g-type', v => { pintarTipo(v); applyType(v); applyMethod(chipValue('g-method')); });
@@ -1519,6 +1737,7 @@ function openTxSheet(tx, asNew) {
         account_id: de, to_account: para,
         scope: 'Família', member: MEMBRO_COMUM,
         category_id: null, card_id: null, invoice_key: '', recurring: false, adjustment: false,
+        tags: tagsEscolhidas(),
       };
       if (orig) applyTxEffect(orig, -1);
       DB.upsert('transactions', transf);
@@ -1550,6 +1769,7 @@ function openTxSheet(tx, asNew) {
       category_id: isReceita ? null : (chipValue('g-cat') || null),
       recurring: !!$('#f-rec').value,
       type: isReceita ? 'Receita' : 'Despesa',
+      tags: tagsEscolhidas(),
       adjustment: false,        // classificar um ajuste o transforma em lançamento normal
       card_id: null, account_id: null, to_account: null, invoice_key: '',
     };
