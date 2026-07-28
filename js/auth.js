@@ -97,6 +97,7 @@ const Auth = {
 
   async bioSuportadaNoAparelho() {
     if (!this.bioDisponivel()) return false;
+    if (this.cfg.bioIndisponivel) return false;   // já tentamos aqui e o navegador não suporta
     try { return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(); }
     catch (_) { return false; }
   },
@@ -130,7 +131,8 @@ const Auth = {
 
     const ext = cred.getClientExtensionResults ? cred.getClientExtensionResults() : {};
     if (!ext.prf || ext.prf.enabled === false) {
-      throw new Error('Seu navegador ainda não permite usar a digital para proteger dados (falta suporte a PRF). Continue com o PIN.');
+      this.cfg.bioIndisponivel = true; this.save();   // não oferecer de novo neste navegador
+      throw new Error('Este navegador ainda não permite usar a digital para proteger dados (falta suporte a PRF). Continue com o PIN.');
     }
 
     const idB64 = KCrypto.b64(cred.rawId);
@@ -185,25 +187,100 @@ const Auth = {
 
   /* ---------- Telas ---------- */
   el() { return document.getElementById('lock'); },
-  hide() { const el = this.el(); el.hidden = true; el.innerHTML = ''; },
+  hide() { const el = this.el(); el.hidden = true; el.innerHTML = ''; document.onkeydown = null; },
+
+  /* Teclado numérico próprio: mostra o progresso em bolinhas, tem alvos grandes
+     para o polegar e não depende do teclado do sistema (que no celular cobre metade
+     da tela). Aceita também o teclado físico, para quem usa no computador. */
+  pinPad({ titulo, texto, rodape, aoConfirmar, min = 4, max = 8 }) {
+    const el = this.el();
+    el.innerHTML = `
+      <div class="lock-card lock-pin-card">
+        <img src="icons/icon-192.png" alt="">
+        <h2>${titulo}</h2>
+        <p>${texto}</p>
+        <div class="pin-dots" id="pin-dots" role="status" aria-label="dígitos informados"></div>
+        <p class="lock-err" id="lock-err"></p>
+        <div class="pin-pad" id="pin-pad">
+          ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button type="button" class="pin-key" data-k="${n}">${n}</button>`).join('')}
+          <button type="button" class="pin-key pin-aux" data-k="del" aria-label="Apagar">⌫</button>
+          <button type="button" class="pin-key" data-k="0">0</button>
+          <button type="button" class="pin-key pin-ok" data-k="ok" aria-label="Confirmar">✓</button>
+        </div>
+        ${rodape || ''}
+      </div>`;
+    el.hidden = false;
+
+    let valor = '';
+    const dots = document.getElementById('pin-dots');
+    const okBtn = el.querySelector('.pin-ok');
+    const err = m => { const e = document.getElementById('lock-err'); if (e) e.textContent = m || ''; };
+
+    const desenhar = () => {
+      const total = Math.max(min, valor.length);
+      dots.innerHTML = Array.from({ length: total }, (_, i) =>
+        `<i class="${i < valor.length ? 'on' : ''}"></i>`).join('');
+      okBtn.disabled = valor.length < min;
+    };
+    desenhar();
+
+    const digitar = d => {
+      if (valor.length >= max) return;
+      valor += d; err('');
+      desenhar();
+      const ultimo = dots.lastElementChild;
+      if (ultimo) { ultimo.style.animation = 'none'; void ultimo.offsetWidth; ultimo.style.animation = ''; }
+    };
+    const apagar = () => { valor = valor.slice(0, -1); err(''); desenhar(); };
+    const confirmar = async () => {
+      if (valor.length < min) return err(`Use ao menos ${min} dígitos`);
+      const atual = valor;
+      const problema = await aoConfirmar(atual);   // devolve texto de erro, ou nada se deu certo
+      if (problema) {
+        err(problema);
+        valor = ''; desenhar();
+        const card = el.querySelector('.lock-card');
+        card.style.animation = 'none'; void card.offsetWidth; card.style.animation = 'tremer .4s';
+      }
+    };
+
+    el.querySelectorAll('.pin-key').forEach(b => b.onclick = () => {
+      const k = b.dataset.k;
+      if (k === 'del') return apagar();
+      if (k === 'ok') return confirmar();
+      digitar(k);
+    });
+
+    document.onkeydown = e => {
+      if (/^\d$/.test(e.key)) { e.preventDefault(); digitar(e.key); }
+      else if (e.key === 'Backspace') { e.preventDefault(); apagar(); }
+      else if (e.key === 'Enter') { e.preventDefault(); confirmar(); }
+    };
+
+    return { limpar: () => { valor = ''; desenhar(); }, erro: err };
+  },
 
   showLock(onDone) {
     this.unlocked = false;
+    const pad = this.pinPad({
+      titulo: DB.familyLabel(),
+      texto: 'Seus dados estão criptografados neste aparelho.<br>Digite o PIN para desbloquear.',
+      rodape: `${this.bioAtiva() ? '<div class="btn-row"><button class="btn ghost" id="lock-bio">👆 Entrar com a digital</button></div>' : ''}
+               <div class="btn-row"><button class="btn ghost" id="lock-forgot">Esqueci o PIN</button></div>`,
+      aoConfirmar: async valor => {
+        const espera = this.blockedSecs();
+        if (espera) return `Muitas tentativas. Aguarde ${espera}s.`;
+        const chave = await this.tryPin(valor);
+        if (!chave) {
+          this.registerFail();
+          const w = this.blockedSecs();
+          return w ? `PIN incorreto. Bloqueado por ${w}s.` : 'PIN incorreto';
+        }
+        return (await entrar(chave)) ? null : 'Falha ao decifrar os dados. Restaure um backup ou use "Esqueci o PIN".';
+      },
+    });
     const el = this.el();
-    el.innerHTML = `
-      <div class="lock-card">
-        <img src="icons/icon-192.png" alt="">
-        <h2>Finanças da Família</h2>
-        <p>Seus dados estão criptografados neste aparelho.<br>Digite o PIN para desbloquear.</p>
-        <input id="lock-pin" class="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="••••">
-        <p class="lock-err" id="lock-err"></p>
-        <button class="btn" id="lock-go">Desbloquear</button>
-        ${this.bioAtiva() ? '<div class="btn-row"><button class="btn ghost" id="lock-bio">👆 Entrar com a digital</button></div>' : ''}
-        <div class="btn-row"><button class="btn ghost" id="lock-forgot">Esqueci o PIN</button></div>
-      </div>`;
-    el.hidden = false;
-    const pin = document.getElementById('lock-pin');
-    const err = m => document.getElementById('lock-err').textContent = m;
+    const err = pad.erro;
 
     const entrar = async chave => {
       try {
@@ -231,23 +308,7 @@ const Auth = {
       setTimeout(usarBio, 350);   // já oferece o leitor ao abrir, sem esperar o toque
     }
 
-    const go = async () => {
-      const wait = this.blockedSecs();
-      if (wait) return err(`Muitas tentativas. Aguarde ${wait}s.`);
-      const key = await this.tryPin(pin.value);
-      if (!key) {
-        this.registerFail();
-        const w = this.blockedSecs();
-        err(w ? `PIN incorreto. Bloqueado por ${w}s.` : 'PIN incorreto');
-        pin.value = ''; pin.focus();
-        return;
-      }
-      await entrar(key);
-    };
-    document.getElementById('lock-go').onclick = go;
-    pin.onkeydown = e => { if (e.key === 'Enter') go(); };
     document.getElementById('lock-forgot').onclick = () => this.showForgot(onDone);
-    setTimeout(() => pin.focus(), 100);
   },
 
   showForgot(onDone) {
@@ -413,23 +474,29 @@ const Auth = {
       });
     };
 
-    /* Passo 4 — proteção deste aparelho */
-    const passoPin = () => {
-      tela(4, 4, 'Proteger este aparelho',
-        'Crie um PIN de 4 a 8 dígitos. Além de bloquear o app, ele <b>criptografa os dados guardados aqui</b> (AES-256).',
-        `<input id="ob-pin" class="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="criar PIN">
-         <input id="ob-pin2" class="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="repetir PIN">`,
-        `<button class="btn" id="ob-pin-go">Ativar proteção</button>
-         <div class="btn-row"><button class="btn ghost" id="ob-pin-skip">Agora não</button></div>`);
-      on('ob-pin-go', async () => {
-        const p1 = val('ob-pin'), p2 = val('ob-pin2');
-        if (!/^\d{4,8}$/.test(p1)) return err('Use de 4 a 8 dígitos');
-        if (p1 !== p2) return err('Os PINs não conferem');
-        await this.setPin(p1);
-        if (await this.bioSuportadaNoAparelho()) passoDigital(p1);
-        else concluir();
+    /* Passo 4 — proteção deste aparelho. Em duas etapas no mesmo teclado:
+       primeiro escolhe, depois repete. Sem dois campos empilhados. */
+    const passoPin = (primeiro = '') => {
+      const criando = !primeiro;
+      this.pinPad({
+        titulo: criando ? 'Proteger este aparelho' : 'Confirme o PIN',
+        texto: criando
+          ? 'Escolha um PIN de 4 a 8 dígitos. Além de bloquear o app, ele <b>criptografa os dados guardados aqui</b> (AES-256).'
+          : 'Digite o mesmo PIN outra vez para confirmar.',
+        rodape: `<div class="btn-row"><button class="btn ghost" id="ob-pin-skip">${criando ? 'Agora não' : 'Recomeçar'}</button></div>`,
+        aoConfirmar: async valor => {
+          if (criando) { passoPin(valor); return null; }
+          if (valor !== primeiro) return 'Os PINs não conferem — comece de novo';
+          await this.setPin(valor);
+          if (await this.bioSuportadaNoAparelho()) passoDigital(valor);
+          else concluir();
+          return null;
+        },
       });
-      on('ob-pin-skip', () => { this.cfg.skipped = true; this.save(); concluir(); });
+      on('ob-pin-skip', () => {
+        if (criando) { this.cfg.skipped = true; this.save(); concluir(); }
+        else passoPin();
+      });
     };
 
     /* Passo extra — digital, oferecida na hora certa (o PIN acabou de existir) */
@@ -441,7 +508,16 @@ const Auth = {
       on('ob-bio', async () => {
         err('Confirme no leitor do aparelho…');
         try { await this.ativarBio(pin); concluir(); }
-        catch (e) { err(e.name === 'NotAllowedError' ? 'Digital não confirmada' : e.message); }
+        catch (e) {
+          err(e.name === 'NotAllowedError' ? 'Digital não confirmada' : e.message);
+          // Navegador sem suporte: tira o botão e deixa só seguir com o PIN
+          if (/PRF|não oferece leitor/i.test(e.message)) {
+            const b = document.getElementById('ob-bio');
+            if (b) b.hidden = true;
+            const pular = document.getElementById('ob-bio-skip');
+            if (pular) pular.textContent = 'Continuar com o PIN';
+          }
+        }
       });
       on('ob-bio-skip', concluir);
     };

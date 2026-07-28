@@ -375,13 +375,44 @@ console.log('\n=== Primeiro acesso (ordem das etapas) ===');
   check('login vem antes da família', ordem[2] < ordem[3], true);
   check('família vem antes do PIN', ordem[3] < ordem[4], true);
   check('PIN vem antes da digital', ordem[4] < ordem[5], true);
-  check('digital é oferecida logo após criar o PIN', /setPin\(p1\)[\s\S]{0,160}passoDigital/.test(wiz), true);
+  check('digital é oferecida logo após criar o PIN', /setPin\(valor\)[\s\S]{0,160}passoDigital/.test(wiz), true);
   check('só oferece digital se o aparelho suportar', /bioSuportadaNoAparelho\(\)[\s\S]{0,60}passoDigital/.test(wiz), true);
   check('dá para usar só neste aparelho (sem nuvem)', wiz.includes('ob-local') && wiz.includes('passoNomeLocal'), true);
   check('pula a tela de servidor se já vier configurado', /Sync\.configured\(\) \? passoLogin/.test(wiz), true);
   check('quem entra numa família baixa tudo antes de seguir', /joinFamily[\s\S]{0,200}lastSync = null/.test(wiz), true);
   check('boot usa o novo fluxo', au.includes('!this.cfg.onboarded') && au.includes('showOnboarding(onReady)'), true);
   check('showFirstRun antigo foi removido', !au.includes('showFirstRun'), true);
+}
+
+console.log('\n=== Teclado do PIN ===');
+{
+  const au = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+  const cssL = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('teclado numérico próprio', au.includes('pinPad(') && au.includes('pin-key'), true);
+  check('progresso mostrado em bolinhas', au.includes('pin-dots') && cssL.includes('.pin-dots i.on'), true);
+  check('teclas com alvo grande', /\.pin-key\s*\{[^}]*height:\s*5\dpx/.test(cssL), true);
+  check('apagar e confirmar no teclado', au.includes("k === 'del'") && au.includes("k === 'ok'"), true);
+  check('confirmar só libera com o mínimo de dígitos', au.includes('okBtn.disabled = valor.length < min'), true);
+  check('teclado físico também funciona', au.includes('document.onkeydown') && au.includes('Backspace'), true);
+  check('erro sacode o cartão', cssL.includes('@keyframes tremer') && au.includes("'tremer"), true);
+  check('criar PIN em duas etapas, sem campos empilhados', /passoPin = \(primeiro/.test(au) && !au.includes('ob-pin2'), true);
+  check('desbloqueio usa o teclado novo', /showLock[\s\S]{0,200}pinPad/.test(au), true);
+  check('some com o teclado ao sair da tela', au.includes('document.onkeydown = null'), true);
+  check('cabe em tela baixa', cssL.includes('max-height: 680px'), true);
+}
+
+console.log('\n=== Digital indisponível no navegador ===');
+{
+  const au = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+  const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const cssL = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('aviso em vermelho, com destaque', /\.bio-indisponivel[^}]*var\(--red\)/.test(cssL), true);
+  check('lembra que o navegador não suporta', au.includes('bioIndisponivel = true'), true);
+  check('não oferece mais a digital depois disso', /bioIndisponivel[\s\S]{0,80}return false/.test(au), true);
+  check('botão some nas configurações', ap.includes("$('#sec-bio-on').hidden = true"), true);
+  check('configurações mostram o aviso no lugar do botão', ap.includes('Auth.cfg.bioIndisponivel') && ap.includes('bio-indisponivel'), true);
+  check('no primeiro acesso o botão também some', /ob-bio[\s\S]{0,300}b\.hidden = true/.test(au), true);
+  check('e o texto vira "Continuar com o PIN"', au.includes('Continuar com o PIN'), true);
 }
 
 console.log('\n=== Desbloqueio por digital ===');
@@ -392,7 +423,7 @@ console.log('\n=== Desbloqueio por digital ===');
   check('recusa aparelho sem PRF em vez de fingir segurança', au.includes('falta suporte a PRF'), true);
   check('chave guardada cifrada pelo segredo do leitor', au.includes('bioKey') && /bioKey = await KCrypto\.enc/.test(au), true);
   check('nunca guarda o PIN em claro', !au.includes('cfg.bioPin'), true);
-  check('PIN segue valendo como alternativa', au.includes('lock-go') && au.includes('lock-bio'), true);
+  check('PIN segue valendo como alternativa', /showLock[\s\S]{0,900}tryPin\(valor\)/.test(au) && au.includes('lock-bio'), true);
   check('remover o PIN também remove a digital', fs.readFileSync(BASE + 'js/app.js', 'utf8').includes('Auth.desativarBio()'), true);
 }
 

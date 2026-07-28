@@ -2098,8 +2098,10 @@ function openConfigSection(sec) {
         <p class="section-title" style="margin-bottom:8px">👆 Desbloqueio por digital</p>
         ${Auth.bioAtiva()
           ? '<p class="muted" style="margin-bottom:10px">Ativo neste aparelho — o app pede a digital ao abrir e o PIN continua valendo como alternativa.</p><button class="btn ghost" id="sec-bio-off">Desativar digital</button>'
-          : '<p class="muted" style="margin-bottom:10px">Use a digital (ou o rosto) em vez de digitar o PIN toda vez. Confirme o PIN atual acima e ative aqui. A criptografia continua a mesma: o leitor do aparelho guarda o segredo que abre a chave.</p><button class="btn ghost" id="sec-bio-on">Ativar digital neste aparelho</button>'}
-        <p class="muted" id="sec-bio-msg" style="margin-top:8px"></p>
+          : Auth.cfg.bioIndisponivel
+            ? '<p class="bio-indisponivel">Este navegador ainda não permite usar a digital para proteger dados (falta suporte a PRF). Continue com o PIN.</p>'
+            : '<p class="muted" style="margin-bottom:10px">Use a digital (ou o rosto) em vez de digitar o PIN toda vez. Confirme o PIN atual acima e ative aqui. A criptografia continua a mesma: o leitor do aparelho guarda o segredo que abre a chave.</p><button class="btn ghost" id="sec-bio-on">Ativar digital neste aparelho</button>'}
+        <p id="sec-bio-msg" class="muted" style="margin-top:8px"></p>
         <div class="btn-row"><button class="btn danger" id="sec-off">Remover PIN</button></div>
       ` : `
         <div class="field"><label>Criar PIN (4 a 8 dígitos)</label><input id="sec-new" type="password" inputmode="numeric" maxlength="8"></div>
@@ -2136,13 +2138,19 @@ function openConfigSection(sec) {
     on('#sec-bio-on', async () => {
       const pin = $('#sec-cur').value;
       if (!pin) { $('#sec-cur').focus(); return toast('Digite o PIN atual acima para ativar'); }
-      $('#sec-bio-msg').textContent = 'Confirme no leitor do aparelho…';
+      const msg = $('#sec-bio-msg');
+      msg.className = 'muted';
+      msg.textContent = 'Confirme no leitor do aparelho…';
       try {
         await Auth.ativarBio(pin);
         toast('Digital ativada ✓'); openConfigSection('security');
       } catch (e) {
-        $('#sec-bio-msg').textContent = '';
-        toast(e.name === 'NotAllowedError' ? 'Digital não confirmada' : e.message);
+        const naoSuporta = /PRF|não oferece leitor/i.test(e.message);
+        msg.className = naoSuporta ? 'bio-indisponivel' : 'lock-err';
+        msg.textContent = e.name === 'NotAllowedError' ? 'Digital não confirmada' : e.message;
+        // Sem suporte no navegador, o botão some: não adianta insistir
+        if (naoSuporta) { $('#sec-bio-on').hidden = true; Auth.cfg.bioIndisponivel = true; Auth.save(); }
+        else toast(msg.textContent);
       }
     });
     on('#sec-bio-off', () => { Auth.desativarBio(); toast('Digital desativada'); openConfigSection('security'); });

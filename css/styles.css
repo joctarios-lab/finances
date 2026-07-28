@@ -744,7 +744,67 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
   font-size: 26px; font-weight: 800; text-align: center; letter-spacing: .4em;
   margin-bottom: 14px;
 }
+
+/* ---------- Teclado numérico do PIN ---------- */
+.lock-pin-card { max-width: 340px; padding: 28px 22px 24px; }
+.lock-pin-card p { margin-bottom: 20px; }
+
+/* Progresso em bolinhas: mostra quantos dígitos já foram digitados */
+.pin-dots { display: flex; justify-content: center; gap: 12px; margin-bottom: 6px; min-height: 16px; }
+.pin-dots i {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid #d3dce6; background: transparent;
+  transition: background .15s ease, border-color .15s ease, transform .15s ease;
+}
+.pin-dots i.on {
+  background: var(--gold); border-color: var(--gold);
+  animation: pinPop .22s cubic-bezier(.34, 1.56, .64, 1);
+}
+@keyframes pinPop { 0% { transform: scale(.4); } 60% { transform: scale(1.25); } 100% { transform: scale(1); } }
+@keyframes tremer {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-9px); } 40% { transform: translateX(8px); }
+  60% { transform: translateX(-5px); } 80% { transform: translateX(3px); }
+}
+
+.pin-pad {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  margin: 4px auto 0; max-width: 260px;
+}
+.pin-key {
+  height: 58px; border-radius: 14px; border: 1px solid var(--line);
+  background: var(--ink-2); color: var(--paper);
+  font-family: var(--font-body); font-size: 22px; font-weight: 600;
+  cursor: pointer; display: grid; place-items: center;
+  transition: background .12s ease, transform .1s ease, border-color .12s ease;
+  -webkit-tap-highlight-color: transparent; user-select: none;
+}
+.pin-key:hover { background: var(--ink-3); border-color: #cbd7e1; }
+.pin-key:active { transform: scale(.93); background: #e6edf3; }
+.pin-aux { font-size: 20px; color: var(--paper-dim); border-color: transparent; background: transparent; }
+.pin-aux:hover { background: var(--ink-3); }
+.pin-ok {
+  background: var(--gold); border-color: var(--gold); color: #fff; font-size: 22px;
+}
+.pin-ok:hover { background: #0095e8; border-color: #0095e8; }
+.pin-ok:disabled {
+  background: var(--ink-3); border-color: var(--line); color: #c3ccd8;
+  cursor: not-allowed; transform: none;
+}
+/* Em telas bem baixas, encolhe para não precisar rolar */
+@media (max-height: 680px) {
+  .lock-pin-card { padding: 18px 20px 16px; }
+  .lock-pin-card img { width: 46px; height: 46px; margin-bottom: 8px; }
+  .lock-pin-card p { margin-bottom: 12px; font-size: 12.5px; }
+  .pin-key { height: 50px; font-size: 20px; }
+}
 .lock-err { color: var(--red); font-size: 12.5px; font-weight: 600; margin: -6px 0 12px; min-height: 16px; }
+/* Recurso indisponível no navegador: avisa em vermelho e não oferece o botão */
+.bio-indisponivel {
+  color: var(--red); font-size: 12.5px; font-weight: 600; line-height: 1.5;
+  background: rgba(241, 65, 108, .07); border-left: 3px solid var(--red);
+  padding: 10px 12px; border-radius: 8px;
+}
 
 /* Primeiro acesso: passos, escolhas e campos */
 .ob-steps { display: flex; gap: 6px; justify-content: center; margin-bottom: 14px; }
