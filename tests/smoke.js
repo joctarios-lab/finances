@@ -1208,6 +1208,85 @@ try {
    segue ancorado no de layout. Sem tratar, o botão de salvar e a lista do
    dropdown ficam atrás do teclado — existem e ninguém vê. */
 /* ---- Nada grava em silêncio, nada some sem aviso ---- */
+/* ---- Seletor de categoria em dois níveis ----
+   Plano, o dropdown tinha 75 itens: 11 telas de rolagem DENTRO do painel, para
+   escolher uma categoria. Em dois níveis a primeira tela tem 13. */
+console.log('\n=== Seletor de categoria não é uma lista sem fim ===');
+{
+  const uiSrc = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
+  const UIreal = eval(uiSrc + '; UI');
+
+  // <select> falso com a estrutura real de optgroup do app
+  const montarSelect = (html, valor = '') => {
+    const opts = [];
+    let grupo = null;
+    for (const m of html.matchAll(/<optgroup label="([^"]*)">|<\/optgroup>|<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)) {
+      if (m[1] !== undefined) { grupo = { tagName: 'OPTGROUP', label: m[1] }; continue; }
+      if (m[0] === '</optgroup>') { grupo = null; continue; }
+      opts.push({ value: m[2], textContent: m[3], disabled: false, parentNode: grupo || { tagName: 'SELECT' } });
+    }
+    return { options: opts, value: valor, dispatchEvent() {}, addEventListener() {} };
+  };
+
+  // DOM mínimo para o painel: guarda o HTML e devolve os nós consultados
+  const criarNo = () => {
+    const no = {
+      className: '', innerHTML: '', style: {}, dataset: {}, tabIndex: 0,
+      classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+      appendChild() {}, remove() {}, focus() {}, addEventListener() {},
+      getBoundingClientRect: () => ({ top: 100, bottom: 144, left: 20, right: 340, width: 320, height: 44 }),
+      querySelector(sel) { return sel === '.ui-list' ? lista : sel === '.ui-search input' ? null : null; },
+      querySelectorAll: () => [],
+    };
+    return no;
+  };
+  const lista = { innerHTML: '', querySelectorAll: () => [], querySelector: () => null, style: {} };
+  const painel = criarNo();
+  global.document.createElement = () => painel;
+
+  const selCat = montarSelect(optionsCategorias(null, 'Despesa'));
+  const totalOpcoes = selCat.options.length;
+  check('o dropdown tem muitas categorias', totalOpcoes > 50, true);
+
+  const box = criarNo(), botao = criarNo();
+  UIreal.abrirSelect(selCat, box, botao, () => {});
+  const primeiraTela = lista.innerHTML;
+  const linhasGrupo = (primeiraTela.match(/ui-grupo-linha/g) || []).length;
+  const linhasOpcao = (primeiraTela.match(/class="ui-opt[^"]*"\s+data-i=/g) || []).length;
+
+  check('a primeira tela mostra os grupos', linhasGrupo >= 10, true);
+  check('e não despeja as folhas todas', linhasOpcao < 5, true);
+  check('a lista encolheu de verdade', linhasGrupo + linhasOpcao < totalOpcoes / 3, true);
+  check('cada grupo diz quantas tem', /ui-grupo-info">\d+/.test(primeiraTela), true);
+  check('e mostra que dá para entrar', primeiraTela.includes('ui-grupo-seta'), true);
+
+  // Lista curta continua plana: um nível a mais seria atrito de graça
+  const selCurto = montarSelect('<optgroup label="A"><option value="1">um</option></optgroup><optgroup label="B"><option value="2">dois</option></optgroup>');
+  UIreal.fechar();
+  UIreal.abrirSelect(selCurto, criarNo(), criarNo(), () => {});
+  check('lista curta não ganha nível extra', lista.innerHTML.includes('ui-grupo-linha'), false);
+
+  // Reabrir com categoria escolhida entra direto no grupo dela
+  const folhas = DB.leafCategories('Despesa');
+  const umaFolha = folhas.find(c => c.parent_id);
+  const selComValor = montarSelect(optionsCategorias(umaFolha.id, 'Despesa'), umaFolha.id);
+  UIreal.fechar();
+  UIreal.abrirSelect(selComValor, criarNo(), criarNo(), () => {});
+  const comEscolhida = lista.innerHTML;
+  check('reabrir vai direto ao grupo da escolhida', comEscolhida.includes('ui-voltar'), true);
+  check('e mostra as irmãs dela', comEscolhida.includes(esc(umaFolha.name)), true);
+  check('com caminho de volta para os grupos', comEscolhida.includes('Todos os grupos'), true);
+
+  UIreal.fechar();
+  check('busca atravessa os dois níveis', /if \(emNiveis && !f\)/.test(uiSrc), true);
+  check('busca acha pelo nome do grupo', /norm\(o\.grupo\)\.includes\(f\)/.test(uiSrc), true);
+  check('Escape volta um nível antes de fechar', /grupoAberto !== null[\s\S]{0,80}grupoAberto = null; desenhar\(\); return;/.test(uiSrc), true);
+  check('Enter no grupo entra nele', /alvoEl\.dataset\.grupo\) \{ grupoAberto = alvoEl\.dataset\.grupo/.test(uiSrc), true);
+  check('setas navegam a árvore', uiSrc.includes("e.key === 'ArrowRight'") && uiSrc.includes("e.key === 'ArrowLeft'"), true);
+  const cssN = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('voltar tem alvo confortável', /\.ui-voltar \{[^}]*min-height: 40px/.test(cssN), true);
+}
+
 console.log('\n=== Retorno ao usuário ===');
 {
   const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');

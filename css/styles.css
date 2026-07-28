@@ -769,6 +769,18 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 .ui-opt.is-sel { background: rgba(0, 158, 247, .09); color: var(--gold); font-weight: 600; }
 .ui-opt.is-off { opacity: .45; cursor: not-allowed; }
 .ui-check { font-weight: 700; }
+/* Navegação em dois níveis: linha de grupo leva à lista dele, em vez de despejar
+   as 75 categorias de uma vez (11 telas de rolagem dentro do painel). */
+.ui-grupo-linha { font-weight: 600; }
+.ui-grupo-info { display: flex; align-items: center; gap: 8px; color: var(--paper-dim); font-size: 12px; font-weight: 500; }
+.ui-grupo-seta { font-size: 17px; line-height: 1; color: #c4cad4; }
+.ui-grupo-linha:hover .ui-grupo-seta { color: var(--gold); }
+.ui-voltar {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 9px 11px; margin-bottom: 2px; border-radius: 7px;
+  font-size: 12.5px; font-weight: 600; color: var(--gold); min-height: 40px;
+}
+.ui-voltar:hover { background: rgba(0, 158, 247, .08); }
 .ui-empty { padding: 18px; text-align: center; color: var(--paper-dim); font-size: 13px; }
 
 /* Calendário — precisa de largura própria, não cabe na coluna estreita do formulário */

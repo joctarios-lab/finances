@@ -55,6 +55,23 @@ const UI = {
     }
     const comBusca = opcoes.length > 7;
 
+    /* Lista longa e agrupada abre em DOIS NÍVEIS. As categorias somavam 75 itens
+       — 11 telas de rolagem dentro do painel. Mostrando só os grupos, a primeira
+       tela cai para 13, e cada grupo tem 5 ou 6 opções.
+
+       Só quando compensa: com poucos itens, ou sem grupos, a lista plana é mais
+       rápida, e um passo a mais seria atrito de graça. A busca continua varrendo
+       tudo de uma vez, então quem sabe o nome não navega — digita e escolhe. */
+    const grupos = [...new Set(opcoes.filter(o => o.grupo).map(o => o.grupo))];
+    const emNiveis = grupos.length >= 3 && opcoes.length > 20;
+    let grupoAberto = null;
+    // Abre no grupo do que já está escolhido: rever a categoria de um lançamento
+    // não deve começar do zero
+    if (emNiveis && sel.value) {
+      const atual = opcoes.find(o => o.value === sel.value);
+      if (atual && atual.grupo) grupoAberto = atual.grupo;
+    }
+
     const painel = document.createElement('div');
     painel.className = 'ui-panel';
     painel.innerHTML =
@@ -67,23 +84,54 @@ const UI = {
     const busca = painel.querySelector('.ui-search input');
     let marcado = Math.max(0, opcoes.findIndex(o => o.value === sel.value));
 
+    const linhaOpcao = (o, i) => {
+      const sel_ = o.value === sel.value;
+      return `<div class="ui-opt${sel_ ? ' is-sel' : ''}${i === marcado ? ' is-mark' : ''}${o.disabled ? ' is-off' : ''}"
+        data-i="${i}" role="option" aria-selected="${sel_}">${this.esc(o.label)}${sel_ ? '<span class="ui-check">✓</span>' : ''}</div>`;
+    };
+
     const desenhar = (filtro = '') => {
       const f = this.norm(filtro);
-      let html = '', grupoAtual = '', visiveis = 0;
-      opcoes.forEach((o, i) => {
-        // Busca também pelo nome do grupo: com as categorias agrupadas, a opção
-        // se chama só "Mercado", e procurar por "alimentação" tem de encontrá-la.
-        if (f && !this.norm(o.label).includes(f) && !this.norm(o.grupo).includes(f)) return;
-        if (o.grupo && o.grupo !== grupoAtual) { grupoAtual = o.grupo; html += `<div class="ui-group">${this.esc(o.grupo)}</div>`; }
-        const sel_ = o.value === sel.value;
-        html += `<div class="ui-opt${sel_ ? ' is-sel' : ''}${i === marcado ? ' is-mark' : ''}${o.disabled ? ' is-off' : ''}"
-          data-i="${i}" role="option" aria-selected="${sel_}">${this.esc(o.label)}${sel_ ? '<span class="ui-check">✓</span>' : ''}</div>`;
-        visiveis++;
-      });
+      let html = '', visiveis = 0;
+
+      // Buscando, o nível some: o resultado vem achatado, com o grupo como contexto
+      if (emNiveis && !f) {
+        if (grupoAberto === null) {
+          for (const g of grupos) {
+            const dentro = opcoes.filter(o => o.grupo === g);
+            const temEscolhida = dentro.some(o => o.value === sel.value);
+            html += `<div class="ui-opt ui-grupo-linha${temEscolhida ? ' is-sel' : ''}" data-grupo="${this.esc(g)}" role="option">
+              <span>${this.esc(g)}</span><span class="ui-grupo-info">${dentro.length}<span class="ui-grupo-seta">›</span></span></div>`;
+            visiveis++;
+          }
+          // Opções sem grupo (ex.: "— escolha a categoria —") ficam no primeiro nível
+          opcoes.forEach((o, i) => { if (!o.grupo) { html = linhaOpcao(o, i) + html; visiveis++; } });
+        } else {
+          html += `<div class="ui-voltar" data-voltar="1">‹ Todos os grupos</div>
+            <div class="ui-group">${this.esc(grupoAberto)}</div>`;
+          opcoes.forEach((o, i) => { if (o.grupo === grupoAberto) { html += linhaOpcao(o, i); visiveis++; } });
+        }
+      } else {
+        let grupoAtual = '';
+        opcoes.forEach((o, i) => {
+          // Busca também pelo nome do grupo: com as categorias agrupadas, a opção
+          // se chama só "Mercado", e procurar por "alimentação" tem de encontrá-la.
+          if (f && !this.norm(o.label).includes(f) && !this.norm(o.grupo).includes(f)) return;
+          if (o.grupo && o.grupo !== grupoAtual) { grupoAtual = o.grupo; html += `<div class="ui-group">${this.esc(o.grupo)}</div>`; }
+          html += linhaOpcao(o, i);
+          visiveis++;
+        });
+      }
+
       lista.innerHTML = visiveis ? html : '<div class="ui-empty">Nada encontrado</div>';
-      lista.querySelectorAll('.ui-opt').forEach(el => {
+      lista.querySelectorAll('.ui-opt[data-i]').forEach(el => {
         el.onclick = () => { if (!el.classList.contains('is-off')) escolher(Number(el.dataset.i)); };
       });
+      lista.querySelectorAll('[data-grupo]').forEach(el => {
+        el.onclick = () => { grupoAberto = el.dataset.grupo; desenhar(); };
+      });
+      const voltar = lista.querySelector('[data-voltar]');
+      if (voltar) voltar.onclick = () => { grupoAberto = null; desenhar(); };
       const m = lista.querySelector('.is-mark');
       if (m) m.scrollIntoView({ block: 'nearest' });
     };
@@ -106,11 +154,30 @@ const UI = {
     const alvo = busca || painel;
     alvo.onkeydown = e => {
       const vis = [...lista.querySelectorAll('.ui-opt:not(.is-off)')];
-      if (e.key === 'Escape') { e.preventDefault(); this.fechar(); botao.focus(); return; }
+      // Escape volta um nível antes de fechar: fechar direto perderia o caminho
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        if (grupoAberto !== null && !(busca && busca.value)) { grupoAberto = null; desenhar(); return; }
+        this.fechar(); botao.focus(); return;
+      }
       if (e.key === 'Enter') {
         e.preventDefault();
         const alvoEl = lista.querySelector('.is-mark') || vis[0];
-        if (alvoEl) escolher(Number(alvoEl.dataset.i));
+        if (!alvoEl) return;
+        // Enter numa linha de grupo entra nele, em vez de tentar escolher um valor
+        if (alvoEl.dataset.grupo) { grupoAberto = alvoEl.dataset.grupo; desenhar(); return; }
+        escolher(Number(alvoEl.dataset.i));
+        return;
+      }
+      // Seta para a direita entra no grupo, esquerda volta — como em árvore de arquivos
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        const alvoEl = lista.querySelector('.is-mark') || vis[0];
+        if (e.key === 'ArrowRight' && alvoEl && alvoEl.dataset.grupo) {
+          e.preventDefault(); grupoAberto = alvoEl.dataset.grupo; desenhar(); return;
+        }
+        if (e.key === 'ArrowLeft' && grupoAberto !== null) {
+          e.preventDefault(); grupoAberto = null; desenhar(); return;
+        }
         return;
       }
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -119,7 +186,11 @@ const UI = {
       const prox = e.key === 'ArrowDown'
         ? Math.min(vis.length - 1, atual + 1)
         : Math.max(0, atual <= 0 ? 0 : atual - 1);
-      if (vis[prox]) { marcado = Number(vis[prox].dataset.i); desenhar(busca ? busca.value : ''); }
+      // Linha de grupo não tem índice: marca só o que é opção de verdade
+      if (vis[prox] && vis[prox].dataset.i !== undefined) {
+        marcado = Number(vis[prox].dataset.i);
+        desenhar(busca ? busca.value : '');
+      }
     };
     if (!busca) painel.tabIndex = -1, setTimeout(() => painel.focus(), 20);
   },
