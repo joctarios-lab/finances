@@ -1,0 +1,19 @@
+# Configuração local do Claude Code (permissões da máquina)
+.claude/settings.local.json
+.claude/worktrees/
+
+# Credenciais reais do Supabase: mantenha o modelo versionado e o preenchido fora
+js/config.local.js
+
+# Dependências e artefatos
+node_modules/
+dist/
+*.log
+
+# Sistema operacional
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Backups exportados pelo app
+financas-backup-*.json
