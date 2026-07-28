@@ -1948,6 +1948,46 @@ for (const tabela of Object.keys(SYNC)) {
   check('reset-teste zera todas as tabelas do schema', fora.length ? fora.join(', ') : true, true);
   check('reset-teste também apaga as contas', /delete from auth\.users/i.test(reset), true);
   check('reset-teste avisa para limpar o aparelho', /Apagar dados deste aparelho/.test(reset), true);
+
+  /* Os scripts de diagnóstico e export só valem se citarem colunas que existem —
+     um nome errado só aparece como erro no SQL Editor, longe daqui. */
+  const colunasDe = tab => {
+    const cria = schema.match(new RegExp(`create table if not exists ${tab} \\(([\\s\\S]*?)\\n\\);`, 'i'));
+    const set = new Set();
+    if (cria) for (const l of cria[1].split('\n')) {
+      const c = l.trim().match(/^"?(\w+)"?\s+(uuid|text|numeric|date|boolean|timestamptz|jsonb|int|bigserial)/i);
+      if (c) set.add(c[1]);
+    }
+    for (const m of schema.matchAll(new RegExp(`alter table ${tab} add column if not exists (\\w+)`, 'gi'))) set.add(m[1]);
+    return set;
+  };
+  const usadas = {
+    transactions: ['description', 'amount', 'date', 'type', 'status', 'method', 'scope', 'member',
+      'category_id', 'account_id', 'card_id', 'to_account', 'invoice_key', 'group_id', 'installment',
+      'adjustment', 'recurring', 'fitid', 'tags', 'deleted'],
+    accounts: ['name', 'type', 'balance', 'is_reserve', 'active', 'deleted'],
+    cards: ['name', 'limit_amount', 'closing_day', 'due_day', 'account_id', 'active', 'deleted'],
+    categories: ['parent_id', 'type', 'deleted'],
+    goals: ['name', 'target_amount', 'target_date', 'done', 'kind', 'deleted'],
+    goal_entries: ['goal_id', 'amount', 'date', 'from_account', 'to_account', 'deleted'],
+    family_settings: ['month_start_day', 'monthly_income', 'members', 'deleted'],
+  };
+  for (const [tab, lista] of Object.entries(usadas)) {
+    const reais = colunasDe(tab);
+    const faltando = lista.filter(c => !reais.has(c));
+    check(`scripts SQL: colunas de ${tab} existem`, faltando.length ? faltando.join(', ') : true, true);
+  }
+
+  const diag = fs.readFileSync(BASE + 'supabase/diagnostico.sql', 'utf8');
+  const exp = fs.readFileSync(BASE + 'supabase/exportar-base.sql', 'utf8');
+  check('diagnóstico procura saldo que não bate', diag.includes('saldo da conta não bate'), true);
+  check('e o bug das parcelas', diag.includes('object HTML'), true);
+  check('e transferência contada duas vezes', diag.includes('contada duas vezes'), true);
+  check('export cobre todas as tabelas de dados',
+    Object.keys(SYNC).every(t => exp.includes(t)), true);
+  check('export tem versão anonimizada', exp.includes('base_anonimizada'), true);
+  check('nenhum script altera dados',
+    /^\s*(update|delete|insert|drop|truncate)\s/im.test(diag.replace(/^--.*$/gm, '')) , false);
 }
 
 check('push_subscriptions com RLS', /alter table push_subscriptions enable row level security/i.test(schema), true);
