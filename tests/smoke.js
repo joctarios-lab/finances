@@ -1911,6 +1911,19 @@ for (const [tabela, campos] of Object.entries(SYNC)) {
   const faltando = campos.filter(c => !cols.has(c));
   check(`${tabela}: ${campos.length} campos existem no schema`, faltando.length ? faltando.join(', ') : true, true);
 }
+
+/* O sentido CONTRÁRIO, que faltava: coluna que existe no banco mas não está na
+   lista de envio nunca sai daqui. Fica certa no aparelho e nula no servidor, e o
+   estrago só aparece no outro celular — foi o que aconteceu com to_account, e por
+   isso toda transferência sincronizada perdia o destino e o saldo derretia. */
+{
+  const envelope = new Set(['id', 'family_id', 'updated_at', 'deleted']);
+  for (const [tabela, campos] of Object.entries(SYNC)) {
+    const naoEnviadas = [...colunasDe(tabela)].filter(c => !envelope.has(c) && !campos.includes(c));
+    check(`${tabela}: nenhuma coluna fica de fora do envio`,
+      naoEnviadas.length ? naoEnviadas.join(', ') : true, true);
+  }
+}
 // Toda tabela sincronizada precisa do envelope de sync e de RLS
 for (const tabela of Object.keys(SYNC)) {
   const cols = colunasDe(tabela);

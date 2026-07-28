@@ -4,6 +4,12 @@
 
 # Credenciais reais do Supabase: mantenha o modelo versionado e o preenchido fora
 js/config.local.js
+.env
+.env.*
+!.env.exemplo
+
+# Relatorios de diagnostico (podem conter dados da familia)
+diagnostico-*.txt
 
 # Dependências e artefatos
 node_modules/
