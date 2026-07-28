@@ -181,8 +181,23 @@ body {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
   margin-top: 16px; padding-top: 14px; border-top: 1px dashed #3a3a52; position: relative;
 }
-.hero-stats small { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: #9899ac; }
-.hero-stats b { font-size: 14.5px; font-weight: 700; }
+.hero-stats > div { min-width: 0; }
+/* Rótulo em uma linha só: se quebrasse, os três valores saíam de alinhamento */
+.hero-stats small {
+  display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+  color: #9899ac; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.hero-stats b { font-size: 14.5px; font-weight: 700; display: block; white-space: nowrap; }
+/* Telas estreitas: encolhe o texto em vez de deixar quebrar */
+@media (max-width: 420px) {
+  .hero-stats { gap: 6px; }
+  .hero-stats small { font-size: 9.5px; letter-spacing: .02em; }
+  .hero-stats b { font-size: 13px; }
+}
+@media (max-width: 340px) {
+  .hero-stats small { font-size: 9px; }
+  .hero-stats b { font-size: 12px; }
+}
 
 .proj-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; margin-top: 6px; gap: 8px; flex-wrap: wrap; }
 .txt-green { color: #47be7d; }
@@ -259,9 +274,18 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .rep-table th:nth-child(n+2) { text-align: right; }
 
 .mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.mini-stats .card { padding: 12px 14px; text-align: center; }
-.mini-stats small { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--paper-dim); }
-.mini-stats b { font-size: 15px; font-weight: 800; }
+.mini-stats .card { padding: 12px 14px; text-align: center; min-width: 0; }
+.mini-stats small {
+  display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--paper-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.mini-stats b { font-size: 15px; font-weight: 800; display: block; white-space: nowrap; }
+@media (max-width: 420px) {
+  .mini-stats { gap: 6px; }
+  .mini-stats .card { padding: 12px 8px; }
+  .mini-stats small { font-size: 9.5px; letter-spacing: .02em; }
+  .mini-stats b { font-size: 13.5px; }
+}
 
 /* KPIs (padrão Metronic: ícone em caixa tintada + valor + rótulo) */
 .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }

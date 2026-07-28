@@ -590,7 +590,7 @@ function renderInicio(period) {
       <div class="hero-stats">
         <div><small>Em contas</small><b>${fmtShort(saldo)}</b></div>
         <div><small>Comprometido</small><b>${fmtShort(committed)}</b></div>
-        <div><small>Projeção do mês</small><b>${fmtShort(stats.projection)}</b></div>
+        <div><small>Gasto previsto</small><b>${fmtShort(stats.projection)}</b></div>
       </div>
     </div>`;
 
@@ -2314,7 +2314,7 @@ function renderOfxPreview(parsed, accounts, cards) {
     <hr class="sep">
     <div class="mini-stats" style="margin-bottom:12px">
       <div class="card"><small>Novos</small><b>${novos.length}</b></div>
-      <div class="card"><small>Já importados</small><b>${dups}</b></div>
+      <div class="card"><small>Repetidos</small><b>${dups}</b></div>
       <div class="card"><small>Do arquivo</small><b>${parsed.txs.length}</b></div>
     </div>
     ${!novos.length ? '<div class="empty"><b>Tudo já importado</b>Nenhum lançamento novo neste arquivo.</div>' : `

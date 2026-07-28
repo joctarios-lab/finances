@@ -630,6 +630,39 @@ try {
   check('cor nunca vem sozinha (ícone + texto no atalho)', ext.includes('>Despesa<') && ext.includes('data-ico="plus"'), true);
 } catch (e) { console.log(` FALHA | semântica: ${e.message}`); fail++; }
 
+/* ---- Rotulos de coluna estreita ----
+   As faixas de 3 colunas (.hero-stats, .mini-stats) dividem a largura do
+   celular por 3. Rotulo comprido quebrava em duas linhas e desalinhava os
+   valores vizinhos — foi o que aconteceu com "Projeção do mês". */
+console.log('\n=== Layout no celular ===');
+{
+  const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const cssM = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  const LIMITE = 14;
+
+  const rotulos = [];
+  for (const faixa of ['hero-stats', 'mini-stats']) {
+    for (const m of ap.matchAll(new RegExp(`class="${faixa}[^"]*"[\\s\\S]{0,600}?</div>\\s*</div>`, 'g'))) {
+      for (const s of m[0].matchAll(/<small>([\s\S]*?)<\/small>/g)) {
+        const bruto = s[1];
+        // "${isCurrent ? 'Projeção' : 'Total'}" -> testa cada texto possível
+        if (bruto.includes('${')) for (const lit of bruto.matchAll(/'([^']+)'/g)) rotulos.push([faixa, lit[1]]);
+        else rotulos.push([faixa, bruto.trim()]);
+      }
+    }
+  }
+  check('achou os rótulos das faixas de 3 colunas', rotulos.length >= 6, true);
+  const compridos = rotulos.filter(([, t]) => t.length > LIMITE).map(([f, t]) => `${f}: "${t}"`);
+  check(`nenhum rótulo passa de ${LIMITE} caracteres`, compridos.length ? compridos.join(' | ') : true, true);
+
+  for (const faixa of ['hero-stats', 'mini-stats']) {
+    const bloco = cssM.match(new RegExp(`\\.${faixa} small \\{[^}]*\\}`));
+    check(`${faixa}: rótulo proibido de quebrar linha`, !!bloco && /white-space:\s*nowrap/.test(bloco[0]), true);
+    check(`${faixa}: valor proibido de quebrar linha`, new RegExp(`\\.${faixa} b \\{[^}]*white-space:\\s*nowrap`).test(cssM), true);
+    check(`${faixa}: encolhe em tela estreita`, new RegExp(`max-width: 420px\\)[\\s\\S]{0,400}\\.${faixa} small \\{[^}]*font-size`).test(cssM), true);
+  }
+}
+
 console.log('\n=== Memória da navegação ===');
 state.tab = 'relatorios'; state.monthOffset = -2; state.memberFilter = 'Joctã';
 persistUI();
