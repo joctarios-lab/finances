@@ -3175,6 +3175,7 @@ function openOfxImport() {
   openModal(`
     <div class="modal-title">Importar extrato OFX<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
     <p class="muted" style="margin-bottom:12px">No app do seu banco ou cartão, procure por <b>exportar extrato / OFX</b> e baixe o arquivo. Lançamentos já importados antes são reconhecidos e ignorados automaticamente.</p>
+    <div id="ofx-estado"></div>
     <button class="btn" id="ofx-pick">Escolher arquivo .ofx</button>
     <input type="file" id="ofx-file" accept=".ofx,.OFX,.qfx,text/plain" hidden>
     <div id="ofx-result"></div>
@@ -3187,7 +3188,23 @@ function openOfxImport() {
     try {
       const parsed = OFX.parse(await OFX.readText(file));
       if (!parsed.txs.length) return toast('Nenhum lançamento encontrado no arquivo');
-      renderOfxPreview(parsed, accounts, cards);
+
+      /* Só decide o que é novo DEPOIS de ter tudo o que a família já lançou.
+         Sem isto, importar logo após "apagar dados deste aparelho" (quando o app
+         ainda está se enchendo pela sincronização) faz todo lançamento parecer
+         novo — e a base duplica sem ninguém perceber. */
+      const estado = $('#ofx-estado');
+      if (Sync.hasFamily() && !Sync.pronto) {
+        estado.innerHTML = '<div class="callout info"><b>Conferindo com a nuvem…</b><p>Buscando o que a família já lançou, para não importar nada em duplicidade.</p></div>';
+      }
+      const situacao = await Sync.aguardarPronto();
+      estado.innerHTML = situacao === 'sem-resposta'
+        ? `<div class="callout warn"><b>Não consegui confirmar com a nuvem</b>
+             <p>O que já foi lançado em outro aparelho pode não estar aqui ainda, e lançamentos repetidos podem passar.
+             Se puder, feche isto, toque em ⇅ para sincronizar e tente de novo.</p></div>`
+        : '';
+
+      renderOfxPreview(parsed, accounts, cards, situacao);
     } catch (err) {
       toast('Não consegui ler o arquivo: ' + err.message);
     }
@@ -3262,7 +3279,7 @@ function contasTransferencia(contaAtual, ehSaida) {
     `<option value="transfer:${o.id}">${ehSaida ? 'Enviado para' : 'Recebido de'} ${esc(o.name)}</option>`).join('')}</optgroup>`;
 }
 
-function renderOfxPreview(parsed, accounts, cards) {
+function renderOfxPreview(parsed, accounts, cards, situacao) {
   const cats = DB.all('categories');   // com os pais: a adivinhação depende deles
   let parEncontrado = {};              // linha -> transferência que já cobre este valor
   const novos = parsed.txs.filter(t => !DB.hasFitid(t.fitid));
@@ -3333,6 +3350,12 @@ function renderOfxPreview(parsed, accounts, cards) {
       <div class="card"><small>Repetidos</small><b>${dups}</b></div>
       <div class="card"><small>Do arquivo</small><b>${parsed.txs.length}</b></div>
     </div>
+    <!-- O aviso fica junto do número de "novos", que é a conclusão em que não se
+         pode confiar quando a leitura da nuvem falhou. -->
+    ${situacao === 'sem-resposta' ? `<div class="callout warn">
+      <b>Estes números podem estar errados</b>
+      <p>Não consegui ler o que a família já lançou, então "${novos.length} novos" pode incluir coisas que já existem em outro aparelho.
+      Sincronize (⇅) e reabra esta tela antes de importar.</p></div>` : ''}
     ${!novos.length ? '<div class="empty"><b>Tudo já importado</b>Nenhum lançamento novo neste arquivo.</div>' : `
       <div class="field"><label>Lançar em</label><select id="ofx-dest">${destOpts}</select></div>
       <!-- Uma etiqueta para o lote inteiro, em vez de um campo por linha: importar

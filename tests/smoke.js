@@ -2703,6 +2703,62 @@ check('função is_member definida antes das policies', schema.indexOf('function
     check('avisa sobre registros descartados', ap.includes('Sync._descartados'), true);
   }
 
+  /* ---- Importar antes de ter os dados é o que duplica a base ----
+     Depois de "apagar dados deste aparelho" o app abre VAZIO e vai se enchendo
+     pela sincronização. Quem importa nesse intervalo vê todo lançamento como
+     novo, porque o FITID que o identificaria ainda não chegou — e a base
+     duplica sem nenhum aviso. Foi o que aconteceu numa reimportação real. */
+  console.log('\n=== Importação espera os dados da nuvem ===');
+  {
+    const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S.saveCfg = () => {}; S.GIRO_MINIMO = 0;
+    const base = { url: 'https://x.supabase.co', anonKey: 'k', access_token: 'a', refresh_token: 'r', token_exp: Date.now() + 600000 };
+
+    // Sem família: nada com que conferir, segue em frente
+    S.cfg = { ...base };
+    check('sem nuvem, não trava a importação', await S.aguardarPronto(), 'sem-nuvem');
+
+    // Com família e ainda sem carregar: precisa esperar
+    S.cfg = { ...base, family_id: FAM_TESTE };
+    S.pronto = false;
+    check('recém-aberto, ainda não está pronto', S.pronto, false);
+
+    const dadosAntes = DB.data;
+    DB.data = { meta: { seeded: true, lastSync: null }, accounts: [], cards: [], categories: [],
+      transactions: [], goals: [], goal_entries: [], invoice_status: [], family_settings: [] };
+    global.navigator.onLine = true;
+    global.fetch = async () => ({ ok: true, status: 200, json: async () => [], text: async () => '' });
+    check('depois de carregar, fica pronto', await S.aguardarPronto(), 'pronto');
+    check('e o estado persiste', S.pronto, true);
+    clearTimeout(S._debounce);
+
+    // Servidor fora do ar: precisa DIZER que não deu, não fingir que está tudo bem
+    S.pronto = false;
+    global.fetch = async () => { throw new Error('sem rede'); };
+    check('servidor mudo devolve sem-resposta', await S.aguardarPronto(2000), 'sem-resposta');
+    check('e não se declara pronto', S.pronto, false);
+    clearTimeout(S._debounce);
+
+    // Offline: responde na hora, sem ficar esperando um timeout
+    global.navigator.onLine = false;
+    const t0 = Date.now();
+    check('offline responde imediatamente', await S.aguardarPronto(9000), 'sem-resposta');
+    check('sem esperar o limite todo', Date.now() - t0 < 500, true);
+    global.navigator.onLine = true;
+    DB.data = dadosAntes;
+
+    // A tela precisa usar isso, senão a proteção não vale de nada
+    const apO = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+    check('a importação espera antes de decidir',
+      /const situacao = await Sync\.aguardarPronto\(\);[\s\S]{0,400}renderOfxPreview/.test(apO), true);
+    check('avisa enquanto confere', apO.includes('Conferindo com a nuvem'), true);
+    check('e avisa se não conseguiu conferir', apO.includes('Não consegui confirmar com a nuvem'), true);
+    check('o aviso aparece junto do número de novos',
+      /situacao === 'sem-resposta' \? `<div class="callout warn">[\s\S]{0,200}podem estar errados/.test(apO), true);
+    check('só marca pronto quando o pull inteiro deu certo',
+      /if \(!falhas\.length\) \{ DB\.data\.meta\.lastSync = DB\.now\(\); this\.pronto = true; \}/.test(fs.readFileSync(BASE + 'js/sync.js', 'utf8')), true);
+  }
+
   /* ---- Login numa conta que já tem família ---- */
   console.log('\n=== Refazer login não cria família nova ===');
   {

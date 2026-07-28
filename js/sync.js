@@ -91,6 +91,38 @@ const Sync = {
   GIRO_MINIMO: 600,        // tempo mínimo do ícone girando, para não piscar
   _timer: null, _debounce: null, _retry: 0, _ultimoErro: null, _girando: false,
 
+  /* Já baixamos tudo o que a família tem, nesta sessão?
+
+     Existe porque decidir sem os dados completos produz erro silencioso. Depois
+     de "apagar dados deste aparelho", o app abre VAZIO e vai se enchendo pela
+     sincronização — e quem importa um OFX nesse intervalo vê todos os
+     lançamentos como novos, porque o que os identificaria ainda não chegou.
+     O resultado é a base duplicada, sem nenhum aviso.
+
+     Só vira true depois de um syncAll que completou o pull. */
+  pronto: false,
+  _esperando: null,
+
+  /* Espera a primeira carga terminar. Devolve:
+       'pronto'        — dados completos, pode decidir
+       'sem-nuvem'     — não há com o que conferir (uso local); segue em frente
+       'sem-resposta'  — configurado, mas o servidor não respondeu; decida com
+                         cautela e avise quem está usando */
+  async aguardarPronto(limiteMs = 12000) {
+    if (!this.hasFamily()) return 'sem-nuvem';
+    if (this.pronto) return 'pronto';
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'sem-resposta';
+    // Uma tentativa por vez: várias telas podem pedir ao mesmo tempo
+    if (!this._esperando) {
+      this._esperando = this.syncAll(true)
+        .then(() => (this.pronto ? 'pronto' : 'sem-resposta'))
+        .catch(() => 'sem-resposta')
+        .finally(() => { this._esperando = null; });
+    }
+    const limite = new Promise(r => setTimeout(() => r('sem-resposta'), limiteMs));
+    return Promise.race([this._esperando, limite]);
+  },
+
   load() {
     try { this.cfg = JSON.parse(localStorage.getItem(this.cfgKey)) || {}; }
     catch (_) { this.cfg = {}; }
@@ -370,7 +402,8 @@ const Sync = {
 
       // Avançar o marcador com alguma leitura falhada faria as linhas dessa
       // tabela nunca mais serem buscadas: a próxima consulta já as ignoraria.
-      if (!falhas.length) DB.data.meta.lastSync = DB.now();
+      // Leitura completa das oito tabelas: agora dá para confiar no que está aqui
+      if (!falhas.length) { DB.data.meta.lastSync = DB.now(); this.pronto = true; }
       DB.save();
       if (descartados) this._descartados = descartados;
       if (falhas.length) {
