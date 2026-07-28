@@ -1260,6 +1260,38 @@ console.log('\n=== Seletor de categoria não é uma lista sem fim ===');
   check('cada grupo diz quantas tem', /ui-grupo-info">\d+/.test(primeiraTela), true);
   check('e mostra que dá para entrar', primeiraTela.includes('ui-grupo-seta'), true);
 
+  /* Tocar no grupo tem de ABRIR o grupo, não fechar o painel.
+     desenhar() troca o innerHTML da lista, então o elemento clicado sai do DOM
+     antes de o clique chegar ao document — onde o "clique fora" testa
+     box.contains(alvo) e dá falso para nó removido. Sem barrar a propagação, o
+     painel fechava e não dava para escolher nada. */
+  {
+    // Registra os handlers ligados pelo desenhar() mais recente
+    const capturados = [];
+    lista.querySelectorAll = sel => {
+      if (!/data-grupo/.test(sel)) return [];
+      const grupos = [...String(lista.innerHTML).matchAll(/data-grupo="([^"]*)"/g)].map(m => m[1]);
+      return grupos.map(g => { const no = { dataset: { grupo: g }, classList: { contains: () => false } }; capturados.push(no); return no; });
+    };
+    UIreal.fechar();
+    const box2 = criarNo();
+    UIreal.abrirSelect(montarSelect(optionsCategorias(null, 'Despesa')), box2, criarNo(), () => {});
+    check('há linhas de grupo para tocar', capturados.length > 0, true);
+
+    const primeiro = capturados[0];
+    let propagou = true;
+    primeiro.onclick({ stopPropagation: () => { propagou = false; } });
+    check('tocar no grupo não deixa o clique subir', propagou, false);
+    check('e o painel continua aberto', !!UIreal.aberto, true);
+    check('mostrando as opções daquele grupo', lista.innerHTML.includes('ui-voltar'), true);
+    check('com as folhas selecionáveis', /class="ui-opt[^"]*"\s+data-i=/.test(lista.innerHTML), true);
+
+    // Rede de proteção: nó já removido não pode ser lido como "clique fora"
+    const uiTxt = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
+    check('clique fora ignora elemento já removido', /alvo\.isConnected === false\) return;/.test(uiTxt), true);
+    lista.querySelectorAll = () => [];
+  }
+
   // Lista curta continua plana: um nível a mais seria atrito de graça
   const selCurto = montarSelect('<optgroup label="A"><option value="1">um</option></optgroup><optgroup label="B"><option value="2">dois</option></optgroup>');
   UIreal.fechar();
@@ -1362,7 +1394,9 @@ console.log('\n=== Teclado do celular não esconde nada ===');
   check('barra de abas sai de cena', /body\.teclado-aberto \.tabbar \{ display: none/.test(cssK), true);
   check('painel pode abrir para cima', /\.ui-panel\.acima \{ top: auto; bottom:/.test(cssK), true);
   check('campo em foco é trazido à vista', uiSrc.includes('scrollIntoView') && uiSrc.includes("'focusin'"), true);
-  check('o vigia é ligado na abertura', /init\(\)[\s\S]{0,400}this\.vigiarTeclado\(\)/.test(uiSrc), true);
+  // Sem janela fixa: crescer o init() não pode reprovar um teste sobre outra coisa
+  check('o vigia é ligado na abertura',
+    /\n {2}init\(\) \{[\s\S]*?this\.vigiarTeclado\(\);[\s\S]*?\n {2}\},/.test(uiSrc), true);
 
   /* Exercita posicionar() com geometria de verdade: campo no rodapé de um celular
      de 800px, com 380px tomados pelo teclado. */

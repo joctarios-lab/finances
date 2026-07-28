@@ -127,11 +127,15 @@ const UI = {
       lista.querySelectorAll('.ui-opt[data-i]').forEach(el => {
         el.onclick = () => { if (!el.classList.contains('is-off')) escolher(Number(el.dataset.i)); };
       });
+      /* stopPropagation aqui não é zelo: desenhar() troca o innerHTML da lista, e
+         o elemento clicado sai do DOM ANTES de o clique chegar ao document. Lá o
+         fechamento por "clique fora" testa box.contains(e.target) — que dá falso
+         para um nó já removido, e o painel fechava ao entrar num grupo. */
       lista.querySelectorAll('[data-grupo]').forEach(el => {
-        el.onclick = () => { grupoAberto = el.dataset.grupo; desenhar(); };
+        el.onclick = e => { if (e && e.stopPropagation) e.stopPropagation(); grupoAberto = el.dataset.grupo; desenhar(); };
       });
       const voltar = lista.querySelector('[data-voltar]');
-      if (voltar) voltar.onclick = () => { grupoAberto = null; desenhar(); };
+      if (voltar) voltar.onclick = e => { if (e && e.stopPropagation) e.stopPropagation(); grupoAberto = null; desenhar(); };
       const m = lista.querySelector('.is-mark');
       if (m) m.scrollIntoView({ block: 'nearest' });
     };
@@ -415,7 +419,12 @@ const UI = {
 
   init() {
     document.addEventListener('click', e => {
-      if (this.aberto && !this.aberto.box.contains(e.target)) this.fechar();
+      if (!this.aberto) return;
+      const alvo = e.target;
+      // Nó já retirado do DOM não é "clique fora": é um redesenho do próprio
+      // painel, e fechar aí tiraria a lista debaixo de quem acabou de tocar nela.
+      if (alvo && alvo.isConnected === false) return;
+      if (!this.aberto.box.contains(alvo)) this.fechar();
     });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') this.fechar(); });
     this.vigiarTeclado();
