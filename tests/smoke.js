@@ -318,6 +318,21 @@ try {
   check('relatórios trazem os gráficos novos', renderRelatorios().includes('rank-row') && renderRelatorios().includes('donut-svg'), true);
 } catch (e) { console.log(` FALHA | gráficos: ${e.message}`); fail++; }
 
+console.log('\n=== Semântica de cor por tipo de ação ===');
+try {
+  const ext = renderExtrato(p);
+  check('atalhos coloridos de lançamento no extrato', ext.includes('qa-desp') && ext.includes('qa-rec') && ext.includes('qa-tr'), true);
+  check('receita marcada em verde', ext.includes('tx-amount income'), true);
+  check('despesa mostra sinal de saída', ext.includes('− '), true);
+  const css = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('vermelho reservado para despesa', /\.chip\[data-v="Despesa"\]\.active[^}]*var\(--red\)/.test(css), true);
+  check('verde reservado para receita', /\.chip\[data-v="Receita"\]\.active[^}]*var\(--green\)/.test(css), true);
+  check('azul reservado para transferência', /\.chip\[data-v="Transferência"\]\.active[^}]*var\(--blue\)/.test(css), true);
+  check('folha veste a cor do tipo escolhido', css.includes('.sheet[data-tipo="Receita"] #sh-save'), true);
+  check('animações respeitam prefers-reduced-motion', css.includes('prefers-reduced-motion'), true);
+  check('cor nunca vem sozinha (ícone + texto no atalho)', ext.includes('>Despesa<') && ext.includes('data-ico="plus"'), true);
+} catch (e) { console.log(` FALHA | semântica: ${e.message}`); fail++; }
+
 console.log('\n=== Memória da navegação ===');
 state.tab = 'relatorios'; state.monthOffset = -2; state.memberFilter = 'Joctã';
 persistUI();

@@ -190,11 +190,22 @@ body {
 .ch-lbl { font-size: 11.5px; fill: var(--paper-dim); font-family: var(--font-body); font-weight: 500; }
 .ch-lbl-on { fill: var(--paper); font-weight: 700; }
 .ch-val { font-size: 11.5px; font-weight: 700; fill: var(--paper); font-family: var(--font-body); }
-.ch-axis { font-size: 10px; fill: #b5bcc9; font-family: var(--font-body); }
-.ch-grid { stroke: var(--line); stroke-width: 1; }
-.ch-ref-line { stroke: #f1416c; stroke-dasharray: 6 5; stroke-width: 1.5; }
+.ch-axis { font-size: 10.5px; fill: #a1a5b7; font-family: var(--font-body); }
+.ch-grid { stroke: var(--line); stroke-width: 1; }          /* hairline sólida, recessiva */
+.ch-base { stroke: #dfe4ec; stroke-width: 1; }
+.ch-ref-line { stroke: #f1416c; stroke-width: 1.5; opacity: .8; }
 .ch-ref-pill { fill: #f1416c; opacity: .1; }
-.ch-ref { font-size: 10px; font-weight: 700; fill: #f1416c; font-family: var(--font-body); }
+.ch-ref { font-size: 10px; font-weight: 700; fill: #d9214e; font-family: var(--font-body); }
+.ch-avg { stroke: #a1a5b7; stroke-width: 1; opacity: .7; }
+.ch-avg-lbl { font-size: 10px; font-weight: 600; fill: #a1a5b7; font-family: var(--font-body); }
+
+/* Série única com ênfase por TOM: histórico recessivo, período atual em destaque */
+.ch-bar { fill: #a9d8f5; transition: fill .18s ease; }
+.ch-bar-on { fill: #0072b8; }                                /* contraste ≥ 3:1 na superfície */
+.ch-hit { cursor: default; }
+.ch-hit:hover ~ .ch-bar { fill: #a9d8f5; }
+svg:hover .ch-bar { fill: #8ecbf0; }
+svg:hover .ch-bar-on { fill: #005a92; }
 .chart-foot {
   display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 14px; padding-top: 12px;
   border-top: 1px dashed var(--line); font-size: 12px; color: var(--paper-dim);
@@ -299,8 +310,13 @@ body {
 .tx-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tx-meta { font-size: 11.5px; color: var(--paper-dim); }
 .tx-amount { font-weight: 800; font-size: 14.5px; white-space: nowrap; }
-.tx-amount.pending { color: var(--amber); }
-.tx-amount.income { color: var(--green); }
+/* Extrato: a cor do valor diz o que aconteceu com o dinheiro */
+.tx-amount { color: var(--red); }                 /* saiu */
+.tx-amount.pending { color: var(--amber); }       /* ainda vai sair */
+.tx-amount.income { color: var(--green); }        /* entrou */
+.tx-amount.transfer { color: var(--blue); }       /* só mudou de lugar */
+.tx-ico.i-receita { background: rgba(80, 205, 137, .12); }
+.tx-ico.i-transfer { background: rgba(114, 57, 234, .1); }
 .tx-adj { border-style: dashed; background: var(--ink-3); }
 .tx-adj .tx-amount { color: var(--paper-dim); }
 
@@ -329,7 +345,50 @@ body {
 }
 .chip.active { background: var(--gold); border-color: var(--gold); color: #fff; }
 .chip-more { border-style: dashed; }
+
+/* Semântica de cor por tipo de ação — sai vermelho, entra verde, move azul.
+   A cor vem sempre acompanhada do ícone e do texto, nunca sozinha. */
+.chip[data-v="Despesa"].active { background: var(--red); border-color: var(--red); }
+.chip[data-v="Receita"].active { background: var(--green); border-color: var(--green); }
+.chip[data-v="Transferência"].active { background: var(--blue); border-color: var(--blue); }
+
+.sheet[data-tipo="Despesa"] .amount-input { color: var(--red); }
+.sheet[data-tipo="Receita"] .amount-input { color: var(--green); }
+.sheet[data-tipo="Transferência"] .amount-input { color: var(--blue); }
+.sheet[data-tipo="Despesa"] .amount-input:focus { border-color: var(--red); }
+.sheet[data-tipo="Receita"] .amount-input:focus { border-color: var(--green); }
+.sheet[data-tipo="Transferência"] .amount-input:focus { border-color: var(--blue); }
+.sheet[data-tipo="Despesa"] #sh-save { background: var(--red); }
+.sheet[data-tipo="Receita"] #sh-save { background: var(--green); }
+.sheet[data-tipo="Transferência"] #sh-save { background: var(--blue); }
+.sheet[data-tipo] #sh-save:hover { filter: brightness(.93); }
+/* Faixa colorida no topo da folha reforça em qual modo se está */
+.sheet[data-tipo]::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px;
+  border-radius: 16px 16px 0 0; transition: background .25s ease;
+}
+.sheet[data-tipo="Despesa"]::before { background: var(--red); }
+.sheet[data-tipo="Receita"]::before { background: var(--green); }
+.sheet[data-tipo="Transferência"]::before { background: var(--blue); }
 .chip-num { opacity: .7; font-weight: 500; margin-left: 4px; font-size: 11.5px; }
+
+/* Atalhos coloridos de lançamento — a cor antecipa o tipo da ação */
+.quick-add { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.qa {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 12px 8px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--ink-2); font-family: var(--font-body); font-size: 13px; font-weight: 600;
+  cursor: pointer; box-shadow: var(--shadow); min-height: 46px;
+  transition: transform .12s ease, box-shadow .18s ease, border-color .16s ease;
+}
+.qa svg { width: 15px; height: 15px; }
+.qa:active { transform: scale(.96); }
+.qa-desp { color: var(--red); }
+.qa-rec { color: #1f9d61; }
+.qa-tr { color: var(--blue); }
+.qa-desp:hover { border-color: var(--red); box-shadow: 0 4px 14px rgba(241, 65, 108, .16); }
+.qa-rec:hover { border-color: var(--green); box-shadow: 0 4px 14px rgba(80, 205, 137, .18); }
+.qa-tr:hover { border-color: var(--blue); box-shadow: 0 4px 14px rgba(114, 57, 234, .16); }
 
 /* Linha de filtro rotulada (extrato) */
 .filter-row { display: flex; align-items: center; gap: 10px; max-width: 100%; }
@@ -513,11 +572,52 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 .sheet-handle { width: 40px; height: 4px; border-radius: 2px; background: #dfe5ea; margin: -6px auto 14px; }
 
 .toast {
-  position: fixed; bottom: calc(96px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
+  position: fixed; bottom: calc(96px + env(safe-area-inset-bottom)); left: 50%;
   background: var(--paper); color: #fff;
-  padding: 10px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; z-index: 60;
-  box-shadow: 0 8px 30px rgba(24, 28, 50, .3); white-space: nowrap;
+  padding: 11px 20px; border-radius: 10px; font-size: 13px; font-weight: 600; z-index: 60;
+  box-shadow: 0 10px 34px rgba(24, 28, 50, .34); max-width: 90vw; text-align: center;
+  animation: toastIn .3s cubic-bezier(.22, 1, .36, 1);
 }
+.toast.t-ok { background: #1f9d61; }
+.toast.t-err { background: #d9214e; }
+.toast.t-info { background: #0072b8; }
+@keyframes toastIn {
+  from { opacity: 0; transform: translate(-50%, 16px) scale(.94); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+/* ---------- Animações: dão sentido às ações, sem enfeitar à toa ---------- */
+/* Entrada em cascata dos cards, para a tela "montar" em vez de piscar */
+.view > * { animation: cardIn .32s cubic-bezier(.22, 1, .36, 1) backwards; }
+.view > *:nth-child(1) { animation-delay: .02s; }
+.view > *:nth-child(2) { animation-delay: .06s; }
+.view > *:nth-child(3) { animation-delay: .10s; }
+.view > *:nth-child(4) { animation-delay: .14s; }
+.view > *:nth-child(5) { animation-delay: .18s; }
+.view > *:nth-child(n+6) { animation-delay: .22s; }
+@keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* Barras e anéis crescem a partir do zero — o dado "chega" */
+.bar > i { animation: barGrow .55s cubic-bezier(.22, 1, .36, 1); }
+@keyframes barGrow { from { width: 0 !important; } }
+.rank-bar > i { animation: barGrow .55s cubic-bezier(.22, 1, .36, 1) backwards; }
+.dn-arc { animation: arcIn .7s cubic-bezier(.22, 1, .36, 1) backwards; }
+@keyframes arcIn { from { opacity: 0; stroke-width: 0; } }
+.ch-bar { animation: colGrow .5s cubic-bezier(.22, 1, .36, 1) backwards; transform-origin: center bottom; }
+@keyframes colGrow { from { transform: scaleY(0); opacity: .3; } }
+
+/* Resposta ao toque: o elemento reage antes de a ação acontecer */
+.tx, .settings-item, .acc-row, .invoice-row { transition: transform .12s ease, background .15s ease, border-color .15s ease; }
+.tx:active, .settings-item:active, .acc-row:active { transform: scale(.985); }
+.chip, .btn, .icon-btn, .fab, .pay-btn { transition: transform .12s ease, background .16s ease, border-color .16s ease, color .16s ease; }
+.chip:active { transform: scale(.94); }
+.btn:active { transform: scale(.97); }
+.kpi { transition: transform .18s ease, box-shadow .18s ease; }
+.kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(76, 87, 125, .1); }
+
+/* Confirmação de sucesso: um pulso curto no elemento salvo */
+@keyframes pulseOk { 0% { box-shadow: 0 0 0 0 rgba(80, 205, 137, .5); } 100% { box-shadow: 0 0 0 14px rgba(80, 205, 137, 0); } }
+.pulse-ok { animation: pulseOk .7s ease-out; }
 
 hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .muted { color: var(--paper-dim); font-size: 12.5px; }

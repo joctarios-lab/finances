@@ -52,11 +52,18 @@ const fmtDay = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { 
 const fmtDate = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-function toast(msg) {
+// tipo: 'ok' (confirmação), 'err' (algo faltou), 'info' (neutro)
+function toast(msg, tipo) {
   const t = $('#toast');
-  t.textContent = msg; t.hidden = false;
+  const auto = /✓|criad|salv|registrad|paga|transferid|import|atualizad/i.test(msg) ? 'ok'
+    : /informe|escolha|falha|incorret|não |nao /i.test(msg) ? 'err' : 'info';
+  t.className = 'toast t-' + (tipo || auto);
+  t.textContent = msg;
+  t.hidden = false;
+  // reinicia a animação de entrada mesmo se o aviso anterior ainda estiver na tela
+  t.style.animation = 'none'; void t.offsetWidth; t.style.animation = '';
   clearTimeout(t._t);
-  t._t = setTimeout(() => { t.hidden = true; }, 2200);
+  t._t = setTimeout(() => { t.hidden = true; }, 2600);
 }
 
 function barClass(pct) { return pct >= 90 ? 'bar-red' : pct >= 70 ? 'bar-amber' : 'bar-green'; }
@@ -170,47 +177,77 @@ function render() {
 
 /* ---------- Gráficos SVG (sem bibliotecas, funcionam offline) ---------- */
 // Barras verticais com rótulos: series = [{label, value, hint?}], refLine opcional (ex: renda).
+/* Colunas de evolução no tempo. Série única: sem legenda (o título já diz o que é),
+   ênfase no período atual por TOM (não por opacidade) e rótulos só onde contam. */
 function svgBars(series, refLine, opts = {}) {
-  const W = 720, H = opts.height || 240, padB = 30, padT = 28, padL = 6, padR = 6;
-  const plotH = H - padB - padT;
-  const max = niceCeil(Math.max(refLine || 0, ...series.map(s => s.value), 1));
-  const bw = (W - padL - padR) / series.length;
+  const W = 760, H = opts.height || 250;
+  const padT = 34, padB = 34, padL = 46, padR = 12;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const valores = series.map(s => s.value);
+  const max = niceCeil(Math.max(refLine || 0, ...valores, 1));
+  const banda = plotW / series.length;
+  const larg = Math.min(24, banda - 10);          // marca fina: nunca preenche a faixa
   const y = v => padT + plotH - (v / max) * plotH;
-  const media = series.reduce((s, x) => s + x.value, 0) / (series.length || 1);
 
-  // Grade discreta com escala à esquerda (padrão Metronic)
+  const comGasto = valores.filter(v => v > 0);
+  const media = comGasto.length ? comGasto.reduce((a, b) => a + b, 0) / comGasto.length : 0;
+  const iMax = valores.indexOf(Math.max(...valores));
+  const iAtual = series.findIndex(s => s.hint === '#009ef7');
+
+  // Grade: hairline sólida, recessiva, com os valores à esquerda
   let grid = '';
   for (let i = 0; i <= 4; i++) {
-    const gy = y(max * i / 4);
-    grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '" class="ch-grid"/>';
-    if (i) grid += '<text x="' + padL + '" y="' + (gy - 5).toFixed(1) + '" class="ch-axis">' + fmtShort(max * i / 4).replace('R$', '').trim() + '</text>';
+    const v = max * i / 4, gy = y(v);
+    grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '" class="ch-grid"/>' +
+      '<text x="' + (padL - 10) + '" y="' + (gy + 4).toFixed(1) + '" text-anchor="end" class="ch-axis">' +
+      (v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(v)) + '</text>';
   }
 
-  let bars = '', labels = '';
+  // Referências: renda (teto) e média do período — linhas finas e sólidas
+  let refs = '';
+  if (media > 0) {
+    const my = y(media);
+    refs += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + my.toFixed(1) + '" y2="' + my.toFixed(1) + '" class="ch-avg"/>' +
+      '<text x="' + (W - padR) + '" y="' + (my - 7).toFixed(1) + '" text-anchor="end" class="ch-avg-lbl">média ' + fmtShort(media).replace('R$', '').trim() + '</text>';
+  }
+  if (refLine > 0 && refLine <= max) {
+    const ry = y(refLine);
+    refs += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + ry.toFixed(1) + '" y2="' + ry.toFixed(1) + '" class="ch-ref-line"/>' +
+      '<text x="' + (W - padR) + '" y="' + (ry - 7).toFixed(1) + '" text-anchor="end" class="ch-ref">renda ' + fmtShort(refLine).replace('R$', '').trim() + '</text>';
+  }
+
+  let marcas = '', rotulos = '', hits = '';
   series.forEach((s, i) => {
-    const h = s.value > 0 ? Math.max(4, (s.value / max) * plotH) : 0;
-    const larg = Math.min(40, bw * 0.58);
-    const cx = padL + i * bw + bw / 2;
-    const topo = padT + plotH - h;
-    const cor = s.hint || '#009ef7';
-    const forte = cor === '#009ef7';
-    bars += '<rect x="' + (cx - larg / 2).toFixed(1) + '" y="' + topo.toFixed(1) + '" width="' + larg.toFixed(1) +
-      '" height="' + h.toFixed(1) + '" rx="6" fill="' + cor + '" opacity="' + (forte ? 1 : 0.5) + '">' +
-      '<title>' + esc(s.label) + ': ' + fmt(s.value) + '</title></rect>';
-    if (s.value > 0 && (series.length <= 8 || forte || s.value >= media))
-      bars += '<text x="' + cx.toFixed(1) + '" y="' + (topo - 9).toFixed(1) + '" text-anchor="middle" class="ch-val">' +
+    const cx = padL + i * banda + banda / 2;
+    const topo = s.value > 0 ? y(s.value) : y(0);
+    const base = y(0);
+    const alt = Math.max(0, base - topo);
+    const atual = i === iAtual;
+    const x = cx - larg / 2, r = Math.min(4, alt);   // ponta arredondada, base reta
+
+    if (alt > 0) {
+      marcas += '<path d="M' + x.toFixed(1) + ' ' + base.toFixed(1) +
+        ' V' + (topo + r).toFixed(1) + ' Q' + x.toFixed(1) + ' ' + topo.toFixed(1) + ' ' + (x + r).toFixed(1) + ' ' + topo.toFixed(1) +
+        ' H' + (x + larg - r).toFixed(1) + ' Q' + (x + larg).toFixed(1) + ' ' + topo.toFixed(1) + ' ' + (x + larg).toFixed(1) + ' ' + (topo + r).toFixed(1) +
+        ' V' + base.toFixed(1) + ' Z" class="ch-bar' + (atual ? ' ch-bar-on' : '') + '"/>';
+    }
+
+    // Rótulo só no período atual e no maior valor — nunca em toda barra
+    if (s.value > 0 && (atual || i === iMax)) {
+      rotulos += '<text x="' + cx.toFixed(1) + '" y="' + (topo - 10).toFixed(1) + '" text-anchor="middle" class="ch-val">' +
         fmtShort(s.value).replace('R$', '').trim() + '</text>';
-    labels += '<text x="' + cx.toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle" class="ch-lbl' + (forte ? ' ch-lbl-on' : '') + '">' + esc(s.label) + '</text>';
+    }
+
+    rotulos += '<text x="' + cx.toFixed(1) + '" y="' + (H - 12) + '" text-anchor="middle" class="ch-lbl' + (atual ? ' ch-lbl-on' : '') + '">' + esc(s.label) + '</text>';
+
+    // Alvo de hover maior que a marca, cobrindo a faixa inteira
+    hits += '<rect x="' + (padL + i * banda).toFixed(1) + '" y="' + padT + '" width="' + banda.toFixed(1) + '" height="' + plotH +
+      '" fill="transparent" class="ch-hit"><title>' + esc(s.label) + ': ' + fmt(s.value) + '</title></rect>';
   });
 
-  let ref = '';
-  if (refLine > 0) {
-    const ry = y(refLine);
-    ref = '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + ry.toFixed(1) + '" y2="' + ry.toFixed(1) + '" class="ch-ref-line"/>' +
-      '<rect x="' + (W - 96) + '" y="' + (ry - 19).toFixed(1) + '" width="90" height="17" rx="8" class="ch-ref-pill"/>' +
-      '<text x="' + (W - 51) + '" y="' + (ry - 6).toFixed(1) + '" text-anchor="middle" class="ch-ref">renda ' + fmtShort(refLine).replace('R$', '').trim() + '</text>';
-  }
-  return '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img">' + grid + ref + bars + labels + '</svg>';
+  const baseline = '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y(0).toFixed(1) + '" y2="' + y(0).toFixed(1) + '" class="ch-base"/>';
+  return '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Evolução dos gastos por período">' +
+    grid + refs + baseline + marcas + rotulos + hits + '</svg>';
 }
 
 // Arredonda o topo da escala para um número redondo — deixa a grade legível
@@ -630,12 +667,12 @@ function renderExtrato(period) {
       ? `${esc((DB.get('accounts', t.account_id) || {}).name || '?')} → ${esc((DB.get('accounts', t.to_account) || {}).name || '?')}`
       : '';
     list += `<div class="tx ${DB.isNeutral(t) ? 'tx-adj' : ''}" data-tx="${t.id}">
-      <span class="tx-ico">${isTr ? '⇄' : t.adjustment ? '⚖️' : isExp ? esc(c ? c.icon : '🧾') : '💵'}</span>
+      <span class="tx-ico ${isTr ? 'i-transfer' : !isExp && !t.adjustment ? 'i-receita' : ''}">${isTr ? '⇄' : t.adjustment ? '⚖️' : isExp ? esc(c ? c.icon : '🧾') : '💵'}</span>
       <span class="tx-info"><span class="tx-name">${esc(t.description)}</span>
       <span class="tx-meta">${isTr ? `Transferência · ${rota}`
         : t.adjustment ? 'Conciliação — fora das análises · toque para classificar'
         : `${isExp ? esc(c ? c.name : 'Sem categoria') : 'Receita'} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}`}</span></span>
-      <span class="tx-amount ${isTr ? '' : !isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${isTr ? '' : isExp ? '' : '+ '}${fmt(t.amount)}</span>
+      <span class="tx-amount ${isTr ? 'transfer' : !isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${isTr ? '' : isExp ? '− ' : '+ '}${fmt(t.amount)}</span>
       ${t.status === 'A Pagar' ? `<button class="pay-btn" data-pay-tx="${t.id}" title="Marcar como ${isExp ? 'pago' : 'recebido'}"><span data-ico="check"></span></button>` : ''}
     </div>`;
   }
@@ -655,6 +692,11 @@ function renderExtrato(period) {
       <div class="card"><small>${isCurrent ? 'Projeção' : 'Total'}</small><b>${fmtShort(isCurrent ? st.projection : st.spent)}</b></div>
     </div>
     <input id="tx-search" type="search" placeholder="🔎 Buscar no período…" autocomplete="off" style="margin-bottom:2px">
+    <div class="quick-add">
+      <button class="qa qa-desp" data-novo="Despesa"><span data-ico="plus"></span>Despesa</button>
+      <button class="qa qa-rec" data-novo="Receita"><span data-ico="plus"></span>Receita</button>
+      <button class="qa qa-tr" data-novo="Transferência"><span data-ico="sync"></span>Transferir</button>
+    </div>
     <div class="filter-row">
       <span class="filter-lbl">Âmbito</span>
       <div class="chips" id="scope-chips">
@@ -1027,6 +1069,11 @@ function bindView() {
   };
   v.querySelectorAll('#scope-chips .chip').forEach(ch => ch.onclick = () => { state.filter = ch.dataset.f; render(); });
   v.querySelectorAll('#member-chips .chip').forEach(ch => ch.onclick = () => { state.memberFilter = ch.dataset.m; render(); });
+  v.querySelectorAll('[data-novo]').forEach(b => b.onclick = () => openTxSheet({
+    type: b.dataset.novo, date: todayISO(), description: '', amount: '',
+    status: 'Pago', method: b.dataset.novo === 'Transferência' ? 'Transferência' : 'PIX',
+    scope: 'Família', member: MEMBRO_COMUM,
+  }, true));
 
   // Ação rápida: marcar um "A Pagar" como pago (ajusta o saldo da conta)
   v.querySelectorAll('[data-pay-tx]').forEach(b => b.onclick = e => {
@@ -1332,7 +1379,10 @@ function openTxSheet(tx, asNew) {
   };
   setCategory(tx.category_id);
 
-  bindChips('g-type', v => { applyType(v); applyMethod(chipValue('g-method')); });
+  // A folha inteira veste a cor do tipo escolhido (faixa, valor e botão salvar)
+  const pintarTipo = v => { $('#sheet').dataset.tipo = v || 'Despesa'; };
+  bindChips('g-type', v => { pintarTipo(v); applyType(v); applyMethod(chipValue('g-method')); });
+  pintarTipo(tx.type || 'Despesa');
   bindChips('g-scope', applyScope);
   bindChips('g-method', v => { methodManual = true; applyMethod(v); });
   applyType(tx.type || 'Despesa');
