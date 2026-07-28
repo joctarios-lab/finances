@@ -68,7 +68,7 @@ eval(appSrc + `; Object.assign(global, {
   state, fmt, fmtShort, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
-  Voltar, setTab, closeSheet, toast, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
+  Voltar, setTab, closeSheet, toast, optionsCategorias, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -337,8 +337,21 @@ console.log('\n=== Subcategorias nas telas ===');
   const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   // O formulário não pode oferecer o envelope como atalho: o gasto cairia no
   // nível de cima e o detalhe nunca aconteceria
-  check('formulário lista só folhas', /const cats = DB\.leafCategories\(\)/.test(ap), true);
-  check('dropdown mostra o caminho inteiro', /DB\.categoryPath\(c\.id\)/.test(ap), true);
+  // O dropdown agrupa por envelope (optgroup) em vez de repetir "Alimentação › "
+  // em cada linha; o UI desenha optgroup como cabeçalho de grupo.
+  const html = optionsCategorias(null);
+  const alimento2 = cat('Aliment');
+  check('opções vêm agrupadas por envelope', /<optgroup label="[^"]*Alimenta/.test(html), true);
+  check('a subcategoria aparece só com o próprio nome', /<option value="[^"]*">Mercado<\/option>/.test(html), true);
+  check('o envelope não é opção selecionável', new RegExp(`<option value="${alimento2.id}"`).test(html), false);
+  check('todas as folhas estão no dropdown',
+    (html.match(/<option /g) || []).length, DB.leafCategories().length);
+  check('envelope sem subcategoria fica em grupo próprio',
+    !DB.rootCategories().some(r => !DB.subcategoriesOf(r.id).length) || html.includes('Sem subcategorias'), true);
+  const marcado = optionsCategorias(DB.subcategoriesOf(alimento2.id)[0].id);
+  check('a categoria escolhida vem marcada', (marcado.match(/selected/g) || []).length, 1);
+  check('formulário e OFX usam o mesmo gerador',
+    (ap.match(/optionsCategorias\(/g) || []).length >= 3, true);
   check('chips das 3 mais usadas só consideram folhas', /const folhas = DB\.leafCategories\(\)/.test(ap), true);
   check('adivinhação recebe a lista completa (precisa dos pais)', ap.includes('OFX.guessCategoryId(texto, DB.all(\'categories\'))'), true);
   check('extrato mostra o caminho', /esc\(c \? DB\.categoryPath\(t\.category_id\) : 'Sem categoria'\)/.test(ap), true);
@@ -822,6 +835,41 @@ try {
 /* ---- Nome de transação não pode ser cortado ----
    Extrato de banco traz descrição longa; truncada, duas compras diferentes viram
    a mesma linha na tela. O teste vale para toda tela que lista lançamento. */
+/* ---- Todo select passa pelo componente estilo Select2 ----
+   O enhance roda em openSheet/openModal. Trecho montado por innerHTML DEPOIS que a
+   tela abriu não é alcançado — foi o caso do preview do OFX, que ficou com selects
+   nativos por meses. O teste cobra o enhance em cada ponto desses. */
+console.log('\n=== Selects no padrão Select2 ===');
+{
+  const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const ui = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
+  const cssU = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+
+  check('openSheet aplica o componente', /function openSheet[\s\S]{0,400}UI\.enhance\(sheet\)/.test(ap), true);
+  check('openModal aplica o componente', /function openModal[\s\S]{0,300}UI\.enhance\(\$\('#modal'\)\)/.test(ap), true);
+  check('preview do OFX aplica o componente', ap.includes("UI.enhance($('#ofx-result'))"), true);
+
+  // Qualquer innerHTML que crie <select> precisa de enhance depois
+  const semEnhance = [];
+  for (const m of ap.matchAll(/\$\('#([\w-]+)'\)\.innerHTML = `([\s\S]*?)`;/g)) {
+    if (!m[2].includes('<select')) continue;
+    const depois = ap.slice(m.index + m[0].length, m.index + m[0].length + 900);
+    if (!/UI\.enhance/.test(depois)) semEnhance.push('#' + m[1]);
+  }
+  check('nenhum innerHTML deixa select sem componente', semEnhance.length ? semEnhance.join(', ') : true, true);
+
+  // Busca só aparece em lista longa; em lista curta seria ruído
+  check('busca aparece só em lista longa', /const comBusca = opcoes\.length > \d/.test(ui), true);
+  check('busca encontra pelo nome do grupo', /norm\(o\.grupo\)\.includes\(f\)/.test(ui), true);
+  check('grupos têm cabeçalho próprio', ui.includes('class="ui-group"') && /\.ui-group \{/.test(cssU), true);
+  check('o select nativo continua sendo a fonte da verdade', ui.includes("sel.dispatchEvent(new Event('change'"), true);
+
+  // O painel é posicionado em relação ao campo: contêiner com overflow o cortaria
+  check('lista do OFX não tem rolagem própria', /\.ofx-list \{[^}]*overflow-y/.test(cssU), false);
+  check('botão de importar fica fixo no rodapé', /\.ofx-acoes \{[^}]*position: sticky/.test(cssU), true);
+  check('o componente ocupa a largura da célula', /\.ofx-cat \.ui-select \{[^}]*width: 100%/.test(cssU), true);
+}
+
 console.log('\n=== Nome do lançamento nunca é cortado ===');
 {
   const cssT = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
@@ -940,14 +988,46 @@ console.log('\n=== Puxar para atualizar desligado ===');
   check('rolagem do modal não vaza para a página', /\.modal \{[^}]*overscroll-behavior:\s*contain/.test(cssP), true);
 }
 
-console.log('\n=== Memória da navegação ===');
-state.tab = 'relatorios'; state.monthOffset = -2; state.memberFilter = 'Joctã';
-persistUI();
-state.tab = 'inicio'; state.monthOffset = 0; state.memberFilter = 'Todos';
-restoreUI();
-check('recarregar volta para a mesma aba', state.tab, 'relatorios');
-check('recarregar mantém o mês em análise', state.monthOffset, -2);
-check('recarregar mantém o filtro de membro', state.memberFilter, 'Joctã');
+/* ---- Voltar para uma tela devolve o estado inicial ----
+   Mês antigo esquecido na tela leva a ler o saldo errado, então mês e filtros são
+   transitórios: zeram ao trocar de tela e ao abrir o app. A aba continua lembrada. */
+console.log('\n=== Voltar para a tela zera o estado ===');
+{
+  // Trocar de tela: o que o usuário havia ajustado na anterior não sobrevive
+  setTab('extrato');
+  state.monthOffset = -3; state.memberFilter = 'Joctã'; state.filter = 'A Pagar';
+  setTab('cartoes');
+  check('trocar de tela zera o mês', state.monthOffset, 0);
+  check('trocar de tela zera o filtro de membro', state.memberFilter, 'Todos');
+  check('trocar de tela zera o filtro de situação', state.filter, 'Todos');
+  setTab('inicio');
+  state.monthOffset = -5;
+  setTab('extrato'); setTab('inicio');
+  check('voltar ao painel mostra o mês corrente', state.monthOffset, 0);
+
+  // Redesenho da MESMA tela não pode perder o que está sendo olhado
+  setTab('extrato');
+  state.monthOffset = -2; state.memberFilter = 'Joctã';
+  setTab('extrato');                       // é o que a sincronização faz ao trazer dado novo
+  check('redesenhar a mesma tela preserva o mês', state.monthOffset, -2);
+  check('redesenhar a mesma tela preserva o filtro', state.memberFilter, 'Joctã');
+
+  // Reabrir o app: lembra a aba, esquece mês e filtros
+  state.tab = 'relatorios'; state.monthOffset = -4; state.memberFilter = 'Joctã'; state.repOffset = -1;
+  persistUI();
+  restoreUI();
+  check('reabrir volta para a mesma aba', state.tab, 'relatorios');
+  check('reabrir mostra o mês corrente', state.monthOffset, 0);
+  check('reabrir esquece o filtro de membro', state.memberFilter, 'Todos');
+  check('reabrir esquece o mês do relatório', state.repOffset, 0);
+
+  const gravado = JSON.parse(store['financas.ui.v1']);
+  check('só a aba é gravada', Object.keys(gravado).join(','), 'tab');
+  const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('não grava mais a cada rolagem', /addEventListener\('scroll'[\s\S]{0,120}persistUI/.test(ap), false);
+  check('volta ao topo ao trocar de tela', /if \(trocou\) \{[\s\S]{0,140}scrollTo\(0, 0\)/.test(ap), true);
+  setTab('inicio');
+}
 
 /* ---- O banco do Supabase aceita tudo o que o app envia? ---- */
 console.log('\n=== Schema do Supabase x payload do app ===');

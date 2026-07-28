@@ -400,8 +400,19 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .ofx-val { grid-column: 3; grid-row: 1; font-weight: 700; font-size: 13px; white-space: nowrap; text-align: right; }
 .ofx-cat { grid-column: 2 / -1; grid-row: 2; min-width: 0; }
 .ofx-cat select { width: 100%; padding: 6px 8px; font-size: 12px; }
-.ofx-cat .muted { font-size: 11.5px; }
-.ofx-list { max-height: 46vh; overflow-y: auto; margin: 10px 0; }
+/* Depois do UI.enhance quem aparece é o .ui-select; o nativo fica escondido atrás */
+.ofx-cat .ui-select { width: 100%; }
+.ofx-cat .ui-select-btn { padding: 7px 10px; font-size: 12.5px; min-height: 36px; }
+.ofx-cat > .muted { font-size: 11.5px; }
+/* Sem rolagem própria: o painel do select é posicionado em relação ao campo, e um
+   contêiner com overflow cortaria o dropdown das últimas linhas. Quem rola é o
+   modal, e o botão de importar fica fixo no rodapé para não ficar longe. */
+.ofx-list { margin: 10px 0; }
+.ofx-acoes {
+  position: sticky; bottom: 0; z-index: 2;
+  background: var(--ink); padding: 12px 0 2px;
+  border-top: 1px solid var(--line); margin-top: 8px;
+}
 .ofx-dup { opacity: .5; }
 
 .month-nav { display: flex; align-items: center; justify-content: space-between; }

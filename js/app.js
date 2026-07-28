@@ -9,7 +9,14 @@ const PALETTE = ['#009ef7', '#50cd89', '#7239ea', '#f1416c', '#ffc700', '#43ced7
 
 let state = { tab: 'inicio', monthOffset: 0, filter: 'Todos', memberFilter: 'Todos', repOffset: 0 };
 
-/* ---------- Memória da navegação: recarregar volta para onde você estava ---------- */
+/* Estado de dentro da tela: mês em análise, filtros, aba de relatório.
+   É transitório de propósito. Ver março e voltar depois achando que é o mês
+   corrente leva a conclusão errada sobre o dinheiro — o risco é grande e o custo
+   de reabrir o mês antigo é um toque. Zera ao trocar de tela e ao abrir o app. */
+const ESTADO_DA_TELA = { monthOffset: 0, filter: 'Todos', memberFilter: 'Todos', repOffset: 0 };
+function zerarEstadoDaTela() { Object.assign(state, ESTADO_DA_TELA); }
+
+/* ---------- Memória da navegação: recarregar volta para a mesma aba ---------- */
 const UI_KEY = 'financas.ui.v1';
 const TABS = ['inicio', 'extrato', 'cartoes', 'metas', 'relatorios'];
 const TITULOS = {
@@ -17,26 +24,19 @@ const TITULOS = {
   metas: 'Metas', relatorios: 'Relatórios',
 };
 
+// Só a aba é lembrada. Mês e filtros ficam de fora por escolha: reabrir o app
+// num mês antigo é justamente o que faz alguém ler o saldo errado.
 function persistUI() {
   try {
-    localStorage.setItem(UI_KEY, JSON.stringify({
-      tab: state.tab, monthOffset: state.monthOffset, filter: state.filter,
-      memberFilter: state.memberFilter, repOffset: state.repOffset,
-      scrollY: Math.round(window.scrollY || 0),
-    }));
+    localStorage.setItem(UI_KEY, JSON.stringify({ tab: state.tab }));
   } catch (_) {}
 }
 
 function restoreUI() {
+  zerarEstadoDaTela();
   try {
     const s = JSON.parse(localStorage.getItem(UI_KEY));
-    if (!s) return;
-    if (TABS.includes(s.tab)) state.tab = s.tab;
-    state.monthOffset = Number(s.monthOffset) || 0;
-    state.filter = s.filter || 'Todos';
-    state.memberFilter = s.memberFilter || 'Todos';
-    state.repOffset = Number(s.repOffset) || 0;
-    state._scrollY = Number(s.scrollY) || 0;
+    if (s && TABS.includes(s.tab)) state.tab = s.tab;
   } catch (_) {}
 }
 
@@ -148,7 +148,15 @@ function catLabel(id) { const c = catOf(id); return c ? `${DB.categoryIcon(id)} 
 
 /* ---------- Navegação ---------- */
 function setTab(tab) {
+  // Sair da tela e voltar devolve o estado inicial: mês corrente, sem filtro,
+  // e do começo da página. Só zera em troca real, para não perder o lugar quando
+  // a própria tela se redesenha (sincronização, salvar um lançamento).
+  const trocou = state.tab !== tab;
   state.tab = tab;
+  if (trocou) {
+    zerarEstadoDaTela();
+    if (typeof scrollTo === 'function') scrollTo(0, 0);
+  }
   document.querySelectorAll('.tab, .side-item[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   render();
 }
@@ -171,11 +179,6 @@ function render() {
   if (typeof UI !== 'undefined') UI.enhance($('#view'));
   bindView();
   persistUI();
-  if (state._scrollY) {   // primeira renderização após recarregar: volta ao ponto de leitura
-    const y = state._scrollY;
-    delete state._scrollY;
-    requestAnimationFrame(() => window.scrollTo(0, y));
-  }
 }
 
 /* ---------- Gráficos SVG (sem bibliotecas, funcionam offline) ---------- */
@@ -1251,9 +1254,6 @@ function openTxSheet(tx, asNew) {
   const isEdit = !!tx && !asNew;
   const orig = isEdit ? { ...tx } : null;   // p/ reverter efeito no saldo ao editar/excluir
   tx = tx || { description: '', amount: '', date: todayISO(), scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', status: 'Pago', category_id: '', account_id: '', card_id: '' };
-  // Só folhas, ordenadas pelo caminho: digitar "mercado" acha, e fica visível
-  // de qual envelope aquilo sai. Classificar no envelope deixaria o detalhe vazio.
-  const cats = DB.leafCategories().sort((a, b) => DB.categoryPath(a.id).localeCompare(DB.categoryPath(b.id), 'pt-BR'));
   const cards = DB.all('cards').filter(c => c.active !== false);
   const accounts = DB.all('accounts').filter(a => a.active !== false);
   const pessoas = DB.settings().members;
@@ -1280,7 +1280,7 @@ function openTxSheet(tx, asNew) {
       </div>
       <select id="f-cat-more" hidden style="margin-top:8px">
         <option value="">— escolha a categoria —</option>
-        ${cats.map(c => `<option value="${c.id}">${esc(DB.categoryIcon(c.id))} ${esc(DB.categoryPath(c.id))}</option>`).join('')}
+        ${optionsCategorias(tx.category_id)}
       </select>
     </div>
     <div class="row2">
@@ -2242,6 +2242,27 @@ function openConfigSection(sec) {
   }
 }
 
+/* Opções de categoria agrupadas por envelope, no formato que o UI desenha como
+   cabeçalho de grupo. Melhor que repetir "Alimentação › " em cada linha: o nome
+   do envelope aparece uma vez, e a busca do painel também procura por ele.
+   Folha sem envelope (categoria simples) fica solta no fim, sem cabeçalho. */
+function optionsCategorias(selecionado) {
+  const opcao = (c, rotulo) =>
+    `<option value="${c.id}"${selecionado === c.id ? ' selected' : ''}>${esc(rotulo)}</option>`;
+  const soltas = [], grupos = [];
+  for (const raiz of DB.rootCategories().sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))) {
+    const filhas = DB.subcategoriesOf(raiz.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    if (!filhas.length) { soltas.push(raiz); continue; }   // envelope sem detalhe é ele mesmo a folha
+    grupos.push(`<optgroup label="${esc(raiz.icon)} ${esc(raiz.name)}">${
+      filhas.map(f => opcao(f, f.name)).join('')}</optgroup>`);
+  }
+  const semGrupo = soltas.length
+    ? `<optgroup label="Sem subcategorias">${
+        soltas.map(c => opcao(c, `${c.icon} ${c.name}`)).join('')}</optgroup>`
+    : '';
+  return grupos.join('') + semGrupo;
+}
+
 /* ---------- Convite para a família ----------
    O código é o que permite o cônjuge ver os mesmos lançamentos. Ficava só na tela
    de Sincronização, em cinza pequeno, e quem não o copiasse na hora do cadastro
@@ -2550,8 +2571,6 @@ function openOfxImport() {
 
 function renderOfxPreview(parsed, accounts, cards) {
   const cats = DB.all('categories');   // com os pais: a adivinhação depende deles
-  // No seletor de cada linha vão só as folhas, com o caminho, como no formulário
-  const folhas = DB.leafCategories().sort((a, b) => DB.categoryPath(a.id).localeCompare(DB.categoryPath(b.id), 'pt-BR'));
   const novos = parsed.txs.filter(t => !DB.hasFitid(t.fitid));
   const dups = parsed.txs.length - novos.length;
   const destOpts = `
@@ -2568,7 +2587,7 @@ function renderOfxPreview(parsed, accounts, cards) {
       <span class="ofx-main"><b>${esc(t.memo)}</b><small>${fmtDay(t.date)} · ${isExp ? 'saída' : 'entrada'}</small></span>
       <span class="ofx-val ${isExp ? '' : 'txt-green'}">${isExp ? '' : '+'}${fmtShort(Math.abs(t.amount))}</span>
       <span class="ofx-cat">${isExp
-        ? `<select data-cat="${i}"><option value="">Sem categoria</option>${folhas.map(c => `<option value="${c.id}" ${guess === c.id ? 'selected' : ''}>${esc(DB.categoryIcon(c.id))} ${esc(DB.categoryPath(c.id))}</option>`).join('')}</select>`
+        ? `<select data-cat="${i}"><option value="">Sem categoria</option>${optionsCategorias(guess)}</select>`
         : '<span class="muted">receita — entra sem categoria</span>'}</span>
     </div>`;
   }).join('');
@@ -2588,10 +2607,13 @@ function renderOfxPreview(parsed, accounts, cards) {
         <button class="btn ghost" id="ofx-none">Desmarcar todos</button>
       </div>
       <div class="ofx-list">${rows}</div>
-      <button class="btn" id="ofx-go">Importar selecionados</button>
+      <div class="ofx-acoes"><button class="btn" id="ofx-go">Importar selecionados</button></div>
     `}`;
 
   if (!novos.length) return;
+  // Este trecho é montado depois que o modal já abriu, então o UI.enhance do
+  // openModal não o alcançou: os selects daqui ficavam nativos, sem busca.
+  if (typeof UI !== 'undefined') UI.enhance($('#ofx-result'));
   const boxes = () => document.querySelectorAll('#ofx-result [data-i]');
   $('#ofx-all').onclick = () => boxes().forEach(b => { b.checked = true; });
   $('#ofx-none').onclick = () => boxes().forEach(b => { b.checked = false; });
@@ -2844,11 +2866,6 @@ function refreshUserChip() {
 refreshUserChip();
 paintIcons();   // ícones do shell estático (sidebar, topbar, tabbar)
 
-let scrollTimer;
-window.addEventListener('scroll', () => {
-  clearTimeout(scrollTimer);
-  scrollTimer = setTimeout(persistUI, 250);
-}, { passive: true });
 window.addEventListener('beforeunload', persistUI);
 
 Notif.load();

@@ -71,7 +71,9 @@ const UI = {
       const f = this.norm(filtro);
       let html = '', grupoAtual = '', visiveis = 0;
       opcoes.forEach((o, i) => {
-        if (f && !this.norm(o.label).includes(f)) return;
+        // Busca também pelo nome do grupo: com as categorias agrupadas, a opção
+        // se chama só "Mercado", e procurar por "alimentação" tem de encontrá-la.
+        if (f && !this.norm(o.label).includes(f) && !this.norm(o.grupo).includes(f)) return;
         if (o.grupo && o.grupo !== grupoAtual) { grupoAtual = o.grupo; html += `<div class="ui-group">${this.esc(o.grupo)}</div>`; }
         const sel_ = o.value === sel.value;
         html += `<div class="ui-opt${sel_ ? ' is-sel' : ''}${i === marcado ? ' is-mark' : ''}${o.disabled ? ' is-off' : ''}"
