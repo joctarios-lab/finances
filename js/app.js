@@ -64,10 +64,63 @@ function setTab(tab) {
 function render() {
   const period = DB.monthPeriod(new Date(), state.tab === 'extrato' ? state.monthOffset : 0);
   $('#topbar-month').textContent = DB.monthPeriod(new Date()).label;
-  const views = { inicio: renderInicio, extrato: renderExtrato, cartoes: renderCartoes, metas: renderMetas };
+  const views = { inicio: renderInicio, extrato: renderExtrato, cartoes: renderCartoes, metas: renderMetas, relatorios: renderRelatorios };
   $('#view').innerHTML = views[state.tab](period);
   paintIcons($('#view'));
   bindView();
+}
+
+/* ---------- Gráficos SVG (sem bibliotecas, funcionam offline) ---------- */
+// Barras verticais com rótulos: series = [{label, value, hint?}], refLine opcional (ex: renda).
+function svgBars(series, refLine) {
+  const W = 560, H = 190, padB = 26, padT = 18;
+  const max = Math.max(refLine || 0, ...series.map(s => s.value), 1) * 1.08;
+  const bw = W / series.length;
+  let bars = '', labels = '';
+  series.forEach((s, i) => {
+    const h = Math.max(2, (s.value / max) * (H - padB - padT));
+    const x = i * bw + bw * 0.18, y = H - padB - h;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${(bw * 0.64).toFixed(1)}" height="${h.toFixed(1)}" rx="5" fill="${s.hint || '#009ef7'}" opacity="0.9"/>`;
+    if (s.value > 0) bars += `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${(y - 6).toFixed(1)}" text-anchor="middle" class="ch-val">${fmtShort(s.value).replace(/ /g, ' ')}</text>`;
+    labels += `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle" class="ch-lbl">${esc(s.label)}</text>`;
+  });
+  let ref = '';
+  if (refLine > 0) {
+    const ry = H - padB - (refLine / max) * (H - padB - padT);
+    ref = `<line x1="0" x2="${W}" y1="${ry.toFixed(1)}" y2="${ry.toFixed(1)}" stroke="#f1416c" stroke-dasharray="5 4" stroke-width="1.5"/>
+           <text x="${W - 4}" y="${(ry - 5).toFixed(1)}" text-anchor="end" class="ch-ref">renda</text>`;
+  }
+  return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img">${ref}${bars}${labels}</svg>`;
+}
+
+// Burn-up do mês: gasto acumulado dia a dia vs. linha ideal do orçamento/renda.
+function svgBurnup(period, refLimit) {
+  const W = 560, H = 170, padB = 20, padT = 12;
+  const total = DB.periodDays(period), elapsed = DB.elapsedDays(period);
+  const daily = new Array(total).fill(0);
+  for (const t of DB.txOfPeriod(period)) {
+    const idx = Math.min(total - 1, Math.max(0, Math.floor((new Date(t.date + 'T12:00:00') - period.start) / 86400000)));
+    daily[idx] += Number(t.amount) || 0;
+  }
+  let acc = 0;
+  const cum = daily.map(v => (acc += v));
+  const spentNow = elapsed > 0 ? cum[Math.max(0, elapsed - 1)] : 0;
+  const max = Math.max(refLimit || 0, cum[total - 1], spentNow, 1) * 1.1;
+  const X = i => (i / (total - 1)) * W;
+  const Y = v => H - padB - (v / max) * (H - padB - padT);
+  let path = '';
+  for (let i = 0; i < Math.max(1, elapsed); i++) path += `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(cum[i]).toFixed(1)}`;
+  let ideal = '';
+  if (refLimit > 0) ideal = `<line x1="${X(0)}" y1="${Y(0)}" x2="${X(total - 1)}" y2="${Y(refLimit).toFixed(1)}" stroke="#7e8299" stroke-dasharray="5 4" stroke-width="1.5"/>`;
+  const dotX = X(Math.max(0, elapsed - 1)), dotY = Y(spentNow);
+  return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img">
+    ${ideal}
+    <path d="${path}" fill="none" stroke="#009ef7" stroke-width="2.5" stroke-linejoin="round"/>
+    <circle cx="${dotX.toFixed(1)}" cy="${dotY.toFixed(1)}" r="4" fill="#009ef7"/>
+    <text x="${Math.min(W - 4, dotX + 8).toFixed(1)}" y="${Math.max(12, dotY - 8).toFixed(1)}" class="ch-val" text-anchor="${dotX > W - 90 ? 'end' : 'start'}">${fmtShort(spentNow).replace(/ /g, ' ')}</text>
+    <text x="4" y="${H - 6}" class="ch-lbl">dia 1</text>
+    <text x="${W - 4}" y="${H - 6}" text-anchor="end" class="ch-lbl">dia ${total}</text>
+  </svg>`;
 }
 
 /* ---------- Situação financeira (conceitos: disponível real, run-rate, 50/30/20, reserva) ---------- */
@@ -231,6 +284,22 @@ function renderInicio(period) {
       ${projCard}
       ${reserveCard}
     </div>
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><div><b>Evolução dos gastos</b><small>últimos 6 períodos${income > 0 ? ' · linha tracejada = renda' : ''}</small></div></div>
+        ${svgBars(
+          Array.from({ length: 6 }, (_, i) => {
+            const p = DB.monthPeriod(new Date(), i - 5);
+            const v = DB.txOfPeriod(p).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+            return { label: p.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', ''), value: v, hint: i === 5 ? '#009ef7' : '#a6d9f7' };
+          }), income)}
+      </div>
+      <div class="card">
+        <div class="card-head"><div><b>Ritmo do mês</b><small>gasto acumulado vs. trilha ideal do ${income > 0 ? 'da renda' : 'orçamento'}</small></div></div>
+        ${svgBurnup(period, refLimit)}
+        <p class="muted" style="margin-top:4px">Se a linha azul cruzar a tracejada antes do fim do mês, o limite estoura.</p>
+      </div>
+    </div>
     ${rule5030}
     <div class="grid-2">
       <div class="card">
@@ -243,6 +312,7 @@ function renderInicio(period) {
       </div>
     </div>
     ${venc ? `<p class="section-title">Próximos vencimentos</p>${venc}` : ''}
+    <button class="btn ghost" id="go-reports" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="pie"></span>Ver relatórios completos</button>
   `;
 }
 
@@ -384,6 +454,106 @@ function renderMetas() {
   return html;
 }
 
+/* ---------- Relatórios ---------- */
+function renderRelatorios() {
+  const period = DB.monthPeriod(new Date(), state.repOffset || 0);
+  const prev = DB.monthPeriod(new Date(), (state.repOffset || 0) - 1);
+  const txs = DB.txOfPeriod(period);
+  const total = txs.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const prevByCat = DB.spentByCategory(prev);
+  const byCat = DB.spentByCategory(period);
+  const income = Number(DB.settings().monthly_income) || 0;
+
+  // 1) Comparativo por categoria (mês vs anterior, com variação)
+  let catRows = '';
+  const catIds = [...new Set([...Object.keys(byCat), ...Object.keys(prevByCat)])]
+    .sort((a, b) => (byCat[b] || 0) - (byCat[a] || 0));
+  for (const cid of catIds) {
+    const cur = byCat[cid] || 0, ant = prevByCat[cid] || 0;
+    const delta = ant > 0 ? Math.round((cur - ant) / ant * 100) : (cur > 0 ? null : 0);
+    const deltaTxt = delta === null ? '<span class="muted">novo</span>'
+      : delta === 0 ? '<span class="muted">=</span>'
+      : `<span class="${delta > 0 ? 'txt-red' : 'txt-green'}">${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)}%</span>`;
+    catRows += `<tr><td>${esc(catLabel(cid === '_sem' ? null : cid))}</td>
+      <td class="num">${fmtShort(cur)}</td><td class="num muted">${fmtShort(ant)}</td><td>${deltaTxt}</td></tr>`;
+  }
+
+  // 2) Por membro e por método (barras horizontais reutilizando .bar)
+  const groupSum = key => {
+    const out = {};
+    for (const t of txs) { const k = t[key] || '—'; out[k] = (out[k] || 0) + (Number(t.amount) || 0); }
+    return Object.entries(out).sort((a, b) => b[1] - a[1]);
+  };
+  const hb = entries => entries.map(([name, v]) => {
+    const pct = total > 0 ? Math.round(v / total * 100) : 0;
+    return `<div class="budget-row"><div class="budget-head"><b>${esc(name)}</b><span class="num">${fmtShort(v)} <span class="muted">· ${pct}%</span></span></div>
+      <div class="bar bar-green"><i style="width:${pct}%;background:#009ef7"></i></div></div>`;
+  }).join('') || '<div class="empty">Sem dados no período.</div>';
+
+  // 3) Maiores gastos
+  const top = [...txs].sort((a, b) => (b.amount || 0) - (a.amount || 0)).slice(0, 10)
+    .map(t => `<tr><td>${esc(t.description)}<br><small class="muted">${fmtDay(t.date)} · ${esc(catLabel(t.category_id))}</small></td>
+      <td class="num">${fmt(t.amount)}</td></tr>`).join('');
+
+  // 4) Custos fixos (recorrentes)
+  const rec = DB.all('transactions').filter(t => t.recurring);
+  const recSeen = {}; // um por descrição (último valor)
+  for (const t of [...rec].sort((a, b) => a.date.localeCompare(b.date))) recSeen[t.description.toLowerCase()] = t;
+  const recList = Object.values(recSeen);
+  const recTotal = recList.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const recRows = recList.sort((a, b) => (b.amount || 0) - (a.amount || 0))
+    .map(t => `<tr><td>${esc(t.description)}</td><td class="num">${fmt(t.amount)}</td></tr>`).join('');
+
+  // 5) Evolução 12 meses
+  const evo12 = Array.from({ length: 12 }, (_, i) => {
+    const p = DB.monthPeriod(new Date(), i - 11);
+    return { label: p.start.toLocaleDateString('pt-BR', { month: 'narrow' }), value: DB.txOfPeriod(p).reduce((s, t) => s + (Number(t.amount) || 0), 0), hint: i === 11 ? '#009ef7' : '#a6d9f7' };
+  });
+
+  return `
+    <div class="card month-nav">
+      <button id="rep-prev" aria-label="Mês anterior" data-ico="chevL"></button>
+      <b>Relatórios · ${period.label}</b>
+      <button id="rep-next" aria-label="Próximo mês" data-ico="chevR"></button>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><b>Evolução — 12 meses</b><small>gasto total por período${income > 0 ? ' · tracejada = renda' : ''}</small></div></div>
+      ${svgBars(evo12, income)}
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><b>Categorias — comparativo</b><small>${period.label} vs. período anterior</small></div></div>
+      <div class="table-wrap"><table class="rep-table">
+        <thead><tr><th>Categoria</th><th>Atual</th><th>Anterior</th><th>Δ</th></tr></thead>
+        <tbody>${catRows || '<tr><td colspan="4" class="empty">Sem dados.</td></tr>'}</tbody>
+      </table></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><div><b>Quem gastou</b><small>por membro no período</small></div></div>
+        ${hb(groupSum('member'))}
+      </div>
+      <div class="card">
+        <div class="card-head"><div><b>Como pagou</b><small>por método no período</small></div></div>
+        ${hb(groupSum('method'))}
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><div><b>Maiores gastos</b><small>top 10 do período</small></div></div>
+        <div class="table-wrap"><table class="rep-table"><tbody>${top || '<tr><td class="empty">Sem dados.</td></tr>'}</tbody></table></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><b>Custos fixos (recorrentes)</b><small>compromisso mensal estimado: <b class="txt-red">${fmtShort(recTotal)}</b>${income > 0 ? ` · ${Math.round(recTotal / income * 100)}% da renda` : ''}</small></div></div>
+        <div class="table-wrap"><table class="rep-table"><tbody>${recRows || '<tr><td class="empty">Marque lançamentos como Recorrente para vê-los aqui.</td></tr>'}</tbody></table></div>
+      </div>
+    </div>
+  `;
+}
+
 /* ---------- Ligações por view ---------- */
 function bindView() {
   const v = $('#view');
@@ -391,6 +561,11 @@ function bindView() {
   const prev = $('#mn-prev'), next = $('#mn-next');
   if (prev) prev.onclick = () => { state.monthOffset--; render(); };
   if (next) next.onclick = () => { state.monthOffset++; render(); };
+  const rprev = $('#rep-prev'), rnext = $('#rep-next');
+  if (rprev) rprev.onclick = () => { state.repOffset = (state.repOffset || 0) - 1; render(); };
+  if (rnext) rnext.onclick = () => { state.repOffset = (state.repOffset || 0) + 1; render(); };
+  const goRep = $('#go-reports');
+  if (goRep) goRep.onclick = () => setTab('relatorios');
   v.querySelectorAll('#scope-chips .chip').forEach(ch => ch.onclick = () => { state.filter = ch.dataset.f; render(); });
   v.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => { DB.setInvoicePaid(b.dataset.pay, true); Sync.autoSync(); render(); toast('Fatura marcada como paga'); });
   v.querySelectorAll('[data-unpay]').forEach(b => b.onclick = () => { DB.setInvoicePaid(b.dataset.unpay, false); Sync.autoSync(); render(); });

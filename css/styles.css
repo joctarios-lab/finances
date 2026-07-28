@@ -172,6 +172,24 @@ body {
 .txt-amber { color: #d18b00; }
 .txt-red { color: var(--red); }
 
+/* Gráficos SVG */
+.chart-svg { width: 100%; height: auto; display: block; }
+.ch-lbl { font-size: 11px; fill: var(--paper-dim); font-family: var(--font-body); }
+.ch-val { font-size: 11px; font-weight: 700; fill: var(--paper); font-family: var(--font-body); }
+.ch-ref { font-size: 10px; fill: #f1416c; font-family: var(--font-body); }
+
+/* Tabelas de relatório */
+.table-wrap { overflow-x: auto; }
+.rep-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.rep-table th {
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--paper-dim); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line);
+}
+.rep-table td { padding: 9px 10px; border-bottom: 1px dashed var(--line); }
+.rep-table tr:last-child td { border-bottom: 0; }
+.rep-table .num { text-align: right; white-space: nowrap; }
+.rep-table th:nth-child(n+2) { text-align: right; }
+
 .mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .mini-stats .card { padding: 12px 14px; text-align: center; }
 .mini-stats small { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--paper-dim); }
