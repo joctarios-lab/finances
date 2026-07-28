@@ -660,6 +660,7 @@ const DB = {
     let criadas = 0;
     for (const [pai, filhas] of this.ARVORE_ENTRADAS) {
       if (existentes.includes(this._semAcento(pai[0]))) continue;
+      if (this.acharCategoria(pai[0], null, 'Receita')) continue;
       const raiz = this.upsert('categories', {
         name: pai[0], icon: pai[1], type: 'Receita', scope: 'Família',
         kind: 'Essencial', monthly_budget: 0, parent_id: null,
@@ -677,6 +678,39 @@ const DB = {
   },
 
   _semAcento(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim(); },
+
+  /* Já existe uma categoria com este nome, no mesmo nível e do mesmo lado?
+     Ignora acento e caixa: "Alimentação" e "alimentacao" são a mesma coisa para
+     quem usa, e deixar as duas conviverem divide o gasto em dois lugares. */
+  acharCategoria(nome, parentId, tipo) {
+    const alvo = this._semAcento(nome);
+    if (!alvo) return null;
+    return this.all('categories').find(c =>
+      this._semAcento(c.name) === alvo &&
+      (c.parent_id || null) === (parentId || null) &&
+      this.categoryType(c) === (tipo || 'Despesa')) || null;
+  },
+
+  /* Categoria criada pelo seed que nunca foi usada nem enviada.
+     Cada aparelho novo cria as ~100 categorias de fábrica com ids próprios; ao
+     entrar numa família que já tem as dela, essas locais viram duplicatas — foi
+     assim que uma base chegou a 312 categorias. Descartar antes do primeiro
+     envio é o que impede a multiplicação.
+
+     Só descarta o que é seguro: nunca sincronizado (ainda dirty), sem nenhum
+     lançamento apontando para ele e sem subcategoria em uso. */
+  descartarCategoriasNaoUsadas() {
+    if (!this.data) return 0;
+    const usadas = new Set(this.all('transactions').map(t => t.category_id).filter(Boolean));
+    const temFilhaUsada = id => this.subcategoriesOf(id).some(f => usadas.has(f.id));
+    const alvo = this.data.categories.filter(c =>
+      !c.deleted && c.dirty && !usadas.has(c.id) && !temFilhaUsada(c.id));
+    for (const c of alvo) c.deleted = true;
+    // Remove de vez: nunca chegaram ao servidor, então não há remoção a propagar
+    this.data.categories = this.data.categories.filter(c => !alvo.includes(c));
+    if (alvo.length) this.save();
+    return alvo.length;
+  },
 
   /* Quem já usava o app antes das subcategorias tem só a lista plana, e o seed
      não roda de novo. Isto preenche as subcategorias sugeridas nos envelopes que
@@ -697,6 +731,7 @@ const DB = {
       const existentes = this.subcategoriesOf(raiz.id).map(c => this._semAcento(c.name));
       for (const nome of molde[1]) {
         if (existentes.includes(this._semAcento(nome))) continue;
+        if (this.acharCategoria(nome, raiz.id, this.categoryType(raiz))) continue;
         this.upsert('categories', {
           name: nome, icon: raiz.icon, scope: raiz.scope, kind: raiz.kind,
           monthly_budget: 0, parent_id: raiz.id,

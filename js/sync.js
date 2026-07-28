@@ -253,6 +253,16 @@ const Sync = {
     return saida;
   },
 
+  /* A família já tem categorias no servidor? Pergunta barata (uma linha basta),
+     usada antes do primeiro envio de um aparelho novo para não duplicar as de
+     fábrica que ele criou sozinho. */
+  async familiaTemCategorias() {
+    if (!this.hasFamily()) return false;
+    const rows = await this.rest(
+      `categories?family_id=eq.${this.cfg.family_id}&deleted=is.false&select=id&limit=1`, { method: 'GET' });
+    return Array.isArray(rows) && rows.length > 0;
+  },
+
   async syncAll(silencioso = false) {
     if (!this.hasFamily()) throw new Error('Configure a sincronização primeiro');
     if (this.busy) return null;

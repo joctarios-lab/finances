@@ -377,24 +377,34 @@ svg:hover .ch-bar-on { fill: #005a92; }
 }
 /* O total do dia acompanha o rótulo, sem competir com o valor de cada lançamento:
    mesmo tamanho da data, não o corpo da linha. */
-.tx-day-tot { display: flex; align-items: center; gap: 14px; letter-spacing: 0; flex: none; }
-/* Rótulo em texto neutro, valor colorido: a cor identifica o número, não a palavra */
-.tx-day-bloco { display: flex; align-items: baseline; gap: 5px; }
-.tx-day-bloco i {
-  font-style: normal; font-size: 9.5px; font-weight: 600; letter-spacing: .04em;
-  text-transform: uppercase; color: var(--paper-dim);
+.tx-day-tot { display: flex; align-items: center; gap: 6px; letter-spacing: 0; flex: none; }
+/* Badge tingido, no padrão badge-light-* do Metronic: o bloco inteiro recebe a
+   cor, então a leitura é imediata mesmo de relance. O rótulo vai dentro, mais
+   claro que o valor, para nomear sem disputar atenção com ele. */
+.dia-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 9px; border-radius: 7px;
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0; white-space: nowrap;
 }
-.tx-day-bloco b { font-weight: 700; font-size: 11.5px; letter-spacing: 0; }
-.tx-day-out { color: var(--red); }
-.tx-day-in { color: #3aa76d; }
-/* O saldo é a conclusão: fundo tênue para separá-lo das parcelas que o formaram */
-.tx-day-liq { padding: 1px 7px; border-radius: 20px; font-weight: 800; }
-.tx-day-liq.pos { background: rgba(80, 205, 137, .14); color: #3aa76d; }
-.tx-day-liq.neg { background: rgba(241, 65, 108, .1); color: var(--red); }
-/* Em tela estreita os totais descem para a própria linha, em vez de espremer a data */
-@media (max-width: 460px) {
-  .tx-day { flex-wrap: wrap; row-gap: 4px; }
-  .tx-day-tot { gap: 10px; width: 100%; justify-content: flex-start; }
+.dia-badge i {
+  font-style: normal; font-size: 9.5px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; opacity: .72;
+}
+.dia-badge.ok   { background: rgba(80, 205, 137, .14); color: #2f9c62; }
+.dia-badge.ruim { background: rgba(241, 65, 108, .1);  color: var(--red); }
+/* O saldo é a conclusão, não uma parcela: fundo sólido em vez de tingido */
+.dia-badge.saldo { color: #fff; }
+.dia-badge.saldo i { opacity: .8; }
+.dia-badge.saldo.pos { background: #47be7d; }
+.dia-badge.saldo.neg { background: var(--red); }
+/* Em tela estreita os badges descem para a própria linha, em vez de espremer a data */
+@media (max-width: 520px) {
+  .tx-day { flex-wrap: wrap; row-gap: 6px; }
+  .tx-day-tot { width: 100%; justify-content: flex-start; }
+}
+@media (max-width: 360px) {
+  .dia-badge { padding: 4px 7px; font-size: 11px; gap: 4px; }
+  .dia-badge i { font-size: 9px; }
 }
 .tx {
   display: flex; align-items: center; gap: 12px; padding: 11px 14px;

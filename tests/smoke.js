@@ -455,6 +455,50 @@ console.log('\n=== Subcategorias nas telas ===');
 /* ---- Categorias de entrada ----
    Entrada tem origem, não envelope: sem separar, empréstimo recebido viraria renda,
    inflando taxa de poupança e a base do 50/30/20 — e a dívida desapareceria. */
+/* ---- Categoria nunca duplica ----
+   Uma base real chegou a 312 categorias (esperado ~100): cada aparelho novo cria
+   as de fábrica com ids próprios, e ao entrar numa família que já tem as dela,
+   enviava as suas por cima. Duas categorias de mesmo nome dividem o gasto em
+   dois lugares, e nenhum dos dois mostra o total. */
+console.log('\n=== Categoria nunca duplica ===');
+try {
+  const alimD = cat('Aliment');
+  check('acha a existente pelo nome', DB.acharCategoria(alimD.name, null, 'Despesa').id, alimD.id);
+  check('ignora acento e caixa', !!DB.acharCategoria('ALIMENTACAO', null, 'Despesa'), true);
+  check('não confunde níveis diferentes', DB.acharCategoria(alimD.name, alimD.id, 'Despesa'), null);
+  check('nem lados diferentes', DB.acharCategoria(alimD.name, null, 'Receita'), null);
+  const sub = DB.subcategoriesOf(alimD.id)[0];
+  check('acha subcategoria dentro do envelope certo', DB.acharCategoria(sub.name, alimD.id, 'Despesa').id, sub.id);
+
+  const apD = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('cadastro barra nome repetido', /const igual = DB\.acharCategoria\(nome, pai, tipo\);/.test(apD), true);
+  check('e deixa editar a própria sem reclamar', /igual\.id !== cat\.id/.test(apD), true);
+
+  // Aparelho novo entrando em família que já tem categorias
+  // Cópia rasa de cada objeto: o descarte marca deleted, então guardar só a
+  // referência da lista traria de volta os registros já marcados
+  const guardado = DB.data.categories.map(c => ({ ...c }));
+  const usadas = DB.all('transactions').map(t => t.category_id).filter(Boolean);
+  const antes = DB.all('categories').length;
+  const orfa = DB.upsert('categories', { name: 'Só local', icon: '🆕', parent_id: null, type: 'Despesa', monthly_budget: 0 });
+  check('a nova nasce pendente de envio', DB.data.categories.find(c => c.id === orfa).dirty, true);
+  const descartadas = DB.descartarCategoriasNaoUsadas();
+  check('descarta o que nunca foi usado nem enviado', descartadas > 0, true);
+  check('e a nova saiu junto', !DB.get('categories', orfa), true);
+  check('categoria COM lançamento nunca é descartada',
+    usadas.every(id => !!DB.get('categories', id)), true);
+  DB.data.categories = guardado;
+  check('cenário devolvido', DB.all('categories').length, antes);
+
+  const apP = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const syP = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
+  check('pergunta ao servidor antes de enviar as locais', syP.includes('familiaTemCategorias'), true);
+  check('e só descarta se a família já tiver as dela',
+    /if \(await Sync\.familiaTemCategorias\(\)\)[\s\S]{0,140}descartarCategoriasNaoUsadas\(\)/.test(apP), true);
+  check('o descarte acontece ANTES da sincronização',
+    apP.indexOf('descartarCategoriasNaoUsadas()') < apP.search(/DB\.data\.meta\.lastSync = null; DB\.save\(\);\s*try \{ await Sync\.syncAll/), true);
+} catch (e) { console.log(` FALHA | duplicidade: ${e.message}`); fail++; }
+
 console.log('\n=== Categorias de entrada ===');
 try {
   const contaE = DB.all('accounts')[0].id;
@@ -1235,7 +1279,8 @@ try {
   let linha = linhaDoDia(renderExtrato(pD));
   check('o dia mostra o que saiu, com centavos', linha.includes(fmt(250)), true);
   check('e o que entrou, separado', linha.includes(fmt(80)), true);
-  check('saída em vermelho, entrada em verde', linha.includes('tx-day-out') && linha.includes('tx-day-in'), true);
+  check('saída e entrada com badge próprio', linha.includes('dia-badge ruim') && linha.includes('dia-badge ok'), true);
+  check('cada badge nomeia o que mostra', linha.includes('<i>Entradas</i>') && linha.includes('<i>Saídas</i>'), true);
 
   // Transferência é dinheiro mudando de lugar: não pode inflar o total do dia
   const tr = { description: 'Para a poupança', amount: 900, date: diaTeste, type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: contaD, to_account: DB.all('accounts')[1].id };
@@ -1256,7 +1301,7 @@ try {
      repetiria o mesmo número, e repetir número faz a pessoa parar de ler. */
   state.filtros = { ...FILTROS_VAZIOS };
   linha = linhaDoDia(renderExtrato(pD));
-  check('dia misto mostra o saldo', linha.includes('tx-day-liq'), true);
+  check('dia misto mostra o saldo', linha.includes('dia-badge saldo'), true);
   check('e o saldo é entrada menos saída', linha.includes(fmt(170)), true);
 
   /* Totalizadores com centavos: arredondar escondia diferença de centavos
@@ -1278,8 +1323,9 @@ try {
   DB.upsert('transactions', { description: 'Salário do dia', amount: 500, date: soEntrada, type: 'Receita', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaD });
   const linhaSo = ((renderExtrato(pD).match(/<p class="tx-day">[\s\S]*?<\/p>/g) || [])
     .find(l => l.includes(fmtDay(soEntrada))) || '');
-  check('dia só com entrada não mostra saída', linhaSo.includes('tx-day-out'), false);
-  check('mas mostra a entrada', linhaSo.includes('tx-day-in'), true);
+  check('dia só com entrada não mostra saída', linhaSo.includes('dia-badge ruim'), false);
+  check('mas mostra a entrada', linhaSo.includes('dia-badge ok'), true);
+  check('e não mostra saldo, que repetiria a entrada', linhaSo.includes('dia-badge saldo'), false);
 
   for (const t of DB.all('transactions').filter(t => /do dia$/.test(t.description))) DB.remove('transactions', t.id);
 } catch (e) { console.log(` FALHA | total do dia: ${e.message}`); fail++; }

@@ -802,16 +802,17 @@ function renderExtrato(period) {
          parar de ler. Com os dois, o saldo é a resposta que nenhum dos dois dá
          sozinho — R$ 3.000 de salário e R$ 3.000 de contas não é dia parado. */
       const liq = d.entrou - d.saiu;
-      /* Rótulo em texto neutro e valor colorido: a cor fica reservada para o
-         número, que é o que se compara. Rótulo colorido junto competiria com ele
-         e diluiria o significado do verde e do vermelho. */
-      const bloco = (rot, cls, valor) =>
-        `<span class="tx-day-bloco"><i>${rot}</i><b class="${cls}">${valor}</b></span>`;
+      /* Badge no padrão Metronic (badge-light-*): fundo tingido, texto na cor
+         forte, cantos arredondados. Fundo próprio separa cada número do outro
+         melhor do que espaço em branco, e a cor fica no bloco inteiro em vez de
+         só no dígito — que era o que deixava a linha lavada. */
+      const badge = (rot, cls, valor) =>
+        `<span class="dia-badge ${cls}"><i>${rot}</i>${valor}</span>`;
       const totais = [
-        d.entrou ? bloco('Entradas', 'tx-day-in', fmt(d.entrou)) : '',
-        d.saiu ? bloco('Saídas', 'tx-day-out', fmt(d.saiu)) : '',
+        d.entrou ? badge('Entradas', 'ok', fmt(d.entrou)) : '',
+        d.saiu ? badge('Saídas', 'ruim', fmt(d.saiu)) : '',
         (d.entrou && d.saiu)
-          ? bloco('Saldo', `tx-day-liq ${liq >= 0 ? 'pos' : 'neg'}`, `${liq >= 0 ? '+' : '−'} ${fmt(Math.abs(liq))}`) : '',
+          ? badge('Saldo', liq >= 0 ? 'saldo pos' : 'saldo neg', `${liq >= 0 ? '+' : '−'} ${fmt(Math.abs(liq))}`) : '',
       ].filter(Boolean).join('');
       list += `<p class="tx-day"><span>${fmtDay(t.date)}</span>${totais ? `<span class="tx-day-tot">${totais}</span>` : ''}</p>`;
     }
@@ -2789,6 +2790,16 @@ function ligarConvite() {
 // não só o que mudou desde a última sincronização (que aqui nunca houve).
 async function puxarTudoDaFamilia() {
   if (!Sync.hasFamily() || !DB.data) return;
+  /* Antes de enviar qualquer coisa: se a família JÁ tem categorias, as que este
+     aparelho criou sozinho ao abrir pela primeira vez são duplicatas esperando
+     para nascer. Enviá-las é o que fez uma base chegar a 312 categorias.
+     A pergunta vai ao servidor porque só ele sabe o que a família já tem. */
+  try {
+    if (await Sync.familiaTemCategorias()) {
+      const n = DB.descartarCategoriasNaoUsadas();
+      if (n) toast(`${n} categorias locais substituídas pelas da família`, 'info');
+    }
+  } catch (_) { /* sem resposta do servidor: segue o fluxo normal */ }
   DB.data.meta.lastSync = null; DB.save();
   try { await Sync.syncAll(); } catch (_) {}
 }
@@ -2992,6 +3003,12 @@ function openCategoryEditor(cat, paiFixo, tipoNovo, voltarPara) {
     const nome = $('#c-name').value.trim();
     if (!nome) return toast('Informe o nome');
     const pai = sel ? (sel.value || null) : (cat.parent_id || null);
+    // Duas categorias de mesmo nome no mesmo nível dividem o gasto em dois
+    // lugares, e nenhum dos dois mostra o total. Barra antes de gravar.
+    const igual = DB.acharCategoria(nome, pai, tipo);
+    if (igual && igual.id !== cat.id) {
+      return toast(`Já existe "${igual.name}"${pai ? ' aqui dentro' : ''} — use outro nome`, 'err');
+    }
     const envelope = pai ? DB.get('categories', pai) : null;
     const semEnvelope = pai || ehEntrada;   // entrada não tem orçamento nem 50/30/20
     DB.upsert('categories', {
