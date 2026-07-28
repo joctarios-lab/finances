@@ -12,6 +12,10 @@ let state = { tab: 'inicio', monthOffset: 0, filter: 'Todos', memberFilter: 'Tod
 /* ---------- Memória da navegação: recarregar volta para onde você estava ---------- */
 const UI_KEY = 'financas.ui.v1';
 const TABS = ['inicio', 'extrato', 'cartoes', 'metas', 'relatorios'];
+const TITULOS = {
+  inicio: 'Painel', extrato: 'Extrato', cartoes: 'Cartões & Contas',
+  metas: 'Metas', relatorios: 'Relatórios',
+};
 
 function persistUI() {
   try {
@@ -108,7 +112,12 @@ function render() {
   // Não existe "fechar o mês": ele vira sozinho. O offset serve para revisar meses passados.
   const usaOffset = state.tab === 'extrato' || state.tab === 'inicio';
   const period = DB.monthPeriod(new Date(), usaOffset ? state.monthOffset : 0);
-  $('#topbar-month').textContent = period.label;
+
+  // O topo nomeia a seção. O mês só aparece nas telas que realmente têm período,
+  // e sempre dentro da própria tela, junto das setas que o controlam — evita
+  // mostrar um mês em Cartões/Metas (que não são mensais) ou um mês diferente
+  // do que a tela de Relatórios está exibindo.
+  $('#topbar-month').textContent = TITULOS[state.tab] || 'Painel';
   const views = { inicio: renderInicio, extrato: renderExtrato, cartoes: renderCartoes, metas: renderMetas, relatorios: renderRelatorios };
   $('#view').innerHTML = views[state.tab](period);
   paintIcons($('#view'));
