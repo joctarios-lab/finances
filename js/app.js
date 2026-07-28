@@ -2676,7 +2676,8 @@ function openCategoriesConfig(estado) {
         <div class="env-head" data-abrir="${r.id}">
           <span class="cfg-ico">${esc(r.icon)}</span>
           <span class="env-nome">${esc(r.name)}<small>${detalhe}</small></span>
-          <button class="env-editar" data-edit="${r.id}" title="Editar ${esc(r.name)}"><span data-ico="settings"></span></button>
+          <button class="env-add" data-nova-sub="${r.id}" title="Nova ${st.lado === 'Receita' ? 'origem' : 'subcategoria'} em ${esc(r.name)}" aria-label="Nova ${st.lado === 'Receita' ? 'origem' : 'subcategoria'} em ${esc(r.name)}"><span data-ico="plus"></span></button>
+          <button class="env-editar" data-edit="${r.id}" title="Editar ${esc(r.name)}" aria-label="Editar ${esc(r.name)}"><span data-ico="settings"></span></button>
           <span class="env-chev" data-ico="chev"></span>
         </div>
         ${mostraFilhas ? `<div class="env-body">
@@ -2745,15 +2746,19 @@ function openCategoriesConfig(estado) {
 
   // Abrir um fecha o anterior: é o que mantém a tela do tamanho de uma tela
   document.querySelectorAll('[data-abrir]').forEach(el => el.onclick = e => {
-    if (e.target.closest('[data-edit]')) return;      // o botão de editar tem ação própria
+    // Editar e "+" vivem dentro do cabeçalho, mas têm ação própria
+    if (e.target.closest('[data-edit], [data-nova-sub]')) return;
     reabrir({ aberto: st.aberto === el.dataset.abrir ? null : el.dataset.abrir });
   });
   document.querySelectorAll('[data-edit]').forEach(el => el.onclick = e => {
     e.stopPropagation();
     openCategoryEditor(DB.get('categories', el.dataset.edit), null, null, st);
   });
-  document.querySelectorAll('[data-nova-sub]').forEach(el =>
-    el.onclick = () => openCategoryEditor(null, el.dataset.novaSub, null, st));
+  // Criar a partir do cabeçalho volta com o envelope aberto, para a nova aparecer
+  document.querySelectorAll('[data-nova-sub]').forEach(el => el.onclick = e => {
+    e.stopPropagation();
+    openCategoryEditor(null, el.dataset.novaSub, null, { ...st, aberto: el.dataset.novaSub });
+  });
   $('#cat-novo').onclick = () => openCategoryEditor(null, null, st.lado, st);
 
   const sugerir = $('#md-sugerir');

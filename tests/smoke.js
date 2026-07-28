@@ -302,6 +302,10 @@ try {
   check('mostra os envelopes de saída', nEnvelopes, DB.rootCategories('Despesa').length);
   check('e nenhuma subcategoria antes de abrir', fechado.includes('sub-linha'), false);
   check('não abre com nada expandido', fechado.includes('env aberto'), false);
+  // Criar sem precisar abrir o grupo antes
+  check('cada envelope tem + no cabeçalho', (fechado.match(/class="env-add"/g) || []).length, DB.rootCategories('Despesa').length);
+  check('o + já sabe em qual envelope criar', /env-add" data-nova-sub="/.test(fechado), true);
+  check('e tem rótulo para leitor de tela', /env-add"[^>]*aria-label="Nova subcategoria em/.test(fechado), true);
 
   // Tocar num envelope revela as subcategorias dele
   openCategoriesConfig({ aberto: alimento.id });

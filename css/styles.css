@@ -914,13 +914,17 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .env-head:hover { background: var(--ink-3); }
 .env-nome { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .env-nome small { display: block; color: var(--paper-dim); font-weight: 400; font-size: 11.5px; }
-.env-editar {
-  flex: none; width: 32px; height: 32px; border-radius: 8px; cursor: pointer;
+/* Criar e editar direto no cabeçalho: sem isto, incluir uma subcategoria exigia
+   abrir o grupo antes. Alvos de 36px, o mínimo confortável para o dedo. */
+.env-add, .env-editar {
+  flex: none; width: 36px; height: 36px; border-radius: 8px; cursor: pointer;
   background: none; border: 1px solid transparent; color: #c4cad4;
   display: grid; place-items: center;
 }
-.env-editar:hover { border-color: var(--line); color: var(--gold); background: var(--ink-2); }
-.env-editar svg { width: 15px; height: 15px; }
+.env-add:hover, .env-editar:hover { border-color: var(--line); color: var(--gold); background: var(--ink-2); }
+.env-add svg, .env-editar svg { width: 15px; height: 15px; }
+.env-add { color: var(--gold); }
+.env-add svg { width: 17px; height: 17px; }
 .env-chev { color: #c4cad4; flex: none; transition: transform .18s ease; }
 .env-chev svg { width: 15px; height: 15px; }
 .env.aberto .env-chev { transform: rotate(90deg); }
