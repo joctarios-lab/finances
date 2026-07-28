@@ -338,6 +338,26 @@ console.log('\n=== Sincronização automática ===');
   check('startAuto é ligado na abertura', a.includes('Sync.startAuto()'), true);
 }
 
+console.log('\n=== Primeiro acesso (ordem das etapas) ===');
+{
+  const au = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+  const wiz = au.slice(au.indexOf('showOnboarding'));
+  const ordem = ['passoInicio', 'passoServidor', 'passoLogin', 'passoFamilia', 'passoPin', 'passoDigital']
+    .map(n => wiz.indexOf('const ' + n));
+  check('as 6 etapas existem', ordem.every(i => i > 0), true);
+  check('servidor vem antes do login', ordem[1] < ordem[2], true);
+  check('login vem antes da família', ordem[2] < ordem[3], true);
+  check('família vem antes do PIN', ordem[3] < ordem[4], true);
+  check('PIN vem antes da digital', ordem[4] < ordem[5], true);
+  check('digital é oferecida logo após criar o PIN', /setPin\(p1\)[\s\S]{0,160}passoDigital/.test(wiz), true);
+  check('só oferece digital se o aparelho suportar', /bioSuportadaNoAparelho\(\)[\s\S]{0,60}passoDigital/.test(wiz), true);
+  check('dá para usar só neste aparelho (sem nuvem)', wiz.includes('ob-local') && /ob-local[\s\S]{0,60}passoPin/.test(wiz), true);
+  check('pula a tela de servidor se já vier configurado', /Sync\.configured\(\) \? passoLogin/.test(wiz), true);
+  check('quem entra numa família baixa tudo antes de seguir', /joinFamily[\s\S]{0,200}lastSync = null/.test(wiz), true);
+  check('boot usa o novo fluxo', au.includes('!this.cfg.onboarded') && au.includes('showOnboarding(onReady)'), true);
+  check('showFirstRun antigo foi removido', !au.includes('showFirstRun'), true);
+}
+
 console.log('\n=== Desbloqueio por digital ===');
 {
   const au = fs.readFileSync(BASE + 'js/auth.js', 'utf8');

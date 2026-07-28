@@ -270,45 +270,171 @@ const Auth = {
     };
   },
 
-  showFirstRun(onDone) {
+  /* ---------- Primeiro acesso ----------
+     Ordem pensada para o que realmente importa em cada etapa: primeiro a conta na
+     nuvem (é ela que guarda e compartilha os dados da família), depois a proteção
+     deste aparelho (PIN) e, por último, o atalho da digital. */
+  showOnboarding(onDone) {
     const el = this.el();
-    el.innerHTML = `
-      <div class="lock-card">
-        <img src="icons/icon-192.png" alt="">
-        <h2>Bem-vindo 👋</h2>
-        <p>Crie um PIN (4 a 8 dígitos). Além de bloquear o app, ele <b>criptografa os dados</b> guardados neste aparelho (AES-256).</p>
-        <input id="lock-pin" class="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="criar PIN">
-        <input id="lock-pin2" class="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="repetir PIN">
-        <p class="lock-err" id="lock-err"></p>
-        <button class="btn" id="lock-go">Ativar proteção</button>
-        <div class="btn-row"><button class="btn ghost" id="lock-skip">Agora não</button></div>
-      </div>`;
-    el.hidden = false;
-    const err = m => document.getElementById('lock-err').textContent = m;
-    document.getElementById('lock-go').onclick = async () => {
-      const p1 = document.getElementById('lock-pin').value;
-      const p2 = document.getElementById('lock-pin2').value;
-      if (!/^\d{4,8}$/.test(p1)) return err('Use de 4 a 8 dígitos');
-      if (p1 !== p2) return err('Os PINs não conferem');
-      await this.setPin(p1);
+    const concluir = () => {
+      this.cfg.onboarded = true; this.save();
       this.unlocked = true;
       this.hide();
       if (onDone) onDone();
     };
-    document.getElementById('lock-skip').onclick = () => {
-      this.cfg.skipped = true; this.save();
-      this.unlocked = true;
-      this.hide();
-      if (onDone) onDone();
+
+    const tela = (passo, total, titulo, texto, corpo, acoes) => {
+      el.innerHTML = `
+        <div class="lock-card">
+          <img src="icons/icon-192.png" alt="">
+          ${total ? `<div class="ob-steps">${Array.from({ length: total }, (_, i) =>
+            `<i class="${i + 1 === passo ? 'on' : i + 1 < passo ? 'done' : ''}"></i>`).join('')}</div>` : ''}
+          <h2>${titulo}</h2>
+          <p>${texto}</p>
+          ${corpo || ''}
+          <p class="lock-err" id="ob-err"></p>
+          ${acoes}
+        </div>`;
+      el.hidden = false;
     };
+    const err = m => { const e = document.getElementById('ob-err'); if (e) e.textContent = m || ''; };
+    const on = (id, fn) => { const b = document.getElementById(id); if (b) b.onclick = fn; };
+    const val = id => (document.getElementById(id) || {}).value || '';
+
+    /* Passo 1 — como os dados vão viver */
+    const passoInicio = () => {
+      tela(1, 4, 'Bem-vindo 👋',
+        'Como vocês querem usar o app?',
+        `<div class="ob-opts">
+           <button type="button" class="ob-opt" id="ob-nuvem">
+             <b>☁️ Com a família</b><small>Os lançamentos aparecem no celular de todos e ficam salvos na nuvem. Recomendado.</small>
+           </button>
+           <button type="button" class="ob-opt" id="ob-local">
+             <b>📱 Só neste aparelho</b><small>Nada sai daqui. Dá para conectar a família depois, em Configurações.</small>
+           </button>
+         </div>`, '');
+      on('ob-nuvem', () => (Sync.configured() ? passoLogin() : passoServidor()));
+      on('ob-local', () => passoPin());
+    };
+
+    /* Passo 2 — endereço do servidor (pulado se o app já vier configurado) */
+    const passoServidor = () => {
+      const c = Sync.cfg || {};
+      tela(2, 4, 'Conectar ao servidor',
+        'Cole os dados do projeto Supabase da família. Estão em <b>Settings → API</b>, no painel do Supabase.',
+        `<div class="ob-field"><label>URL do projeto</label><input id="ob-url" placeholder="https://xxxx.supabase.co" value="${this.esc(c.url || '')}"></div>
+         <div class="ob-field"><label>Chave anon (public)</label><input id="ob-key" placeholder="eyJhbGciOi…" value="${this.esc(c.anonKey || '')}"></div>`,
+        `<button class="btn" id="ob-next">Continuar</button>
+         <div class="btn-row"><button class="btn ghost" id="ob-back">Voltar</button></div>`);
+      on('ob-back', passoInicio);
+      on('ob-next', () => {
+        const url = val('ob-url').trim().replace(/\/$/, ''), key = val('ob-key').trim();
+        if (!/^https:\/\/.+/.test(url)) return err('A URL precisa começar com https://');
+        if (!key) return err('Cole a chave anon');
+        Sync.cfg.url = url; Sync.cfg.anonKey = key; Sync.saveCfg();
+        passoLogin();
+      });
+    };
+
+    /* Passo 3 — conta */
+    const passoLogin = () => {
+      tela(3, 4, 'Sua conta',
+        'Entre com sua conta ou crie uma agora. É ela que liga este aparelho aos dados da família.',
+        `<div class="ob-field"><label>E-mail</label><input id="ob-email" type="email" autocomplete="username" value="${this.esc((Sync.cfg || {}).user_email || '')}"></div>
+         <div class="ob-field"><label>Senha</label><input id="ob-pass" type="password" autocomplete="current-password"></div>`,
+        `<button class="btn" id="ob-entrar">Entrar</button>
+         <div class="btn-row"><button class="btn ghost" id="ob-criar">Criar conta</button></div>
+         <div class="btn-row"><button class="btn ghost" id="ob-back">Voltar</button></div>`);
+      on('ob-back', () => (Sync.configured() ? passoServidor() : passoInicio()));
+
+      const email = () => val('ob-email').trim();
+      on('ob-entrar', async () => {
+        if (!email() || !val('ob-pass')) return err('Preencha e-mail e senha');
+        err('Entrando…');
+        try { await Sync.signIn(email(), val('ob-pass')); passoFamilia(); }
+        catch (e) { err(e.message); }
+      });
+      on('ob-criar', async () => {
+        if (!email() || val('ob-pass').length < 6) return err('Use um e-mail válido e senha de 6+ caracteres');
+        err('Criando…');
+        try {
+          const d = await Sync.signUp(email(), val('ob-pass'));
+          if (!d.access_token) return err('Conta criada. Confirme o e-mail que você recebeu e depois entre.');
+          passoFamilia();
+        } catch (e) { err(e.message); }
+      });
+    };
+
+    /* Passo 3b — família */
+    const passoFamilia = () => {
+      tela(3, 4, 'Sua família',
+        'Crie a família agora ou entre na que já existe, usando o código do outro aparelho.',
+        `<div class="ob-field"><label>Nome da família</label><input id="ob-fam" value="Minha Família"></div>`,
+        `<button class="btn" id="ob-criar-fam">Criar família</button>
+         <hr class="sep">
+         <div class="ob-field"><label>Ou cole o código recebido</label><input id="ob-cod" placeholder="código da família"></div>
+         <button class="btn ghost" id="ob-entrar-fam">Entrar na família</button>`);
+      on('ob-criar-fam', async () => {
+        err('Criando…');
+        try { await Sync.createFamily(val('ob-fam') || 'Minha Família'); await Sync.syncAll(); passoPin(); }
+        catch (e) { err(e.message); }
+      });
+      on('ob-entrar-fam', async () => {
+        if (!val('ob-cod').trim()) return err('Cole o código da família');
+        err('Entrando…');
+        try {
+          await Sync.joinFamily(val('ob-cod'));
+          DB.data.meta.lastSync = null; DB.save();     // puxa tudo o que a família já tem
+          await Sync.syncAll();
+          passoPin();
+        } catch (e) { err(e.message); }
+      });
+    };
+
+    /* Passo 4 — proteção deste aparelho */
+    const passoPin = () => {
+      tela(4, 4, 'Proteger este aparelho',
+        'Crie um PIN de 4 a 8 dígitos. Além de bloquear o app, ele <b>criptografa os dados guardados aqui</b> (AES-256).',
+        `<input id="ob-pin" class="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="criar PIN">
+         <input id="ob-pin2" class="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="repetir PIN">`,
+        `<button class="btn" id="ob-pin-go">Ativar proteção</button>
+         <div class="btn-row"><button class="btn ghost" id="ob-pin-skip">Agora não</button></div>`);
+      on('ob-pin-go', async () => {
+        const p1 = val('ob-pin'), p2 = val('ob-pin2');
+        if (!/^\d{4,8}$/.test(p1)) return err('Use de 4 a 8 dígitos');
+        if (p1 !== p2) return err('Os PINs não conferem');
+        await this.setPin(p1);
+        if (await this.bioSuportadaNoAparelho()) passoDigital(p1);
+        else concluir();
+      });
+      on('ob-pin-skip', () => { this.cfg.skipped = true; this.save(); concluir(); });
+    };
+
+    /* Passo extra — digital, oferecida na hora certa (o PIN acabou de existir) */
+    const passoDigital = pin => {
+      tela(0, 0, 'Usar a digital? 👆',
+        'Em vez de digitar o PIN toda vez, desbloqueie com a digital. O PIN continua valendo como alternativa.',
+        '', `<button class="btn" id="ob-bio">Ativar digital</button>
+             <div class="btn-row"><button class="btn ghost" id="ob-bio-skip">Agora não</button></div>`);
+      on('ob-bio', async () => {
+        err('Confirme no leitor do aparelho…');
+        try { await this.ativarBio(pin); concluir(); }
+        catch (e) { err(e.name === 'NotAllowedError' ? 'Digital não confirmada' : e.message); }
+      });
+      on('ob-bio-skip', concluir);
+    };
+
+    passoInicio();
   },
+
+  esc(s) { return String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch])); },
 
   /* Ponto de entrada: garante DB carregado/decifrado e chama onReady exatamente uma vez. */
   init(onReady) {
     this.load();
     DB.load();
     if (DB.locked || this.enabled()) this.showLock(onReady);
-    else if (!this.cfg.skipped) this.showFirstRun(onReady);
+    else if (!this.cfg.onboarded && !this.cfg.skipped) this.showOnboarding(onReady);
     else { this.unlocked = true; onReady(); }
 
     // Re-bloqueio automático ao voltar de segundo plano
