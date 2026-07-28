@@ -311,6 +311,48 @@ const DB = {
     return !!fitid && this.data.transactions.some(t => t.fitid === fitid && !t.deleted);
   },
 
+  /* ---------- A outra perna de uma transferência ----------
+     Uma transferência já mexe nos DOIS saldos quando é criada. Então, ao importar
+     o extrato da conta que recebeu, o crédito correspondente NÃO pode virar
+     lançamento: entraria o mesmo dinheiro duas vezes, e o saldo ficaria alto.
+
+     O FITID não serve aqui: cada banco emite o seu, então a mesma transferência
+     tem identificadores diferentes nos dois extratos. O casamento é por conteúdo.
+
+     TOLERANCIA_DIAS cobre TED que cai no dia seguinte e agendamento de fim de
+     semana; acima disso o risco de casar duas transferências distintas cresce
+     mais do que a comodidade. */
+  TOLERANCIA_DIAS: 3,
+
+  /* Procura a transferência cuja perna oposta bate com este lançamento do extrato.
+     contaId  — a conta cujo extrato está sendo importado
+     ehEntrada — true quando é crédito (a conta RECEBEU)
+     usados   — ids já casados nesta importação, para duas transferências iguais
+                no mesmo dia não serem casadas pela mesma linha */
+  acharPernaDeTransferencia(contaId, dataISO, valor, ehEntrada, usados) {
+    if (!contaId || !dataISO) return null;
+    const alvo = Math.abs(Number(valor) || 0);
+    if (!alvo) return null;
+    const dia = Date.parse(dataISO + 'T12:00:00');
+    if (isNaN(dia)) return null;
+    const jaUsados = usados || new Set();
+
+    const candidatos = this.all('transactions').filter(t => {
+      if (!this.isTransfer(t) || jaUsados.has(t.id)) return false;
+      // A perna que interessa é a do OUTRO lado: crédito casa com o destino
+      const pernaDaConta = ehEntrada ? t.to_account : t.account_id;
+      if (pernaDaConta !== contaId) return false;
+      if (Math.abs(Math.abs(Number(t.amount) || 0) - alvo) > 0.005) return false;
+      const d = Date.parse(String(t.date) + 'T12:00:00');
+      return !isNaN(d) && Math.abs(d - dia) <= this.TOLERANCIA_DIAS * 86400000;
+    });
+    if (!candidatos.length) return null;
+    // A mais próxima da data do extrato é a mais provável
+    candidatos.sort((a, b) =>
+      Math.abs(Date.parse(a.date + 'T12:00:00') - dia) - Math.abs(Date.parse(b.date + 'T12:00:00') - dia));
+    return candidatos[0];
+  },
+
   /* ---------- Etiquetas ----------
      Texto livre, ao lado da categoria em vez de no lugar dela: categoria responde
      "que tipo de gasto é" e tem orçamento; etiqueta responde "de que assunto isto

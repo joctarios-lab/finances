@@ -424,6 +424,13 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .ofx-cat .ui-select { width: 100%; }
 .ofx-cat .ui-select-btn { padding: 7px 10px; font-size: 12.5px; min-height: 36px; }
 .ofx-cat > .muted { font-size: 11.5px; }
+/* Linha já coberta por uma transferência: apagada e desmarcada, para o olho pular
+   e a mão não marcar sem querer o que contaria o dinheiro duas vezes. */
+.ofx-par { opacity: .62; }
+.ofx-aviso {
+  display: block; font-size: 11.5px; line-height: 1.4; color: var(--blue);
+  background: rgba(114, 57, 234, .07); border-radius: 8px; padding: 6px 9px;
+}
 /* Sem rolagem própria: o painel do select é posicionado em relação ao campo, e um
    contêiner com overflow cortaria o dropdown das últimas linhas. Quem rola é o
    modal, e o botão de importar fica fixo no rodapé para não ficar longe. */

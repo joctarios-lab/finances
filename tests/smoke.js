@@ -1096,7 +1096,7 @@ try {
   const ap2 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   check('importação tem etiqueta para o lote', ap2.includes('id="ofx-tags"'), true);
   check('com autocomplete também', ap2.includes('list="tag-hist-ofx"'), true);
-  check('cada linha grava as próprias etiquetas', /tags: tagsDe\(Number\(box\.dataset\.i\)\)/.test(ap2), true);
+  check('cada linha grava as próprias etiquetas', /const tags = tagsDe\(idx\);/.test(ap2), true);
   check('linha sem ajuste segue o lote', /const tagsDe = i => tagsLinha\[i\] \|\| tagsDoLote\(\)/.test(ap2), true);
   check('há botão de etiqueta por linha', ap2.includes('data-tagbtn='), true);
   check('e uma folha para editar só aquela linha', ap2.includes('openTagsLinhaSheet'), true);
@@ -1211,6 +1211,81 @@ try {
 /* ---- Seletor de categoria em dois níveis ----
    Plano, o dropdown tinha 75 itens: 11 telas de rolagem DENTRO do painel, para
    escolher uma categoria. Em dois níveis a primeira tela tem 13. */
+/* ---- Transferência importada dos dois extratos ----
+   A transferência move os DOIS saldos quando é criada. Ao importar o extrato da
+   conta que recebeu, o crédito correspondente não pode virar lançamento novo:
+   entraria o mesmo dinheiro duas vezes. O FITID não ajuda — cada banco emite o
+   seu, então a mesma transferência tem identificadores diferentes nos dois lados. */
+console.log('\n=== Transferência vista dos dois extratos ===');
+try {
+  const contaA = DB.upsert('accounts', { name: 'Banco A', type: 'Conta Corrente', balance: 5000, active: true });
+  const contaB = DB.upsert('accounts', { name: 'Banco B', type: 'Conta Corrente', balance: 1000, active: true });
+  const saldoA = DB.get('accounts', contaA).balance;
+  const saldoB = DB.get('accounts', contaB).balance;
+
+  // O que a importação do extrato de A cria quando a linha é marcada como transferência
+  const transf = {
+    description: 'TED PARA BANCO B', amount: 800, date: dia(11),
+    type: 'Transferência', status: 'Pago', method: 'Transferência',
+    scope: 'Família', member: MEMBRO_COMUM,
+    account_id: contaA, to_account: contaB,
+    category_id: null, card_id: null, invoice_key: '', recurring: false, adjustment: false,
+    fitid: 'FITID-DO-BANCO-A',
+  };
+  DB.upsert('transactions', transf);
+  applyTxEffect(transf, +1);
+
+  check('sai da conta de origem', DB.get('accounts', contaA).balance, saldoA - 800);
+  check('e entra na de destino', DB.get('accounts', contaB).balance, saldoB + 800);
+  // Nem gasto nem receita: só mudou de lugar. Se contasse, o mês mostraria
+  // R$ 800 de despesa E R$ 800 de renda que nunca existiram.
+  const p4 = DB.monthPeriod(new Date());
+  check('transferência não é gasto', DB.expensesOf(p4).some(t => t.description === 'TED PARA BANCO B'), false);
+  check('nem receita', DB.incomesOf(p4).some(t => t.description === 'TED PARA BANCO B'), false);
+  check('e o total das contas não muda',
+    DB.get('accounts', contaA).balance + DB.get('accounts', contaB).balance, saldoA + saldoB);
+
+  // Agora o extrato de B: o crédito correspondente tem OUTRO fitid
+  check('o fitid do outro banco não dedupe', DB.hasFitid('FITID-DO-BANCO-B'), false);
+  const achado = DB.acharPernaDeTransferencia(contaB, dia(11), 800, true, new Set());
+  check('mas o app reconhece a outra perna', !!achado, true);
+  check('e é a transferência certa', achado.description, 'TED PARA BANCO B');
+
+  // Direção importa: um débito em B não é a perna de uma transferência que ENTROU em B
+  check('débito em B não casa com entrada', DB.acharPernaDeTransferencia(contaB, dia(11), 800, false, new Set()), null);
+  // E a conta precisa ser a certa
+  check('conta de fora não casa', DB.acharPernaDeTransferencia(conta, dia(11), 800, true, new Set()), null);
+  check('valor diferente não casa', DB.acharPernaDeTransferencia(contaB, dia(11), 799, true, new Set()), null);
+
+  // Tolerância de data: TED cai no dia seguinte, mas não meses depois
+  check('um dia de diferença ainda casa', !!DB.acharPernaDeTransferencia(contaB, dia(12), 800, true, new Set()), true);
+  check('dez dias depois não casa', DB.acharPernaDeTransferencia(contaB, dia(21), 800, true, new Set()), null);
+
+  // Duas transferências iguais no mesmo dia: cada linha casa com uma
+  const transf2 = { ...transf, id: null, fitid: 'FITID-A-2' };
+  DB.upsert('transactions', transf2);
+  const usados = new Set();
+  const m1 = DB.acharPernaDeTransferencia(contaB, dia(11), 800, true, usados);
+  usados.add(m1.id);
+  const m2 = DB.acharPernaDeTransferencia(contaB, dia(11), 800, true, usados);
+  check('duas iguais casam com pernas diferentes', !!m2 && m2.id !== m1.id, true);
+  usados.add(m2.id);
+  check('e a terceira não tem par', DB.acharPernaDeTransferencia(contaB, dia(11), 800, true, usados), null);
+
+  // A tela: o seletor oferece transferência e a linha pareada vem desmarcada
+  const apT = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('seletor do OFX oferece transferência', apT.includes('contasTransferencia'), true);
+  check('com prefixo que separa de categoria', /value="transfer:\$\{o\.id\}"/.test(apT), true);
+  check('importar cria UM lançamento de transferência', /type: 'Transferência', status: 'Pago', method: 'Transferência'/.test(apT), true);
+  check('que move os dois saldos', /DB\.upsert\('transactions', transf\);\s*\r?\n\s*applyTxEffect\(transf, \+1\)/.test(apT), true);
+  check('linha já lançada não vira lançamento novo', /if \(parEncontrado\[idx\]\) return;/.test(apT), true);
+  check('e aparece desmarcada com o motivo', apT.includes('Já lançado como transferência'), true);
+  check('trocar a conta refaz o pareamento', /dest\.onchange[\s\S]{0,200}linhasHtml\(\)/.test(apT), true);
+
+  DB.remove('transactions', m1.id); DB.remove('transactions', m2.id);
+  DB.remove('accounts', contaA); DB.remove('accounts', contaB);
+} catch (e) { console.log(` FALHA | transferência no OFX: ${e.message}`); fail++; }
+
 console.log('\n=== Seletor de categoria não é uma lista sem fim ===');
 {
   const uiSrc = fs.readFileSync(BASE + 'js/ui.js', 'utf8');

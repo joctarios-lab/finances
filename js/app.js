@@ -3087,32 +3087,78 @@ function openTagsLinhaSheet(tx, atuais, segueLote, aoAplicar) {
   };
 }
 
+/* Contas e cartões oferecidos como destino/origem de transferência, no topo do
+   mesmo seletor da categoria. Transferência não É categoria — mas a pergunta que
+   a pessoa responde ali é a mesma ("o que foi isso?"), e um segundo controle na
+   linha custaria mais do que resolve. O prefixo separa os dois mundos no valor. */
+function contasTransferencia(contaAtual, ehSaida) {
+  const outras = [
+    ...DB.all('accounts').filter(a => a.active !== false && a.id !== contaAtual),
+    ...DB.all('cards').filter(c => c.active !== false),   // pagar fatura também é transferência
+  ];
+  if (!outras.length) return '';
+  return `<optgroup label="⇄ Transferência — não é gasto nem receita">${outras.map(o =>
+    `<option value="transfer:${o.id}">${ehSaida ? 'Enviado para' : 'Recebido de'} ${esc(o.name)}</option>`).join('')}</optgroup>`;
+}
+
 function renderOfxPreview(parsed, accounts, cards) {
   const cats = DB.all('categories');   // com os pais: a adivinhação depende deles
+  let parEncontrado = {};              // linha -> transferência que já cobre este valor
   const novos = parsed.txs.filter(t => !DB.hasFitid(t.fitid));
   const dups = parsed.txs.length - novos.length;
   const destOpts = `
     ${cards.length ? `<optgroup label="Cartões de crédito">${cards.map(c => `<option value="card:${c.id}" ${parsed.isCard ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</optgroup>` : ''}
     ${accounts.length ? `<optgroup label="Contas">${accounts.map(a => `<option value="acc:${a.id}" ${!parsed.isCard ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</optgroup>` : ''}`;
 
-  const rows = novos.map((t, i) => {
-    const isExp = t.amount < 0;
-    const guess = OFX.guessCategoryId(t.memo, cats, isExp ? 'Despesa' : 'Receita');
-    // Ordem no HTML igual à ordem de leitura: marcar, ler a descrição, ver o valor,
-    // e só então escolher a categoria — que fica na linha de baixo, com espaço.
-    return `<div class="ofx-row">
-      <input type="checkbox" data-i="${i}" checked>
+  /* A conta que está sendo importada só é conhecida depois que a pessoa escolhe
+     em "Lançar em" — e é ela que define quais linhas já foram lançadas como a
+     outra perna de uma transferência. Por isso as linhas são redesenhadas quando
+     o destino muda (ver #ofx-dest mais abaixo). */
+  const destinoAtual = () => {
+    const v = ($('#ofx-dest') || {}).value || (parsed.isCard && cards[0] ? 'card:' + cards[0].id : (accounts[0] ? 'acc:' + accounts[0].id : ''));
+    const [kind, id] = String(v).split(':');
+    return { kind, id };
+  };
+
+  const linhasHtml = () => {
+    const { kind, id: contaAtual } = destinoAtual();
+    const usados = new Set();
+    // Guardado para a importação: linha que casou não pode virar lançamento novo
+    parEncontrado = {};
+
+    return novos.map((t, i) => {
+      const isExp = t.amount < 0;
+      // Só conta corrente tem transferência; fatura de cartão não é conta bancária
+      const par = kind === 'acc'
+        ? DB.acharPernaDeTransferencia(contaAtual, t.date, t.amount, !isExp, usados)
+        : null;
+      if (par) { usados.add(par.id); parEncontrado[i] = par; }
+
+      const guess = OFX.guessCategoryId(t.memo, cats, isExp ? 'Despesa' : 'Receita');
+      const outraConta = par
+        ? DB.get('accounts', !isExp ? par.account_id : par.to_account)
+        : null;
+
+      // Ordem no HTML igual à ordem de leitura: marcar, ler a descrição, ver o valor,
+      // e só então escolher a categoria — que fica na linha de baixo, com espaço.
+      return `<div class="ofx-row ${par ? 'ofx-par' : ''}">
+      <input type="checkbox" data-i="${i}" ${par ? '' : 'checked'}>
       <span class="ofx-main"><b>${esc(t.memo)}</b><small>${fmtDay(t.date)} · ${isExp ? 'saída' : 'entrada'}</small></span>
       <span class="ofx-val ${isExp ? '' : 'txt-green'}">${isExp ? '' : '+'}${fmtShort(Math.abs(t.amount))}</span>
-      <!-- Entrada também é classificada: sem isso não dá para separar salário de
+      ${par ? `<span class="ofx-cat"><span class="ofx-aviso">⇄ Já lançado como transferência${outraConta ? ` ${isExp ? 'para' : 'de'} ${esc(outraConta.name)}` : ''} — marcar contaria o mesmo dinheiro duas vezes</span></span>`
+      : `<!-- Entrada também é classificada: sem isso não dá para separar salário de
            empréstimo recebido, que entra na conta e não é ganho. -->
       <span class="ofx-cat"><select data-cat="${i}">
         <option value="">${isExp ? 'Sem categoria' : 'Sem origem'}</option>
+        ${contasTransferencia(contaAtual, isExp)}
         ${optionsCategorias(guess, isExp ? 'Despesa' : 'Receita')}
-      </select></span>
+      </select></span>`}
       <button type="button" class="ofx-tag-btn" data-tagbtn="${i}" title="Etiquetas deste lançamento"><span data-ico="tag"></span><span class="ofx-tag-txt"></span></button>
     </div>`;
-  }).join('');
+    }).join('');
+  };
+
+  const rows = linhasHtml();
 
   $('#ofx-result').innerHTML = `
     <hr class="sep">
@@ -3137,7 +3183,7 @@ function renderOfxPreview(parsed, accounts, cards) {
         <button class="btn ghost" id="ofx-all">Marcar todos</button>
         <button class="btn ghost" id="ofx-none">Desmarcar todos</button>
       </div>
-      <div class="ofx-list">${rows}</div>
+      <div class="ofx-list" id="ofx-lista">${rows}</div>
       <div class="ofx-acoes"><button class="btn" id="ofx-go">Importar selecionados</button></div>
     `}`;
 
@@ -3195,14 +3241,30 @@ function renderOfxPreview(parsed, accounts, cards) {
   };
   campoTagOfx.onblur = () => { if (campoTagOfx.value.trim()) { addTagOfxEPintar(campoTagOfx.value); campoTagOfx.value = ''; } };
 
-  document.querySelectorAll('#ofx-result [data-tagbtn]').forEach(b => b.onclick = () => {
-    const i = Number(b.dataset.tagbtn);
-    openTagsLinhaSheet(novos[i], tagsDe(i), tagsLinha[i] === null, escolhidas => {
-      tagsLinha[i] = escolhidas;      // null volta a seguir o lote
-      pintarBotoes();
+  const ligarLinhas = () => {
+    document.querySelectorAll('#ofx-result [data-tagbtn]').forEach(b => b.onclick = () => {
+      const i = Number(b.dataset.tagbtn);
+      openTagsLinhaSheet(novos[i], tagsDe(i), tagsLinha[i] === null, escolhidas => {
+        tagsLinha[i] = escolhidas;      // null volta a seguir o lote
+        pintarBotoes();
+      });
     });
-  });
-  pintarBotoes();
+    pintarBotoes();
+  };
+  ligarLinhas();
+
+  /* Trocar a conta de destino refaz o pareamento: uma linha que já estava lançada
+     como transferência para a conta A não está lançada para a conta B. Sem
+     redesenhar, o aviso ficaria falando da conta anterior. */
+  const dest = $('#ofx-dest');
+  if (dest) dest.onchange = () => {
+    const lista = $('#ofx-lista');
+    if (!lista) return;
+    lista.innerHTML = linhasHtml();
+    paintIcons(lista);
+    if (typeof UI !== 'undefined') UI.enhance(lista);
+    ligarLinhas();
+  };
 
   const boxes = () => document.querySelectorAll('#ofx-result [data-i]');
   $('#ofx-all').onclick = () => boxes().forEach(b => { b.checked = true; });
@@ -3214,12 +3276,44 @@ function renderOfxPreview(parsed, accounts, cards) {
     const account = kind === 'acc' ? DB.get('accounts', id) : null;
     if (!card && !account) return toast('Escolha onde lançar');
 
-    let n = 0;
+    let n = 0, transferidos = 0;
     boxes().forEach(box => {
       if (!box.checked) return;
-      const t = novos[Number(box.dataset.i)];
+      const idx = Number(box.dataset.i);
+      // Linha que casou com uma transferência já existente não vira lançamento:
+      // o dinheiro já foi movido nas duas contas quando ela foi criada.
+      if (parEncontrado[idx]) return;
+      const t = novos[idx];
       const isExp = t.amount < 0;
-      const catSel = document.querySelector(`#ofx-result [data-cat="${box.dataset.i}"]`);
+      const catSel = document.querySelector(`#ofx-result [data-cat="${idx}"]`);
+      const escolha = (catSel && catSel.value) || '';
+      const tags = tagsDe(idx);
+
+      /* Transferência: um lançamento só, tocando as duas contas. Lançar dois
+         (saída aqui, entrada lá) faria a mesma movimentação aparecer duas vezes
+         no extrato e contar como gasto E como receita nos relatórios. */
+      if (escolha.startsWith('transfer:')) {
+        const outroId = escolha.slice('transfer:'.length);
+        const daqui = account ? account.id : (card ? card.id : null);
+        const transf = {
+          description: t.memo,
+          amount: Math.abs(t.amount),
+          date: t.date,
+          type: 'Transferência', status: 'Pago', method: 'Transferência',
+          scope: 'Família', member: MEMBRO_COMUM,
+          // Quem sai é sempre account_id: numa saída é esta conta, numa entrada é a outra
+          account_id: isExp ? daqui : outroId,
+          to_account: isExp ? outroId : daqui,
+          category_id: null, card_id: null, invoice_key: '',
+          recurring: false, adjustment: false,
+          fitid: t.fitid, tags,
+        };
+        DB.upsert('transactions', transf);
+        applyTxEffect(transf, +1);            // move os dois saldos de uma vez
+        n++; transferidos++;
+        return;
+      }
+
       DB.upsert('transactions', {
         description: t.memo,
         amount: Math.abs(t.amount),
@@ -3229,13 +3323,13 @@ function renderOfxPreview(parsed, accounts, cards) {
         scope: 'Família',
         member: MEMBRO_COMUM,                 // extrato conjunto entra como gasto comum
         method: OFX.guessMethod(t.memo, !!card),
-        category_id: (catSel && catSel.value) || null,
+        category_id: escolha || null,
         fitid: t.fitid,
         card_id: card ? card.id : null,
         account_id: account ? account.id : null,
         invoice_key: card ? DB.invoiceKeyFor(card, t.date) : '',
         recurring: false,
-        tags: tagsDe(Number(box.dataset.i)),
+        tags,
       });
       n++;
     });
@@ -3247,7 +3341,11 @@ function renderOfxPreview(parsed, accounts, cards) {
       reconcileBalance(DB.get('accounts', account.id), parsed.balance, 'Ajuste de saldo (extrato do banco)');
     }
     Sync.autoSync(); closeModal();
-    toast(`${n} lançamento(s) importado(s) ✓`);
+    const pulados = Object.keys(parEncontrado).length;
+    const partes = [`${n} lançamento(s) importado(s)`];
+    if (transferidos) partes.push(`${transferidos} como transferência`);
+    if (pulados) partes.push(`${pulados} já estavam lançados`);
+    toast(partes.join(' · ') + ' ✓');
   };
 }
 
