@@ -1595,7 +1595,15 @@ try {
   check('com prefixo que separa de categoria', /value="transfer:\$\{o\.id\}"/.test(apT), true);
   check('importar cria UM lançamento de transferência', /type: 'Transferência', status: 'Pago', method: 'Transferência'/.test(apT), true);
   check('que move os dois saldos', /DB\.upsert\('transactions', transf\);\s*\r?\n\s*applyTxEffect\(transf, \+1\)/.test(apT), true);
-  check('linha já lançada não vira lançamento novo', /if \(parEncontrado\[idx\]\) return;/.test(apT), true);
+  /* A marcação é a palavra final: o app desmarca o que julga já lançado, mas
+     quem importa pode discordar. Antes a linha era pulada mesmo marcada, e a
+     caixa de seleção não queria dizer nada. */
+  check('linha já lançada vem desmarcada', /<input type="checkbox" data-i="\$\{i\}" \$\{certeza \? '' : 'checked'\}>/.test(apT), true);
+  check('mas marcar faz valer', /if \(parEncontrado\[idx\]\) return;/.test(apT), false);
+  check('só o desmarcado fica de fora', /if \(!box\.checked\) return;/.test(apT), true);
+  check('e o seletor aparece ao marcar', /cx\.checked\) \{ sel\.hidden = false;/.test(apT), true);
+  check('toda linha tem seletor, mesmo a desmarcada',
+    /<select data-cat="\$\{i\}" \$\{certeza \? 'hidden' : ''\}>/.test(apT), true);
   check('e aparece desmarcada com o motivo', apT.includes('Já lançado como transferência'), true);
   check('trocar a conta refaz o pareamento', /dest\.onchange[\s\S]{0,200}linhasHtml\(\)/.test(apT), true);
 

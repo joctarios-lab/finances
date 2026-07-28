@@ -3332,19 +3332,25 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
       // Ordem no HTML igual à ordem de leitura: marcar, ler a descrição, ver o valor,
       // e só então escolher a categoria — que fica na linha de baixo, com espaço.
       const nomeOutra = outraConta ? ` ${isExp ? 'para' : 'de'} ${esc(outraConta.name)}` : '';
+      /* O seletor existe em TODA linha, inclusive nas que o app desmarcou. Quem
+         discorda do palpite e marca a linha precisa poder classificá-la — e a
+         marcação é a palavra final: o que estiver marcado é importado, e nada
+         mais decide por fora. */
+      const aviso = certeza
+        ? `<span class="ofx-aviso">⇄ Já lançado como transferência${nomeOutra}, no mesmo dia. Marque só se for outra movimentação.</span>`
+        : par
+          ? `<span class="ofx-aviso duvida">⚠ Parecido com uma transferência${nomeOutra} de ${fmtDay(par.date)}. Se for a mesma, desmarque.</span>`
+          : '';
       return `<div class="ofx-row ${certeza ? 'ofx-par' : ''}${par && !certeza ? ' ofx-duvida' : ''}">
       <input type="checkbox" data-i="${i}" ${certeza ? '' : 'checked'}>
       <span class="ofx-main"><b>${esc(t.memo)}</b><small>${fmtDay(t.date)} · ${isExp ? 'saída' : 'entrada'}</small></span>
       <span class="ofx-val ${isExp ? '' : 'txt-green'}">${isExp ? '' : '+'}${fmtShort(Math.abs(t.amount))}</span>
-      ${certeza ? `<span class="ofx-cat"><span class="ofx-aviso">⇄ Já lançado como transferência${nomeOutra}, no mesmo dia — marcar contaria o mesmo dinheiro duas vezes</span></span>`
-      : `${par ? `<!-- Parecido mas em dia diferente: avisa e deixa a escolha, porque
-             desmarcar sozinho já fez uma saída legítima desaparecer -->
-      <span class="ofx-cat"><span class="ofx-aviso duvida">⚠ Parecido com uma transferência${nomeOutra} de ${fmtDay(par.date)}. Se for a mesma, desmarque; se for outra movimentação, deixe marcada.</span>` : `<span class="ofx-cat">`}
-      <select data-cat="${i}">
+      <span class="ofx-cat">${aviso}
+      <select data-cat="${i}" ${certeza ? 'hidden' : ''}>
         <option value="">${isExp ? 'Sem categoria' : 'Sem origem'}</option>
         ${contasTransferencia(contaAtual, isExp)}
         ${optionsCategorias(guess, isExp ? 'Despesa' : 'Receita')}
-      </select></span>`}
+      </select></span>
       <button type="button" class="ofx-tag-btn" data-tagbtn="${i}" title="Etiquetas deste lançamento"><span data-ico="tag"></span><span class="ofx-tag-txt"></span></button>
     </div>`;
     }).join('');
@@ -3440,6 +3446,21 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
   campoTagOfx.onblur = () => { if (campoTagOfx.value.trim()) { addTagOfxEPintar(campoTagOfx.value); campoTagOfx.value = ''; } };
 
   const ligarLinhas = () => {
+    /* Marcar uma linha que o app tinha desmarcado revela o seletor: sem isso ela
+       entraria sem categoria, e o aviso continuaria dizendo que é duplicata. */
+    document.querySelectorAll('#ofx-result [data-i]').forEach(cx => cx.onchange = () => {
+      const linha = cx.closest ? cx.closest('.ofx-row') : null;
+      if (!linha) return;
+      const sel = linha.querySelector('[data-cat]');
+      const cx2 = linha.querySelector('.ofx-aviso');
+      if (sel) {
+        const box = sel.closest ? sel.closest('.ui-select') : null;
+        if (cx.checked) { sel.hidden = false; if (box) box.hidden = false; }
+        else if (parEncontrado[Number(cx.dataset.i)]) { sel.hidden = true; if (box) box.hidden = true; }
+      }
+      if (cx2) cx2.hidden = cx.checked && !!parEncontrado[Number(cx.dataset.i)] ? false : cx2.hidden;
+      linha.classList.toggle('ofx-par', !cx.checked && !!parEncontrado[Number(cx.dataset.i)]);
+    });
     document.querySelectorAll('#ofx-result [data-tagbtn]').forEach(b => b.onclick = () => {
       const i = Number(b.dataset.tagbtn);
       openTagsLinhaSheet(novos[i], tagsDe(i), tagsLinha[i] === null, escolhidas => {
@@ -3476,11 +3497,11 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
 
     let n = 0, transferidos = 0, descartadas = 0;
     boxes().forEach(box => {
+      /* A marcação é a palavra final. O app desmarca o que julga já lançado, mas
+         se quem importa discorda e marca, a linha entra — antes ela era pulada
+         mesmo marcada, e a caixa de seleção não queria dizer nada. */
       if (!box.checked) return;
       const idx = Number(box.dataset.i);
-      // Linha que casou com uma transferência já existente não vira lançamento:
-      // o dinheiro já foi movido nas duas contas quando ela foi criada.
-      if (parEncontrado[idx]) return;
       const t = novos[idx];
       const isExp = t.amount < 0;
       const catSel = document.querySelector(`#ofx-result [data-cat="${idx}"]`);
@@ -3547,7 +3568,9 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
       reconcileBalance(DB.get('accounts', account.id), parsed.balance, 'Ajuste de saldo (extrato do banco)');
     }
     Sync.autoSync(); closeModal();
-    const pulados = Object.keys(parEncontrado).length;
+    // Conta o que ficou de fora POR ESTAR DESMARCADO, não o que o app palpitou:
+    // com a marcação valendo, o palpite pode ter sido revertido por quem importa
+    const pulados = [...boxes()].filter(b => !b.checked).length;
     const partes = [`${n} lançamento(s) importado(s)`];
     if (transferidos) partes.push(`${transferidos} como transferência`);
     if (descartadas) partes.push(`${descartadas} sem destino válido, ignorada(s)`);
