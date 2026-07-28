@@ -51,6 +51,32 @@ const Auth = {
     } catch (_) { return null; }
   },
 
+  /* O prazo conta a partir do ÚLTIMO USO, não de quando o PIN foi digitado.
+     Sem isto, depois de alguns minutos de uso qualquer F5 voltava a pedir o PIN —
+     era exatamente o que dava a sensação de "pede sempre". */
+  tocarSessao() {
+    try {
+      const bruto = sessionStorage.getItem(this.SESSAO_KEY);
+      if (!bruto) return;
+      const s = JSON.parse(bruto);
+      if (!s || !s.k) return;
+      if (Date.now() - s.t < 20000) return;      // no máximo uma gravação a cada 20s
+      s.t = Date.now();
+      sessionStorage.setItem(this.SESSAO_KEY, JSON.stringify(s));
+    } catch (_) {}
+  },
+
+  // Enquanto a pessoa estiver usando o app, a sessão se mantém viva
+  vigiarAtividade() {
+    if (this._vigiando) return;
+    this._vigiando = true;
+    const tocar = () => this.tocarSessao();
+    for (const ev of ['pointerdown', 'keydown', 'visibilitychange']) {
+      document.addEventListener(ev, tocar, { passive: true });
+    }
+    setInterval(() => { if (!document.hidden && this.unlocked) tocar(); }, 30000);
+  },
+
   limparSessao() { try { sessionStorage.removeItem(this.SESSAO_KEY); } catch (_) {} },
 
   async setPin(pin) {
@@ -320,6 +346,7 @@ const Auth = {
       }
       this.registerSuccess();
       this.guardarSessao(chave);   // um F5 daqui em diante não pede o PIN de novo
+      this.vigiarAtividade();
       this.unlocked = true;
       this.hide();
       if (onDone) onDone();
@@ -607,6 +634,7 @@ const Auth = {
         this.unlocked = true;
         this.hide();
         this.guardarSessao(chave);      // renova o prazo a partir de agora
+        this.vigiarAtividade();
         onReady();
         return;
       } catch (_) { this.limparSessao(); }

@@ -400,6 +400,54 @@ console.log('\n=== Recarregar a página não pede o PIN de novo ===');
   check('sessão morre com a aba (sessionStorage, não localStorage)', !au.includes("localStorage.setItem(this.SESSAO_KEY"), true);
 }
 
+console.log('\n=== Prazo da sessão conta do último uso ===');
+{
+  // Simula o relógio: o prazo tem de valer a partir da última atividade,
+  // não de quando o PIN foi digitado (era o que fazia o F5 pedir PIN sempre).
+  const sess = {};
+  const sessionAntes = global.sessionStorage;
+  global.sessionStorage = {
+    getItem: k => (k in sess ? sess[k] : null),
+    setItem: (k, v) => { sess[k] = String(v); },
+    removeItem: k => { delete sess[k]; },
+  };
+  // Usa a função real do app, extraída do arquivo — se ela mudar, o teste acompanha
+  const fonteAuth = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+  const corpo = (fonteAuth.match(/ {2}tocarSessao\(\) \{[\s\S]*?\n {2}\},/) || [])[0];
+  if (!corpo) throw new Error('tocarSessao não encontrada em auth.js');
+  const A = { SESSAO_KEY: 'financas.sessao', cfg: { lockAfterMin: 5 }, unlocked: true };
+  // eslint-disable-next-line no-eval
+  A.tocarSessao = eval('(function ' + corpo.trim().replace(/^tocarSessao\(\)/, '()').replace(/,$/, '') + ')');
+  const agoraReal = Date.now;
+  let desloc = 0;
+  Date.now = () => agoraReal() + desloc;
+
+  const valida = () => {
+    const s = JSON.parse(sess[A.SESSAO_KEY] || 'null');
+    return !!s && (Date.now() - s.t) / 60000 <= A.cfg.lockAfterMin;
+  };
+  sess[A.SESSAO_KEY] = JSON.stringify({ k: 'xxx', t: Date.now() });
+  check('logo após o PIN, recarregar retoma', valida(), true);
+
+  desloc = 6 * 60 * 1000;                       // 6 min depois, sem tocar
+  check('sem renovar, o prazo vence (bug antigo)', valida(), false);
+
+  sess[A.SESSAO_KEY] = JSON.stringify({ k: 'xxx', t: Date.now() });
+  for (let m = 1; m <= 12; m++) { desloc += 60 * 1000; A.tocarSessao(); }
+  check('usando o app, a sessão se mantém viva', valida(), true);
+
+  desloc += 6 * 60 * 1000;                      // 6 min parado
+  check('parado além do prazo, volta a pedir o PIN', valida(), false);
+
+  Date.now = agoraReal;
+  global.sessionStorage = sessionAntes;
+
+  const au2 = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+  check('atividade renova a sessão', au2.includes('vigiarAtividade') && au2.includes('pointerdown'), true);
+  check('gravação limitada a uma a cada 20s', au2.includes('< 20000'), true);
+  check('vigilância ligada ao desbloquear e ao retomar', (au2.match(/this\.vigiarAtividade\(\)/g) || []).length >= 2, true);
+}
+
 console.log('\n=== Versão dos arquivos (evita rodar código velho) ===');
 {
   const html = fs.readFileSync(BASE + 'index.html', 'utf8');
