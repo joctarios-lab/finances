@@ -10,7 +10,7 @@ const SYNC_TABLES = {
   goals: ['name', 'icon', 'target_amount', 'target_date', 'done', 'kind'],
   goal_entries: ['goal_id', 'description', 'amount', 'date', 'from_account', 'to_account'],
   invoice_status: ['invoice_key', 'paid'],
-  family_settings: ['members', 'month_start_day', 'monthly_income'],
+  family_settings: ['members', 'month_start_day', 'monthly_income', 'family_name'],
 };
 
 const Sync = {

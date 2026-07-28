@@ -164,6 +164,7 @@ function render() {
   // do que a tela de Relatórios está exibindo.
   $('#topbar-month').textContent = TITULOS[state.tab] || 'Painel';
   const views = { inicio: renderInicio, extrato: renderExtrato, cartoes: renderCartoes, metas: renderMetas, relatorios: renderRelatorios };
+  refreshIdentity();
   $('#view').innerHTML = views[state.tab](period);
   paintIcons($('#view'));
   if (typeof UI !== 'undefined') UI.enhance($('#view'));
@@ -836,6 +837,17 @@ function renderMetas() {
     </div>`;
   }
   return html;
+}
+
+// Saudação e identidade usam o nome que a própria família escolheu
+function refreshIdentity() {
+  const hora = new Date().getHours();
+  const saudacao = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
+  const nome = DB.familyName();
+  $('#topbar-hello').textContent = saudacao + (nome ? ' · ' + nome : '');
+  const side = $('#side-family');
+  if (side) side.textContent = DB.familyLabel();
+  document.title = nome ? `Finanças — ${nome}` : 'Finanças da Família';
 }
 
 /* ---------- Relatórios ---------- */
@@ -1862,7 +1874,7 @@ function openConfig() {
     <div class="settings-item" data-go="accounts"><span class="cfg-left"><span class="cfg-ico" data-ico="wallet"></span><span>Contas<br><small>${DB.all('accounts').length} cadastrada(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="cards"><span class="cfg-left"><span class="cfg-ico" data-ico="card"></span><span>Cartões de crédito<br><small>${DB.all('cards').length} cadastrado(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="categories"><span class="cfg-left"><span class="cfg-ico" data-ico="pie"></span><span>Categorias &amp; orçamentos<br><small>${DB.all('categories').length} categoria(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Membros &amp; ciclo do mês<br><small>Início no dia ${DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Família &amp; ciclo do mês<br><small>${esc(DB.familyLabel())} · início no dia ${DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="sync"><span class="cfg-left"><span class="cfg-ico" data-ico="cloud"></span><span>Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="ofx"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Importar extrato OFX<br><small>traga os lançamentos do banco ou cartão de uma vez</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="notif"><span class="cfg-left"><span class="cfg-ico" data-ico="bell"></span><span>Notificações<br><small>${Notif.enabled() ? 'Ativas — faturas, orçamentos e metas' : 'Desativadas'}</small></span></span><span class="chev" data-ico="chev"></span></div>
@@ -1996,8 +2008,11 @@ function openConfigSection(sec) {
   if (sec === 'family') {
     const s = DB.settings();
     openModal(`
-      <div class="modal-title">Membros & ciclo<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-      <div class="field"><label>Membros (um por linha)</label><textarea id="f-members" rows="4">${esc(s.members.join('\n'))}</textarea></div>
+      <div class="modal-title">Família & ciclo<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+      <div class="field"><label>Nome da família</label><input id="f-famname" placeholder="Ex: Nossa casa, Família Silva…" value="${esc(s.family_name || '')}">
+        <p class="muted" style="margin-top:6px">Aparece no topo do app e no menu lateral.</p></div>
+      <div class="field"><label>Membros (um por linha)</label><textarea id="f-members" rows="4" placeholder="Ex:&#10;Ana&#10;Carlos">${esc((s.members || []).join('\n'))}</textarea>
+        <p class="muted" style="margin-top:6px">Quem pode aparecer como responsável por um gasto pessoal.</p></div>
       <div class="field"><label>Dia de início do mês financeiro</label><input id="f-start" type="number" min="1" max="28" value="${s.month_start_day}">
         <p class="muted" style="margin-top:6px">1 = mês calendário. Ex: 5 = período do dia 5 ao dia 4 do mês seguinte (útil para quem se organiza pelo salário).</p></div>
       <div class="field"><label>Renda mensal da família (líquida)</label><input id="f-income" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00">
@@ -2008,7 +2023,13 @@ function openConfigSection(sec) {
     $('#md-back').onclick = openConfig;
     $('#md-save').onclick = () => {
       const members = $('#f-members').value.split('\n').map(x => x.trim()).filter(Boolean);
-      DB.upsert('family_settings', { ...s, members: members.length ? members : ['Família'], month_start_day: Math.min(28, Math.max(1, parseInt($('#f-start').value) || 1)), monthly_income: moneyVal('#f-income') });
+      DB.upsert('family_settings', {
+        ...s,
+        family_name: ($('#f-famname').value || '').trim(),
+        members,
+        month_start_day: Math.min(28, Math.max(1, parseInt($('#f-start').value) || 1)),
+        monthly_income: moneyVal('#f-income'),
+      });
       Sync.autoSync(); toast('Salvo'); openConfig();
     };
   }
@@ -2171,7 +2192,8 @@ function openSyncConfig() {
     <hr class="sep"><button class="btn ghost" id="s-reset">Alterar URL/chave</button>`;
   if (step === 3) body = `
     <p class="muted" style="margin-bottom:12px">Passo 3 de 3 — crie a família ou entre na que seu cônjuge criou.</p>
-    <button class="btn" id="s-create-fam">Criar família "Peixoto Rios"</button>
+    <div class="field"><label>Nome da família</label><input id="s-fam-name" placeholder="Ex: Nossa casa, Família Silva…" value="${esc(DB.familyName())}"></div>
+    <button class="btn" id="s-create-fam">Criar família</button>
     <hr class="sep">
     <div class="field"><label>Ou cole o código da família</label><input id="s-fam-code" placeholder="código recebido do outro membro"></div>
     <button class="btn ghost" id="s-join-fam">Entrar na família</button>`;
@@ -2207,8 +2229,14 @@ function openSyncConfig() {
     } catch (e) { toast(e.message); }
   });
   on('#s-create-fam', async () => {
-    try { await Sync.createFamily('Família Peixoto Rios'); await Sync.syncAll(); toast('Família criada ✓'); openSyncConfig(); }
-    catch (e) { toast(e.message); }
+    const nome = ($('#s-fam-name').value || '').trim();
+    if (!nome) { $('#s-fam-name').focus(); return toast('Escolha um nome para a família'); }
+    try {
+      await Sync.createFamily(nome);
+      DB.upsert('family_settings', { ...DB.settings(), family_name: nome });
+      await Sync.syncAll();
+      toast('Família criada ✓'); render(); openSyncConfig();
+    } catch (e) { toast(e.message); }
   });
   on('#s-join-fam', async () => {
     try {
@@ -2472,9 +2500,6 @@ Sync.onState = (estado, pendentes) => {
     off: 'Sincronização não configurada',
   }[estado] || '';
 };
-
-const hour = new Date().getHours();
-$('#topbar-hello').textContent = (hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite') + ' · Família Peixoto Rios';
 
 function refreshUserChip() {
   const mail = (Sync.cfg && Sync.cfg.user_email) || '';

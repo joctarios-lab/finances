@@ -137,10 +137,12 @@ create table if not exists family_settings (
   members jsonb not null default '["Família"]',
   month_start_day int not null default 1,
   monthly_income numeric not null default 0,   -- renda líquida familiar (projeções, 50/30/20)
+  family_name text default '',                 -- nome escolhido por quem usa
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
 alter table family_settings add column if not exists monthly_income numeric not null default 0;
+alter table family_settings add column if not exists family_name text default '';
 
 alter table transactions add column if not exists type text not null default 'Despesa';
 alter table transactions add column if not exists fitid text default '';

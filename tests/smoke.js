@@ -338,6 +338,32 @@ console.log('\n=== Sincronização automática ===');
   check('startAuto é ligado na abertura', a.includes('Sync.startAuto()'), true);
 }
 
+console.log('\n=== Nome da família é escolhido por quem usa ===');
+{
+  const arquivos = ['js/app.js', 'js/auth.js', 'js/db.js', 'js/sync.js', 'index.html', 'manifest.webmanifest'];
+  const comNomeFixo = arquivos.filter(f => /Peixoto/i.test(fs.readFileSync(BASE + f, 'utf8')));
+  check('nenhum nome de família fixo no código', comNomeFixo.length ? comNomeFixo.join(', ') : true, true);
+
+  const au = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+  const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('onboarding pede o nome antes de criar', /ob-fam[\s\S]{0,400}Escolha um nome para a família/.test(au), true);
+  check('quem usa só no aparelho também nomeia', au.includes('passoNomeLocal'), true);
+  check('nome é gravado nas configurações', au.includes("family_name: nome"), true);
+  check('criar família pela tela de sync exige nome', ap.includes("Escolha um nome para a família"), true);
+  check('nome editável em Configurações', ap.includes('f-famname'), true);
+  check('family_name sincroniza entre aparelhos', fs.readFileSync(BASE + 'js/sync.js', 'utf8').includes("'family_name'"), true);
+  check('coluna family_name no banco', /add column if not exists family_name/.test(fs.readFileSync(BASE + 'supabase/schema.sql', 'utf8')), true);
+
+  // Sem nome definido, o app fala de forma neutra — nunca inventa um sobrenome
+  const semNome = DB.settings().family_name;
+  check('sem nome escolhido, usa rótulo neutro', DB.familyLabel(), 'Minha família');
+  check('familyName vazio enquanto não escolherem', DB.familyName(), '');
+  DB.upsert('family_settings', { ...DB.settings(), family_name: 'Nossa Casa' });
+  check('depois de escolher, usa o nome da família', DB.familyLabel(), 'Nossa Casa');
+  DB.upsert('family_settings', { ...DB.settings(), family_name: semNome || '' });
+  check('membros começam vazios (ninguém inventado)', Array.isArray(DB.settings().members), true);
+}
+
 console.log('\n=== Primeiro acesso (ordem das etapas) ===');
 {
   const au = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
@@ -351,7 +377,7 @@ console.log('\n=== Primeiro acesso (ordem das etapas) ===');
   check('PIN vem antes da digital', ordem[4] < ordem[5], true);
   check('digital é oferecida logo após criar o PIN', /setPin\(p1\)[\s\S]{0,160}passoDigital/.test(wiz), true);
   check('só oferece digital se o aparelho suportar', /bioSuportadaNoAparelho\(\)[\s\S]{0,60}passoDigital/.test(wiz), true);
-  check('dá para usar só neste aparelho (sem nuvem)', wiz.includes('ob-local') && /ob-local[\s\S]{0,60}passoPin/.test(wiz), true);
+  check('dá para usar só neste aparelho (sem nuvem)', wiz.includes('ob-local') && wiz.includes('passoNomeLocal'), true);
   check('pula a tela de servidor se já vier configurado', /Sync\.configured\(\) \? passoLogin/.test(wiz), true);
   check('quem entra numa família baixa tudo antes de seguir', /joinFamily[\s\S]{0,200}lastSync = null/.test(wiz), true);
   check('boot usa o novo fluxo', au.includes('!this.cfg.onboarded') && au.includes('showOnboarding(onReady)'), true);

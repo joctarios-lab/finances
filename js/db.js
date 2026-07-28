@@ -116,13 +116,18 @@ const DB = {
   settings() {
     let s = this.all('family_settings')[0];
     if (!s) {
-      s = { id: this.uuid(), members: ['Joctã', 'Cônjuge'], month_start_day: 1, monthly_income: 0, updated_at: this.now(), deleted: false, dirty: true };
+      s = { id: this.uuid(), family_name: '', members: [], month_start_day: 1, monthly_income: 0, updated_at: this.now(), deleted: false, dirty: true };
       this.data.family_settings.push(s);
       this.save();
     }
     if (s.monthly_income === undefined) s.monthly_income = 0;
+    if (!Array.isArray(s.members)) s.members = [];
     return s;
   },
+
+  // Nome escolhido por quem usa. Enquanto não houver, o app fala de forma neutra.
+  familyName() { return (this.settings().family_name || '').trim(); },
+  familyLabel() { return this.familyName() || 'Minha família'; },
 
   /* ---------- Ciclo do mês (dia de início configurável) ---------- */
   // Retorna { start, end, label } do período que contém a data ref (Date).

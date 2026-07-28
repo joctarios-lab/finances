@@ -314,7 +314,7 @@ const Auth = {
            </button>
          </div>`, '');
       on('ob-nuvem', () => (Sync.configured() ? passoLogin() : passoServidor()));
-      on('ob-local', () => passoPin());
+      on('ob-local', () => passoNomeLocal());
     };
 
     /* Passo 2 — endereço do servidor (pulado se o app já vier configurado) */
@@ -368,16 +368,22 @@ const Auth = {
     /* Passo 3b — família */
     const passoFamilia = () => {
       tela(3, 4, 'Sua família',
-        'Crie a família agora ou entre na que já existe, usando o código do outro aparelho.',
-        `<div class="ob-field"><label>Nome da família</label><input id="ob-fam" value="Minha Família"></div>`,
+        'Escolha como querem chamar a família — é o nome que aparece no app. Ou entre na família que já existe, com o código do outro aparelho.',
+        `<div class="ob-field"><label>Nome da família</label><input id="ob-fam" placeholder="Ex: Nossa casa, Família Silva…" autocomplete="off"></div>`,
         `<button class="btn" id="ob-criar-fam">Criar família</button>
          <hr class="sep">
          <div class="ob-field"><label>Ou cole o código recebido</label><input id="ob-cod" placeholder="código da família"></div>
          <button class="btn ghost" id="ob-entrar-fam">Entrar na família</button>`);
       on('ob-criar-fam', async () => {
+        const nome = val('ob-fam').trim();
+        if (!nome) { const c = document.getElementById('ob-fam'); if (c) c.focus(); return err('Escolha um nome para a família'); }
         err('Criando…');
-        try { await Sync.createFamily(val('ob-fam') || 'Minha Família'); await Sync.syncAll(); passoPin(); }
-        catch (e) { err(e.message); }
+        try {
+          await Sync.createFamily(nome);
+          DB.upsert('family_settings', { ...DB.settings(), family_name: nome });
+          await Sync.syncAll();
+          passoPin();
+        } catch (e) { err(e.message); }
       });
       on('ob-entrar-fam', async () => {
         if (!val('ob-cod').trim()) return err('Cole o código da família');
@@ -388,6 +394,22 @@ const Auth = {
           await Sync.syncAll();
           passoPin();
         } catch (e) { err(e.message); }
+      });
+    };
+
+    /* Quem usa só neste aparelho também escolhe o nome */
+    const passoNomeLocal = () => {
+      tela(2, 3, 'Como chamar a família?',
+        'É o nome que aparece no topo do app. Dá para mudar depois em Configurações.',
+        `<div class="ob-field"><label>Nome</label><input id="ob-fam-local" placeholder="Ex: Nossa casa, Família Silva…" autocomplete="off"></div>`,
+        `<button class="btn" id="ob-nome-go">Continuar</button>
+         <div class="btn-row"><button class="btn ghost" id="ob-back">Voltar</button></div>`);
+      on('ob-back', passoInicio);
+      on('ob-nome-go', () => {
+        const nome = val('ob-fam-local').trim();
+        if (!nome) { const c = document.getElementById('ob-fam-local'); if (c) c.focus(); return err('Escolha um nome'); }
+        DB.upsert('family_settings', { ...DB.settings(), family_name: nome });
+        passoPin();
       });
     };
 
