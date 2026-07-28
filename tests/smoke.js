@@ -1620,6 +1620,59 @@ try {
   DB.remove('accounts', contaA); DB.remove('accounts', contaB);
 } catch (e) { console.log(` FALHA | transferência no OFX: ${e.message}`); fail++; }
 
+/* ---- A regra que decide o que já foi importado ----
+   Errar para cada lado custa coisas diferentes: descartar um lançamento legítimo
+   faz dinheiro sumir em silêncio; deixar passar um repetido gera duplicata, que
+   aparece no saldo. A regra é calibrada por isso. */
+console.log('\n=== Regra de duplicidade ===');
+try {
+  const cX = DB.upsert('accounts', { name: 'Conta Dedup A', type: 'Conta Corrente', balance: 0, active: true });
+  const cY = DB.upsert('accounts', { name: 'Conta Dedup B', type: 'Conta Corrente', balance: 0, active: true });
+  const dD = dia(20);
+  DB.upsert('transactions', { description: 'Mercado dedup', amount: 80, date: dD, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: cX, fitid: 'FIT-1' });
+
+  // FITID é único DENTRO da conta, não entre bancos
+  check('mesmo FITID na mesma conta é repetido', DB.jaImportado({ fitid: 'FIT-1', amount: -80, date: dD, memo: 'x' }, cX), true);
+  check('mesmo FITID em OUTRA conta não é repetido', DB.jaImportado({ fitid: 'FIT-1', amount: -80, date: dD, memo: 'x' }, cY), false);
+  check('FITID diferente não é repetido', DB.jaImportado({ fitid: 'FIT-9', amount: -80, date: dD, memo: 'x' }, cX), false);
+
+  // Banco sem FITID: cai para conteúdo exato, exigindo os quatro campos
+  DB.upsert('transactions', { description: 'Padaria dedup', amount: 12, date: dD, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Dinheiro', account_id: cX });
+  const semFit = { fitid: '', amount: -12, date: dD, memo: 'Padaria dedup' };
+  check('sem FITID, conteúdo idêntico é repetido', DB.jaImportado(semFit, cX), true);
+  check('valor diferente não é repetido', DB.jaImportado({ ...semFit, amount: -13 }, cX), false);
+  check('dia diferente não é repetido', DB.jaImportado({ ...semFit, date: dia(21) }, cX), false);
+  check('descrição diferente não é repetido', DB.jaImportado({ ...semFit, memo: 'Outra coisa' }, cX), false);
+  check('conta diferente não é repetido', DB.jaImportado(semFit, cY), false);
+
+  /* O caso real: uma saída de R$ 100 em 24/06 foi desmarcada sozinha por parecer
+     com uma transferência de 25/06, e sumiu. Agora só o mesmo dia desmarca. */
+  const tr = { description: 'Envio dedup', amount: 100, date: dia(25), type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: cX, to_account: cY };
+  DB.upsert('transactions', tr); applyTxEffect(tr, +1);
+
+  const mesmoDia = DB.acharPernaDeTransferencia(cX, dia(25), 100, false, new Set());
+  check('mesmo dia: encontra', !!mesmoDia, true);
+  check('e com certeza, autorizando desmarcar', mesmoDia._certeza, true);
+
+  const umDiaAntes = DB.acharPernaDeTransferencia(cX, dia(24), 100, false, new Set());
+  check('um dia antes: encontra', !!umDiaAntes, true);
+  check('mas SEM certeza — não desmarca sozinho', umDiaAntes._certeza, false);
+  const tresDias = DB.acharPernaDeTransferencia(cX, dia(22), 100, false, new Set());
+  check('três dias antes ainda avisa', !!tresDias, true);
+  check('sem certeza', tresDias._certeza, false);
+  check('quatro dias já não casa', DB.acharPernaDeTransferencia(cX, dia(21), 100, false, new Set()), null);
+
+  const apR = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('só a certeza desmarca a linha', /const certeza = !!\(par && par\._certeza\);/.test(apR), true);
+  check('e só ela sai do que será importado', /if \(par && certeza\) \{ usados\.add/.test(apR), true);
+  check('na dúvida a linha fica marcada', /<input type="checkbox" data-i="\$\{i\}" \$\{certeza \? '' : 'checked'\}>/.test(apR), true);
+  check('com aviso dizendo o que fazer', apR.includes('Se for a mesma, desmarque'), true);
+  check('o descarte é refeito ao trocar de conta', /novos = parsed\.txs\.filter\(t => !DB\.jaImportado/.test(apR), true);
+
+  for (const t of DB.all('transactions').filter(t => / dedup$/.test(t.description))) DB.remove('transactions', t.id);
+  DB.remove('accounts', cX); DB.remove('accounts', cY);
+} catch (e) { console.log(` FALHA | dedup: ${e.message}`); fail++; }
+
 console.log('\n=== Seletor de categoria não é uma lista sem fim ===');
 {
   const uiSrc = fs.readFileSync(BASE + 'js/ui.js', 'utf8');

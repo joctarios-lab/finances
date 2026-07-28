@@ -474,6 +474,10 @@ svg:hover .ch-bar-on { fill: #005a92; }
 /* Linha já coberta por uma transferência: apagada e desmarcada, para o olho pular
    e a mão não marcar sem querer o que contaria o dinheiro duas vezes. */
 .ofx-par { opacity: .62; }
+/* Dúvida não é o mesmo que certeza: fica em pé de igualdade com as demais e
+   marcada, porque desmarcar por engano faz dinheiro sumir sem aviso */
+.ofx-duvida { background: rgba(246, 166, 9, .05); border-radius: 8px; }
+.ofx-aviso.duvida { color: #b57500; background: rgba(246, 166, 9, .1); margin-bottom: 6px; }
 .ofx-aviso {
   display: block; font-size: 11.5px; line-height: 1.4; color: var(--blue);
   background: rgba(114, 57, 234, .07); border-radius: 8px; padding: 6px 9px;

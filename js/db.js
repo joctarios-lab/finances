@@ -311,6 +311,30 @@ const DB = {
     return !!fitid && this.data.transactions.some(t => t.fitid === fitid && !t.deleted);
   },
 
+  /* Este lançamento do extrato já está lançado NESTA conta?
+
+     O FITID é único dentro de uma conta, não entre bancos — dois bancos podem
+     emitir o mesmo. Comparar sem olhar a conta faz um lançamento legítimo sumir
+     porque "já existe" em outro lugar. Por isso a busca é sempre escopada.
+
+     Sem FITID (banco que não emite), cai para conteúdo exato: mesma conta,
+     mesmo dia, mesmo valor, mesma descrição. Exigir os quatro juntos é
+     conservador de propósito — duas compras iguais no mesmo dia existem, e
+     descartar uma delas seria pior do que a repetida entrar. */
+  jaImportado(linha, contaId, cartaoId) {
+    const ondeBate = t => (contaId ? t.account_id === contaId : t.card_id === cartaoId);
+    if (linha.fitid) {
+      return this.all('transactions').some(t => t.fitid === linha.fitid && ondeBate(t));
+    }
+    const valor = Math.abs(Number(linha.amount) || 0);
+    const desc = this._semAcento(linha.memo);
+    return this.all('transactions').some(t =>
+      ondeBate(t) &&
+      t.date === linha.date &&
+      Math.abs(Math.abs(Number(t.amount) || 0) - valor) < 0.005 &&
+      this._semAcento(t.description) === desc);
+  },
+
   /* ---------- A outra perna de uma transferência ----------
      Uma transferência já mexe nos DOIS saldos quando é criada. Então, ao importar
      o extrato da conta que recebeu, o crédito correspondente NÃO pode virar
@@ -319,10 +343,17 @@ const DB = {
      O FITID não serve aqui: cada banco emite o seu, então a mesma transferência
      tem identificadores diferentes nos dois extratos. O casamento é por conteúdo.
 
-     TOLERANCIA_DIAS cobre TED que cai no dia seguinte e agendamento de fim de
-     semana; acima disso o risco de casar duas transferências distintas cresce
-     mais do que a comodidade. */
+     Duas faixas de confiança, porque errar para cada lado custa coisas
+     diferentes. Desmarcar sozinho uma linha legítima faz dinheiro sumir em
+     silêncio — foi assim que uma saída de R$ 100 do dia 24 desapareceu, casada
+     por engano com uma transferência do dia 25. Deixar passar uma repetida gera
+     duplicata, que aparece no saldo e o diagnóstico acha.
+
+     Então: só o MESMO DIA autoriza desmarcar sozinho. De 1 a 3 dias o app avisa
+     e deixa a decisão com quem está importando — TED que cai no dia seguinte é
+     comum demais para ignorar, e parecida demais para decidir por conta. */
   TOLERANCIA_DIAS: 3,
+  TOLERANCIA_CERTEZA: 0,
 
   /* Procura a transferência cuja perna oposta bate com este lançamento do extrato.
      contaId  — a conta cujo extrato está sendo importado
@@ -350,7 +381,11 @@ const DB = {
     // A mais próxima da data do extrato é a mais provável
     candidatos.sort((a, b) =>
       Math.abs(Date.parse(a.date + 'T12:00:00') - dia) - Math.abs(Date.parse(b.date + 'T12:00:00') - dia));
-    return candidatos[0];
+    const achado = candidatos[0];
+    const distancia = Math.abs(Date.parse(achado.date + 'T12:00:00') - dia) / 86400000;
+    // O chamador precisa saber o quanto confiar: só o mesmo dia é certeza
+    achado._certeza = distancia <= this.TOLERANCIA_CERTEZA;
+    return achado;
   },
 
   /* ---------- Etiquetas ----------

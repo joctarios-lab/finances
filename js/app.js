@@ -3282,8 +3282,7 @@ function contasTransferencia(contaAtual, ehSaida) {
 function renderOfxPreview(parsed, accounts, cards, situacao) {
   const cats = DB.all('categories');   // com os pais: a adivinhação depende deles
   let parEncontrado = {};              // linha -> transferência que já cobre este valor
-  const novos = parsed.txs.filter(t => !DB.hasFitid(t.fitid));
-  const dups = parsed.txs.length - novos.length;
+  let novos = parsed.txs, dups = 0;
   /* Só o PRIMEIRO de cada grupo vem marcado. Marcando todos, o navegador fica com
      o ÚLTIMO — enquanto o código assumia o primeiro. As duas pontas discordavam, e
      a lista de destinos de transferência era montada excluindo a conta errada:
@@ -3309,13 +3308,21 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
     // Guardado para a importação: linha que casou não pode virar lançamento novo
     parEncontrado = {};
 
+    /* O que já foi importado depende de EM QUAL CONTA se está lançando: o mesmo
+       FITID em contas diferentes é lançamento diferente. Por isso o descarte é
+       refeito a cada troca de "Lançar em", e não uma vez só ao abrir. */
+    novos = parsed.txs.filter(t => !DB.jaImportado(t, kind === 'acc' ? contaAtual : null, kind === 'card' ? contaAtual : null));
+    dups = parsed.txs.length - novos.length;
+
     return novos.map((t, i) => {
       const isExp = t.amount < 0;
       // Só conta corrente tem transferência; fatura de cartão não é conta bancária
       const par = kind === 'acc'
         ? DB.acharPernaDeTransferencia(contaAtual, t.date, t.amount, !isExp, usados)
         : null;
-      if (par) { usados.add(par.id); parEncontrado[i] = par; }
+      // Só o mesmo dia autoriza desmarcar sozinho; na dúvida, quem decide é quem importa
+      const certeza = !!(par && par._certeza);
+      if (par && certeza) { usados.add(par.id); parEncontrado[i] = par; }
 
       const guess = OFX.guessCategoryId(t.memo, cats, isExp ? 'Despesa' : 'Receita');
       const outraConta = par
@@ -3324,14 +3331,16 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
 
       // Ordem no HTML igual à ordem de leitura: marcar, ler a descrição, ver o valor,
       // e só então escolher a categoria — que fica na linha de baixo, com espaço.
-      return `<div class="ofx-row ${par ? 'ofx-par' : ''}">
-      <input type="checkbox" data-i="${i}" ${par ? '' : 'checked'}>
+      const nomeOutra = outraConta ? ` ${isExp ? 'para' : 'de'} ${esc(outraConta.name)}` : '';
+      return `<div class="ofx-row ${certeza ? 'ofx-par' : ''}${par && !certeza ? ' ofx-duvida' : ''}">
+      <input type="checkbox" data-i="${i}" ${certeza ? '' : 'checked'}>
       <span class="ofx-main"><b>${esc(t.memo)}</b><small>${fmtDay(t.date)} · ${isExp ? 'saída' : 'entrada'}</small></span>
       <span class="ofx-val ${isExp ? '' : 'txt-green'}">${isExp ? '' : '+'}${fmtShort(Math.abs(t.amount))}</span>
-      ${par ? `<span class="ofx-cat"><span class="ofx-aviso">⇄ Já lançado como transferência${outraConta ? ` ${isExp ? 'para' : 'de'} ${esc(outraConta.name)}` : ''} — marcar contaria o mesmo dinheiro duas vezes</span></span>`
-      : `<!-- Entrada também é classificada: sem isso não dá para separar salário de
-           empréstimo recebido, que entra na conta e não é ganho. -->
-      <span class="ofx-cat"><select data-cat="${i}">
+      ${certeza ? `<span class="ofx-cat"><span class="ofx-aviso">⇄ Já lançado como transferência${nomeOutra}, no mesmo dia — marcar contaria o mesmo dinheiro duas vezes</span></span>`
+      : `${par ? `<!-- Parecido mas em dia diferente: avisa e deixa a escolha, porque
+             desmarcar sozinho já fez uma saída legítima desaparecer -->
+      <span class="ofx-cat"><span class="ofx-aviso duvida">⚠ Parecido com uma transferência${nomeOutra} de ${fmtDay(par.date)}. Se for a mesma, desmarque; se for outra movimentação, deixe marcada.</span>` : `<span class="ofx-cat">`}
+      <select data-cat="${i}">
         <option value="">${isExp ? 'Sem categoria' : 'Sem origem'}</option>
         ${contasTransferencia(contaAtual, isExp)}
         ${optionsCategorias(guess, isExp ? 'Despesa' : 'Receita')}
