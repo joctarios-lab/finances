@@ -197,8 +197,10 @@ const DB = {
   txOfPeriod(period) {
     return this.all('transactions').filter(t => this.inPeriod(t.date, period));
   },
-  expensesOf(period) { return this.txOfPeriod(period).filter(t => this.isExpense(t)); },
-  incomesOf(period) { return this.txOfPeriod(period).filter(t => !this.isExpense(t)); },
+  // Ajustes de saldo aparecem no extrato (para auditoria), mas não são gasto nem
+  // renda de verdade — ficam fora de toda análise para não distorcer os números.
+  expensesOf(period) { return this.txOfPeriod(period).filter(t => this.isExpense(t) && !t.adjustment); },
+  incomesOf(period) { return this.txOfPeriod(period).filter(t => !this.isExpense(t) && !t.adjustment); },
   // Renda que realmente entrou na família. Estorno de cartão é receita no modelo
   // (abate a fatura), mas não é renda — por isso fica de fora daqui.
   realizedIncome(period) {

@@ -97,6 +97,31 @@ function txEffect(t) {
   return DB.isExpense(t) ? -v : v;   // despesa debita, receita credita
 }
 
+/* Conciliação: corrigir o saldo NÃO reescreve o número em silêncio.
+   Lança um "Ajuste de saldo" com a diferença, para que o extrato sempre explique
+   o saldo e a correção possa ser auditada, revertida ou classificada depois.
+   Ajustes ficam de fora das análises (não são gasto nem renda de verdade). */
+function reconcileBalance(account, novoSaldo, descricao) {
+  const delta = Number(novoSaldo) - (Number(account.balance) || 0);
+  if (Math.abs(delta) < 0.005) return 0;
+  const ajuste = {
+    description: descricao || 'Ajuste de saldo',
+    amount: Math.abs(delta),
+    date: todayISO(),
+    type: delta > 0 ? 'Receita' : 'Despesa',
+    status: 'Pago',
+    scope: 'Família',
+    member: MEMBRO_COMUM,
+    method: 'Ajuste',
+    account_id: account.id,
+    category_id: null,
+    adjustment: true,
+  };
+  DB.upsert('transactions', ajuste);
+  adjustBalance(account.id, txEffect(ajuste));   // o próprio lançamento leva o saldo ao novo valor
+  return delta;
+}
+
 function catOf(id) { return DB.get('categories', id); }
 function catLabel(id) { const c = catOf(id); return c ? `${c.icon} ${c.name}` : 'Sem categoria'; }
 
@@ -459,8 +484,8 @@ function renderExtrato(period) {
     .filter(t => state.filter === 'Todos' || t.scope === state.filter)
     .filter(t => quem === 'Todos' || (t.member || MEMBRO_COMUM) === quem)
     .sort((a, b) => b.date.localeCompare(a.date));
-  const total = txs.filter(t => DB.isExpense(t)).reduce((s, t) => s + Number(t.amount || 0), 0);
-  const receitas = txs.filter(t => !DB.isExpense(t) && !t.card_id).reduce((s, t) => s + Number(t.amount || 0), 0);
+  const total = txs.filter(t => DB.isExpense(t) && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
+  const receitas = txs.filter(t => !DB.isExpense(t) && !t.card_id && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
 
   let list = '', lastDay = '';
   for (const t of txs) {
@@ -470,10 +495,10 @@ function renderExtrato(period) {
       ? `💳 ${esc((DB.get('cards', t.card_id) || {}).name || 'Cartão')}`
       : esc(t.method);
     const isExp = DB.isExpense(t);
-    list += `<div class="tx" data-tx="${t.id}">
-      <span class="tx-ico">${isExp ? esc(c ? c.icon : '🧾') : '💵'}</span>
+    list += `<div class="tx ${t.adjustment ? 'tx-adj' : ''}" data-tx="${t.id}">
+      <span class="tx-ico">${t.adjustment ? '⚖️' : isExp ? esc(c ? c.icon : '🧾') : '💵'}</span>
       <span class="tx-info"><span class="tx-name">${esc(t.description)}</span>
-      <span class="tx-meta">${isExp ? esc(c ? c.name : 'Sem categoria') : 'Receita'} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}</span></span>
+      <span class="tx-meta">${t.adjustment ? 'Conciliação — fora das análises · toque para classificar' : `${isExp ? esc(c ? c.name : 'Sem categoria') : 'Receita'} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}`}</span></span>
       <span class="tx-amount ${!isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${isExp ? '' : '+ '}${fmt(t.amount)}</span>
       ${t.status === 'A Pagar' ? `<button class="pay-btn" data-pay-tx="${t.id}" title="Marcar como ${isExp ? 'pago' : 'recebido'}"><span data-ico="check"></span></button>` : ''}
     </div>`;
@@ -958,7 +983,7 @@ function openTxSheet(tx, asNew) {
         <option value="A Pagar" ${tx.status === 'A Pagar' ? 'selected' : ''}>A Pagar</option>
       </select></div>
     </div>
-    <div class="field"><label id="lbl-method">Pagamento</label>${chipGroup('g-method', METHODS.map(m => ({ value: m, label: m })), tx.method)}</div>
+    <div class="field"><label id="lbl-method">Pagamento</label>${chipGroup('g-method', METHODS.map(m => ({ value: m, label: m })), METHODS.includes(tx.method) ? tx.method : 'PIX')}</div>
     <div class="field" id="wrap-card" ${tx.method === 'Cartão de Crédito' ? '' : 'hidden'}>
       <label>Cartão <span class="muted">— a fatura é escolhida sozinha pelo fechamento</span></label>
       <select id="f-card">${cards.map(c => `<option value="${c.id}" ${tx.card_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('') || '<option value="">— cadastre um cartão em Configurações —</option>'}</select>
@@ -1147,6 +1172,7 @@ function openTxSheet(tx, asNew) {
       category_id: isReceita ? null : (chipValue('g-cat') || null),
       recurring: !!$('#f-rec').value,
       type: isReceita ? 'Receita' : 'Despesa',
+      adjustment: false,        // classificar um ajuste o transforma em lançamento normal
       card_id: null, account_id: null, invoice_key: '',
     };
     if (method === 'Cartão de Crédito') {
@@ -1223,18 +1249,27 @@ function openSaldoSheet(accountId) {
   if (!a) return;
   openSheet(`
     <div class="sheet-title">Saldo — ${esc(a.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin-bottom:10px">Confira no app do banco e ajuste aqui. É a conciliação que mantém o <b>disponível para usar</b> confiável.</p>
+    <p class="muted" style="margin-bottom:10px">Confira no app do banco e informe o saldo real. É a conciliação que mantém o <b>disponível para usar</b> confiável.</p>
     <div class="field"><input class="amount-input" id="s-bal" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
-    <button class="btn" id="sh-save">Atualizar saldo</button>
+    <p class="muted" id="s-delta" style="margin-bottom:10px"></p>
+    <button class="btn" id="sh-save">Conciliar saldo</button>
     <div class="btn-row"><button class="btn ghost" id="sh-edit">Editar conta</button></div>
   `);
   initMoney('#s-bal', a.balance);
+  const mostrarDelta = () => {
+    const d = moneyVal('#s-bal') - (Number(a.balance) || 0);
+    $('#s-delta').innerHTML = Math.abs(d) < 0.005
+      ? 'Saldo registrado no app: <b>' + fmt(a.balance) + '</b>'
+      : `Diferença de <b class="${d > 0 ? 'txt-green' : 'txt-red'}">${d > 0 ? '+' : '−'} ${fmt(Math.abs(d))}</b> — será lançada como <b>Ajuste de saldo</b> no extrato, para não sumir sem explicação.`;
+  };
+  mostrarDelta();
+  $('#s-bal').addEventListener('input', mostrarDelta);
   $('#sh-close').onclick = closeSheet;
   $('#sh-edit').onclick = () => { closeSheet(); openConfigSection('accounts'); };
   $('#sh-save').onclick = () => {
-    DB.upsert('accounts', { ...a, balance: moneyVal('#s-bal') });
+    const delta = reconcileBalance(a, moneyVal('#s-bal'));
     closeSheet(); render(); Sync.autoSync();
-    toast('Saldo atualizado ✓');
+    toast(delta ? `Ajuste de ${fmt(Math.abs(delta))} lançado no extrato ✓` : 'Saldo já estava correto');
   };
 }
 
@@ -1543,7 +1578,12 @@ function openConfigSection(sec) {
         $('#md-back').onclick = () => openConfigSection('accounts');
         $('#md-save').onclick = () => {
           if (!$('#c-name').value.trim()) return toast('Informe o nome');
-          DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value, balance: moneyVal('#c-bal') });
+          const saldoInformado = moneyVal('#c-bal');
+          // Conta nova: o valor é o saldo de abertura. Conta existente: a diferença
+          // vira um lançamento de ajuste, para o extrato continuar explicando o saldo.
+          const saldoFinal = isEdit ? (Number(acc.balance) || 0) : saldoInformado;
+          DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value, balance: saldoFinal });
+          if (isEdit) reconcileBalance(DB.get('accounts', acc.id), saldoInformado);
           Sync.autoSync(); openConfigSection('accounts');
         };
         const del = $('#md-del');
@@ -1935,7 +1975,8 @@ function renderOfxPreview(parsed, accounts, cards) {
     // Saldo pelo valor informado pelo banco — mais confiável que somar lançamentos importados
     const balBox = $('#ofx-bal');
     if (account && balBox && balBox.checked && parsed.balance !== null) {
-      DB.upsert('accounts', { ...account, balance: parsed.balance });
+      // A diferença aqui costuma ser o saldo que já existia antes do período importado
+      reconcileBalance(DB.get('accounts', account.id), parsed.balance, 'Ajuste de saldo (extrato do banco)');
     }
     Sync.autoSync(); closeModal();
     toast(`${n} lançamento(s) importado(s) ✓`);

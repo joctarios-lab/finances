@@ -264,6 +264,8 @@ body {
 .tx-amount { font-weight: 800; font-size: 14.5px; white-space: nowrap; }
 .tx-amount.pending { color: var(--amber); }
 .tx-amount.income { color: var(--green); }
+.tx-adj { border-style: dashed; background: var(--ink-3); }
+.tx-adj .tx-amount { color: var(--paper-dim); }
 
 /* Importação OFX */
 .ofx-row { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px dashed var(--line); }

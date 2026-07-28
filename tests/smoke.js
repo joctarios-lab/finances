@@ -51,7 +51,7 @@ eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
   state, fmt, fmtShort, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
-  openSaldoSheet, openTransferSheet, persistUI, restoreUI });`);
+  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -180,6 +180,32 @@ try {
   openInvoiceDetail(DB.invoicesOf(DB.get('cards', cartao))[0].key);
   check('detalhe da fatura lista os lançamentos', el('#modal').innerHTML.includes('Roupa'), true);
 } catch (e) { console.log(` FALHA | detalhe da fatura: ${e.message}`); fail++; }
+
+console.log('\n=== Conciliação de saldo (ajuste vira lançamento) ===');
+try {
+  const gastoAntes = DB.statsFor(p).spent;
+  const receitaAntes = DB.realizedIncome(p);
+  const c = DB.get('accounts', conta);
+  const saldoAntes = c.balance;
+
+  const delta = reconcileBalance(c, saldoAntes + 87.5);       // apareceram R$ 87,50
+  check('saldo passa a ser o informado', DB.get('accounts', conta).balance, saldoAntes + 87.5);
+  check('a diferença é devolvida para quem chamou', delta, 87.5);
+
+  const ajuste = DB.all('transactions').find(t => t.adjustment);
+  check('gerou um lançamento de ajuste (rastro no extrato)', !!ajuste, true);
+  check('ajuste guarda a conta afetada', ajuste.account_id, conta);
+  check('ajuste NÃO conta como gasto', DB.statsFor(p).spent, gastoAntes);
+  check('ajuste NÃO conta como renda', DB.realizedIncome(p), receitaAntes);
+  check('ajuste aparece no extrato', DB.txOfPeriod(p).some(t => t.adjustment), true);
+
+  // Excluir o ajuste desfaz a conciliação (o rastro é reversível)
+  adjustBalance(ajuste.account_id, -txEffect(ajuste));
+  DB.remove('transactions', ajuste.id);
+  check('excluir o ajuste devolve o saldo anterior', DB.get('accounts', conta).balance, saldoAntes);
+
+  check('saldo já correto não gera lançamento', reconcileBalance(DB.get('accounts', conta), saldoAntes), 0);
+} catch (e) { console.log(` FALHA | conciliação: ${e.message}`); fail++; }
 
 console.log('\n=== Memória da navegação ===');
 state.tab = 'relatorios'; state.monthOffset = -2; state.memberFilter = 'Joctã';
