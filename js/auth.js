@@ -82,6 +82,107 @@ const Auth = {
   },
   registerSuccess() { this.cfg.fails = 0; delete this.cfg.blockedUntil; this.save(); },
 
+  /* ---------- Biometria (digital / rosto) ----------
+     Regra que não abrimos mão: a chave que decifra os dados NUNCA fica gravada no
+     aparelho de forma utilizável sem verificação. Por isso usamos a extensão PRF do
+     WebAuthn: o próprio leitor biométrico devolve um segredo estável, e só depois de
+     confirmar a digital. Guardamos apenas a chave AES cifrada com esse segredo — quem
+     copiar o armazenamento não consegue abrir nada sem a digital (ou o PIN).
+     Aparelho sem suporte a PRF simplesmente não oferece a opção, em vez de fingir
+     segurança guardando a chave em claro. */
+  bioDisponivel() {
+    return !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
+  },
+  bioAtiva() { return !!(this.cfg.bioId && this.cfg.bioKey && this.cfg.bioPrfSalt); },
+
+  async bioSuportadaNoAparelho() {
+    if (!this.bioDisponivel()) return false;
+    try { return await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable(); }
+    catch (_) { return false; }
+  },
+
+  // Transforma o segredo devolvido pelo leitor numa chave de embrulho AES
+  async chaveDoPrf(bytes) {
+    const km = await crypto.subtle.importKey('raw', bytes, 'HKDF', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      { name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: new TextEncoder().encode('financas-bio-v1') },
+      km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  },
+
+  // Ativa: confirma o PIN, registra a digital e guarda a chave cifrada pelo segredo do leitor
+  async ativarBio(pin) {
+    if (!(await this.tryPin(pin))) throw new Error('PIN incorreto');
+    if (!(await this.bioSuportadaNoAparelho())) throw new Error('Este aparelho não oferece leitor de digital ao navegador');
+
+    const prfSalt = crypto.getRandomValues(new Uint8Array(32));
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rp: { name: 'Finanças da Família' },
+        user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'familia', displayName: 'Finanças da Família' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred' },
+        extensions: { prf: {} },
+        timeout: 60000,
+      },
+    });
+    if (!cred) throw new Error('Não foi possível registrar a digital');
+
+    const ext = cred.getClientExtensionResults ? cred.getClientExtensionResults() : {};
+    if (!ext.prf || ext.prf.enabled === false) {
+      throw new Error('Seu navegador ainda não permite usar a digital para proteger dados (falta suporte a PRF). Continue com o PIN.');
+    }
+
+    const idB64 = KCrypto.b64(cred.rawId);
+    const segredo = await this.lerPrf(cred.rawId, prfSalt);       // pede a digital uma vez
+    if (!segredo) throw new Error('O leitor não devolveu o segredo necessário. Continue com o PIN.');
+
+    // Guarda a chave de dados cifrada pelo segredo do leitor. Sem a digital, é ilegível.
+    const bruta = await crypto.subtle.exportKey('raw', await this.chaveExportavel(pin));
+    this.cfg.bioId = idB64;
+    this.cfg.bioPrfSalt = KCrypto.b64(prfSalt);
+    this.cfg.bioKey = await KCrypto.enc(await this.chaveDoPrf(segredo), KCrypto.b64(bruta));
+    this.save();
+    return true;
+  },
+
+  // Pede a digital e devolve o segredo estável do autenticador (extensão PRF)
+  async lerPrf(rawId, salt) {
+    const assertion = await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        allowCredentials: [{ type: 'public-key', id: rawId }],
+        userVerification: 'required',
+        extensions: { prf: { eval: { first: salt } } },
+        timeout: 60000,
+      },
+    });
+    const r = assertion && assertion.getClientExtensionResults && assertion.getClientExtensionResults();
+    return r && r.prf && r.prf.results && r.prf.results.first ? new Uint8Array(r.prf.results.first) : null;
+  },
+
+  // Mesma derivação do PIN, mas exportável — só para poder embrulhar a chave
+  async chaveExportavel(pin) {
+    const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: KCrypto.unb64(this.cfg.kdfSalt), iterations: 150000, hash: 'SHA-256' },
+      km, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  },
+
+  desativarBio() {
+    delete this.cfg.bioId; delete this.cfg.bioKey; delete this.cfg.bioPrfSalt;
+    this.save();
+  },
+
+  // Desbloqueio por digital: devolve a mesma CryptoKey que o PIN produziria
+  async desbloquearComBio() {
+    if (!this.bioAtiva()) throw new Error('Digital não configurada');
+    const segredo = await this.lerPrf(KCrypto.unb64(this.cfg.bioId), KCrypto.unb64(this.cfg.bioPrfSalt));
+    if (!segredo) throw new Error('Digital não reconhecida');
+    const bruta = KCrypto.unb64(await KCrypto.dec(await this.chaveDoPrf(segredo), this.cfg.bioKey));
+    return crypto.subtle.importKey('raw', bruta, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  },
+
   /* ---------- Telas ---------- */
   el() { return document.getElementById('lock'); },
   hide() { const el = this.el(); el.hidden = true; el.innerHTML = ''; },
@@ -97,11 +198,38 @@ const Auth = {
         <input id="lock-pin" class="pin-input" type="password" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="••••">
         <p class="lock-err" id="lock-err"></p>
         <button class="btn" id="lock-go">Desbloquear</button>
+        ${this.bioAtiva() ? '<div class="btn-row"><button class="btn ghost" id="lock-bio">👆 Entrar com a digital</button></div>' : ''}
         <div class="btn-row"><button class="btn ghost" id="lock-forgot">Esqueci o PIN</button></div>
       </div>`;
     el.hidden = false;
     const pin = document.getElementById('lock-pin');
     const err = m => document.getElementById('lock-err').textContent = m;
+
+    const entrar = async chave => {
+      try {
+        if (DB.locked) await DB.unlock(chave);
+        else DB.setKey(chave);
+      } catch (_) {
+        err('Falha ao decifrar os dados. Restaure um backup ou use "Esqueci o PIN".');
+        return false;
+      }
+      this.registerSuccess();
+      this.unlocked = true;
+      this.hide();
+      if (onDone) onDone();
+      return true;
+    };
+
+    const bioBtn = document.getElementById('lock-bio');
+    if (bioBtn) {
+      const usarBio = async () => {
+        err('');
+        try { await entrar(await this.desbloquearComBio()); }
+        catch (e) { err(e.name === 'NotAllowedError' ? 'Digital não confirmada' : e.message); }
+      };
+      bioBtn.onclick = usarBio;
+      setTimeout(usarBio, 350);   // já oferece o leitor ao abrir, sem esperar o toque
+    }
 
     const go = async () => {
       const wait = this.blockedSecs();
@@ -114,16 +242,7 @@ const Auth = {
         pin.value = ''; pin.focus();
         return;
       }
-      try {
-        if (DB.locked) await DB.unlock(key);
-        else DB.setKey(key);      // dados ainda em claro: passa a criptografar agora
-      } catch (_) {
-        return err('Falha ao decifrar os dados. Restaure um backup ou use "Esqueci o PIN".');
-      }
-      this.registerSuccess();
-      this.unlocked = true;
-      this.hide();
-      if (onDone) onDone();
+      await entrar(key);
     };
     document.getElementById('lock-go').onclick = go;
     pin.onkeydown = e => { if (e.key === 'Enter') go(); };

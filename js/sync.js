@@ -17,7 +17,14 @@ const Sync = {
   cfgKey: 'financas.sync.v1',
   cfg: null,
   busy: false,
-  onStatus: null, // callback(msg, ok)
+  onStatus: null,    // callback(msg, ok)
+  onChanged: null,   // chamado quando a sincronização trouxe dados novos (a tela precisa redesenhar)
+  onState: null,     // chamado quando o estado muda (sincronizando / pendente / em dia)
+
+  // Agendamento
+  INTERVALO: 60000,        // consulta o servidor a cada 1 min com o app aberto
+  ESPERA_APOS_EDICAO: 1200, // agrupa edições seguidas num envio só
+  _timer: null, _debounce: null, _retry: 0, _ultimoErro: null,
 
   load() {
     try { this.cfg = JSON.parse(localStorage.getItem(this.cfgKey)) || {}; }
@@ -122,18 +129,21 @@ const Sync = {
     this.saveCfg();
   },
 
-  async syncAll() {
+  async syncAll(silencioso = false) {
     if (!this.hasFamily()) throw new Error('Configure a sincronização primeiro');
-    if (this.busy) return;
+    if (this.busy) return null;
     this.busy = true;
+    let enviados = 0, recebidos = 0;
+    this.avisarEstado();
     try {
-      this.status('Sincronizando…');
+      if (!silencioso) this.status('Sincronizando…');
       const fid = this.cfg.family_id;
 
       // PUSH: registros dirty
       for (const [table, cols] of Object.entries(SYNC_TABLES)) {
         const dirty = DB.data[table].filter(r => r.dirty);
         if (!dirty.length) continue;
+        enviados += dirty.length;
         const payload = dirty.map(r => {
           const row = { id: r.id, family_id: fid, updated_at: r.updated_at, deleted: !!r.deleted };
           for (const c of cols) if (r[c] !== undefined) row[c] = r[c];
@@ -159,24 +169,102 @@ const Sync = {
           if (local && local.dirty && local.updated_at > remote.updated_at) continue; // local mais novo
           const merged = { ...(local || {}), ...remote };
           delete merged.family_id; delete merged.dirty;
+          // Só conta como novidade o que realmente mudou nesta máquina
+          if (!local || local.updated_at !== remote.updated_at) recebidos++;
           if (i >= 0) DB.data[table][i] = merged; else DB.data[table].push(merged);
         }
       }
 
       DB.data.meta.lastSync = DB.now();
       DB.save();
-      this.status('Sincronizado ✓');
+      this.cfg.lastOk = Date.now(); this.saveCfg();
+      this._retry = 0; this._ultimoErro = null;
+      if (silencioso) this.status(''); else this.status('Sincronizado ✓');
+      // Se o servidor trouxe novidade (o cônjuge lançou algo), a tela precisa redesenhar
+      if (recebidos > 0 && this.onChanged) this.onChanged(recebidos);
+      this.avisarEstado();
+      return { enviados, recebidos };
     } catch (e) {
-      this.status('Falha ao sincronizar: ' + e.message, false);
+      this._ultimoErro = e.message;
+      if (!silencioso) this.status('Falha ao sincronizar: ' + e.message, false);
+      this.avisarEstado();
+      this.agendarNovaTentativa();
       throw e;
     } finally {
       this.busy = false;
     }
   },
 
-  // Sincroniza em silêncio quando possível (abrir app / voltar online / após salvar)
+  /* ---------------- Sincronização automática ----------------
+     Objetivo: com conexão, o aparelho fica sempre em dia sem ninguém pedir.
+     - envia logo após qualquer edição (agrupando edições seguidas);
+     - consulta o servidor periodicamente enquanto o app está aberto;
+     - sincroniza ao voltar para o app e ao recuperar a conexão;
+     - repete com espera crescente quando falha, sem travar o uso. */
+
+  // Quantos registros ainda não foram enviados
+  pendentes() {
+    if (!DB.data) return 0;
+    return Object.keys(SYNC_TABLES)
+      .reduce((n, t) => n + (DB.data[t] || []).filter(r => r.dirty).length, 0);
+  },
+
+  estado() {
+    if (!this.hasFamily()) return 'off';
+    if (this.busy) return 'sync';
+    if (!navigator.onLine) return 'offline';
+    if (this.pendentes() > 0) return 'pendente';
+    return 'ok';
+  },
+  avisarEstado() { if (this.onState) this.onState(this.estado(), this.pendentes()); },
+
+  // Chamado depois de salvar algo: agrupa edições seguidas num envio só
   autoSync() {
-    if (!this.hasFamily() || !navigator.onLine) return;
-    this.syncAll().catch(() => {});
+    this.avisarEstado();
+    if (!this.hasFamily()) return;
+    clearTimeout(this._debounce);
+    this._debounce = setTimeout(() => this.tentar(true), this.ESPERA_APOS_EDICAO);
+  },
+
+  // Uma tentativa silenciosa; não propaga erro para não interromper o uso
+  tentar(silencioso = true) {
+    if (!this.hasFamily() || !navigator.onLine || this.busy) return Promise.resolve(null);
+    return this.syncAll(silencioso).catch(() => null);
+  },
+
+  // Falhou: tenta de novo em 5s, 15s, 45s, 2min… até 5 min
+  agendarNovaTentativa() {
+    if (!this.hasFamily()) return;
+    const esperas = [5000, 15000, 45000, 120000, 300000];
+    const espera = esperas[Math.min(this._retry, esperas.length - 1)];
+    this._retry++;
+    clearTimeout(this._debounce);
+    this._debounce = setTimeout(() => this.tentar(true), espera);
+  },
+
+  // Liga os gatilhos automáticos. Chamado uma vez, na abertura do app.
+  startAuto() {
+    const agora = () => this.tentar(true);
+
+    // Relógio: só corre com o app visível, para não gastar bateria nem cota à toa
+    const reprogramar = () => {
+      clearInterval(this._timer);
+      if (typeof document !== 'undefined' && document.hidden) return;
+      this._timer = setInterval(agora, this.INTERVALO);
+    };
+    reprogramar();
+
+    document.addEventListener('visibilitychange', () => {
+      reprogramar();
+      if (!document.hidden) agora();      // voltou para o app: busca o que mudou
+    });
+    window.addEventListener('online', () => { this._retry = 0; agora(); });
+    window.addEventListener('offline', () => this.avisarEstado());
+    window.addEventListener('focus', agora);
+    // Última chance de enviar o que ficou pendente ao fechar
+    window.addEventListener('beforeunload', () => { if (this.pendentes()) this.tentar(true); });
+
+    agora();
+    this.avisarEstado();
   },
 };

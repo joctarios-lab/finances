@@ -210,7 +210,7 @@ console.log('\n=== Nenhuma função inexistente é chamada (DB.x / OFX.x) ===');
     const alvo = { DB, OFX, Sync: global.Sync, Auth: global.Auth, Notif: typeof Notif !== 'undefined' ? Notif : {} }[obj];
     if (alvo && typeof alvo[met] !== 'function' && !quebradas.includes(obj + '.' + met)) quebradas.push(obj + '.' + met);
   }
-  const ignorar = ['Sync.rest', 'Sync.signIn', 'Sync.signUp', 'Sync.signOut', 'Sync.createFamily', 'Sync.joinFamily', 'Sync.syncAll', 'Sync.status', 'Auth.setPin', 'Auth.verify', 'Auth.removePin', 'Auth.lockNow', 'Auth.save', 'Notif.load', 'Notif.enable', 'Notif.disable', 'Notif.push', 'Notif.check', 'Notif.save', 'Notif.pushState', 'Notif.subscribePush', 'Notif.unsubscribePush', 'Notif.enabled', 'Notif.vapid', 'Notif.urlB64ToU8', 'Notif.registerFail', 'Notif.registerSuccess'];
+  const ignorar = ['Sync.startAuto', 'Auth.bioAtiva', 'Auth.ativarBio', 'Auth.desativarBio', 'Auth.desbloquearComBio', 'Auth.bioSuportadaNoAparelho', 'Sync.rest', 'Sync.signIn', 'Sync.signUp', 'Sync.signOut', 'Sync.createFamily', 'Sync.joinFamily', 'Sync.syncAll', 'Sync.status', 'Auth.setPin', 'Auth.verify', 'Auth.removePin', 'Auth.lockNow', 'Auth.save', 'Notif.load', 'Notif.enable', 'Notif.disable', 'Notif.push', 'Notif.check', 'Notif.save', 'Notif.pushState', 'Notif.subscribePush', 'Notif.unsubscribePush', 'Notif.enabled', 'Notif.vapid', 'Notif.urlB64ToU8', 'Notif.registerFail', 'Notif.registerSuccess'];
   const reais = quebradas.filter(q => !ignorar.includes(q));
   check('todas as chamadas existem', reais.length ? reais.join(', ') : true, true);
 }
@@ -317,6 +317,38 @@ try {
   check('painel usa o donut novo', renderInicio(p).includes('donut-svg'), true);
   check('relatórios trazem os gráficos novos', renderRelatorios().includes('rank-row') && renderRelatorios().includes('donut-svg'), true);
 } catch (e) { console.log(` FALHA | gráficos: ${e.message}`); fail++; }
+
+console.log('\n=== Sincronização automática ===');
+{
+  const s = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
+  const a = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('consulta o servidor periodicamente', s.includes('setInterval') && s.includes('INTERVALO'), true);
+  check('sincroniza ao voltar para o app', s.includes("visibilitychange"), true);
+  check('sincroniza ao recuperar a conexão', s.includes("'online'"), true);
+  check('para o relógio com o app em segundo plano', s.includes('document.hidden'), true);
+  check('agrupa edições seguidas num envio só', s.includes('ESPERA_APOS_EDICAO') && s.includes('clearTimeout(this._debounce)'), true);
+  check('repete com espera crescente ao falhar', s.includes('agendarNovaTentativa') && s.includes('300000'), true);
+  check('tenta enviar pendentes ao fechar', s.includes('beforeunload'), true);
+  check('informa quantos registros faltam enviar', s.includes('pendentes()'), true);
+  check('syncAll conta o que recebeu', s.includes('recebidos++') && s.includes('onChanged'), true);
+  // A falha que existia: puxava dados e a tela ficava velha
+  check('tela redesenha quando chega dado novo', a.includes('Sync.onChanged') && /onChanged[\s\S]{0,220}render\(\)/.test(a), true);
+  check('não redesenha com formulário aberto', /onChanged[\s\S]{0,200}editando/.test(a), true);
+  check('estado da sincronização visível no botão', a.includes('Sync.onState') && /#btn-sync\[data-estado/.test(fs.readFileSync(BASE + 'css/styles.css', 'utf8')), true);
+  check('startAuto é ligado na abertura', a.includes('Sync.startAuto()'), true);
+}
+
+console.log('\n=== Desbloqueio por digital ===');
+{
+  const au = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+  check('usa WebAuthn com verificação do usuário', au.includes('navigator.credentials.create') && au.includes("userVerification: 'required'"), true);
+  check('usa a extensão PRF (segredo vem do leitor)', au.includes('prf:') && au.includes('prf.results'), true);
+  check('recusa aparelho sem PRF em vez de fingir segurança', au.includes('falta suporte a PRF'), true);
+  check('chave guardada cifrada pelo segredo do leitor', au.includes('bioKey') && /bioKey = await KCrypto\.enc/.test(au), true);
+  check('nunca guarda o PIN em claro', !au.includes('cfg.bioPin'), true);
+  check('PIN segue valendo como alternativa', au.includes('lock-go') && au.includes('lock-bio'), true);
+  check('remover o PIN também remove a digital', fs.readFileSync(BASE + 'js/app.js', 'utf8').includes('Auth.desativarBio()'), true);
+}
 
 console.log('\n=== Componentes de formulário (select e datepicker) ===');
 try {

@@ -2073,6 +2073,12 @@ function openConfigSection(sec) {
         <div class="field"><label>Novo PIN (deixe vazio para só alterar o tempo)</label><input id="sec-new" type="password" inputmode="numeric" maxlength="8" placeholder="4 a 8 dígitos"></div>
         <div class="field"><label>Bloquear após (minutos em segundo plano)</label><input id="sec-min" type="number" min="0" max="120" value="${Auth.cfg.lockAfterMin ?? 5}"></div>
         <button class="btn" id="sec-save">Salvar</button>
+        <hr class="sep">
+        <p class="section-title" style="margin-bottom:8px">👆 Desbloqueio por digital</p>
+        ${Auth.bioAtiva()
+          ? '<p class="muted" style="margin-bottom:10px">Ativo neste aparelho — o app pede a digital ao abrir e o PIN continua valendo como alternativa.</p><button class="btn ghost" id="sec-bio-off">Desativar digital</button>'
+          : '<p class="muted" style="margin-bottom:10px">Use a digital (ou o rosto) em vez de digitar o PIN toda vez. Confirme o PIN atual acima e ative aqui. A criptografia continua a mesma: o leitor do aparelho guarda o segredo que abre a chave.</p><button class="btn ghost" id="sec-bio-on">Ativar digital neste aparelho</button>'}
+        <p class="muted" id="sec-bio-msg" style="margin-top:8px"></p>
         <div class="btn-row"><button class="btn danger" id="sec-off">Remover PIN</button></div>
       ` : `
         <div class="field"><label>Criar PIN (4 a 8 dígitos)</label><input id="sec-new" type="password" inputmode="numeric" maxlength="8"></div>
@@ -2103,8 +2109,22 @@ function openConfigSection(sec) {
     on('#sec-off', async () => {
       if (!confirm('Remover a proteção? Os dados deste aparelho voltarão a ficar SEM criptografia.')) return;
       if (!(await Auth.removePin($('#sec-cur').value))) return toast('PIN atual incorreto');
+      Auth.desativarBio();
       toast('PIN removido — dados locais sem criptografia'); openConfig();
     });
+    on('#sec-bio-on', async () => {
+      const pin = $('#sec-cur').value;
+      if (!pin) { $('#sec-cur').focus(); return toast('Digite o PIN atual acima para ativar'); }
+      $('#sec-bio-msg').textContent = 'Confirme no leitor do aparelho…';
+      try {
+        await Auth.ativarBio(pin);
+        toast('Digital ativada ✓'); openConfigSection('security');
+      } catch (e) {
+        $('#sec-bio-msg').textContent = '';
+        toast(e.name === 'NotAllowedError' ? 'Digital não confirmada' : e.message);
+      }
+    });
+    on('#sec-bio-off', () => { Auth.desativarBio(); toast('Digital desativada'); openConfigSection('security'); });
   }
 
   if (sec === 'backup') {
@@ -2431,7 +2451,27 @@ $('#btn-sync').onclick = () => {
 };
 $('#sheet-backdrop').onclick = closeSheet;
 $('#modal-backdrop').onclick = closeModal;
-window.addEventListener('online', () => Sync.autoSync());
+// Quando a sincronização traz lançamentos do outro aparelho, a tela se atualiza sozinha.
+// Não redesenha com uma folha aberta, para não apagar o que está sendo digitado.
+Sync.onChanged = qtd => {
+  const editando = !$('#sheet').hidden || !$('#modal').hidden;
+  if (editando) return;
+  render();
+  toast(`${qtd} atualização(ões) da família ✓`, 'info');
+};
+
+// Indicador permanente no botão de sincronizar
+Sync.onState = (estado, pendentes) => {
+  const btn = $('#btn-sync');
+  if (!btn) return;
+  btn.dataset.estado = estado;
+  btn.title = {
+    ok: 'Tudo sincronizado', sync: 'Sincronizando…',
+    pendente: `${pendentes} alteração(ões) aguardando conexão`,
+    offline: 'Sem conexão — será enviado assim que voltar',
+    off: 'Sincronização não configurada',
+  }[estado] || '';
+};
 
 const hour = new Date().getHours();
 $('#topbar-hello').textContent = (hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite') + ' · Família Peixoto Rios';
@@ -2457,6 +2497,6 @@ UI.init();
 restoreUI();
 Auth.init(() => {
   setTab(state.tab);          // restaura a aba e marca o menu corretamente
-  Sync.autoSync();
+  Sync.startAuto();           // mantém o aparelho em dia sempre que houver conexão
   setTimeout(() => Notif.check(), 800);
 });

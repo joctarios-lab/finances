@@ -1,7 +1,7 @@
 /* Finanças da Família — service worker: app shell offline-first */
 'use strict';
 
-const CACHE = 'financas-v7';
+const CACHE = 'financas-v8';
 const SHELL = [
   './',
   'index.html',

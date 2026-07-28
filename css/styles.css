@@ -105,6 +105,19 @@ body {
   box-shadow: var(--shadow);
 }
 .icon-btn:hover { color: var(--gold); }
+/* Estado da sincronização, sempre visível no botão ⇅ */
+#btn-sync { position: relative; }
+#btn-sync::after {
+  content: ''; position: absolute; top: 6px; right: 6px;
+  width: 7px; height: 7px; border-radius: 50%; background: transparent;
+  box-shadow: 0 0 0 2px var(--ink-2);
+}
+#btn-sync[data-estado="ok"]::after { background: var(--green); }
+#btn-sync[data-estado="pendente"]::after { background: var(--amber); }
+#btn-sync[data-estado="offline"]::after { background: #a1a5b7; }
+#btn-sync[data-estado="sync"] { color: var(--gold); }
+#btn-sync[data-estado="sync"] svg { animation: girar 1s linear infinite; }
+@keyframes girar { to { transform: rotate(360deg); } }
 .icon-btn:active { transform: scale(.94); }
 .btn-new-desktop {
   display: none;
