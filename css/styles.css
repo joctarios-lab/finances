@@ -540,6 +540,10 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 /* ---------- Select e datepicker (estilo Metronic/Select2, sem dependências) ---------- */
 .ui-native { position: absolute !important; opacity: 0; pointer-events: none; width: 0; height: 0; }
 .ui-select, .ui-date { position: relative; }
+/* O campo nativo continua sendo a fonte da verdade: se ele está oculto,
+   o componente que o representa também some. Assim `el.hidden = true`
+   segue funcionando em todo o app, sem precisar mexer nos handlers. */
+.ui-select:has(> select[hidden]), .ui-date:has(> input[hidden]) { display: none; }
 .ui-select-btn, .ui-date-btn {
   width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
   background: var(--ink-3); border: 1px solid var(--line); color: var(--paper);
@@ -586,8 +590,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 .ui-check { font-weight: 700; }
 .ui-empty { padding: 18px; text-align: center; color: var(--paper-dim); font-size: 13px; }
 
-/* Calendário */
-.ui-cal { padding: 12px; }
+/* Calendário — precisa de largura própria, não cabe na coluna estreita do formulário */
+.ui-cal { padding: 14px; min-width: 300px; }
 .ui-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .ui-cal-head b { font-size: 14px; font-weight: 700; }
 .ui-cal-nav {
@@ -601,8 +605,8 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
   padding-bottom: 5px; text-transform: uppercase;
 }
 .ui-cal-d {
-  aspect-ratio: 1; min-height: 34px; border: none; background: none; border-radius: 8px;
-  font-size: 13px; font-family: var(--font-body); color: var(--paper); cursor: pointer;
+  aspect-ratio: 1; min-height: 36px; border: none; background: none; border-radius: 8px;
+  font-size: 13.5px; font-family: var(--font-body); color: var(--paper); cursor: pointer;
   display: grid; place-items: center; transition: background .12s ease;
 }
 .ui-cal-d:hover { background: var(--ink-3); }

@@ -95,6 +95,7 @@ const UI = {
     };
 
     desenhar();
+    this.posicionar(painel, box);
     if (busca) {
       setTimeout(() => busca.focus(), 30);
       busca.oninput = () => { marcado = -1; desenhar(busca.value); };
@@ -168,7 +169,7 @@ const UI = {
     const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const hojeISO = iso(new Date());
 
-    const desenhar = () => {
+    const desenhar = () => {                       // eslint-disable-line no-shadow
       const primeiro = new Date(ano, mes, 1);
       const inicio = primeiro.getDay();                       // domingo = 0
       const dias = new Date(ano, mes + 1, 0).getDate();
@@ -209,6 +210,7 @@ const UI = {
         const d = new Date(); d.setDate(d.getDate() - Number(b.dataset.q));
         aplicar(iso(d));
       });
+      this.posicionar(painel, box);
     };
 
     const aplicar = valor => {
@@ -222,6 +224,29 @@ const UI = {
   },
 
   /* ---------------- Utilitários ---------------- */
+  // Impede que um painel mais largo que o campo (o calendário, em coluna estreita)
+  // fique espremido ou saia da tela: mede e desloca para dentro da janela.
+  posicionar(painel, box) {
+    if (typeof painel.getBoundingClientRect !== 'function') return;
+    painel.style.left = '0'; painel.style.right = 'auto';
+    const r = painel.getBoundingClientRect();
+    const margem = 10, largura = window.innerWidth || 0;
+    if (!largura || !r.width) return;
+    if (r.right > largura - margem) {
+      const desloca = r.right - (largura - margem);
+      painel.style.left = `-${Math.round(desloca)}px`;
+    }
+    const novo = painel.getBoundingClientRect();
+    if (novo.left < margem) painel.style.left = `${Math.round(margem - (novo.left - parseFloat(painel.style.left || 0)))}px`;
+  },
+
+  // Abre o painel de um campo por código (ex: ao escolher "Outra" nas categorias)
+  open(nativo) {
+    const box = nativo && nativo.closest && nativo.closest('.ui-select, .ui-date');
+    const botao = box && box.querySelector('.ui-select-btn, .ui-date-btn');
+    if (botao) botao.click();
+  },
+
   fechar() {
     if (!this.aberto) return;
     this.aberto.painel.remove();

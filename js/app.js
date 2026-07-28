@@ -1369,9 +1369,10 @@ function openTxSheet(tx, asNew) {
   bindChips('g-cat', v => {
     $('#cat-auto').textContent = '';
     if (v) catManual = true;                       // escolheu um dos botões
+    // O seletor completo só existe quando a pessoa pede por ele em "Outra"
     const abriu = $('#cat-other').classList.contains('active') && !$('#cat-other').dataset.v;
     $('#f-cat-more').hidden = !abriu;
-    if (abriu) setTimeout(() => $('#f-cat-more').focus(), 20);
+    if (abriu && typeof UI !== 'undefined') setTimeout(() => UI.open($('#f-cat-more')), 30);
   });
   $('#f-cat-more').onchange = e => {
     if (!e.target.value) return;

@@ -21,7 +21,7 @@ function makeEl(sel) {
     classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
     addEventListener() {}, removeEventListener() {}, focus() {}, blur() {}, setSelectionRange() {},
     click() { if (this.onclick) this.onclick({ stopPropagation() {} }); },
-    querySelector: () => el('#_dentro'), querySelectorAll: () => [],
+    querySelector: () => el('#_dentro'), querySelectorAll: () => [], closest: () => null,
   };
 }
 const el = sel => els[sel] || (els[sel] = makeEl(sel));
@@ -346,6 +346,16 @@ try {
   const appSrc2 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   check('app segue lendo .value dos campos', appSrc2.includes("$('#f-account').value") && appSrc2.includes("$('#f-date').value"), true);
   check('atalhos de data atualizam o rótulo', appSrc2.includes('_uiRefresh'), true);
+
+  // Bug: o wrapper visual precisa sumir junto com o campo nativo oculto
+  check('componente some quando o campo nativo está oculto', /\.ui-select:has\(> select\[hidden\]\)/.test(cssUi), true);
+  check('mesma regra vale para o datepicker', /\.ui-date:has\(> input\[hidden\]\)/.test(cssUi), true);
+  check('lista completa de categorias começa oculta', /<select id="f-cat-more" hidden/.test(appSrc2), true);
+  check('lista completa só abre ao pedir "Outra"', appSrc2.includes("UI.open($('#f-cat-more'))"), true);
+
+  // Bug: calendário espremido na coluna estreita do formulário
+  check('calendário tem largura própria', /\.ui-cal\s*\{[^}]*min-width:\s*300px/.test(cssUi), true);
+  check('painel se reposiciona para não sair da tela', ui.includes('posicionar(') && ui.includes('innerWidth'), true);
 } catch (e) { console.log(` FALHA | componentes: ${e.message}`); fail++; }
 
 console.log('\n=== Semântica de cor por tipo de ação ===');
