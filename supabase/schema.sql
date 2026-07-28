@@ -34,9 +34,11 @@ create table if not exists accounts (
   institution text default '',
   balance numeric not null default 0,
   active boolean not null default true,
+  is_reserve boolean,                     -- conta que compõe a reserva de emergência
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
+alter table accounts add column if not exists is_reserve boolean;
 
 create table if not exists cards (
   id uuid primary key,

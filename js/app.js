@@ -338,13 +338,24 @@ function renderInicio(period) {
   const avgSpend = DB.avgMonthlySpend();
   const coverage = avgSpend > 0 ? reserve / avgSpend : 0;
   const covPct = Math.min(100, Math.round(coverage / 6 * 100));
+  const reserveAccs = DB.reserveAccounts();
+  const alvoReserva = avgSpend * 6;
+  const faltaReserva = Math.max(0, alvoReserva - reserve);
   const reserveCard = `
     <div class="card">
-      <div class="card-head"><div><b>Reserva de emergência</b><small>caixinhas + investimentos vs. custo de vida</small></div><span class="kpi-ico t-success" data-ico="shield" style="width:34px;height:34px;margin:0"></span></div>
-      <div class="proj-row"><span>Guardado</span><b>${fmtShort(reserve)}</b></div>
-      <div class="proj-row"><span>Cobre</span><b class="${coverage >= 6 ? 'txt-green' : coverage >= 3 ? 'txt-amber' : 'txt-red'}">${coverage.toFixed(1)} meses</b></div>
-      <div class="bar ${coverage >= 6 ? 'bar-green' : coverage >= 3 ? 'bar-amber' : 'bar-red'}" style="margin:8px 0 4px"><i style="width:${covPct}%"></i></div>
-      <p class="muted">Recomendação clássica: 3 a 6 meses do gasto médio (${fmtShort(avgSpend)}/mês).</p>
+      <div class="card-head"><div><b>Reserva de emergência</b><small>o dinheiro guardado nas contas marcadas como reserva</small></div><span class="kpi-ico t-success" data-ico="shield" style="width:34px;height:34px;margin:0"></span></div>
+      ${!reserveAccs.length ? `
+        <div class="empty" style="padding:14px 4px"><b>Nenhuma conta marcada como reserva</b>
+        Marque a poupança/caixinha onde vocês guardam dinheiro para emergências.</div>
+        <button class="btn ghost" data-setup="accounts">Marcar uma conta como reserva</button>
+      ` : `
+        <div class="proj-row"><span>Guardado</span><b>${fmtShort(reserve)}</b></div>
+        <div class="proj-row"><span>Cobre</span><b class="${coverage >= 6 ? 'txt-green' : coverage >= 3 ? 'txt-amber' : 'txt-red'}">${coverage.toFixed(1)} meses</b></div>
+        <div class="bar ${coverage >= 6 ? 'bar-green' : coverage >= 3 ? 'bar-amber' : 'bar-red'}" style="margin:8px 0 4px"><i style="width:${covPct}%"></i></div>
+        <p class="muted">Recomendação clássica: 3 a 6 meses do gasto médio (${fmtShort(avgSpend)}/mês)${faltaReserva > 0 ? ` — faltam <b>${fmtShort(faltaReserva)}</b> para 6 meses` : ' — objetivo alcançado 🎉'}.</p>
+        <p class="muted" style="margin-top:6px">Composta por: ${reserveAccs.map(a => `${esc(a.name)} (${fmtShort(a.balance)})`).join(' · ')}</p>
+        <button class="btn ghost" id="btn-guardar" style="margin-top:10px">＋ Guardar na reserva</button>
+      `}
     </div>`;
 
   // --- Conselheiro: insights automáticos por regras de especialista ---
@@ -556,7 +567,7 @@ function renderCartoes() {
       ${contas.length ? contas.map(a => `
         <div class="acc-row" data-acc="${a.id}">
           <span class="acc-ico">${a.type === 'Caixinha / Rendimento' ? '🐷' : a.type === 'Investimento' ? '📈' : a.type === 'Carteira Digital' ? '📱' : '🏦'}</span>
-          <span class="acc-info"><b>${esc(a.name)}</b><small>${esc(a.type)}${a.institution ? ' · ' + esc(a.institution) : ''}</small></span>
+          <span class="acc-info"><b>${esc(a.name)}${DB.isReserveAccount(a) ? ' <span class="badge paga">reserva</span>' : ''}</b><small>${esc(a.type)}${a.institution ? ' · ' + esc(a.institution) : ''}</small></span>
           <span class="num">${fmt(a.balance)}</span>
         </div>`).join('') : '<div class="empty">Nenhuma conta cadastrada. Adicione em Configurações → Contas.</div>'}
       ${contas.length > 1 ? '<button class="btn ghost" id="btn-transfer" style="margin-top:10px">⇄ Transferir entre contas</button>' : ''}
@@ -651,8 +662,8 @@ function renderMetas() {
         <button class="btn ghost" data-goal-detail="${g.id}">Ver histórico (${entries.length})</button>
       </div>
       ${entries.length ? `<p class="muted" style="margin-top:10px;font-weight:600">Últimos aportes</p>` : ''}
-      ${entries.slice(0, 3).map(e => `<div class="muted" style="margin-top:4px">· ${fmtDay(e.date)} — ${esc(e.description)} <b style="color:var(--paper)">${fmtShort(e.amount)}</b></div>`).join('')}
-      ${entries.length > 3 ? `<div class="muted" style="margin-top:6px">e mais ${entries.length - 3} — toque em <b>Ver histórico</b> para ver todos</div>` : ''}
+      ${entries.slice(0, 2).map(e => `<div class="muted" style="margin-top:4px">· ${fmtDay(e.date)} — ${esc(e.description)} <b style="color:var(--paper)">${fmtShort(e.amount)}</b></div>`).join('')}
+      ${entries.length > 2 ? `<div class="muted" style="margin-top:6px">e mais ${entries.length - 2} — toque em <b>Ver histórico</b> para ver todos</div>` : ''}
     </div>`;
   }
   return html;
@@ -852,6 +863,11 @@ function bindView() {
   v.querySelectorAll('[data-acc]').forEach(el => el.onclick = () => openSaldoSheet(el.dataset.acc));
   const transf = $('#btn-transfer');
   if (transf) transf.onclick = () => openTransferSheet();
+  const guardar = $('#btn-guardar');
+  if (guardar) guardar.onclick = () => {
+    const destino = DB.reserveAccounts()[0];
+    openTransferSheet(destino && destino.id, 'Guardar na reserva de emergência');
+  };
   const invAdjust = (key, sign) => {
     const card = DB.get('cards', key.split(':')[0]);
     if (!card || !card.account_id) return false;
@@ -1273,19 +1289,22 @@ function openSaldoSheet(accountId) {
   };
 }
 
-function openTransferSheet() {
+function openTransferSheet(destinoId, titulo) {
   const contas = DB.all('accounts').filter(a => a.active !== false);
-  const opts = sel => contas.map(a => `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('');
+  const opts = sel => contas.map(a =>
+    `<option value="${a.id}" ${sel === a.id ? 'selected' : ''}>${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('');
+  // Origem sugerida: a primeira conta que não é o destino
+  const origem = (contas.find(a => a.id !== destinoId) || {}).id;
   openSheet(`
-    <div class="sheet-title">Transferir entre contas<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="sheet-title">${esc(titulo || 'Transferir entre contas')}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <p class="muted" style="margin-bottom:10px">Mover dinheiro entre suas contas <b>não é despesa nem receita</b> — só ajusta os saldos, sem poluir seus relatórios.</p>
     <div class="field"><input class="amount-input" id="t-val" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
-    <div class="field"><label>De</label><select id="t-from">${opts()}</select></div>
-    <div class="field"><label>Para</label><select id="t-to">${opts()}</select></div>
+    <div class="field"><label>De</label><select id="t-from">${opts(origem)}</select></div>
+    <div class="field"><label>Para</label><select id="t-to">${opts(destinoId)}</select></div>
     <button class="btn" id="sh-save">Transferir</button>
   `);
   initMoney('#t-val');
-  if ($('#t-to').options.length > 1) $('#t-to').selectedIndex = 1;
+  if (!destinoId && $('#t-to').options.length > 1) $('#t-to').selectedIndex = 1;
   $('#sh-close').onclick = closeSheet;
   $('#sh-save').onclick = () => {
     const valor = moneyVal('#t-val');
@@ -1481,6 +1500,7 @@ function openEntrySheet(entryId, goalId) {
 function openAporteSheet(goalId) {
   const g = DB.get('goals', goalId);
   if (!g) return toast('Meta não encontrada — atualize a tela');
+  const ehReserva = g.tipo === 'Reserva de Emergência' || g.type === 'Reserva de Emergência' || /reserva/i.test(g.name);
   openSheet(`
     <div class="sheet-title">Aporte — ${esc(g.icon)} ${esc(g.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <div class="field"><input class="amount-input" id="a-amount" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
@@ -1494,8 +1514,10 @@ function openAporteSheet(goalId) {
       </select></div>
     <div class="field"><label>Entrou em qual conta? <span class="muted">— onde o dinheiro ficou guardado</span></label>
       <select id="a-to"><option value="">— não movimentar contas —</option>
-        ${DB.all('accounts').filter(a => a.active !== false).map(a => `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}
+        ${DB.all('accounts').filter(a => a.active !== false).map(a =>
+          `<option value="${a.id}" ${ehReserva && DB.isReserveAccount(a) ? 'selected' : ''}>${esc(a.name)}${DB.isReserveAccount(a) ? ' (reserva)' : ''} — ${fmtShort(a.balance)}</option>`).join('')}
       </select></div>
+    ${ehReserva ? '<p class="muted" style="margin-bottom:10px">🛡️ Esta é a sua meta de reserva: guarde o dinheiro numa conta marcada como reserva para a cobertura de meses subir no painel.</p>' : ''}
     <button class="btn" id="sh-save">Registrar aporte</button>
   `);
   initMoney('#a-amount');
@@ -1571,6 +1593,11 @@ function openConfigSection(sec) {
           <div class="field"><label>Tipo</label><select id="c-type">${['Conta Corrente', 'Carteira Digital', 'Caixinha / Rendimento', 'Investimento'].map(t => `<option ${acc.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
           <div class="field"><label>Instituição</label><input id="c-inst" value="${esc(acc.institution)}"></div>
           <div class="field"><label>Saldo atual</label><input id="c-bal" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
+          <div class="field"><label style="display:flex;align-items:center;gap:9px;cursor:pointer">
+            <input type="checkbox" id="c-reserve" ${DB.isReserveAccount({ ...acc, active: true }) ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--gold)">
+            Faz parte da reserva de emergência
+          </label>
+          <p class="muted" style="margin-top:6px">O dinheiro desta conta conta para a cobertura de meses no painel. Marque poupanças e caixinhas; deixe desmarcada a conta do dia a dia.</p></div>
           <button class="btn" id="md-save">Salvar</button>
           ${isEdit ? '<div class="btn-row"><button class="btn danger" id="md-del">Excluir</button></div>' : ''}
         `);
@@ -1582,7 +1609,7 @@ function openConfigSection(sec) {
           // Conta nova: o valor é o saldo de abertura. Conta existente: a diferença
           // vira um lançamento de ajuste, para o extrato continuar explicando o saldo.
           const saldoFinal = isEdit ? (Number(acc.balance) || 0) : saldoInformado;
-          DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value, balance: saldoFinal });
+          DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value, balance: saldoFinal, is_reserve: !!$('#c-reserve').checked });
           if (isEdit) reconcileBalance(DB.get('accounts', acc.id), saldoInformado);
           Sync.autoSync(); openConfigSection('accounts');
         };

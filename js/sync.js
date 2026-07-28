@@ -3,7 +3,7 @@
 'use strict';
 
 const SYNC_TABLES = {
-  accounts: ['name', 'type', 'institution', 'balance', 'active'],
+  accounts: ['name', 'type', 'institution', 'balance', 'active', 'is_reserve'],
   cards: ['name', 'brand', 'limit_amount', 'closing_day', 'due_day', 'account_id', 'active'],
   categories: ['name', 'icon', 'scope', 'monthly_budget', 'kind'],
   transactions: ['description', 'amount', 'date', 'scope', 'member', 'method', 'status', 'recurring', 'category_id', 'account_id', 'card_id', 'invoice_key', 'notes', 'type', 'fitid', 'group_id', 'installment', 'adjustment'],

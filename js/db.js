@@ -267,12 +267,16 @@ const DB = {
   // Disponível de verdade: o que está nas contas menos o que já está comprometido.
   available() { return this.accountsTotal() - this.committed(); },
 
-  // Reserva = contas de guarda (caixinhas e investimentos).
-  reserveTotal() {
-    return this.all('accounts')
-      .filter(a => a.active !== false && (a.type === 'Caixinha / Rendimento' || a.type === 'Investimento'))
-      .reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  // A reserva é o dinheiro guardado nas contas marcadas como reserva.
+  // Contas antigas (sem a marcação) seguem a regra anterior: caixinha e investimento.
+  isReserveAccount(a) {
+    if (!a || a.active === false) return false;
+    return a.is_reserve !== undefined && a.is_reserve !== null
+      ? !!a.is_reserve
+      : (a.type === 'Caixinha / Rendimento' || a.type === 'Investimento');
   },
+  reserveAccounts() { return this.all('accounts').filter(a => this.isReserveAccount(a)); },
+  reserveTotal() { return this.reserveAccounts().reduce((s, a) => s + (Number(a.balance) || 0), 0); },
 
   // Gasto médio dos últimos n períodos completos (base p/ cobertura da reserva).
   avgMonthlySpend(n = 3) {

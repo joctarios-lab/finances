@@ -181,6 +181,19 @@ try {
   check('detalhe da fatura lista os lançamentos', el('#modal').innerHTML.includes('Roupa'), true);
 } catch (e) { console.log(` FALHA | detalhe da fatura: ${e.message}`); fail++; }
 
+console.log('\n=== Reserva de emergência ===');
+check('caixinha entra na reserva por padrão', DB.isReserveAccount(DB.get('accounts', caixinha)), true);
+check('conta corrente fica fora por padrão', DB.isReserveAccount(DB.get('accounts', conta)), false);
+check('reserva soma só as contas de reserva', DB.reserveTotal(), 12000);
+DB.upsert('accounts', { ...DB.get('accounts', conta), is_reserve: true });      // marcação explícita
+check('marcar a corrente como reserva soma as duas', DB.reserveTotal(), 17000);
+DB.upsert('accounts', { ...DB.get('accounts', caixinha), is_reserve: false });  // desmarcar funciona
+check('desmarcar a caixinha a tira da reserva', DB.reserveTotal(), 5000);
+DB.upsert('accounts', { ...DB.get('accounts', conta), is_reserve: false });
+DB.upsert('accounts', { ...DB.get('accounts', caixinha), is_reserve: true });
+check('reserva volta ao normal', DB.reserveTotal(), 12000);
+check('painel explica como alimentar a reserva', renderInicio(p).includes('Guardar na reserva'), true);
+
 console.log('\n=== Conciliação de saldo (ajuste vira lançamento) ===');
 try {
   const gastoAntes = DB.statsFor(p).spent;
