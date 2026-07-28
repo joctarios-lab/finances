@@ -24,6 +24,7 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }   /* garante que hidden vença classes com display próprio (ex: .lock) */
 html { -webkit-text-size-adjust: 100%; }
 body {
   background: var(--ink);

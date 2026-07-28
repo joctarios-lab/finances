@@ -5,13 +5,49 @@
 const DB_KEY = 'financas.v1';
 const STORES = ['accounts', 'cards', 'categories', 'transactions', 'goals', 'goal_entries', 'invoice_status', 'family_settings'];
 
+/* Criptografia local: AES-256-GCM com chave derivada do PIN (PBKDF2, 150 mil iterações). */
+const KCrypto = {
+  b64(buf) {
+    const bytes = new Uint8Array(buf);
+    let s = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(s);
+  },
+  unb64(s) { return Uint8Array.from(atob(s), c => c.charCodeAt(0)); },
+  async deriveKey(pin, saltB64, iterations = 150000) {
+    const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: this.unb64(saltB64), iterations, hash: 'SHA-256' },
+      km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  },
+  async enc(key, text) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(text));
+    return { enc: true, iv: this.b64(iv), ct: this.b64(ct) };
+  },
+  async dec(key, blob) {
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: this.unb64(blob.iv) }, key, this.unb64(blob.ct));
+    return new TextDecoder().decode(pt);
+  },
+};
+
 const DB = {
   data: null,
+  locked: false,       // true quando os dados estão criptografados aguardando o PIN
+  key: null,           // CryptoKey ativa (criptografia em repouso ligada)
+  _encBlob: null,
+  _q: Promise.resolve(),
 
   load() {
-    try {
-      this.data = JSON.parse(localStorage.getItem(DB_KEY)) || null;
-    } catch (_) { this.data = null; }
+    let parsed = null;
+    try { parsed = JSON.parse(localStorage.getItem(DB_KEY)) || null; } catch (_) { parsed = null; }
+    if (parsed && parsed.enc === true) {   // dados em repouso criptografados
+      this._encBlob = parsed;
+      this.locked = true;
+      this.data = null;
+      return null;
+    }
+    this.data = parsed;
     if (!this.data) {
       this.data = { meta: { seeded: false, lastSync: null } };
       for (const s of STORES) this.data[s] = [];
@@ -21,8 +57,29 @@ const DB = {
     return this.data;
   },
 
+  async unlock(cryptoKey) {
+    const text = await KCrypto.dec(cryptoKey, this._encBlob);   // lança se a chave for errada
+    this.data = JSON.parse(text);
+    for (const s of STORES) if (!this.data[s]) this.data[s] = [];
+    this.key = cryptoKey;
+    this.locked = false;
+    this._encBlob = null;
+  },
+
+  setKey(cryptoKey) { this.key = cryptoKey; this.save(); },
+  clearKey() { this.key = null; this.save(); },
+
   save() {
-    localStorage.setItem(DB_KEY, JSON.stringify(this.data));
+    if (this.key) {
+      // Serializa gravações criptografadas em fila para nunca escrever fora de ordem.
+      const json = JSON.stringify(this.data);
+      this._q = this._q
+        .then(() => KCrypto.enc(this.key, json))
+        .then(blob => localStorage.setItem(DB_KEY, JSON.stringify(blob)))
+        .catch(() => {});
+    } else {
+      localStorage.setItem(DB_KEY, JSON.stringify(this.data));
+    }
   },
 
   uuid() {

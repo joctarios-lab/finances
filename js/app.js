@@ -1,8 +1,7 @@
 /* Finanças da Família — UI e fluxo do app */
 'use strict';
 
-DB.load();
-Sync.load();
+Sync.load();   // DB.load() acontece dentro de Auth.init(), que decifra os dados quando há PIN
 
 const METHODS = ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto'];
 const PALETTE = ['#009ef7', '#50cd89', '#7239ea', '#f1416c', '#ffc700', '#43ced7', '#fd7e14', '#8950fc', '#1bc5bd', '#6c7293'];
@@ -572,7 +571,7 @@ function openConfigSection(sec) {
   if (sec === 'security') {
     openModal(`
       <div class="modal-title">🔒 Segurança<button class="close-x" id="md-back">‹</button></div>
-      <p class="muted" style="margin-bottom:12px">O PIN protege o acesso ao app neste aparelho (pedido ao abrir e ao voltar de segundo plano). Os dados na nuvem já são protegidos pelo login e pelas regras por família do Supabase.</p>
+      <p class="muted" style="margin-bottom:12px">O PIN não é só uma tela de bloqueio: ele deriva uma chave <b>AES-256</b> (PBKDF2) que <b>criptografa os dados guardados neste aparelho</b> — sem o PIN, o conteúdo é ilegível. Após 5 erros, o app bloqueia por tempo progressivo. A nuvem tem camada própria: login e-mail/senha + regras por família (RLS) no Supabase.</p>
       ${Auth.enabled() ? `
         <div class="field"><label>PIN atual</label><input id="sec-cur" type="password" inputmode="numeric" maxlength="8"></div>
         <div class="field"><label>Novo PIN (deixe vazio para só alterar o tempo)</label><input id="sec-new" type="password" inputmode="numeric" maxlength="8" placeholder="4 a 8 dígitos"></div>
@@ -606,10 +605,9 @@ function openConfigSection(sec) {
       toast('Segurança atualizada ✓'); openConfig();
     });
     on('#sec-off', async () => {
-      if (!(await Auth.verify($('#sec-cur').value))) return toast('Digite o PIN atual para remover');
-      if (!confirm('Remover a proteção por PIN?')) return;
-      Auth.removePin();
-      toast('PIN removido'); openConfig();
+      if (!confirm('Remover a proteção? Os dados deste aparelho voltarão a ficar SEM criptografia.')) return;
+      if (!(await Auth.removePin($('#sec-cur').value))) return toast('PIN atual incorreto');
+      toast('PIN removido — dados locais sem criptografia'); openConfig();
     });
   }
 
@@ -742,6 +740,7 @@ function refreshUserChip() {
 }
 refreshUserChip();
 
-Auth.init();
-render();
-Sync.autoSync();
+Auth.init(() => {
+  render();
+  Sync.autoSync();
+});

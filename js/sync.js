@@ -22,6 +22,9 @@ const Sync = {
   load() {
     try { this.cfg = JSON.parse(localStorage.getItem(this.cfgKey)) || {}; }
     catch (_) { this.cfg = {}; }
+    // Pré-configuração via js/config.js (deploy já apontando para o projeto da família)
+    const pre = (typeof window !== 'undefined' && window.FINANCAS_SUPABASE) || {};
+    if (!this.cfg.url && pre.url) { this.cfg.url = pre.url.replace(/\/$/, ''); this.cfg.anonKey = pre.anonKey; this.saveCfg(); }
     return this.cfg;
   },
   saveCfg() { localStorage.setItem(this.cfgKey, JSON.stringify(this.cfg)); },
