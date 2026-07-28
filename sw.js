@@ -1,13 +1,14 @@
 /* Finanças da Família — service worker: app shell offline-first */
 'use strict';
 
-const CACHE = 'financas-v6';
+const CACHE = 'financas-v7';
 const SHELL = [
   './',
   'index.html',
   'css/styles.css',
   'js/config.js',
   'js/icons.js',
+  'js/ui.js',
   'js/ofx.js',
   'js/db.js',
   'js/sync.js',

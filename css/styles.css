@@ -536,6 +536,92 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 }
 .amount-input:focus { border-color: var(--gold); background: none; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+/* ---------- Select e datepicker (estilo Metronic/Select2, sem dependências) ---------- */
+.ui-native { position: absolute !important; opacity: 0; pointer-events: none; width: 0; height: 0; }
+.ui-select, .ui-date { position: relative; }
+.ui-select-btn, .ui-date-btn {
+  width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper);
+  border-radius: 8px; padding: 11px 13px; font-size: 14px; font-family: var(--font-body);
+  cursor: pointer; text-align: left; min-height: 44px;
+  transition: border-color .15s ease, background .15s ease;
+}
+.ui-select-btn:hover, .ui-date-btn:hover { border-color: #cbd7e1; }
+.ui-select-btn:focus-visible, .ui-date-btn:focus-visible { border-color: var(--gold); background: #fff; }
+.ui-select-txt, .ui-date-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.is-placeholder .ui-select-txt, .ui-date-btn.is-placeholder .ui-date-txt,
+.ui-select-btn.is-placeholder .ui-select-txt { color: #9aa3b2; }
+.ui-select-arrow {
+  width: 0; height: 0; flex: none; border-left: 5px solid transparent; border-right: 5px solid transparent;
+  border-top: 6px solid #9aa3b2; transition: transform .18s ease;
+}
+.ui-select:has(.ui-panel) .ui-select-arrow { transform: rotate(180deg); }
+.ui-date-ico { font-size: 15px; flex: none; opacity: .8; }
+
+.ui-panel {
+  position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; right: 0;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 12px 34px rgba(24, 28, 50, .16);
+  animation: uiPanel .16s cubic-bezier(.22, 1, .36, 1);
+  overflow: hidden;
+}
+@keyframes uiPanel { from { opacity: 0; transform: translateY(-6px); } }
+.ui-search { padding: 9px; border-bottom: 1px solid var(--line); }
+.ui-search input { padding: 9px 11px; font-size: 13.5px; background: var(--ink-3); }
+.ui-list { max-height: 260px; overflow-y: auto; padding: 6px; scrollbar-width: thin; }
+.ui-list::-webkit-scrollbar { width: 6px; }
+.ui-list::-webkit-scrollbar-thumb { background: #d8e3ea; border-radius: 3px; }
+.ui-group {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--paper-dim); padding: 9px 10px 5px;
+}
+.ui-opt {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 10px 11px; border-radius: 7px; font-size: 13.5px; cursor: pointer; min-height: 40px;
+}
+.ui-opt:hover, .ui-opt.is-mark { background: var(--ink-3); }
+.ui-opt.is-sel { background: rgba(0, 158, 247, .09); color: var(--gold); font-weight: 600; }
+.ui-opt.is-off { opacity: .45; cursor: not-allowed; }
+.ui-check { font-weight: 700; }
+.ui-empty { padding: 18px; text-align: center; color: var(--paper-dim); font-size: 13px; }
+
+/* Calendário */
+.ui-cal { padding: 12px; }
+.ui-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.ui-cal-head b { font-size: 14px; font-weight: 700; }
+.ui-cal-nav {
+  width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--ink-2); color: var(--paper); cursor: pointer; font-size: 16px; line-height: 1;
+}
+.ui-cal-nav:hover { background: var(--ink-3); }
+.ui-cal-wd, .ui-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.ui-cal-wd span {
+  text-align: center; font-size: 10.5px; font-weight: 700; color: var(--paper-dim);
+  padding-bottom: 5px; text-transform: uppercase;
+}
+.ui-cal-d {
+  aspect-ratio: 1; min-height: 34px; border: none; background: none; border-radius: 8px;
+  font-size: 13px; font-family: var(--font-body); color: var(--paper); cursor: pointer;
+  display: grid; place-items: center; transition: background .12s ease;
+}
+.ui-cal-d:hover { background: var(--ink-3); }
+.ui-cal-d.is-out { visibility: hidden; }
+.ui-cal-d.is-today { color: var(--gold); font-weight: 700; box-shadow: inset 0 0 0 1px rgba(0, 158, 247, .35); }
+.ui-cal-d.is-sel { background: var(--gold); color: #fff; font-weight: 700; }
+.ui-cal-quick { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.ui-cal-quick button {
+  flex: 1; padding: 8px 6px; border-radius: 7px; border: 1px solid var(--line);
+  background: var(--ink-2); color: var(--paper); font-size: 12px; font-weight: 600;
+  font-family: var(--font-body); cursor: pointer;
+}
+.ui-cal-quick button:hover { background: var(--ink-3); border-color: #cbd7e1; }
+
+/* Em telas estreitas o painel vira uma folha ancorada, sem cortar nas bordas */
+@media (max-width: 520px) {
+  .ui-panel { left: -2px; right: -2px; }
+  .ui-list { max-height: 46vh; }
+}
 .btn {
   width: 100%; padding: 13px; border-radius: 8px; border: none; cursor: pointer;
   font-size: 14px; font-weight: 700; font-family: var(--font-body);

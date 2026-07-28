@@ -166,6 +166,7 @@ function render() {
   const views = { inicio: renderInicio, extrato: renderExtrato, cartoes: renderCartoes, metas: renderMetas, relatorios: renderRelatorios };
   $('#view').innerHTML = views[state.tab](period);
   paintIcons($('#view'));
+  if (typeof UI !== 'undefined') UI.enhance($('#view'));
   bindView();
   persistUI();
   if (state._scrollY) {   // primeira renderização após recarregar: volta ao ponto de leitura
@@ -1135,6 +1136,7 @@ function openSheet(html) {
   sheet.innerHTML = `<div class="sheet-handle"></div>${html}`;
   sheet.hidden = false; $('#sheet-backdrop').hidden = false;
   paintIcons(sheet);
+  if (typeof UI !== 'undefined') UI.enhance(sheet);
   // Teclado padrão de TODAS as folhas. Reatribuído a cada abertura e acionando o botão
   // do formulário atual (via click), para nunca sobrar handler de uma folha anterior.
   sheet.onkeydown = e => {
@@ -1392,7 +1394,9 @@ function openTxSheet(tx, asNew) {
   document.querySelectorAll('#g-day .chip').forEach(ch => ch.onclick = () => {
     const d = new Date();
     d.setDate(d.getDate() - Number(ch.dataset.d));
-    $('#f-date').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const campo = $('#f-date');
+    campo.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (campo._uiRefresh) campo._uiRefresh();   // atualiza o rótulo do datepicker
     showFatura();
   });
   $('#f-date').addEventListener('change', showFatura);
@@ -1846,6 +1850,7 @@ function openModal(html) {
   $('#modal').innerHTML = `<div class="modal-inner">${html}</div>`;
   $('#modal').hidden = false; $('#modal-backdrop').hidden = false;
   paintIcons($('#modal'));
+  if (typeof UI !== 'undefined') UI.enhance($('#modal'));
 }
 function closeModal() { $('#modal').hidden = true; $('#modal-backdrop').hidden = true; render(); }
 
@@ -2447,6 +2452,7 @@ window.addEventListener('scroll', () => {
 window.addEventListener('beforeunload', persistUI);
 
 Notif.load();
+UI.init();
 restoreUI();
 Auth.init(() => {
   setTab(state.tab);          // restaura a aba e marca o menu corretamente

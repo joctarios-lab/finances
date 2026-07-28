@@ -318,6 +318,36 @@ try {
   check('relatórios trazem os gráficos novos', renderRelatorios().includes('rank-row') && renderRelatorios().includes('donut-svg'), true);
 } catch (e) { console.log(` FALHA | gráficos: ${e.message}`); fail++; }
 
+console.log('\n=== Componentes de formulário (select e datepicker) ===');
+try {
+  const ui = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
+  const html = fs.readFileSync(BASE + 'index.html', 'utf8');
+  const sw = fs.readFileSync(BASE + 'sw.js', 'utf8');
+  const cssUi = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+
+  check('ui.js carregado no app', html.includes('js/ui.js'), true);
+  check('ui.js no cache offline', sw.includes("'js/ui.js'"), true);
+  check('sem dependência de jQuery/CDN', !html.includes('jquery') && !html.includes('select2') && !/src="http/.test(html), true);
+
+  // Melhoria progressiva: o campo nativo continua sendo a fonte da verdade
+  check('mantém o <select> nativo no DOM', ui.includes('box.appendChild(sel)'), true);
+  check('escreve no nativo e dispara change', ui.includes("sel.value = opcoes[i].value") && ui.includes("new Event('change'"), true);
+  check('datepicker mantém o input nativo', ui.includes('box.appendChild(inp)') && ui.includes('inp.value = valor'), true);
+
+  check('select tem busca quando há muitas opções', ui.includes('comBusca') && ui.includes('Buscar'), true);
+  check('select suporta grupos (optgroup)', ui.includes('OPTGROUP'), true);
+  check('navegação por teclado', ui.includes('ArrowDown') && ui.includes('Escape') && ui.includes('Enter'), true);
+  check('busca ignora acentos', ui.includes('norm(') && ui.includes('NFD'), true);
+  check('calendário com atalhos de data', ui.includes('data-q') && ui.includes('Hoje'), true);
+  check('alvos de toque com 40px+', /min-height:\s*4\dpx/.test(cssUi), true);
+  check('painel some ao clicar fora', ui.includes('contains(e.target)'), true);
+
+  // O código do app continua lendo .value normalmente
+  const appSrc2 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('app segue lendo .value dos campos', appSrc2.includes("$('#f-account').value") && appSrc2.includes("$('#f-date').value"), true);
+  check('atalhos de data atualizam o rótulo', appSrc2.includes('_uiRefresh'), true);
+} catch (e) { console.log(` FALHA | componentes: ${e.message}`); fail++; }
+
 console.log('\n=== Semântica de cor por tipo de ação ===');
 try {
   const ext = renderExtrato(p);
