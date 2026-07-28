@@ -14,11 +14,12 @@ const KCrypto = {
     return btoa(s);
   },
   unb64(s) { return Uint8Array.from(atob(s), c => c.charCodeAt(0)); },
-  async deriveKey(pin, saltB64, iterations = 150000) {
+  // extraivel: necessário para guardar a chave na sessão da aba (ver Auth.guardarSessao)
+  async deriveKey(pin, saltB64, iterations = 150000, extraivel = false) {
     const km = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveKey']);
     return crypto.subtle.deriveKey(
       { name: 'PBKDF2', salt: this.unb64(saltB64), iterations, hash: 'SHA-256' },
-      km, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+      km, { name: 'AES-GCM', length: 256 }, extraivel, ['encrypt', 'decrypt']);
   },
   async enc(key, text) {
     const iv = crypto.getRandomValues(new Uint8Array(12));

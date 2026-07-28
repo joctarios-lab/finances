@@ -26,9 +26,36 @@ const Auth = {
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
   },
 
+  /* ---------- Sessão da aba ----------
+     Recarregar a página não é sair do app. Sem isto, cada F5 pedia o PIN de novo,
+     porque a chave só existia em memória. Guardamos a chave no sessionStorage —
+     que morre quando a aba fecha — respeitando o mesmo tempo de bloqueio
+     configurado. Com o tempo em 0, volta a pedir o PIN a cada atualização. */
+  SESSAO_KEY: 'financas.sessao',
+
+  async guardarSessao(chave) {
+    if ((this.cfg.lockAfterMin ?? 5) <= 0) return this.limparSessao();
+    try {
+      const bruta = await crypto.subtle.exportKey('raw', chave);
+      sessionStorage.setItem(this.SESSAO_KEY, JSON.stringify({ k: KCrypto.b64(bruta), t: Date.now() }));
+    } catch (_) { /* chave não exportável: segue pedindo o PIN, sem quebrar */ }
+  },
+
+  async recuperarSessao() {
+    try {
+      const s = JSON.parse(sessionStorage.getItem(this.SESSAO_KEY) || 'null');
+      if (!s || !s.k) return null;
+      const limite = this.cfg.lockAfterMin ?? 5;
+      if (limite <= 0 || (Date.now() - s.t) / 60000 > limite) { this.limparSessao(); return null; }
+      return await crypto.subtle.importKey('raw', KCrypto.unb64(s.k), { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
+    } catch (_) { return null; }
+  },
+
+  limparSessao() { try { sessionStorage.removeItem(this.SESSAO_KEY); } catch (_) {} },
+
   async setPin(pin) {
     this.cfg.kdfSalt = KCrypto.b64(crypto.getRandomValues(new Uint8Array(16)));
-    const key = await KCrypto.deriveKey(pin, this.cfg.kdfSalt);
+    const key = await KCrypto.deriveKey(pin, this.cfg.kdfSalt, 150000, true);
     this.cfg.verifier = await KCrypto.enc(key, 'financas-ok');
     delete this.cfg.pinHash; delete this.cfg.salt;
     this.cfg.lockAfterMin = this.cfg.lockAfterMin ?? 5;
@@ -42,7 +69,7 @@ const Auth = {
   async tryPin(pin) {
     if (this.cfg.verifier) {
       try {
-        const key = await KCrypto.deriveKey(pin, this.cfg.kdfSalt);
+        const key = await KCrypto.deriveKey(pin, this.cfg.kdfSalt, 150000, true);
         if ((await KCrypto.dec(key, this.cfg.verifier)) === 'financas-ok') return key;
       } catch (_) {}
       return null;
@@ -59,6 +86,7 @@ const Auth = {
   async removePin(pin) {
     const key = await this.tryPin(pin);
     if (!key) return false;
+    this.limparSessao();
     DB.clearKey();           // regrava os dados em claro
     delete this.cfg.verifier; delete this.cfg.kdfSalt;
     delete this.cfg.pinHash; delete this.cfg.salt;
@@ -291,6 +319,7 @@ const Auth = {
         return false;
       }
       this.registerSuccess();
+      this.guardarSessao(chave);   // um F5 daqui em diante não pede o PIN de novo
       this.unlocked = true;
       this.hide();
       if (onDone) onDone();
@@ -569,10 +598,26 @@ const Auth = {
   esc(s) { return String(s ?? '').replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch])); },
 
   /* Ponto de entrada: garante DB carregado/decifrado e chama onReady exatamente uma vez. */
+  // Retoma a sessão desta aba, se ainda válida — assim um F5 não pede o PIN de novo
+  async retomarOuPedirPin(onReady) {
+    const chave = await this.recuperarSessao();
+    if (chave) {
+      try {
+        if (DB.locked) await DB.unlock(chave); else DB.setKey(chave);
+        this.unlocked = true;
+        this.hide();
+        this.guardarSessao(chave);      // renova o prazo a partir de agora
+        onReady();
+        return;
+      } catch (_) { this.limparSessao(); }
+    }
+    this.showLock(onReady);
+  },
+
   init(onReady) {
     this.load();
     DB.load();
-    if (DB.locked || this.enabled()) this.showLock(onReady);
+    if (DB.locked || this.enabled()) this.retomarOuPedirPin(onReady);
     else if (!this.cfg.onboarded && !this.cfg.skipped) this.showOnboarding(onReady);
     else { this.unlocked = true; onReady(); }
 
@@ -581,12 +626,16 @@ const Auth = {
       if (!this.enabled() || !this.unlocked) return;
       if (document.hidden) { this._hiddenAt = Date.now(); return; }
       const mins = (Date.now() - (this._hiddenAt || 0)) / 60000;
-      if (this._hiddenAt && mins >= (this.cfg.lockAfterMin ?? 5)) this.showLock(() => {});
+      if (this._hiddenAt && mins >= (this.cfg.lockAfterMin ?? 5)) {
+        this.limparSessao();          // passou do prazo: exige o PIN de verdade
+        this.showLock(() => {});
+      }
     });
   },
 
   lockNow() {
-    if (this.enabled()) this.showLock(() => {});
-    else toast('Ative um PIN em ⚙︎ → Segurança primeiro');
+    if (!this.enabled()) return toast('Ative um PIN em ⚙︎ → Segurança primeiro');
+    this.limparSessao();              // bloqueio pedido: nem o F5 escapa
+    this.showLock(() => {});
   },
 };

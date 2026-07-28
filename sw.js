@@ -1,19 +1,20 @@
 /* Finanças da Família — service worker: app shell offline-first */
 'use strict';
 
-const CACHE = 'financas-v14';
+const VERSAO = '15';
+const CACHE = 'financas-' + VERSAO;
 const SHELL = [
   './',
   'index.html',
-  'css/styles.css',
-  'js/config.js',
-  'js/icons.js',
-  'js/ui.js',
-  'js/ofx.js',
-  'js/db.js',
-  'js/sync.js',
-  'js/auth.js',
-  'js/app.js',
+  'css/styles.css?v=' + VERSAO,
+  'js/config.js?v=' + VERSAO,
+  'js/icons.js?v=' + VERSAO,
+  'js/ui.js?v=' + VERSAO,
+  'js/ofx.js?v=' + VERSAO,
+  'js/db.js?v=' + VERSAO,
+  'js/sync.js?v=' + VERSAO,
+  'js/auth.js?v=' + VERSAO,
+  'js/app.js?v=' + VERSAO,
   'manifest.webmanifest',
   'icons/icon.svg',
   'icons/icon-192.png',

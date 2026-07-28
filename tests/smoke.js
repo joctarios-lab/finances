@@ -384,6 +384,37 @@ console.log('\n=== Primeiro acesso (ordem das etapas) ===');
   check('showFirstRun antigo foi removido', !au.includes('showFirstRun'), true);
 }
 
+console.log('\n=== Recarregar a página não pede o PIN de novo ===');
+{
+  const au = fs.readFileSync(BASE + 'js/auth.js', 'utf8');
+  const dbSrc = fs.readFileSync(BASE + 'js/db.js', 'utf8');
+  check('sessão da aba guarda a chave', au.includes('guardarSessao') && au.includes('sessionStorage'), true);
+  check('a chave precisa ser exportável para isso', /deriveKey\(pin, this\.cfg\.kdfSalt, 150000, true\)/.test(au), true);
+  check('deriveKey aceita o parâmetro', /deriveKey\(pin, saltB64, iterations = 150000, extraivel/.test(dbSrc), true);
+  check('boot tenta retomar antes de pedir o PIN', /init\(onReady\)[\s\S]{0,220}retomarOuPedirPin/.test(au), true);
+  check('sessão respeita o tempo de bloqueio', /recuperarSessao[\s\S]{0,400}lockAfterMin/.test(au), true);
+  check('tempo 0 volta a pedir sempre', /limite <= 0/.test(au) && /lockAfterMin \?\? 5\) <= 0/.test(au), true);
+  check('bloquear manualmente encerra a sessão', /lockNow[\s\S]{0,160}limparSessao/.test(au), true);
+  check('passar do tempo em segundo plano encerra', /visibilitychange[\s\S]{0,400}limparSessao/.test(au), true);
+  check('remover o PIN encerra a sessão', /removePin[\s\S]{0,160}limparSessao/.test(au), true);
+  check('sessão morre com a aba (sessionStorage, não localStorage)', !au.includes("localStorage.setItem(this.SESSAO_KEY"), true);
+}
+
+console.log('\n=== Versão dos arquivos (evita rodar código velho) ===');
+{
+  const html = fs.readFileSync(BASE + 'index.html', 'utf8');
+  const sw = fs.readFileSync(BASE + 'sw.js', 'utf8');
+  const versao = (sw.match(/const VERSAO = '([^']+)'/) || [])[1];
+  check('service worker declara a versão', !!versao, true);
+  const tags = [...html.matchAll(/(?:src|href)="((?:js|css)\/[^"?]+)(\?v=([^"]+))?"/g)];
+  const semVersao = tags.filter(t => !t[3]).map(t => t[1]);
+  check('todo script e CSS carrega versionado', semVersao.length ? semVersao.join(', ') : true, true);
+  const divergentes = tags.filter(t => t[3] && t[3] !== versao).map(t => t[1]);
+  check('HTML e service worker na mesma versão', divergentes.length ? divergentes.join(', ') : true, true);
+  check('cache nomeado pela versão', sw.includes("'financas-' + VERSAO"), true);
+  check('rede primeiro, cache como reserva', /fetch\(e\.request\)[\s\S]{0,300}caches\.match/.test(sw), true);
+}
+
 console.log('\n=== App bloqueado (dados cifrados, DB.data nulo) ===');
 {
   // Reproduz o estado real da tela de bloqueio: dados existem, mas ainda cifrados.
@@ -492,7 +523,7 @@ try {
   const cssUi = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
 
   check('ui.js carregado no app', html.includes('js/ui.js'), true);
-  check('ui.js no cache offline', sw.includes("'js/ui.js'"), true);
+  check('ui.js no cache offline', sw.includes('js/ui.js'), true);
   check('sem dependência de jQuery/CDN', !html.includes('jquery') && !html.includes('select2') && !/src="http/.test(html), true);
 
   // Melhoria progressiva: o campo nativo continua sendo a fonte da verdade
