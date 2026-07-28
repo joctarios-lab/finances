@@ -319,6 +319,32 @@ const DB = {
     return this.all('transactions').filter(t => this.tagsOf(t).includes(tag)).length;
   },
 
+  /* Etiquetas do último lançamento criado, para o próximo já vir com elas.
+     Lançar os gastos de uma viagem é sempre em série: sem isto, a mesma etiqueta
+     é digitada dez vezes seguidas.
+
+     Se auto-corrige e não precisa guardar estado nenhum: salvar um lançamento sem
+     etiqueta faz dele o último, e a sugestão acaba junto. Tirar o chip é o que
+     encerra a sequência, sem precisar de botão para isso.
+
+     A janela existe para a etiqueta de uma viagem de março não reaparecer em maio.
+     24h cobre lançar hoje o que se gastou ontem. */
+  tagsRecentes(horasLimite = 24) {
+    /* Empate de updated_at é comum: a importação de OFX grava dezenas de
+       registros no mesmo milissegundo. O >= faz o de posição mais alta vencer,
+       e como a lista é append-only, esse é o criado por último. Com > (ou com
+       sort) o desempate seria arbitrário. */
+    let ultimo = null;
+    for (const t of this.all('transactions')) {
+      if (!t.updated_at) continue;
+      if (!ultimo || String(t.updated_at) >= String(ultimo.updated_at)) ultimo = t;
+    }
+    if (!ultimo) return [];
+    const idade = (Date.now() - Date.parse(ultimo.updated_at)) / 3600000;
+    if (!(idade >= 0) || idade > horasLimite) return [];
+    return this.tagsOf(ultimo);
+  },
+
   /* Gasto por envelope: o que foi lançado numa subcategoria sobe para o pai.
      Somar aqui, e não em cada tela, é o que faz donut, ranking, comparativo,
      barras de orçamento, conselheiro e notificação concordarem entre si. */

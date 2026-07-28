@@ -860,6 +860,47 @@ try {
   const idsViagem = DB.all('transactions').filter(t => DB.tagsOf(t).includes('viagem'));
   check('etiqueta agrupa gastos de categorias diferentes', idsViagem.length, 2);
 
+  /* Reaproveitar etiqueta: lançar gasto de viagem é em série, e redigitar a mesma
+     etiqueta dez vezes é o que se quer evitar. */
+  console.log('\n=== Reaproveitar etiquetas ===');
+  const folhaDe = abrir => { abrir(); return els['#sheet'].innerHTML; };
+
+  check('herda as etiquetas do último lançamento', DB.tagsRecentes().sort().join(','), 'lazer,viagem');
+
+  // No formulário de um lançamento novo elas já vêm ligadas
+  const novo = folhaDe(() => openTxSheet(null));
+  check('lançamento novo já vem com a etiqueta ligada', /chip-tag active" data-v="viagem"/.test(novo), true);
+  check('e diz de onde ela veio', novo.includes('repetidas do lançamento anterior'), true);
+  check('campo de etiqueta tem autocomplete', novo.includes('list="tag-hist"') && novo.includes('<datalist id="tag-hist"'), true);
+  check('tocar no chip apaga o aviso de herança', /chip-tag'\)\.forEach[\s\S]{0,200}tag-auto/.test(fs.readFileSync(BASE + 'js/app.js', 'utf8')), true);
+
+  // Ao editar, vale o que está salvo — não se inventa etiqueta que o lançamento não tem
+  const semTags = DB.all('transactions').find(t => t.description === 'Mercado');
+  check('o lançamento de referência não tem etiqueta', DB.tagsOf(semTags).length, 0);
+  const editando = folhaDe(() => openTxSheet(semTags));
+  check('editar não inventa etiqueta', /chip-tag active/.test(editando), false);
+
+  // Etiqueta de uma viagem de março não pode reaparecer em maio: envelhece a base
+  // toda para que o mais recente também esteja fora da janela.
+  const idades = DB.all('transactions').map(t => [t, t.updated_at]);
+  for (const [t] of idades) t.updated_at = new Date(Date.now() - 40 * 3600000).toISOString();
+  check('fora da janela, não herda nada', DB.tagsRecentes(24).length, 0);
+  check('com janela maior, volta a herdar', DB.tagsRecentes(48).length > 0, true);
+  for (const [t, orig] of idades) t.updated_at = orig;
+  check('a base volta ao estado anterior', DB.tagsRecentes().sort().join(','), 'lazer,viagem');
+
+  // Salvar sem etiqueta encerra a sequência sozinho, sem estado guardado
+  const semTag = DB.upsert('transactions', { description: 'Padaria da esquina', amount: 12, date: dia(18), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Dinheiro', account_id: contaT, tags: [] });
+  check('lançamento sem etiqueta encerra a herança', DB.tagsRecentes().length, 0);
+  DB.remove('transactions', semTag);
+
+  // OFX: uma etiqueta para o lote, não um campo por linha
+  const ap2 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('importação tem etiqueta para o lote', ap2.includes('id="ofx-tags"'), true);
+  check('com autocomplete também', ap2.includes('list="tag-hist-ofx"'), true);
+  check('e aplica em todas as linhas importadas', /tags: tagsDoLote\(\)/.test(ap2), true);
+  check('não há um campo de etiqueta por linha', /ofx-row[\s\S]{0,400}ofx-tag-linha/.test(ap2), false);
+
   console.log('\n=== Painel de filtros do extrato ===');
   const p2 = DB.monthPeriod(new Date());
   const zerar = () => { state.filtros = { ...FILTROS_VAZIOS }; };

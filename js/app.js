@@ -1500,18 +1500,23 @@ function openTxSheet(tx, asNew) {
       <p class="muted" id="member-hint" style="margin-top:6px"></p>
     </div>
     <!-- Etiquetas: assunto que atravessa envelopes. "Viagem Bahia" junta passagem,
-         comida e hospedagem, que estão em três categorias diferentes. -->
-    <div class="field"><label>Etiquetas <span class="muted">— opcional, para agrupar por assunto</span></label>
+         comida e hospedagem, que estão em três categorias diferentes.
+         Num lançamento novo já vêm ligadas as do anterior: gasto de viagem se
+         lança em série, e redigitar a mesma etiqueta dez vezes é o que se evita. -->
+    ${(() => {
+      const atuais = isEdit ? DB.tagsOf(tx) : (DB.tagsOf(tx).length ? DB.tagsOf(tx) : DB.tagsRecentes());
+      const herdadas = !isEdit && !DB.tagsOf(tx).length && atuais.length;
+      const sugeridas = DB.allTags().filter(t => !atuais.includes(t)).slice(0, 6);
+      const chips = [...atuais.map(t => ({ t, on: true })), ...sugeridas.map(t => ({ t, on: false }))];
+      return `
+    <div class="field"><label>Etiquetas <span class="muted" id="tag-auto">${herdadas ? '· repetidas do lançamento anterior' : '— opcional, agrupa por assunto'}</span></label>
       <div class="chips" id="g-tags">
-        ${(() => {
-          const atuais = DB.tagsOf(tx);
-          const sugeridas = DB.allTags().filter(t => !atuais.includes(t)).slice(0, 6);
-          return [...atuais.map(t => ({ t, on: true })), ...sugeridas.map(t => ({ t, on: false }))]
-            .map(({ t, on }) => `<button type="button" class="chip chip-tag ${on ? 'active' : ''}" data-v="${esc(t)}">#${esc(t)}</button>`).join('');
-        })()}
+        ${chips.map(({ t, on }) => `<button type="button" class="chip chip-tag ${on ? 'active' : ''}" data-v="${esc(t)}">#${esc(t)}</button>`).join('')}
       </div>
-      <input id="f-tag-nova" placeholder="Nova etiqueta e Enter (ex: viagem, reforma)" autocomplete="off" maxlength="24" style="margin-top:8px">
-    </div>
+      <input id="f-tag-nova" list="tag-hist" placeholder="Nova etiqueta e Enter (ex: viagem, reforma)" autocomplete="off" maxlength="24" style="margin-top:8px">
+      <datalist id="tag-hist">${DB.allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+    </div>`;
+    })()}
     <div class="field"><label id="lbl-rec">Custo fixo mensal (recorrente)?</label><select id="f-rec"><option value="">Não</option><option value="1" ${tx.recurring ? 'selected' : ''}>Sim — entra nos custos fixos e no lançamento em 1 clique</option></select></div>
     <button class="btn" id="sh-save">${isEdit ? 'Salvar alterações' : 'Lançar'}</button>
     ${isEdit ? '<div class="btn-row"><button class="btn ghost" id="sh-dup">Repetir</button><button class="btn danger" id="sh-del">Excluir</button></div>' : ''}
@@ -1643,7 +1648,10 @@ function openTxSheet(tx, asNew) {
     b.onclick = () => b.classList.toggle('active');
     chipsTags().appendChild(b);
   };
-  chipsTags().querySelectorAll('.chip-tag').forEach(c => { c.onclick = () => c.classList.toggle('active'); });
+  // Tocar num chip é também o que encerra a herança: some o aviso de "repetidas"
+  chipsTags().querySelectorAll('.chip-tag').forEach(c => {
+    c.onclick = () => { c.classList.toggle('active'); const a = $('#tag-auto'); if (a) a.textContent = ''; };
+  });
   const campoTag = $('#f-tag-nova');
   campoTag.onkeydown = e => {
     if (e.key !== 'Enter' && e.key !== ',') return;
@@ -2821,6 +2829,15 @@ function renderOfxPreview(parsed, accounts, cards) {
     </div>
     ${!novos.length ? '<div class="empty"><b>Tudo já importado</b>Nenhum lançamento novo neste arquivo.</div>' : `
       <div class="field"><label>Lançar em</label><select id="ofx-dest">${destOpts}</select></div>
+      <!-- Uma etiqueta para o lote inteiro, em vez de um campo por linha: importar
+           o extrato de uma viagem é o caso típico, e 40 campos poluiriam a tela. -->
+      <div class="field"><label>Etiquetar todos <span class="muted">— opcional</span></label>
+        <div class="chips" id="ofx-tags">
+          ${DB.allTags().slice(0, 6).map(t => `<button type="button" class="chip chip-tag" data-v="${esc(t)}">#${esc(t)}</button>`).join('')}
+        </div>
+        <input id="ofx-tag-nova" list="tag-hist-ofx" placeholder="Nova etiqueta e Enter (ex: viagem bahia)" autocomplete="off" maxlength="24" style="margin-top:8px">
+        <datalist id="tag-hist-ofx">${DB.allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
+      </div>
       ${parsed.balance !== null ? `<div class="field"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="ofx-bal" checked style="width:18px;height:18px;accent-color:var(--gold)">Atualizar saldo da conta para ${fmt(parsed.balance)} (informado pelo banco)</label></div>` : ''}
       <div class="btn-row" style="margin-bottom:4px">
         <button class="btn ghost" id="ofx-all">Marcar todos</button>
@@ -2834,6 +2851,31 @@ function renderOfxPreview(parsed, accounts, cards) {
   // Este trecho é montado depois que o modal já abriu, então o UI.enhance do
   // openModal não o alcançou: os selects daqui ficavam nativos, sem busca.
   if (typeof UI !== 'undefined') UI.enhance($('#ofx-result'));
+
+  // Etiquetas do lote: mesma mecânica do formulário (chip liga/desliga, campo cria)
+  const chipsOfx = $('#ofx-tags');
+  const addTagOfx = nome => {
+    const tag = DB.normTag(nome);
+    if (!tag) return;
+    const existe = [...chipsOfx.querySelectorAll('.chip-tag')]
+      .find(c => DB._semAcento(c.dataset.v) === DB._semAcento(tag));
+    if (existe) { existe.classList.add('active'); return; }
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'chip chip-tag active'; b.dataset.v = tag;
+    b.textContent = '#' + tag;
+    b.onclick = () => b.classList.toggle('active');
+    chipsOfx.appendChild(b);
+  };
+  chipsOfx.querySelectorAll('.chip-tag').forEach(c => { c.onclick = () => c.classList.toggle('active'); });
+  const campoTagOfx = $('#ofx-tag-nova');
+  campoTagOfx.onkeydown = e => {
+    if (e.key !== 'Enter' && e.key !== ',') return;
+    e.preventDefault();
+    addTagOfx(campoTagOfx.value); campoTagOfx.value = '';
+  };
+  campoTagOfx.onblur = () => { if (campoTagOfx.value.trim()) { addTagOfx(campoTagOfx.value); campoTagOfx.value = ''; } };
+  const tagsDoLote = () => [...chipsOfx.querySelectorAll('.chip-tag.active')].map(c => c.dataset.v);
+
   const boxes = () => document.querySelectorAll('#ofx-result [data-i]');
   $('#ofx-all').onclick = () => boxes().forEach(b => { b.checked = true; });
   $('#ofx-none').onclick = () => boxes().forEach(b => { b.checked = false; });
@@ -2865,6 +2907,7 @@ function renderOfxPreview(parsed, accounts, cards) {
         account_id: account ? account.id : null,
         invoice_key: card ? DB.invoiceKeyFor(card, t.date) : '',
         recurring: false,
+        tags: tagsDoLote(),
       });
       n++;
     });
