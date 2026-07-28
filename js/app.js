@@ -2473,6 +2473,62 @@ const Notif = {
   },
 };
 
+/* ---------- Botão voltar do aparelho ----------
+   Sem isto, "voltar" fecha o app na hora — no meio de um lançamento, inclusive.
+   Aqui ele passa a se comportar como em app nativo: primeiro fecha o que está
+   aberto, depois volta para o Painel, e só sai com dois toques seguidos.
+
+   A sentinela no histórico é o que torna isso possível: com uma única entrada,
+   o Android encerra o app antes de o popstate acontecer, e não há o que
+   interceptar. Mantemos sempre uma entrada extra — menos no instante de sair. */
+const Voltar = {
+  JANELA: 2000,        // tempo para o segundo toque confirmar a saída
+  ultimo: 0,
+  ativo: false,
+  AVISO: 'Toque em voltar de novo para sair',
+
+  marcar() { try { history.pushState({ financas: 1 }, ''); } catch (_) {} },
+
+  init() {
+    if (this.ativo || typeof history === 'undefined' || !history.pushState) return;
+    this.ativo = true;
+    this.marcar();
+    window.addEventListener('popstate', () => this.tratar());
+  },
+
+  // Fecha uma camada por vez, da mais sobreposta para a mais ao fundo
+  fecharCamada() {
+    if (typeof UI !== 'undefined' && UI.aberto) { UI.fechar(); return true; }
+    const sheet = $('#sheet');
+    if (sheet && !sheet.hidden) { closeSheet(); return true; }
+    const modal = $('#modal');
+    if (modal && !modal.hidden) { closeModal(); return true; }
+    return false;
+  },
+
+  tratar() {
+    if (this.fecharCamada()) { this.ultimo = 0; this.marcar(); return; }
+    const lock = $('#lock');
+    const bloqueado = lock && !lock.hidden;
+    // Na tela de bloqueio não há para onde subir: voltar significa sair
+    if (!bloqueado && state.tab !== 'inicio') { this.ultimo = 0; setTab('inicio'); this.marcar(); return; }
+    this.sair();
+  },
+
+  sair() {
+    const agora = Date.now();
+    if (agora - this.ultimo < this.JANELA) {
+      this.ultimo = 0;
+      persistUI();       // guarda aba e ponto de leitura antes de fechar
+      history.back();    // sentinela não reposta: agora sai de verdade
+      return;
+    }
+    this.ultimo = agora;
+    this.marcar();       // segura o app nesta primeira vez
+    toast(this.AVISO, 'info');
+  },
+};
+
 /* ---------- Boot ---------- */
 Sync.onStatus = (msg, ok = true) => {
   const el = $('#sync-status');
@@ -2534,6 +2590,7 @@ window.addEventListener('beforeunload', persistUI);
 
 Notif.load();
 UI.init();
+Voltar.init();
 restoreUI();
 Auth.init(() => {
   setTab(state.tab);          // restaura a aba e marca o menu corretamente

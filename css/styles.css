@@ -25,7 +25,9 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }   /* garante que hidden vença classes com display próprio (ex: .lock) */
-html { -webkit-text-size-adjust: 100%; }
+/* Sem "puxar para atualizar": num app instalado, o gesto recarregava a tela
+   por acidente durante a rolagem. Também impede o efeito de elástico da borda. */
+html { -webkit-text-size-adjust: 100%; overscroll-behavior-y: none; }
 
 /* Ícones SVG inline */
 [data-ico] { display: inline-flex; align-items: center; justify-content: center; }
@@ -41,6 +43,7 @@ body {
   font-size: 14px;
   line-height: 1.5;
   min-height: 100dvh;
+  overscroll-behavior-y: none;
 }
 
 /* ---------- Estrutura: sidebar (desktop) + wrapper ---------- */
@@ -539,7 +542,7 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 .sheet-backdrop, .modal-backdrop { position: fixed; inset: 0; background: rgba(24, 28, 50, .35); z-index: 30; }
 .sheet {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 31;
-  max-width: 560px; margin: 0 auto; max-height: 90dvh; overflow-y: auto;
+  max-width: 560px; margin: 0 auto; max-height: 90dvh; overflow-y: auto; overscroll-behavior: contain;
   background: var(--ink-2); border-radius: 16px 16px 0 0;
   padding: 20px 20px calc(22px + env(safe-area-inset-bottom));
   box-shadow: 0 -10px 50px rgba(24, 28, 50, .18);
@@ -547,7 +550,7 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 }
 @keyframes sheetUp { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
 .modal {
-  position: fixed; inset: 0; z-index: 31; overflow-y: auto;
+  position: fixed; inset: 0; z-index: 31; overflow-y: auto; overscroll-behavior: contain;
   background: var(--ink); padding: 18px 18px calc(28px + env(safe-area-inset-bottom));
   animation: fadeUp .2s ease;
 }
@@ -610,7 +613,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 @keyframes uiPanel { from { opacity: 0; transform: translateY(-6px); } }
 .ui-search { padding: 9px; border-bottom: 1px solid var(--line); }
 .ui-search input { padding: 9px 11px; font-size: 13.5px; background: var(--ink-3); }
-.ui-list { max-height: 260px; overflow-y: auto; padding: 6px; scrollbar-width: thin; }
+.ui-list { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; padding: 6px; scrollbar-width: thin; }
 .ui-list::-webkit-scrollbar { width: 6px; }
 .ui-list::-webkit-scrollbar-thumb { background: #d8e3ea; border-radius: 3px; }
 .ui-group {

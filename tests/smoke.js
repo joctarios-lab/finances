@@ -51,7 +51,8 @@ eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
   state, fmt, fmtShort, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
-  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil });`);
+  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
+  Voltar, setTab, closeSheet, toast });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -661,6 +662,64 @@ console.log('\n=== Layout no celular ===');
     check(`${faixa}: valor proibido de quebrar linha`, new RegExp(`\\.${faixa} b \\{[^}]*white-space:\\s*nowrap`).test(cssM), true);
     check(`${faixa}: encolhe em tela estreita`, new RegExp(`max-width: 420px\\)[\\s\\S]{0,400}\\.${faixa} small \\{[^}]*font-size`).test(cssM), true);
   }
+}
+
+/* ---- Botão voltar: fechar o app tem que ser intencional ---- */
+console.log('\n=== Botão voltar do aparelho ===');
+{
+  let pilha = 1, saidas = 0;   // histórico falso: conta empilhadas e saídas
+  global.history = { pushState: () => { pilha++; }, back: () => { saidas++; } };
+  const aviso = () => el('#toast').textContent;
+  const limpar = () => { el('#toast').textContent = ''; };
+  const sheet = el('#sheet'), lock = el('#lock');
+  sheet.hidden = true; el('#modal').hidden = true; lock.hidden = true;
+
+  Voltar.init();
+  check('sentinela empilhada na abertura', pilha, 2);
+
+  sheet.hidden = false;
+  Voltar.tratar();
+  check('voltar fecha a folha aberta', sheet.hidden, true);
+  check('fechar a folha não sai do app', saidas, 0);
+
+  state.tab = 'relatorios';
+  Voltar.tratar();
+  check('voltar sobe para o Painel', state.tab, 'inicio');
+  check('subir de nível não sai do app', saidas, 0);
+
+  limpar();
+  Voltar.tratar();
+  check('primeiro voltar avisa em vez de sair', aviso(), 'Toque em voltar de novo para sair');
+  check('primeiro voltar não fecha o app', saidas, 0);
+
+  Voltar.tratar();
+  check('segundo voltar seguido fecha o app', saidas, 1);
+
+  Voltar.ultimo = Date.now() - 5000;   // toque espaçado não pode contar como confirmação
+  limpar();
+  Voltar.tratar();
+  check('voltar depois de 2s avisa de novo', aviso(), 'Toque em voltar de novo para sair');
+  check('voltar espaçado não fecha o app', saidas, 1);
+
+  state.tab = 'relatorios'; lock.hidden = false; Voltar.ultimo = 0; limpar();
+  Voltar.tratar();
+  check('bloqueado, voltar não troca de aba', state.tab, 'relatorios');
+  check('bloqueado, voltar ainda pede confirmação', aviso(), 'Toque em voltar de novo para sair');
+  lock.hidden = true; state.tab = 'inicio';
+
+  // A saída só funciona porque a sentinela NÃO é reposta nesse caminho
+  const apV = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('a saída não repõe a sentinela', /history\.back\(\)/.test(apV) && !/history\.back\(\)[\s\S]{0,80}this\.marcar\(\)/.test(apV), true);
+  check('voltar é ligado na abertura', apV.includes('Voltar.init()'), true);
+}
+
+console.log('\n=== Puxar para atualizar desligado ===');
+{
+  const cssP = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('página não recarrega ao puxar', /html \{[^}]*overscroll-behavior-y:\s*none/.test(cssP), true);
+  check('body também trava o gesto', /^body \{[^}]*overscroll-behavior-y:\s*none/m.test(cssP), true);
+  check('rolagem da folha não vaza para a página', /\.sheet \{[^}]*overscroll-behavior:\s*contain/.test(cssP), true);
+  check('rolagem do modal não vaza para a página', /\.modal \{[^}]*overscroll-behavior:\s*contain/.test(cssP), true);
 }
 
 console.log('\n=== Memória da navegação ===');
