@@ -767,7 +767,8 @@ function renderExtrato(period) {
   if (!txs.length) {
     list = ativos.length
       ? `<div class="empty"><b>Nenhum lançamento com esses filtros</b>Há ${DB.txOfPeriod(period).length} no período. <button class="btn ghost" id="limpar-vazio" style="margin-top:10px">Limpar os filtros</button></div>`
-      : `<div class="empty"><b>Sem lançamentos</b>Nada registrado neste período ainda.</div>`;
+      : `<div class="empty"><b>Sem lançamentos</b>Nada registrado neste período ainda.
+          <button class="btn" data-novo="Despesa" style="margin-top:12px">Lançar o primeiro gasto</button></div>`;
   }
 
   const st = DB.statsFor(period);
@@ -1900,7 +1901,7 @@ function openTxSheet(tx, asNew) {
           const iso = `${di.getFullYear()}-${String(di.getMonth() + 1).padStart(2, '0')}-${String(di.getDate()).padStart(2, '0')}`;
           DB.upsert('transactions', {
             ...rec, id: null,
-            description: `${desc} (${i + 1}/${parcelas})`,
+            description: `${descricao} (${i + 1}/${parcelas})`,
             amount: (base + (i === 0 ? resto : 0)) / 100,
             date: iso,
             invoice_key: DB.invoiceKeyFor(card, iso),
@@ -2040,13 +2041,22 @@ function openGoalSheet(goal) {
       done: isEdit ? !!$('#g-done').value : false,
     });
     closeSheet(); render(); Sync.autoSync();
+    toast(isEdit ? 'Meta atualizada ✓' : 'Meta criada ✓');
   };
   const del = $('#sh-del');
   if (del) del.onclick = () => {
-    if (!confirm('Excluir esta meta e seus aportes?')) return;
-    DB.all('goal_entries').filter(e => e.goal_id === goal.id).forEach(e => DB.remove('goal_entries', e.id));
+    const aportes = DB.all('goal_entries').filter(e => e.goal_id === goal.id);
+    const guardado = aportes.reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    // Dizer o que se perde: o histórico some, mas o dinheiro segue nas contas
+    const aviso = aportes.length
+      ? `Excluir "${goal.name}" e os ${aportes.length} aporte(s) dela?\n\n` +
+        `O histórico de ${fmt(guardado)} guardado some. O dinheiro continua nas contas — só deixa de contar para esta meta.`
+      : `Excluir "${goal.name}"?`;
+    if (!confirm(aviso)) return;
+    aportes.forEach(e => DB.remove('goal_entries', e.id));
     DB.remove('goals', goal.id);
     closeSheet(); render(); Sync.autoSync();
+    toast('Meta excluída ✓');
   };
 }
 
@@ -2300,10 +2310,23 @@ function openConfigSection(sec) {
           const saldoFinal = isEdit ? (Number(acc.balance) || 0) : saldoInformado;
           DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value, balance: saldoFinal });
           if (isEdit) reconcileBalance(DB.get('accounts', acc.id), saldoInformado);
-          Sync.autoSync(); openConfigSection('accounts');
+          Sync.autoSync(); toast(isEdit ? 'Conta atualizada ✓' : 'Conta criada ✓'); openConfigSection('accounts');
         };
         const del = $('#md-del');
-        if (del) del.onclick = () => { if (confirm('Excluir conta?')) { DB.remove('accounts', acc.id); Sync.autoSync(); openConfigSection('accounts'); } };
+        // Excluir sem dizer o que acontece é o pior tipo de confirmação: a pessoa
+        // aceita sem saber que o saldo sai do "Disponível" e os lançamentos ficam soltos.
+        if (del) del.onclick = () => {
+          const presos = DB.all('transactions').filter(t => t.account_id === acc.id || t.to_account === acc.id).length;
+          const cartoes = DB.all('cards').filter(c => c.account_id === acc.id).length;
+          const aviso = [`Excluir "${acc.name}"?`];
+          if (acc.balance) aviso.push(`O saldo de ${fmt(acc.balance)} sai do total disponível.`);
+          if (presos) aviso.push(`${presos} lançamento(s) ficam sem conta — o histórico permanece, mas deixa de somar aqui.`);
+          if (cartoes) aviso.push(`${cartoes} cartão(ões) perdem a conta de pagamento.`);
+          if (confirm(aviso.join('\n\n'))) {
+            DB.remove('accounts', acc.id); Sync.autoSync();
+            toast('Conta excluída ✓'); openConfigSection('accounts');
+          }
+        };
       });
   }
 
@@ -2338,10 +2361,23 @@ function openConfigSection(sec) {
             limit_amount: moneyVal('#c-limit'),
             account_id: $('#c-account').value || null,
           });
-          Sync.autoSync(); openConfigSection('cards');
+          Sync.autoSync(); toast(isEdit ? 'Cartão atualizado ✓' : 'Cartão criado ✓'); openConfigSection('cards');
         };
         const del = $('#md-del');
-        if (del) del.onclick = () => { if (confirm('Excluir cartão?')) { DB.remove('cards', card.id); Sync.autoSync(); openConfigSection('cards'); } };
+        if (del) del.onclick = () => {
+          const compras = DB.all('transactions').filter(t => t.card_id === card.id);
+          const abertas = DB.invoicesOf(card).filter(i => i.status !== 'Paga');
+          const aviso = [`Excluir "${card.name}"?`];
+          if (abertas.length) {
+            const soma = abertas.reduce((s, i) => s + i.total, 0);
+            aviso.push(`${abertas.length} fatura(s) em aberto, somando ${fmt(soma)}, somem do painel — mas a dívida com o banco continua.`);
+          }
+          if (compras.length) aviso.push(`${compras.length} compra(s) ficam sem cartão no extrato.`);
+          if (confirm(aviso.join('\n\n'))) {
+            DB.remove('cards', card.id); Sync.autoSync();
+            toast('Cartão excluído ✓'); openConfigSection('cards');
+          }
+        };
       });
   }
 
@@ -2850,7 +2886,7 @@ function openCategoryEditor(cat, paiFixo, tipoNovo, voltarPara) {
       kind: semEnvelope ? (envelope ? envelope.kind : 'Essencial') : $('#c-kind').value,
       monthly_budget: semEnvelope ? 0 : moneyVal('#c-budget'),
     });
-    Sync.autoSync(); voltar();
+    Sync.autoSync(); toast(isEdit ? 'Categoria atualizada ✓' : 'Categoria criada ✓'); voltar();
   };
 
   const del = $('#md-del');
@@ -2859,7 +2895,7 @@ function openCategoryEditor(cat, paiFixo, tipoNovo, voltarPara) {
     const aviso = filhas
       ? `Excluir "${cat.name}" e suas ${filhas} subcategoria(s)? Os lançamentos antigos ficam sem categoria.`
       : 'Excluir categoria? Os lançamentos antigos ficam sem categoria.';
-    if (confirm(aviso)) { DB.remove('categories', cat.id); Sync.autoSync(); voltar(); }
+    if (confirm(aviso)) { DB.remove('categories', cat.id); Sync.autoSync(); toast('Categoria excluída ✓'); voltar(); }
   };
 }
 
@@ -2945,7 +2981,13 @@ function openSyncConfig() {
       toast('Você entrou na família ✓'); render(); openSyncConfig();
     } catch (e) { toast(e.message); }
   });
-  on('#s-now', async () => { try { await Sync.syncAll(); render(); } catch (_) {} });
+  on('#s-now', async () => {
+    const b = $('#s-now');
+    if (b) { b.disabled = true; b.textContent = 'Sincronizando…'; }   // impede o toque repetido
+    await sincronizarAgora();
+    const depois = $('#s-now');                                       // a tela pode ter sido redesenhada
+    if (depois) { depois.disabled = false; depois.textContent = 'Sincronizar agora'; }
+  });
   on('#s-diag', async () => {
     const caixa = $('#s-diag-out');
     caixa.innerHTML = '<p class="muted" style="margin-top:10px">Verificando…</p>';
@@ -3378,10 +3420,24 @@ $('#btn-new-desktop').onclick = () => openTxSheet(null);
 $('#btn-config').onclick = openConfig;
 $('#side-config').onclick = openConfig;
 $('#side-lock').onclick = () => Auth.lockNow();
-$('#btn-sync').onclick = () => {
+/* Sincronizar a pedido do usuário: sempre responde algo. Antes o erro era
+   engolido (.catch vazio) e o sucesso não dizia nada — em rede lenta a pessoa
+   tocava várias vezes sem saber se tinha acontecido. */
+async function sincronizarAgora() {
   if (!Sync.hasFamily()) return openConfigSection('sync');
-  Sync.syncAll().then(render).catch(() => {});
-};
+  try {
+    const r = await Sync.syncAll();
+    render();
+    if (!r) return;                       // já havia uma sincronização em andamento
+    const partes = [];
+    if (r.enviados) partes.push(`${r.enviados} enviado(s)`);
+    if (r.recebidos) partes.push(`${r.recebidos} recebido(s)`);
+    toast(partes.length ? `Sincronizado — ${partes.join(', ')} ✓` : 'Tudo já estava em dia ✓');
+  } catch (e) {
+    toast(e.message || 'Falha ao sincronizar', 'err');
+  }
+}
+$('#btn-sync').onclick = sincronizarAgora;
 $('#sheet-backdrop').onclick = closeSheet;
 $('#modal-backdrop').onclick = closeModal;
 // Quando a sincronização traz lançamentos do outro aparelho, a tela se atualiza sozinha.

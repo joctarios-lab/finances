@@ -8,7 +8,10 @@
   --ink-3: #f5f8fa;        /* campos / superfícies internas */
   --line: #eff2f5;         /* bordas */
   --paper: #181c32;        /* texto principal */
-  --paper-dim: #7e8299;    /* texto secundário */
+  /* 4,96:1 sobre branco — passa no AA (4,5:1). O #7e8299 do Metronic dava 3,79:1,
+     e aqui o cinza carrega informação de decisão: "faltam R$ X", data de
+     vencimento, em que fatura a compra cai. */
+  --paper-dim: #6b6f85;    /* texto secundário */
   --gold: #009ef7;         /* primário Metronic (azul) — nome mantido por compatibilidade */
   --green: #50cd89;
   --amber: #f6a609;
@@ -533,8 +536,9 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .tx-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .tx-tag {
   background: var(--ink-3); color: var(--paper-dim); border: 1px solid var(--line);
-  border-radius: 20px; padding: 2px 8px; font-size: 10.5px; font-weight: 600;
-  cursor: pointer; font-family: var(--font-body);
+  /* Tocar aqui APLICA um filtro, então precisa de alvo de ação, não de rótulo */
+  border-radius: 20px; padding: 5px 10px; font-size: 11px; font-weight: 600;
+  cursor: pointer; font-family: var(--font-body); min-height: 28px;
 }
 .tx-tag:hover { border-color: var(--gold); color: var(--gold); }
 .chip-tag { font-size: 12.5px; }
@@ -565,8 +569,9 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 .view > * { min-width: 0; }
 
 /* Ação rápida de pagar no extrato */
+/* Fica colado à linha que abre a edição: alvo pequeno fazia errar e abrir a folha */
 .pay-btn {
-  width: 34px; height: 34px; border-radius: 9px; flex: none; cursor: pointer;
+  width: 40px; height: 40px; border-radius: 9px; flex: none; cursor: pointer;
   border: 1px solid var(--line); background: rgba(80, 205, 137, .1); color: #47be7d;
   display: grid; place-items: center;
 }
@@ -614,7 +619,14 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 .badge.aberta { background: rgba(0, 158, 247, .1); color: var(--gold); }
 .badge.fechada { background: rgba(246, 166, 9, .12); color: #d18b00; }
 .badge.paga { background: rgba(80, 205, 137, .12); color: #47be7d; }
-.link-btn { background: none; border: none; color: var(--gold); font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: var(--font-body); }
+/* Alvo confortável: são "marcar paga" e "↺" na linha da fatura, botões colados
+   que antes tinham a altura só do texto (~16px). */
+.link-btn {
+  background: none; border: none; color: var(--gold); font-size: 12.5px; font-weight: 600;
+  cursor: pointer; font-family: var(--font-body);
+  min-height: 40px; padding: 0 10px; border-radius: 8px;
+}
+.link-btn:hover { background: rgba(0, 158, 247, .08); }
 
 /* Metas */
 .goal-head { display: flex; align-items: center; gap: 10px; }
@@ -685,7 +697,7 @@ body.teclado-aberto .tabbar { display: none; }
   font-size: 18px; font-weight: 800; margin-bottom: 16px;
   display: flex; justify-content: space-between; align-items: center;
 }
-.close-x { background: var(--ink-3); border: none; color: var(--paper-dim); font-size: 16px; cursor: pointer; width: 32px; height: 32px; border-radius: 8px; }
+.close-x { background: var(--ink-3); border: none; color: var(--paper-dim); font-size: 16px; cursor: pointer; width: 40px; height: 40px; border-radius: 8px; flex: none; }
 
 /* Formulários */
 .field { margin-bottom: 13px; }

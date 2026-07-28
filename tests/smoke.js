@@ -146,6 +146,37 @@ for (const [rotulo, valor] of [['disponível', fmt(16350)], ['gasto do mês', fm
 }
 
 /* ---- Fluxos reais: aportes, detalhe da meta e da fatura ---- */
+/* ---- Compra parcelada (fluxo real, do clique às parcelas) ----
+   Nunca teve teste, e por isso a descrição das parcelas ficou meses gravando
+   "[object HTMLInputElement] (1/12)": o código usava o ELEMENTO do campo em vez
+   do texto dele. Quebrava busca, extrato e "repetir custos fixos". */
+console.log('\n=== Compra parcelada ===');
+try {
+  const antesQtd = DB.all('transactions').length;
+  openTxSheet(null);
+  el('#f-amount').dataset.cents = '120000';        // R$ 1.200,00
+  el('#f-desc').value = 'Geladeira nova';
+  el('#f-date').value = dia(7);
+  el('#f-card').value = cartao;
+  el('#f-parc').value = '3';
+  el('#g-type .chip.active').dataset.v = 'Despesa';
+  el('#g-method .chip.active').dataset.v = 'Cartão de Crédito';   // é o que liga o parcelamento
+  el('#sh-save').click();
+
+  const parcelas = DB.all('transactions').filter(t => /Geladeira nova/.test(t.description));
+  check('gerou uma parcela por fatura', parcelas.length, 3);
+  check('a descrição leva o texto digitado', parcelas.every(t => t.description.startsWith('Geladeira nova (')), true);
+  check('e nunca o elemento do campo', parcelas.some(t => /object HTML/i.test(t.description)), false);
+  check('numeradas de 1 a 3', parcelas.map(t => t.installment).sort().join(','), '1/3,2/3,3/3');
+  check('a soma bate com o valor da compra', parcelas.reduce((s, t) => s + t.amount, 0), 1200);
+  check('todas no mesmo grupo', new Set(parcelas.map(t => t.group_id)).size, 1);
+  check('cada uma numa fatura diferente', new Set(parcelas.map(t => t.invoice_key)).size, 3);
+  check('a busca do extrato encontra pelo nome',
+    DB.all('transactions').filter(t => DB._semAcento(t.description).includes('geladeira')).length, 3);
+  for (const t of parcelas) DB.remove('transactions', t.id);
+  check('cenário devolvido ao estado anterior', DB.all('transactions').length, antesQtd);
+} catch (e) { console.log(` FALHA | parcelamento: ${e.message}`); fail++; }
+
 console.log('\n=== Aportes (fluxo real, do clique ao saldo) ===');
 try {
   const saldoAntes = DB.get('accounts', conta).balance;
@@ -1176,6 +1207,67 @@ try {
    Com o teclado aberto o viewport visual encolhe, mas elemento position:fixed
    segue ancorado no de layout. Sem tratar, o botão de salvar e a lista do
    dropdown ficam atrás do teclado — existem e ninguém vê. */
+/* ---- Nada grava em silêncio, nada some sem aviso ---- */
+console.log('\n=== Retorno ao usuário ===');
+{
+  const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const html = fs.readFileSync(BASE + 'index.html', 'utf8');
+  const cssA = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+
+  // O toast é o único canal de erro de validação: precisa ser anunciado
+  check('toast é anunciado por leitor de tela', /id="toast"[^>]*aria-live="polite"/.test(html), true);
+  check('e tem papel de status', /id="toast"[^>]*role="status"/.test(html), true);
+
+  // Exclusões dizem o que se perde, não só "Excluir?"
+  check('excluir conta explica o efeito no saldo', /Excluir "\$\{acc\.name\}"\?/.test(ap) && ap.includes('sai do total disponível'), true);
+  check('excluir cartão avisa das faturas em aberto', ap.includes('a dívida com o banco continua'), true);
+  check('excluir meta diz que o dinheiro fica nas contas', ap.includes('só deixa de contar para esta meta'), true);
+  check('nenhuma exclusão importante usa aviso genérico',
+    /confirm\('Excluir (conta|cartão|categoria)\?'\)/.test(ap), false);
+
+  // Gravar sem retorno visual parece que nada aconteceu
+  for (const t of ['Conta criada', 'Cartão criado', 'Categoria criada', 'Meta criada']) {
+    check(`avisa: ${t}`, ap.includes(t + ' ✓'), true);
+  }
+  for (const t of ['Conta excluída', 'Cartão excluído', 'Categoria excluída', 'Meta excluída']) {
+    check(`avisa: ${t}`, ap.includes(t + ' ✓'), true);
+  }
+
+  // Sincronizar a pedido sempre responde algo
+  check('sincronizar avisa o resultado', ap.includes('Tudo já estava em dia ✓'), true);
+  check('e mostra o erro em vez de engolir', /catch \(e\) \{\s*toast\(e\.message \|\| 'Falha ao sincronizar'/.test(ap), true);
+  check('não sobrou catch vazio no sync', /Sync\.syncAll\(\)\.then\(render\)\.catch\(\(\) => \{\}\)/.test(ap), false);
+  check('botão desabilita enquanto sincroniza', /b\.disabled = true; b\.textContent = 'Sincronizando…'/.test(ap), true);
+
+  // Vazio sem saída de ação deixa a pessoa parada
+  check('extrato vazio oferece lançar o primeiro', ap.includes('Lançar o primeiro gasto'), true);
+
+  // Alvos de toque: o projeto já sabe o número certo (.ui-select-btn usa 44px)
+  const alvo = (sel, min) => {
+    const m = cssA.match(new RegExp(`\\${sel} \\{[^}]*\\}`));
+    if (!m) return false;
+    const h = m[0].match(/(?:min-)?height: (\d+)px/);
+    return !!h && Number(h[1]) >= min;
+  };
+  check('.pay-btn tem alvo confortável', alvo('.pay-btn', 40), true);
+  check('.close-x tem alvo confortável', alvo('.close-x', 40), true);
+  check('.link-btn da fatura tem alvo confortável', alvo('.link-btn', 40), true);
+  check('etiqueta do extrato é tocável', alvo('.tx-tag', 28), true);
+
+  // Contraste do texto secundário, que carrega informação de decisão
+  const lum = h => {
+    const c = [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16) / 255)
+      .map(v => (v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)));
+    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+  };
+  const contraste = (a, b) => {
+    const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  const dim = (cssA.match(/--paper-dim: (#[0-9a-f]{6})/i) || [])[1];
+  check('texto secundário passa no AA', contraste(dim, '#ffffff') >= 4.5, true);
+}
+
 console.log('\n=== Teclado do celular não esconde nada ===');
 {
   const uiSrc = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
