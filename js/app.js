@@ -802,11 +802,16 @@ function renderExtrato(period) {
          parar de ler. Com os dois, o saldo é a resposta que nenhum dos dois dá
          sozinho — R$ 3.000 de salário e R$ 3.000 de contas não é dia parado. */
       const liq = d.entrou - d.saiu;
+      /* Rótulo em texto neutro e valor colorido: a cor fica reservada para o
+         número, que é o que se compara. Rótulo colorido junto competiria com ele
+         e diluiria o significado do verde e do vermelho. */
+      const bloco = (rot, cls, valor) =>
+        `<span class="tx-day-bloco"><i>${rot}</i><b class="${cls}">${valor}</b></span>`;
       const totais = [
-        d.entrou ? `<span class="tx-day-in">+ ${fmt(d.entrou)}</span>` : '',
-        d.saiu ? `<span class="tx-day-out">− ${fmt(d.saiu)}</span>` : '',
+        d.entrou ? bloco('Entradas', 'tx-day-in', fmt(d.entrou)) : '',
+        d.saiu ? bloco('Saídas', 'tx-day-out', fmt(d.saiu)) : '',
         (d.entrou && d.saiu)
-          ? `<span class="tx-day-liq ${liq >= 0 ? 'pos' : 'neg'}">${liq >= 0 ? '+' : '−'} ${fmt(Math.abs(liq))}</span>` : '',
+          ? bloco('Saldo', `tx-day-liq ${liq >= 0 ? 'pos' : 'neg'}`, `${liq >= 0 ? '+' : '−'} ${fmt(Math.abs(liq))}`) : '',
       ].filter(Boolean).join('');
       list += `<p class="tx-day"><span>${fmtDay(t.date)}</span>${totais ? `<span class="tx-day-tot">${totais}</span>` : ''}</p>`;
     }
