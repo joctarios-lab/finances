@@ -415,6 +415,21 @@ for (const tabela of Object.keys(SYNC)) {
   check(`${tabela}: tem updated_at e deleted`, cols.has('updated_at') && cols.has('deleted'), true);
   check(`${tabela}: RLS habilitado`, new RegExp(`alter table ${tabela} enable row level security`, 'i').test(schema), true);
 }
+// Endpoints que o app chama precisam existir no schema
+{
+  const syncSrc2 = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
+  check('criar família usa a função atômica do banco', syncSrc2.includes('rpc/create_family'), true);
+  check('função create_family existe no schema', /create or replace function create_family/i.test(schema), true);
+  check('create_family é security definer', /create_family[\s\S]{0,300}security definer/i.test(schema), true);
+  check('authenticated pode executar create_family', /grant execute on function create_family\(text\) to authenticated/i.test(schema), true);
+  check('to_account tem ALTER (bases já criadas)', /alter table transactions add column if not exists to_account/i.test(schema), true);
+  check('código de família é validado antes de enviar', syncSrc2.includes('Código inválido'), true);
+  // Toda coluna do envelope de sync precisa de ALTER, senão bases antigas quebram
+  for (const col of ['type', 'fitid', 'group_id', 'installment', 'adjustment', 'to_account']) {
+    check(`transactions.${col} com ALTER seguro`, new RegExp(`add column if not exists ${col}\\b`, 'i').test(schema), true);
+  }
+}
+
 check('push_subscriptions com RLS', /alter table push_subscriptions enable row level security/i.test(schema), true);
 check('notification_log com RLS', /alter table notification_log enable row level security/i.test(schema), true);
 check('função is_member definida antes das policies', schema.indexOf('function is_member') < schema.indexOf('create policy'), true);

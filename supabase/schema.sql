@@ -147,6 +147,7 @@ alter table transactions add column if not exists fitid text default '';
 alter table transactions add column if not exists group_id uuid;
 alter table transactions add column if not exists installment text default '';
 alter table transactions add column if not exists adjustment boolean not null default false;
+alter table transactions add column if not exists to_account uuid;
 
 -- Inscrições de push (um registro por navegador/aparelho)
 create table if not exists push_subscriptions (
@@ -213,3 +214,35 @@ begin
       t, t);
   end loop;
 end $$;
+
+-- Criar família em uma única operação.
+-- Sem isto, o app inseriria a família e só depois viraria membro dela — e a política
+-- de leitura (is_member) impediria de receber o id de volta, travando o primeiro uso.
+-- Como é security definer, roda com permissão elevada e mantém os dois passos atômicos.
+create or replace function create_family(fam_name text default 'Minha Família')
+returns uuid
+language plpgsql security definer set search_path = public as $$
+declare fid uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'É preciso estar autenticado para criar uma família';
+  end if;
+  insert into families (name) values (coalesce(nullif(trim(fam_name), ''), 'Minha Família'))
+    returning id into fid;
+  insert into family_members (family_id, user_id) values (fid, auth.uid());
+  return fid;
+end $$;
+
+revoke all on function create_family(text) from public;
+grant execute on function create_family(text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Conferência: rode isto depois e verifique se aparecem 12 tabelas, todas com
+-- RLS ligado, e a função create_family.
+--
+--   select tablename, rowsecurity as rls
+--     from pg_tables where schemaname = 'public' order by tablename;
+--
+--   select routine_name from information_schema.routines
+--    where routine_schema = 'public' and routine_name in ('is_member','create_family');
+-- ---------------------------------------------------------------------------

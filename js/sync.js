@@ -97,22 +97,28 @@ const Sync = {
     return res.json().catch(() => null);
   },
 
+  // Cria a família e já vira membro dela numa operação só (função create_family no banco).
+  // Fazer em dois passos pelo REST falha: a política de leitura exige ser membro,
+  // então o id da família recém-criada não voltaria.
   async createFamily(name) {
-    const rows = await this.rest('families', {
+    const id = await this.rest('rpc/create_family', {
       method: 'POST',
-      headers: { 'Prefer': 'return=representation' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ fam_name: name }),
     });
-    const fam = rows[0];
-    await this.rest('family_members', { method: 'POST', body: JSON.stringify({ family_id: fam.id }) });
-    this.cfg.family_id = fam.id;
+    const fid = typeof id === 'string' ? id : (id && id.id) || null;
+    if (!fid) throw new Error('Não foi possível criar a família. Rode o schema.sql mais recente no Supabase.');
+    this.cfg.family_id = fid;
     this.saveCfg();
-    return fam.id;
+    return fid;
   },
 
   async joinFamily(familyId) {
-    await this.rest('family_members', { method: 'POST', body: JSON.stringify({ family_id: familyId.trim() }) });
-    this.cfg.family_id = familyId.trim();
+    const fid = (familyId || '').trim();
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(fid)) {
+      throw new Error('Código inválido — cole o código completo que aparece no outro aparelho');
+    }
+    await this.rest('family_members', { method: 'POST', body: JSON.stringify({ family_id: fid }) });
+    this.cfg.family_id = fid;
     this.saveCfg();
   },
 
