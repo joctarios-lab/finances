@@ -2645,88 +2645,137 @@ window.puxarTudoDaFamilia = puxarTudoDaFamilia;
 /* ---------- Categorias & orçamentos ----------
    Lista em árvore em vez de plana: com subcategorias, uma lista corrida de 70
    itens não deixa ver quais envelopes existem nem a quem cada item pertence. */
-function openCategoriesConfig() {
-  const raizes = DB.rootCategories().sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-  const semCat = '<div class="empty">Nada cadastrado ainda.</div>';
+function openCategoriesConfig(estado) {
+  /* A lista aberta tinha ~123 linhas: 19 envelopes, 85 subcategorias e um botão
+     por envelope — quase 8 telas de rolagem para achar qualquer coisa.
 
-  const arvoreDe = tipo => DB.rootCategories(tipo)
-    .sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
-    .map(r => {
-      const filhas = DB.subcategoriesOf(r.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
-      const detalhe = tipo === 'Receita'
-        ? `${filhas.length} origem(ns)`
-        : `${esc(r.scope)} · ${r.monthly_budget ? fmtShort(r.monthly_budget) + '/mês' : 'sem orçamento'} · ${filhas.length} subcategoria(s)`;
-      const cabeca = `
-      <div class="settings-item" data-edit="${r.id}">
-        <span class="cfg-left"><span class="cfg-ico">${esc(r.icon)}</span>
-          <span>${esc(r.name)}<br><small>${detalhe}</small></span></span>
-        <span class="chev" data-ico="chev"></span>
+     Agora só os envelopes aparecem, recolhidos; as subcategorias abrem no que
+     for tocado. Um por vez: dois abertos já devolvem a rolagem, e não há motivo
+     para comparar duas listas de subcategoria lado a lado.
+
+     Saídas e Entradas viram abas, porque quem vem mexer em orçamento não está
+     mexendo em origem de renda na mesma hora. */
+  const st = { lado: 'Despesa', aberto: null, busca: '', ...(estado || {}) };
+  const busca = DB._semAcento(st.busca);
+
+  const cartaoEnvelope = r => {
+    const filhas = DB.subcategoriesOf(r.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    const aberto = st.aberto === r.id;
+    // Buscando, o que casa abre sozinho — senão a subcategoria encontrada ficaria escondida
+    const filhasVisiveis = busca ? filhas.filter(f => DB._semAcento(f.name).includes(busca)) : filhas;
+    const casaPai = !busca || DB._semAcento(r.name).includes(busca);
+    if (busca && !casaPai && !filhasVisiveis.length) return '';
+    const mostraFilhas = aberto || (busca && filhasVisiveis.length);
+
+    const detalhe = st.lado === 'Receita'
+      ? `${filhas.length} origem(ns)`
+      : `${r.monthly_budget ? fmtShort(r.monthly_budget) + '/mês' : 'sem orçamento'} · ${filhas.length} subcategoria(s)`;
+
+    return `
+      <div class="env ${mostraFilhas ? 'aberto' : ''}">
+        <div class="env-head" data-abrir="${r.id}">
+          <span class="cfg-ico">${esc(r.icon)}</span>
+          <span class="env-nome">${esc(r.name)}<small>${detalhe}</small></span>
+          <button class="env-editar" data-edit="${r.id}" title="Editar ${esc(r.name)}"><span data-ico="settings"></span></button>
+          <span class="env-chev" data-ico="chev"></span>
+        </div>
+        ${mostraFilhas ? `<div class="env-body">
+          ${(busca ? filhasVisiveis : filhas).map(f => `
+            <button class="sub-linha" data-edit="${f.id}"><span class="sub-traco"></span>${esc(f.name)}</button>`).join('')
+            || '<p class="muted" style="padding:4px 2px 8px">Nenhuma subcategoria ainda.</p>'}
+          <button class="btn ghost btn-sub" data-nova-sub="${r.id}">＋ Subcategoria</button>
+        </div>` : ''}
       </div>`;
-      const netas = filhas.map(f => `
-      <div class="settings-item sub-item" data-edit="${f.id}">
-        <span class="cfg-left"><span class="sub-traco"></span><span>${esc(f.name)}</span></span>
-        <span class="chev" data-ico="chev"></span>
-      </div>`).join('');
-      const novaFilha = `<button class="btn ghost btn-sub" data-nova-sub="${r.id}">＋ Subcategoria em ${esc(r.name)}</button>`;
-      return cabeca + netas + novaFilha;
-    }).join('');
+  };
 
-  // Gasto e entrada em blocos separados: são perguntas diferentes ("no que foi" x
-  // "de onde veio"), e só o lado do gasto tem orçamento.
-  const entradas = arvoreDe('Receita');
-  const linhas = `
-    <p class="section-title">Saídas — onde o dinheiro é gasto</p>
-    ${arvoreDe('Despesa') || semCat}
-    <p class="section-title" style="margin-top:18px">Entradas — de onde o dinheiro vem</p>
-    ${entradas || `<div class="callout info">
-      <b>Classifique também o que entra</b>
-      <p>Sem isto, toda entrada fica junta e não dá para separar salário de empréstimo recebido — que entra na conta mas não é ganho.</p>
-      <button class="btn" id="md-entradas" style="margin-top:10px">Criar categorias de entrada sugeridas</button>
-    </div>`}
-    <button class="btn ghost" id="md-new-rec" style="margin-top:10px">＋ Nova origem de entrada</button>`;
+  const raizes = DB.rootCategories(st.lado).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+  const cartoes = raizes.map(cartaoEnvelope).join('');
+  const nada = busca
+    ? '<div class="empty">Nada encontrado com esse texto.</div>'
+    : '<div class="empty">Nada cadastrado ainda.</div>';
 
-  // Base criada antes das subcategorias: o seed não roda de novo, então a opção
-  // fica aqui, explícita — preencher sozinho mudaria os relatórios da família sem aviso.
-  const semNenhuma = raizes.length > 0 && DB.all('categories').every(c => !c.parent_id);
+  // Ofertas de preenchimento só quando fazem falta, e no lado a que pertencem
+  const semSub = st.lado === 'Despesa' && raizes.length > 0 && raizes.every(r => !DB.subcategoriesOf(r.id).length);
+  const semEntradas = st.lado === 'Receita' && !raizes.length;
 
   openModal(`
-    <div class="modal-title">Categorias &amp; orçamentos<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-    <p class="muted" style="margin-bottom:12px">O orçamento fica no envelope de cima. As subcategorias detalham o gasto e somam nele — assim o limite não é contado duas vezes.</p>
-    ${semNenhuma ? `<div class="callout info">
+    <div class="modal-title">Categorias<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+
+    <div class="chips seg" id="cat-lado">
+      <button class="chip ${st.lado === 'Despesa' ? 'active' : ''}" data-lado="Despesa">Saídas</button>
+      <button class="chip ${st.lado === 'Receita' ? 'active' : ''}" data-lado="Receita">Entradas</button>
+    </div>
+    <p class="muted" style="margin:10px 0 12px">${st.lado === 'Despesa'
+      ? 'O orçamento fica no envelope. As subcategorias detalham e somam nele.'
+      : 'Origem do dinheiro que entra. Não tem orçamento.'}</p>
+
+    <div class="busca-row" style="margin-bottom:12px">
+      <input id="cat-busca" type="search" placeholder="Buscar categoria…" autocomplete="off" value="${esc(st.busca)}">
+      <button class="btn-filtros" id="cat-novo">＋ ${st.lado === 'Despesa' ? 'Envelope' : 'Origem'}</button>
+    </div>
+
+    ${semSub ? `<div class="callout info">
       <b>Detalhar os gastos com subcategorias</b>
-      <p>Seus envelopes ainda não têm subcategorias. Dá para preencher as sugeridas de uma vez — por exemplo Mercado, Restaurante e Delivery dentro de Alimentação — e depois ajustar. Nada do que você já lançou muda de lugar.</p>
-      <button class="btn" id="md-sugerir" style="margin-top:10px">Adicionar subcategorias sugeridas</button>
+      <p>Seus envelopes ainda não têm subcategorias. Dá para preencher as sugeridas de uma vez e ajustar depois. Nada do que você já lançou muda de lugar.</p>
+      <button class="btn" id="md-sugerir" style="margin-top:10px">Adicionar sugeridas</button>
     </div>` : ''}
-    <button class="btn ghost" id="md-new" style="margin-bottom:12px">＋ Novo envelope de gasto</button>
-    ${linhas || semCat}
+    ${semEntradas ? `<div class="callout info">
+      <b>Classifique também o que entra</b>
+      <p>Sem isto não dá para separar salário de empréstimo recebido — que entra na conta mas não é ganho.</p>
+      <button class="btn" id="md-entradas" style="margin-top:10px">Criar categorias sugeridas</button>
+    </div>` : ''}
+
+    ${cartoes || nada}
   `);
+
+  const reabrir = novo => openCategoriesConfig({ ...st, ...novo });
   $('#md-back').onclick = openConfig;
+  document.querySelectorAll('#cat-lado .chip').forEach(b =>
+    b.onclick = () => reabrir({ lado: b.dataset.lado, aberto: null, busca: '' }));
+
+  const campo = $('#cat-busca');
+  campo.oninput = () => {
+    clearTimeout(campo._t);
+    campo._t = setTimeout(() => {
+      reabrir({ busca: campo.value.trim() });
+      const novo = $('#cat-busca');
+      if (novo) { novo.focus(); novo.setSelectionRange(novo.value.length, novo.value.length); }
+    }, 220);
+  };
+
+  // Abrir um fecha o anterior: é o que mantém a tela do tamanho de uma tela
+  document.querySelectorAll('[data-abrir]').forEach(el => el.onclick = e => {
+    if (e.target.closest('[data-edit]')) return;      // o botão de editar tem ação própria
+    reabrir({ aberto: st.aberto === el.dataset.abrir ? null : el.dataset.abrir });
+  });
+  document.querySelectorAll('[data-edit]').forEach(el => el.onclick = e => {
+    e.stopPropagation();
+    openCategoryEditor(DB.get('categories', el.dataset.edit), null, null, st);
+  });
+  document.querySelectorAll('[data-nova-sub]').forEach(el =>
+    el.onclick = () => openCategoryEditor(null, el.dataset.novaSub, null, st));
+  $('#cat-novo').onclick = () => openCategoryEditor(null, null, st.lado, st);
+
   const sugerir = $('#md-sugerir');
   if (sugerir) sugerir.onclick = () => {
     const n = DB.sugerirSubcategorias();
     Sync.autoSync();
     toast(n ? `${n} subcategoria(s) criada(s) ✓` : 'Nenhum envelope conhecido para detalhar');
-    openConfigSection('categories');
+    reabrir({});
   };
   const criarEntradas = $('#md-entradas');
   if (criarEntradas) criarEntradas.onclick = () => {
     const n = DB.criarCategoriasDeEntrada();
     Sync.autoSync();
     toast(n ? `${n} categoria(s) de entrada criada(s) ✓` : 'Já existem categorias de entrada');
-    openConfigSection('categories');
+    reabrir({});
   };
-  $('#md-new').onclick = () => openCategoryEditor(null, null, 'Despesa');
-  $('#md-new-rec').onclick = () => openCategoryEditor(null, null, 'Receita');
-  document.querySelectorAll('[data-edit]').forEach(el =>
-    el.onclick = () => openCategoryEditor(DB.get('categories', el.dataset.edit), null));
-  document.querySelectorAll('[data-nova-sub]').forEach(el =>
-    el.onclick = () => openCategoryEditor(null, el.dataset.novaSub));
 }
 
 /* paiFixo: id do envelope quando se cria uma subcategoria a partir dele.
    tipoNovo: 'Despesa' ou 'Receita' ao criar do zero — o tipo de uma categoria que
    já existe vem do envelope dela, nunca é reescolhido aqui. */
-function openCategoryEditor(cat, paiFixo, tipoNovo) {
+function openCategoryEditor(cat, paiFixo, tipoNovo, voltarPara) {
   const isEdit = !!cat;
   const tipo = isEdit ? DB.categoryType(DB.categoryRoot(cat.id) || cat)
     : paiFixo ? DB.categoryType(DB.get('categories', paiFixo))
@@ -2771,7 +2820,8 @@ function openCategoryEditor(cat, paiFixo, tipoNovo) {
     ${isEdit ? '<div class="btn-row"><button class="btn danger" id="md-del">Excluir</button></div>' : ''}
   `);
   initMoney('#c-budget', cat.monthly_budget);
-  $('#md-back').onclick = () => openConfigSection('categories');
+  const voltar = () => openCategoriesConfig(voltarPara || {});
+  $('#md-back').onclick = voltar;
 
   // Os campos de envelope só existem enquanto não há pai escolhido
   const sel = $('#c-parent');
@@ -2795,7 +2845,7 @@ function openCategoryEditor(cat, paiFixo, tipoNovo) {
       kind: semEnvelope ? (envelope ? envelope.kind : 'Essencial') : $('#c-kind').value,
       monthly_budget: semEnvelope ? 0 : moneyVal('#c-budget'),
     });
-    Sync.autoSync(); openConfigSection('categories');
+    Sync.autoSync(); voltar();
   };
 
   const del = $('#md-del');
@@ -2804,7 +2854,7 @@ function openCategoryEditor(cat, paiFixo, tipoNovo) {
     const aviso = filhas
       ? `Excluir "${cat.name}" e suas ${filhas} subcategoria(s)? Os lançamentos antigos ficam sem categoria.`
       : 'Excluir categoria? Os lançamentos antigos ficam sem categoria.';
-    if (confirm(aviso)) { DB.remove('categories', cat.id); Sync.autoSync(); openConfigSection('categories'); }
+    if (confirm(aviso)) { DB.remove('categories', cat.id); Sync.autoSync(); voltar(); }
   };
 }
 

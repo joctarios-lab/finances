@@ -293,10 +293,52 @@ try {
 
   // As telas novas precisam abrir de verdade, não só existir no código
   const modal = () => els['#modal'].innerHTML;
+  /* O cadastro abre recolhido: a lista aberta tinha ~123 linhas (19 envelopes +
+     85 subcategorias + um botão cada), quase 8 telas de rolagem. */
   openCategoriesConfig();
-  check('cadastro em árvore abre', modal().includes('Categorias'), true);
-  check('e mostra as subcategorias recuadas', modal().includes('sub-item'), true);
-  check('e oferece criar subcategoria no envelope', modal().includes('data-nova-sub'), true);
+  const fechado = modal();
+  check('cadastro abre', fechado.includes('Categorias'), true);
+  const nEnvelopes = (fechado.match(/class="env /g) || []).length;
+  check('mostra os envelopes de saída', nEnvelopes, DB.rootCategories('Despesa').length);
+  check('e nenhuma subcategoria antes de abrir', fechado.includes('sub-linha'), false);
+  check('não abre com nada expandido', fechado.includes('env aberto'), false);
+
+  // Tocar num envelope revela as subcategorias dele
+  openCategoriesConfig({ aberto: alimento.id });
+  const comUmAberto = modal();
+  check('abrir um envelope revela as subcategorias', comUmAberto.includes('sub-linha'), true);
+  check('e oferece criar subcategoria ali', comUmAberto.includes('data-nova-sub'), true);
+  check('só um envelope fica aberto por vez', (comUmAberto.match(/env aberto/g) || []).length, 1);
+  check('a tela continua curta', (comUmAberto.match(/sub-linha/g) || []).length, DB.subcategoriesOf(alimento.id).length);
+
+  // Abas separam os dois lados
+  check('a aba de saídas não mistura entradas', /Alimenta/.test(fechado) && !/Empréstimos/.test(fechado), true);
+  openCategoriesConfig({ lado: 'Receita' });
+  const entradas = modal();
+  check('a aba de entradas mostra as origens', /Empréstimos/.test(entradas), true);
+  check('e não mostra envelopes de gasto', /Alimenta/.test(entradas), false);
+
+  // Busca encontra subcategoria sem precisar abrir o envelope certo
+  openCategoriesConfig({ busca: 'delivery' });
+  const buscado = modal();
+  check('busca encontra a subcategoria', buscado.includes('Delivery'), true);
+  check('e abre o envelope dela sozinha', buscado.includes('env aberto'), true);
+  check('escondendo os envelopes sem resultado', (buscado.match(/class="env /g) || []).length < nEnvelopes, true);
+  openCategoriesConfig({ busca: 'zzzzz' });
+  check('busca sem resultado explica', modal().includes('Nada encontrado'), true);
+
+  /* O ganho é o tamanho da tela, então é isso que o teste guarda. Conta as linhas
+     tocáveis: com tudo aberto seriam ~123 (19 envelopes, 85 subcategorias e um
+     botão por envelope), quase 8 telas de celular. */
+  openCategoriesConfig();
+  const linhasFechado = (modal().match(/class="env |sub-linha|btn-sub/g) || []).length;
+  check('a lista cabe em poucas telas', linhasFechado <= 20, true);
+  check('e é bem menor que a lista aberta',
+    linhasFechado < DB.rootCategories().length + DB.all('categories').length, true);
+  openCategoriesConfig({ aberto: alimento.id });
+  const linhasAberto = (modal().match(/class="env |sub-linha|btn-sub/g) || []).length;
+  check('abrir um envelope cresce pouco', linhasAberto - linhasFechado <= 10, true);
+  openCategoriesConfig();
   openCategoryEditor(null, alimento.id);
   check('editor de subcategoria abre', modal().includes('Nova subcategoria'), true);
   check('e esconde os campos de envelope', /id="wrap-envelope" hidden/.test(modal()), true);
@@ -358,7 +400,7 @@ console.log('\n=== Subcategorias nas telas ===');
   check('entrada sem origem também é sinalizada', ap.includes("'Entrada sem origem'"), true);
   check('CSV exporta o caminho', /DB\.categoryPath\(t\.category_id\), t\.scope/.test(ap), true);
   check('barra de orçamento abre o detalhe', ap.includes('openEnvelopeDetail') && ap.includes('data-envelope='), true);
-  check('cadastro de categoria em árvore', ap.includes('openCategoriesConfig') && ap.includes('sub-item'), true);
+  check('cadastro de categoria recolhível', ap.includes('openCategoriesConfig') && ap.includes('data-abrir'), true);
   check('dá para criar subcategoria dentro do envelope', ap.includes('data-nova-sub'), true);
   check('subcategoria não pede orçamento próprio', /monthly_budget: semEnvelope \? 0 :/.test(ap), true);
   check('subcategoria herda âmbito e tipo do envelope', /scope: semEnvelope \?[\s\S]{0,180}kind: semEnvelope \?/.test(ap), true);
@@ -371,7 +413,8 @@ console.log('\n=== Subcategorias nas telas ===');
   check('servidor busca parent_id', nt.includes("select('id,name,icon,monthly_budget,parent_id')"), true);
 
   const cssS = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
-  check('subcategoria recuada na lista', /\.sub-item \{[^}]*margin-left/.test(cssS), true);
+  check('subcategoria é linha simples dentro do envelope',
+    /\.sub-linha \{/.test(cssS) && /\.env-body \{/.test(cssS), true);
 }
 
 /* ---- Categorias de entrada ----
