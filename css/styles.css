@@ -26,6 +26,14 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }   /* garante que hidden vença classes com display próprio (ex: .lock) */
 html { -webkit-text-size-adjust: 100%; }
+
+/* Ícones SVG inline */
+[data-ico] { display: inline-flex; align-items: center; justify-content: center; }
+[data-ico] svg { width: 18px; height: 18px; }
+:focus-visible { outline: 2px solid rgba(0, 158, 247, .55); outline-offset: 2px; border-radius: 6px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
 body {
   background: var(--ink);
   color: var(--paper);
@@ -101,8 +109,10 @@ body {
 .btn-new-desktop {
   display: none;
   background: var(--gold); color: #fff; border: none; border-radius: 8px;
-  padding: 10px 18px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: var(--font-body);
+  padding: 10px 16px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: var(--font-body);
+  align-items: center; gap: 7px;
 }
+.btn-new-desktop svg { width: 16px; height: 16px; }
 .btn-new-desktop:hover { background: #0095e8; }
 
 .sync-status { font-size: 12px; color: var(--paper-dim); padding: 0 2px 8px; }
@@ -124,14 +134,24 @@ body {
 }
 .grid-2 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
 
-/* KPIs */
+/* Cabeçalho de card (padrão Metronic: título + subtítulo + toolbar) */
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+.card-head b { font-size: 15px; font-weight: 800; display: block; }
+.card-head small { color: var(--paper-dim); font-size: 12px; }
+
+/* KPIs (padrão Metronic: ícone em caixa tintada + valor + rótulo) */
 .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.kpi { padding: 16px 18px; position: relative; overflow: hidden; }
-.kpi::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--line); }
-.kpi.k-primary::before { background: var(--gold); }
-.kpi.k-danger::before { background: var(--red); }
-.kpi.k-success::before { background: var(--green); }
-.kpi.k-info::before { background: var(--blue); }
+.kpi { padding: 16px 18px; }
+.kpi-ico {
+  width: 42px; height: 42px; border-radius: 10px; margin-bottom: 12px;
+  display: grid; place-items: center;
+}
+.kpi-ico svg { width: 21px; height: 21px; }
+.t-primary { background: rgba(0, 158, 247, .1); color: var(--gold); }
+.t-danger { background: rgba(241, 65, 108, .1); color: var(--red); }
+.t-success { background: rgba(80, 205, 137, .12); color: #47be7d; }
+.t-info { background: rgba(114, 57, 234, .1); color: var(--blue); }
+.t-warning { background: rgba(246, 166, 9, .12); color: #d18b00; }
 .kpi-label { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--paper-dim); }
 .kpi-value { font-size: 22px; font-weight: 800; margin-top: 4px; letter-spacing: -.01em; }
 .kpi-value.gold { color: var(--gold); }
@@ -243,10 +263,15 @@ body {
 }
 .tab {
   background: none; border: none; color: var(--paper-dim); font-size: 11px; font-weight: 600; cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; gap: 3px; width: 64px; font-family: var(--font-body);
+  display: flex; flex-direction: column; align-items: center; gap: 2px; width: 68px; min-height: 48px;
+  justify-content: center; font-family: var(--font-body); transition: color .15s ease;
 }
-.tab-ico { font-size: 18px; }
+.tabbar .tab-ico {
+  width: 40px; height: 26px; border-radius: 999px;
+  display: grid; place-items: center; transition: background .15s ease;
+}
 .tab.active { color: var(--gold); }
+.tab.active .tab-ico { background: rgba(0, 158, 247, .12); }  /* pill de estado ativo (Material/Metronic) */
 .fab {
   width: 54px; height: 54px; border-radius: 50%; border: none; cursor: pointer;
   background: var(--gold); color: #fff; font-size: 26px; font-weight: 700;
@@ -317,6 +342,16 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 }
 .settings-item:hover { border-color: #d8e3ea; }
 .settings-item small { color: var(--paper-dim); font-weight: 400; }
+.cfg-left { display: flex; align-items: center; gap: 12px; }
+.cfg-ico {
+  width: 40px; height: 40px; border-radius: 9px; flex: none;
+  background: var(--ink-3); color: var(--paper-dim);
+  display: grid; place-items: center;
+}
+.settings-item .chev { color: #c4cad4; }
+.settings-item .chev svg { width: 16px; height: 16px; }
+
+.sheet-handle { width: 40px; height: 4px; border-radius: 2px; background: #dfe5ea; margin: -6px auto 14px; }
 
 .toast {
   position: fixed; bottom: calc(96px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%);
@@ -353,7 +388,7 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 @media (min-width: 1024px) {
   .sidebar { display: flex; }
   .tabbar { display: none; }
-  .btn-new-desktop { display: inline-block; }
+  .btn-new-desktop { display: inline-flex; }
   .content { padding: 0 32px 48px; }
   .topbar { padding-top: 20px; }
   .topbar-month { font-size: 24px; }

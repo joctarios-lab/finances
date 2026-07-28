@@ -27,14 +27,14 @@
     </div>
     <nav class="sidebar-menu">
       <p class="sidebar-section">Visão</p>
-      <button class="side-item" data-tab="inicio"><span class="tab-ico">◈</span>Painel</button>
-      <button class="side-item" data-tab="extrato"><span class="tab-ico">☰</span>Extrato</button>
+      <button class="side-item" data-tab="inicio"><span class="tab-ico" data-ico="home"></span>Painel</button>
+      <button class="side-item" data-tab="extrato"><span class="tab-ico" data-ico="list"></span>Extrato</button>
       <p class="sidebar-section">Gestão</p>
-      <button class="side-item" data-tab="cartoes"><span class="tab-ico">▤</span>Cartões &amp; Faturas</button>
-      <button class="side-item" data-tab="metas"><span class="tab-ico">◎</span>Metas</button>
+      <button class="side-item" data-tab="cartoes"><span class="tab-ico" data-ico="card"></span>Cartões &amp; Faturas</button>
+      <button class="side-item" data-tab="metas"><span class="tab-ico" data-ico="target"></span>Metas</button>
       <p class="sidebar-section">Sistema</p>
-      <button class="side-item" id="side-config"><span class="tab-ico">⚙︎</span>Configurações</button>
-      <button class="side-item" id="side-lock"><span class="tab-ico">🔒</span>Bloquear</button>
+      <button class="side-item" id="side-config"><span class="tab-ico" data-ico="settings"></span>Configurações</button>
+      <button class="side-item" id="side-lock"><span class="tab-ico" data-ico="lock"></span>Bloquear</button>
     </nav>
     <div class="sidebar-footer">
       <div class="user-chip">
@@ -53,9 +53,9 @@
           <h1 class="topbar-month" id="topbar-month">—</h1>
         </div>
         <div class="topbar-actions">
-          <button class="btn-new-desktop" id="btn-new-desktop">＋ Novo lançamento</button>
-          <button class="icon-btn" id="btn-sync" title="Sincronizar" aria-label="Sincronizar">⇅</button>
-          <button class="icon-btn" id="btn-config" title="Configurações" aria-label="Configurações">⚙︎</button>
+          <button class="btn-new-desktop" id="btn-new-desktop"><span data-ico="plus"></span>Novo lançamento</button>
+          <button class="icon-btn" id="btn-sync" title="Sincronizar" aria-label="Sincronizar"><span data-ico="sync"></span></button>
+          <button class="icon-btn" id="btn-config" title="Configurações" aria-label="Configurações"><span data-ico="settings"></span></button>
         </div>
       </header>
 
@@ -65,11 +65,11 @@
     </div>
 
     <nav class="tabbar" aria-label="Navegação principal">
-      <button data-tab="inicio" class="tab active"><span class="tab-ico">◈</span>Início</button>
-      <button data-tab="extrato" class="tab"><span class="tab-ico">☰</span>Extrato</button>
-      <button id="fab" class="fab" aria-label="Lançar gasto">＋</button>
-      <button data-tab="cartoes" class="tab"><span class="tab-ico">▤</span>Cartões</button>
-      <button data-tab="metas" class="tab"><span class="tab-ico">◎</span>Metas</button>
+      <button data-tab="inicio" class="tab active"><span class="tab-ico" data-ico="home"></span><span>Início</span></button>
+      <button data-tab="extrato" class="tab"><span class="tab-ico" data-ico="list"></span><span>Extrato</span></button>
+      <button id="fab" class="fab" aria-label="Lançar gasto"><span data-ico="plus"></span></button>
+      <button data-tab="cartoes" class="tab"><span class="tab-ico" data-ico="card"></span><span>Cartões</span></button>
+      <button data-tab="metas" class="tab"><span class="tab-ico" data-ico="target"></span><span>Metas</span></button>
     </nav>
   </div>
 </div>
@@ -88,6 +88,7 @@
 <div id="toast" class="toast" hidden></div>
 
 <script src="js/config.js"></script>
+<script src="js/icons.js"></script>
 <script src="js/db.js"></script>
 <script src="js/sync.js"></script>
 <script src="js/auth.js"></script>

@@ -44,6 +44,7 @@ function render() {
   $('#topbar-month').textContent = DB.monthPeriod(new Date()).label;
   const views = { inicio: renderInicio, extrato: renderExtrato, cartoes: renderCartoes, metas: renderMetas };
   $('#view').innerHTML = views[state.tab](period);
+  paintIcons($('#view'));
   bindView();
 }
 
@@ -118,19 +119,19 @@ function renderInicio(period) {
 
   return `
     <div class="kpi-grid">
-      <div class="card kpi k-primary"><div class="kpi-label">Gasto do mês</div><div class="kpi-value gold">${fmtShort(total)}</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
-      <div class="card kpi k-danger"><div class="kpi-label">Faturas em aberto</div><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmtShort(openInvoices)}</div><div class="kpi-sub">${upcoming.length} fatura(s)</div></div>
-      <div class="card kpi k-success"><div class="kpi-label">Saldo em contas</div><div class="kpi-value green">${fmtShort(saldo)}</div><div class="kpi-sub">${contas.length} conta(s)</div></div>
-      <div class="card kpi k-info"><div class="kpi-label">Metas (média)</div><div class="kpi-value">${avgPct}%</div><div class="kpi-sub">${goals.length} em andamento</div></div>
+      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmtShort(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
+      <div class="card kpi"><span class="kpi-ico t-danger" data-ico="invoice"></span><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmtShort(openInvoices)}</div><div class="kpi-label">Faturas em aberto</div><div class="kpi-sub">${upcoming.length} fatura(s)</div></div>
+      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmtShort(saldo)}</div><div class="kpi-label">Saldo em contas</div><div class="kpi-sub">${contas.length} conta(s)</div></div>
+      <div class="card kpi"><span class="kpi-ico t-info" data-ico="target"></span><div class="kpi-value">${avgPct}%</div><div class="kpi-label">Metas (média)</div><div class="kpi-sub">${goals.length} em andamento</div></div>
     </div>
     <div class="grid-2">
-      <div>
-        <p class="section-title">Para onde foi o dinheiro</p>
-        <div class="card" style="margin-top:10px">${donut}</div>
+      <div class="card">
+        <div class="card-head"><div><b>Para onde foi o dinheiro</b><small>distribuição do período por categoria</small></div><span class="kpi-ico t-primary" data-ico="pie" style="width:34px;height:34px;margin:0"></span></div>
+        ${donut}
       </div>
-      <div>
-        <p class="section-title">Orçamento por categoria</p>
-        <div class="card" style="margin-top:10px">${budgets || '<div class="empty">Defina orçamentos em ⚙︎ → Categorias.</div>'}</div>
+      <div class="card">
+        <div class="card-head"><div><b>Orçamento por categoria</b><small>gasto do período vs. limite mensal</small></div></div>
+        ${budgets || '<div class="empty">Defina orçamentos em Configurações → Categorias.</div>'}
       </div>
     </div>
     ${venc ? `<p class="section-title">Próximos vencimentos</p>${venc}` : ''}
@@ -162,9 +163,9 @@ function renderExtrato(period) {
 
   return `
     <div class="card month-nav">
-      <button id="mn-prev">‹</button>
+      <button id="mn-prev" aria-label="Mês anterior" data-ico="chevL"></button>
       <b>${period.label} · ${fmtShort(total)}</b>
-      <button id="mn-next">›</button>
+      <button id="mn-next" aria-label="Próximo mês" data-ico="chevR"></button>
     </div>
     <div class="chips" id="scope-chips">
       ${['Todos', 'Família', 'Pessoal'].map(f => `<button class="chip ${state.filter === f ? 'active' : ''}" data-f="${f}">${f}</button>`).join('')}
@@ -260,8 +261,9 @@ function bindView() {
 
 /* ---------- Sheet: lançamento rápido ---------- */
 function openSheet(html) {
-  $('#sheet').innerHTML = html;
+  $('#sheet').innerHTML = `<div class="sheet-handle"></div>${html}`;
   $('#sheet').hidden = false; $('#sheet-backdrop').hidden = false;
+  paintIcons($('#sheet'));
 }
 function closeSheet() { $('#sheet').hidden = true; $('#sheet-backdrop').hidden = true; }
 
@@ -291,7 +293,7 @@ function openTxSheet(tx) {
   const members = ['Comum / Família', ...DB.settings().members];
 
   openSheet(`
-    <div class="sheet-title">${isEdit ? 'Editar lançamento' : 'Lançar gasto'}<button class="close-x" id="sh-close">✕</button></div>
+    <div class="sheet-title">${isEdit ? 'Editar lançamento' : 'Lançar gasto'}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <div class="field"><input class="amount-input" id="f-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="R$ 0,00" value="${tx.amount || ''}"></div>
     <div class="field"><label>Descrição</label><input id="f-desc" placeholder="Ex: Mercado, Uber, Farmácia…" value="${esc(tx.description)}"></div>
     <div class="field"><label>Categoria</label>${chipGroup('g-cat', cats.map(c => ({ value: c.id, label: `${c.icon} ${c.name}` })), tx.category_id)}</div>
@@ -365,7 +367,7 @@ function openGoalSheet(goal) {
   const isEdit = !!goal;
   goal = goal || { name: '', icon: '🎯', target_amount: '', target_date: '', done: false };
   openSheet(`
-    <div class="sheet-title">${isEdit ? 'Editar meta' : 'Nova meta'}<button class="close-x" id="sh-close">✕</button></div>
+    <div class="sheet-title">${isEdit ? 'Editar meta' : 'Nova meta'}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <div class="row2">
       <div class="field"><label>Ícone</label><input id="g-icon" value="${esc(goal.icon)}" maxlength="4"></div>
       <div class="field"><label>Nome</label><input id="g-name" placeholder="Ex: Viagem Nordeste" value="${esc(goal.name)}"></div>
@@ -402,7 +404,7 @@ function openGoalSheet(goal) {
 function openAporteSheet(goalId) {
   const g = DB.get('goals', goalId);
   openSheet(`
-    <div class="sheet-title">Aporte — ${esc(g.icon)} ${esc(g.name)}<button class="close-x" id="sh-close">✕</button></div>
+    <div class="sheet-title">Aporte — ${esc(g.icon)} ${esc(g.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <div class="field"><input class="amount-input" id="a-amount" type="number" inputmode="decimal" step="0.01" placeholder="R$ 0,00"></div>
     <div class="row2">
       <div class="field"><label>Descrição</label><input id="a-desc" value="Aporte"></div>
@@ -425,20 +427,21 @@ function openAporteSheet(goalId) {
 function openModal(html) {
   $('#modal').innerHTML = `<div class="modal-inner">${html}</div>`;
   $('#modal').hidden = false; $('#modal-backdrop').hidden = false;
+  paintIcons($('#modal'));
 }
 function closeModal() { $('#modal').hidden = true; $('#modal-backdrop').hidden = true; render(); }
 
 function openConfig() {
   const s = Sync.cfg || {};
   openModal(`
-    <div class="modal-title">Configurações<button class="close-x" id="md-close">✕</button></div>
-    <div class="settings-item" data-go="accounts"><span>🏦 Contas<br><small>${DB.all('accounts').length} cadastrada(s)</small></span><span>›</span></div>
-    <div class="settings-item" data-go="cards"><span>💳 Cartões de crédito<br><small>${DB.all('cards').length} cadastrado(s)</small></span><span>›</span></div>
-    <div class="settings-item" data-go="categories"><span>🗂️ Categorias & orçamentos<br><small>${DB.all('categories').length} categoria(s)</small></span><span>›</span></div>
-    <div class="settings-item" data-go="family"><span>👨‍👩‍👧 Membros & ciclo do mês<br><small>Início no dia ${DB.settings().month_start_day}</small></span><span>›</span></div>
-    <div class="settings-item" data-go="sync"><span>☁️ Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span><span>›</span></div>
-    <div class="settings-item" data-go="security"><span>🔒 Segurança<br><small>${Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'Sem proteção local'}</small></span><span>›</span></div>
-    <div class="settings-item" data-go="backup"><span>💾 Backup (exportar / importar)<br><small>Arquivo JSON local</small></span><span>›</span></div>
+    <div class="modal-title">Configurações<button class="close-x" id="md-close"><span data-ico="x"></span></button></div>
+    <div class="settings-item" data-go="accounts"><span class="cfg-left"><span class="cfg-ico" data-ico="wallet"></span><span>Contas<br><small>${DB.all('accounts').length} cadastrada(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="cards"><span class="cfg-left"><span class="cfg-ico" data-ico="card"></span><span>Cartões de crédito<br><small>${DB.all('cards').length} cadastrado(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="categories"><span class="cfg-left"><span class="cfg-ico" data-ico="pie"></span><span>Categorias &amp; orçamentos<br><small>${DB.all('categories').length} categoria(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Membros &amp; ciclo do mês<br><small>Início no dia ${DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="sync"><span class="cfg-left"><span class="cfg-ico" data-ico="cloud"></span><span>Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="security"><span class="cfg-left"><span class="cfg-ico" data-ico="shield"></span><span>Segurança<br><small>${Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'Sem proteção local'}</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="backup"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Backup (exportar / importar)<br><small>Arquivo JSON local</small></span></span><span class="chev" data-ico="chev"></span></div>
   `);
   $('#md-close').onclick = closeModal;
   document.querySelectorAll('[data-go]').forEach(el => el.onclick = () => openConfigSection(el.dataset.go));
@@ -447,9 +450,9 @@ window.openConfigSection = openConfigSection;
 
 function crudList(store, title, renderRow, openEditor) {
   const rows = DB.all(store).map(r => `
-    <div class="settings-item" data-edit="${r.id}"><span>${renderRow(r)}</span><span>›</span></div>`).join('');
+    <div class="settings-item" data-edit="${r.id}"><span>${renderRow(r)}</span><span class="chev" data-ico="chev"></span></div>`).join('');
   openModal(`
-    <div class="modal-title">${title}<button class="close-x" id="md-back">‹</button></div>
+    <div class="modal-title">${title}<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
     <button class="btn ghost" id="md-new" style="margin-bottom:12px">＋ Adicionar</button>
     ${rows || '<div class="empty">Nada cadastrado ainda.</div>'}
   `);
@@ -466,7 +469,7 @@ function openConfigSection(sec) {
         const isEdit = !!acc;
         acc = acc || { name: '', type: 'Conta Corrente', institution: '', balance: 0, active: true };
         openModal(`
-          <div class="modal-title">${isEdit ? 'Editar conta' : 'Nova conta'}<button class="close-x" id="md-back">‹</button></div>
+          <div class="modal-title">${isEdit ? 'Editar conta' : 'Nova conta'}<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
           <div class="field"><label>Nome</label><input id="c-name" value="${esc(acc.name)}"></div>
           <div class="field"><label>Tipo</label><select id="c-type">${['Conta Corrente', 'Carteira Digital', 'Caixinha / Rendimento', 'Investimento'].map(t => `<option ${acc.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
           <div class="field"><label>Instituição</label><input id="c-inst" value="${esc(acc.institution)}"></div>
@@ -492,7 +495,7 @@ function openConfigSection(sec) {
         const isEdit = !!card;
         card = card || { name: '', brand: '', limit_amount: 0, closing_day: 25, due_day: 5, active: true };
         openModal(`
-          <div class="modal-title">${isEdit ? 'Editar cartão' : 'Novo cartão'}<button class="close-x" id="md-back">‹</button></div>
+          <div class="modal-title">${isEdit ? 'Editar cartão' : 'Novo cartão'}<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
           <div class="field"><label>Nome</label><input id="c-name" placeholder="Ex: Nubank" value="${esc(card.name)}"></div>
           <div class="field"><label>Bandeira</label><input id="c-brand" placeholder="Mastercard, Visa…" value="${esc(card.brand)}"></div>
           <div class="row2">
@@ -526,7 +529,7 @@ function openConfigSection(sec) {
         const isEdit = !!cat;
         cat = cat || { name: '', icon: '🏷️', scope: 'Família', monthly_budget: 0 };
         openModal(`
-          <div class="modal-title">${isEdit ? 'Editar categoria' : 'Nova categoria'}<button class="close-x" id="md-back">‹</button></div>
+          <div class="modal-title">${isEdit ? 'Editar categoria' : 'Nova categoria'}<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
           <div class="row2">
             <div class="field"><label>Ícone</label><input id="c-icon" maxlength="4" value="${esc(cat.icon)}"></div>
             <div class="field"><label>Nome</label><input id="c-name" value="${esc(cat.name)}"></div>
@@ -552,7 +555,7 @@ function openConfigSection(sec) {
   if (sec === 'family') {
     const s = DB.settings();
     openModal(`
-      <div class="modal-title">Membros & ciclo<button class="close-x" id="md-back">‹</button></div>
+      <div class="modal-title">Membros & ciclo<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
       <div class="field"><label>Membros (um por linha)</label><textarea id="f-members" rows="4">${esc(s.members.join('\n'))}</textarea></div>
       <div class="field"><label>Dia de início do mês financeiro</label><input id="f-start" type="number" min="1" max="28" value="${s.month_start_day}">
         <p class="muted" style="margin-top:6px">1 = mês calendário. Ex: 5 = período do dia 5 ao dia 4 do mês seguinte (útil para quem se organiza pelo salário).</p></div>
@@ -570,7 +573,7 @@ function openConfigSection(sec) {
 
   if (sec === 'security') {
     openModal(`
-      <div class="modal-title">🔒 Segurança<button class="close-x" id="md-back">‹</button></div>
+      <div class="modal-title">🔒 Segurança<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
       <p class="muted" style="margin-bottom:12px">O PIN não é só uma tela de bloqueio: ele deriva uma chave <b>AES-256</b> (PBKDF2) que <b>criptografa os dados guardados neste aparelho</b> — sem o PIN, o conteúdo é ilegível. Após 5 erros, o app bloqueia por tempo progressivo. A nuvem tem camada própria: login e-mail/senha + regras por família (RLS) no Supabase.</p>
       ${Auth.enabled() ? `
         <div class="field"><label>PIN atual</label><input id="sec-cur" type="password" inputmode="numeric" maxlength="8"></div>
@@ -613,7 +616,7 @@ function openConfigSection(sec) {
 
   if (sec === 'backup') {
     openModal(`
-      <div class="modal-title">Backup<button class="close-x" id="md-back">‹</button></div>
+      <div class="modal-title">Backup<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
       <p class="muted" style="margin-bottom:12px">Com a sincronização ativa, a nuvem já é seu backup. Ainda assim, você pode guardar um arquivo local.</p>
       <button class="btn ghost" id="bk-export" style="margin-bottom:10px">⬇ Exportar dados (.json)</button>
       <button class="btn ghost" id="bk-import">⬆ Importar backup</button>
@@ -667,7 +670,7 @@ function openSyncConfig() {
     <button class="btn" id="s-now">Sincronizar agora</button>
     <hr class="sep"><button class="btn danger" id="s-logout">Sair da conta</button>`;
 
-  openModal(`<div class="modal-title">☁️ Sincronização<button class="close-x" id="md-back">‹</button></div>${body}`);
+  openModal(`<div class="modal-title">☁️ Sincronização<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>${body}`);
   $('#md-back').onclick = openConfig;
 
   const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
@@ -739,6 +742,7 @@ function refreshUserChip() {
   $('#user-avatar').textContent = (mail || 'F').charAt(0).toUpperCase();
 }
 refreshUserChip();
+paintIcons();   // ícones do shell estático (sidebar, topbar, tabbar)
 
 Auth.init(() => {
   render();
