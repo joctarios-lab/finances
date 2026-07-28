@@ -5,7 +5,7 @@ DB.load();
 Sync.load();
 
 const METHODS = ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto'];
-const PALETTE = ['#d4a94e', '#3fae76', '#5b9bd0', '#e05a4e', '#b07cc6', '#e0a13c', '#6fc2b0', '#c9756b', '#8ea662', '#7f8fd0'];
+const PALETTE = ['#009ef7', '#50cd89', '#7239ea', '#f1416c', '#ffc700', '#43ced7', '#fd7e14', '#8950fc', '#1bc5bd', '#6c7293'];
 
 let state = { tab: 'inicio', monthOffset: 0, filter: 'Todos' };
 
@@ -36,7 +36,7 @@ function catLabel(id) { const c = catOf(id); return c ? `${c.icon} ${c.name}` : 
 /* ---------- Navegação ---------- */
 function setTab(tab) {
   state.tab = tab;
-  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.tab, .side-item[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   render();
 }
 
@@ -119,15 +119,21 @@ function renderInicio(period) {
 
   return `
     <div class="kpi-grid">
-      <div class="card kpi"><div class="kpi-label">Gasto do mês</div><div class="kpi-value gold">${fmtShort(total)}</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
-      <div class="card kpi"><div class="kpi-label">Faturas em aberto</div><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmtShort(openInvoices)}</div><div class="kpi-sub">${upcoming.length} fatura(s)</div></div>
-      <div class="card kpi"><div class="kpi-label">Saldo em contas</div><div class="kpi-value green">${fmtShort(saldo)}</div><div class="kpi-sub">${contas.length} conta(s)</div></div>
-      <div class="card kpi"><div class="kpi-label">Metas (média)</div><div class="kpi-value">${avgPct}%</div><div class="kpi-sub">${goals.length} em andamento</div></div>
+      <div class="card kpi k-primary"><div class="kpi-label">Gasto do mês</div><div class="kpi-value gold">${fmtShort(total)}</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
+      <div class="card kpi k-danger"><div class="kpi-label">Faturas em aberto</div><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmtShort(openInvoices)}</div><div class="kpi-sub">${upcoming.length} fatura(s)</div></div>
+      <div class="card kpi k-success"><div class="kpi-label">Saldo em contas</div><div class="kpi-value green">${fmtShort(saldo)}</div><div class="kpi-sub">${contas.length} conta(s)</div></div>
+      <div class="card kpi k-info"><div class="kpi-label">Metas (média)</div><div class="kpi-value">${avgPct}%</div><div class="kpi-sub">${goals.length} em andamento</div></div>
     </div>
-    <p class="section-title">Para onde foi o dinheiro</p>
-    <div class="card">${donut}</div>
-    <p class="section-title">Orçamento por categoria</p>
-    <div class="card">${budgets || '<div class="empty">Defina orçamentos em ⚙︎ → Categorias.</div>'}</div>
+    <div class="grid-2">
+      <div>
+        <p class="section-title">Para onde foi o dinheiro</p>
+        <div class="card" style="margin-top:10px">${donut}</div>
+      </div>
+      <div>
+        <p class="section-title">Orçamento por categoria</p>
+        <div class="card" style="margin-top:10px">${budgets || '<div class="empty">Defina orçamentos em ⚙︎ → Categorias.</div>'}</div>
+      </div>
+    </div>
     ${venc ? `<p class="section-title">Próximos vencimentos</p>${venc}` : ''}
   `;
 }
@@ -418,7 +424,7 @@ function openAporteSheet(goalId) {
 
 /* ---------- Configurações ---------- */
 function openModal(html) {
-  $('#modal').innerHTML = html;
+  $('#modal').innerHTML = `<div class="modal-inner">${html}</div>`;
   $('#modal').hidden = false; $('#modal-backdrop').hidden = false;
 }
 function closeModal() { $('#modal').hidden = true; $('#modal-backdrop').hidden = true; render(); }
@@ -432,6 +438,7 @@ function openConfig() {
     <div class="settings-item" data-go="categories"><span>🗂️ Categorias & orçamentos<br><small>${DB.all('categories').length} categoria(s)</small></span><span>›</span></div>
     <div class="settings-item" data-go="family"><span>👨‍👩‍👧 Membros & ciclo do mês<br><small>Início no dia ${DB.settings().month_start_day}</small></span><span>›</span></div>
     <div class="settings-item" data-go="sync"><span>☁️ Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span><span>›</span></div>
+    <div class="settings-item" data-go="security"><span>🔒 Segurança<br><small>${Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'Sem proteção local'}</small></span><span>›</span></div>
     <div class="settings-item" data-go="backup"><span>💾 Backup (exportar / importar)<br><small>Arquivo JSON local</small></span><span>›</span></div>
   `);
   $('#md-close').onclick = closeModal;
@@ -562,6 +569,50 @@ function openConfigSection(sec) {
 
   if (sec === 'sync') openSyncConfig();
 
+  if (sec === 'security') {
+    openModal(`
+      <div class="modal-title">🔒 Segurança<button class="close-x" id="md-back">‹</button></div>
+      <p class="muted" style="margin-bottom:12px">O PIN protege o acesso ao app neste aparelho (pedido ao abrir e ao voltar de segundo plano). Os dados na nuvem já são protegidos pelo login e pelas regras por família do Supabase.</p>
+      ${Auth.enabled() ? `
+        <div class="field"><label>PIN atual</label><input id="sec-cur" type="password" inputmode="numeric" maxlength="8"></div>
+        <div class="field"><label>Novo PIN (deixe vazio para só alterar o tempo)</label><input id="sec-new" type="password" inputmode="numeric" maxlength="8" placeholder="4 a 8 dígitos"></div>
+        <div class="field"><label>Bloquear após (minutos em segundo plano)</label><input id="sec-min" type="number" min="0" max="120" value="${Auth.cfg.lockAfterMin ?? 5}"></div>
+        <button class="btn" id="sec-save">Salvar</button>
+        <div class="btn-row"><button class="btn danger" id="sec-off">Remover PIN</button></div>
+      ` : `
+        <div class="field"><label>Criar PIN (4 a 8 dígitos)</label><input id="sec-new" type="password" inputmode="numeric" maxlength="8"></div>
+        <div class="field"><label>Repetir PIN</label><input id="sec-new2" type="password" inputmode="numeric" maxlength="8"></div>
+        <button class="btn" id="sec-on">Ativar proteção</button>
+      `}
+    `);
+    $('#md-back').onclick = openConfig;
+    const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+    on('#sec-on', async () => {
+      const p1 = $('#sec-new').value, p2 = $('#sec-new2').value;
+      if (!/^\d{4,8}$/.test(p1)) return toast('Use de 4 a 8 dígitos');
+      if (p1 !== p2) return toast('Os PINs não conferem');
+      await Auth.setPin(p1);
+      toast('PIN ativado ✓'); openConfig();
+    });
+    on('#sec-save', async () => {
+      if (!(await Auth.verify($('#sec-cur').value))) return toast('PIN atual incorreto');
+      const novo = $('#sec-new').value;
+      if (novo) {
+        if (!/^\d{4,8}$/.test(novo)) return toast('Novo PIN: 4 a 8 dígitos');
+        await Auth.setPin(novo);
+      }
+      Auth.cfg.lockAfterMin = Math.min(120, Math.max(0, parseInt($('#sec-min').value) || 5));
+      Auth.save();
+      toast('Segurança atualizada ✓'); openConfig();
+    });
+    on('#sec-off', async () => {
+      if (!(await Auth.verify($('#sec-cur').value))) return toast('Digite o PIN atual para remover');
+      if (!confirm('Remover a proteção por PIN?')) return;
+      Auth.removePin();
+      toast('PIN removido'); openConfig();
+    });
+  }
+
   if (sec === 'backup') {
     openModal(`
       <div class="modal-title">Backup<button class="close-x" id="md-back">‹</button></div>
@@ -666,9 +717,12 @@ Sync.onStatus = (msg, ok = true) => {
   el._t = setTimeout(() => { el.hidden = true; }, ok ? 2500 : 6000);
 };
 
-document.querySelectorAll('.tab').forEach(b => b.onclick = () => setTab(b.dataset.tab));
+document.querySelectorAll('.tab, .side-item[data-tab]').forEach(b => b.onclick = () => setTab(b.dataset.tab));
 $('#fab').onclick = () => openTxSheet(null);
+$('#btn-new-desktop').onclick = () => openTxSheet(null);
 $('#btn-config').onclick = openConfig;
+$('#side-config').onclick = openConfig;
+$('#side-lock').onclick = () => Auth.lockNow();
 $('#btn-sync').onclick = () => {
   if (!Sync.hasFamily()) return openConfigSection('sync');
   Sync.syncAll().then(render).catch(() => {});
@@ -680,5 +734,14 @@ window.addEventListener('online', () => Sync.autoSync());
 const hour = new Date().getHours();
 $('#topbar-hello').textContent = (hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite') + ' · Família Peixoto Rios';
 
+function refreshUserChip() {
+  const mail = (Sync.cfg && Sync.cfg.user_email) || '';
+  $('#user-name').textContent = mail ? mail.split('@')[0] : 'Família';
+  $('#user-mail').textContent = mail ? (Sync.hasFamily() ? 'sincronizado ☁️' : 'conectado') : 'modo local';
+  $('#user-avatar').textContent = (mail || 'F').charAt(0).toUpperCase();
+}
+refreshUserChip();
+
+Auth.init();
 render();
 Sync.autoSync();
