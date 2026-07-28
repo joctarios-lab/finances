@@ -92,6 +92,14 @@ supabase functions deploy notify --no-verify-jwt
 
 Para testar sem esperar o horário agendado, rode o `net.http_post` comentado no fim de `supabase/cron.sql`.
 
+## Testes
+
+```bash
+node tests/smoke.js
+```
+
+Roda o app sem navegador e confere as regras que ligam os módulos: despesa × receita, ciclo de fatura, comprometido, disponível, mês financeiro com dia de início, efeito no saldo e renderização de todas as telas. Rode depois de qualquer alteração.
+
 ## Estrutura
 
 ```

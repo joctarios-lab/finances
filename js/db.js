@@ -199,8 +199,12 @@ const DB = {
   },
   expensesOf(period) { return this.txOfPeriod(period).filter(t => this.isExpense(t)); },
   incomesOf(period) { return this.txOfPeriod(period).filter(t => !this.isExpense(t)); },
+  // Renda que realmente entrou na família. Estorno de cartão é receita no modelo
+  // (abate a fatura), mas não é renda — por isso fica de fora daqui.
   realizedIncome(period) {
-    return this.incomesOf(period).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    return this.incomesOf(period)
+      .filter(t => !t.card_id)
+      .reduce((s, t) => s + (Number(t.amount) || 0), 0);
   },
 
   // Evita reimportar o mesmo lançamento de um extrato OFX (FITID é único no banco).

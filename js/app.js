@@ -4,6 +4,7 @@
 Sync.load();   // DB.load() acontece dentro de Auth.init(), que decifra os dados quando há PIN
 
 const METHODS = ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto'];
+const MEMBRO_COMUM = 'Comum / Família';   // usado sempre que o âmbito é Família
 const PALETTE = ['#009ef7', '#50cd89', '#7239ea', '#f1416c', '#ffc700', '#43ced7', '#fd7e14', '#8950fc', '#1bc5bd', '#6c7293'];
 
 let state = { tab: 'inicio', monthOffset: 0, filter: 'Todos' };
@@ -112,7 +113,7 @@ function svgBurnup(period, refLimit) {
   const W = 560, H = 170, padB = 20, padT = 12;
   const total = DB.periodDays(period), elapsed = DB.elapsedDays(period);
   const daily = new Array(total).fill(0);
-  for (const t of DB.txOfPeriod(period)) {
+  for (const t of DB.expensesOf(period)) {
     const idx = Math.min(total - 1, Math.max(0, Math.floor((new Date(t.date + 'T12:00:00') - period.start) / 86400000)));
     daily[idx] += Number(t.amount) || 0;
   }
@@ -149,7 +150,7 @@ function healthOf(stats, refLimit, available) {
 
 /* ---------- Início ---------- */
 function renderInicio(period) {
-  const txs = DB.txOfPeriod(period);
+  const txs = DB.expensesOf(period);
   const total = txs.reduce((s, t) => s + Number(t.amount || 0), 0);
   const contas = DB.all('accounts').filter(a => a.active !== false);
   const saldo = contas.reduce((s, a) => s + Number(a.balance || 0), 0);
@@ -302,7 +303,20 @@ function renderInicio(period) {
       ${tips.slice(0, 5).map(t => `<div class="tip tip-${t.cls}">${esc(t.txt)}</div>`).join('')}
     </div>`;
 
+  // Primeiro uso: guia de configuração em vez de um painel vazio
+  const faltando = [];
+  if (!contas.length) faltando.push({ go: 'accounts', txt: 'Cadastrar suas contas e saldos' });
+  if (!DB.all('cards').length) faltando.push({ go: 'cards', txt: 'Cadastrar cartões de crédito (fechamento e vencimento)' });
+  if (!DB.settings().monthly_income) faltando.push({ go: 'family', txt: 'Informar a renda mensal da família' });
+  if (!DB.all('transactions').length) faltando.push({ go: 'ofx', txt: 'Importar o extrato do banco (ou lançar no + )' });
+  const setupCard = faltando.length ? `
+    <div class="card">
+      <div class="card-head"><div><b>Deixe o app com a sua cara</b><small>faltam ${faltando.length} passo(s) para as análises ficarem completas</small></div></div>
+      ${faltando.map(f => `<div class="settings-item" data-setup="${f.go}"><span class="cfg-left"><span class="cfg-ico" data-ico="check"></span><span>${f.txt}</span></span><span class="chev" data-ico="chev"></span></div>`).join('')}
+    </div>` : '';
+
   return `
+    ${setupCard}
     <div class="hero hero-${health.cls}">
       <div class="hero-top">
         <span class="hero-label">Disponível para usar</span>
@@ -333,7 +347,7 @@ function renderInicio(period) {
         ${svgBars(
           Array.from({ length: 6 }, (_, i) => {
             const p = DB.monthPeriod(new Date(), i - 5);
-            const v = DB.txOfPeriod(p).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+            const v = DB.expensesOf(p).reduce((s, t) => s + (Number(t.amount) || 0), 0);
             return { label: p.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', ''), value: v, hint: i === 5 ? '#009ef7' : '#a6d9f7' };
           }), income)}
       </div>
@@ -361,11 +375,13 @@ function renderInicio(period) {
 
 /* ---------- Extrato ---------- */
 function renderExtrato(period) {
+  const quem = state.memberFilter || 'Todos';
   const txs = DB.txOfPeriod(period)
     .filter(t => state.filter === 'Todos' || t.scope === state.filter)
+    .filter(t => quem === 'Todos' || (t.member || MEMBRO_COMUM) === quem)
     .sort((a, b) => b.date.localeCompare(a.date));
   const total = txs.filter(t => DB.isExpense(t)).reduce((s, t) => s + Number(t.amount || 0), 0);
-  const receitas = txs.filter(t => !DB.isExpense(t)).reduce((s, t) => s + Number(t.amount || 0), 0);
+  const receitas = txs.filter(t => !DB.isExpense(t) && !t.card_id).reduce((s, t) => s + Number(t.amount || 0), 0);
 
   let list = '', lastDay = '';
   for (const t of txs) {
@@ -380,6 +396,7 @@ function renderExtrato(period) {
       <span class="tx-info"><span class="tx-name">${esc(t.description)}</span>
       <span class="tx-meta">${isExp ? esc(c ? c.name : 'Sem categoria') : 'Receita'} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}</span></span>
       <span class="tx-amount ${!isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${isExp ? '' : '+ '}${fmt(t.amount)}</span>
+      ${t.status === 'A Pagar' ? `<button class="pay-btn" data-pay-tx="${t.id}" title="Marcar como ${isExp ? 'pago' : 'recebido'}"><span data-ico="check"></span></button>` : ''}
     </div>`;
   }
   if (!txs.length) list = `<div class="empty"><b>Sem lançamentos</b>Nada registrado neste período com esse filtro.</div>`;
@@ -398,8 +415,23 @@ function renderExtrato(period) {
       <div class="card"><small>${isCurrent ? 'Projeção' : 'Total'}</small><b>${fmtShort(isCurrent ? st.projection : st.spent)}</b></div>
     </div>
     <input id="tx-search" type="search" placeholder="🔎 Buscar no período…" autocomplete="off" style="margin-bottom:2px">
-    <div class="chips" id="scope-chips">
-      ${['Todos', 'Família', 'Pessoal'].map(f => `<button class="chip ${state.filter === f ? 'active' : ''}" data-f="${f}">${f}</button>`).join('')}
+    <div class="filter-row">
+      <span class="filter-lbl">Âmbito</span>
+      <div class="chips" id="scope-chips">
+        ${['Todos', 'Família', 'Pessoal'].map(f => `<button class="chip ${state.filter === f ? 'active' : ''}" data-f="${f}">${f}</button>`).join('')}
+      </div>
+    </div>
+    <div class="filter-row">
+      <span class="filter-lbl">Quem</span>
+      <div class="chips" id="member-chips">
+        ${['Todos', MEMBRO_COMUM, ...DB.settings().members].map(m => {
+          const gasto = DB.expensesOf(period)
+            .filter(t => m === 'Todos' || (t.member || MEMBRO_COMUM) === m)
+            .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+          const label = m === MEMBRO_COMUM ? '👨‍👩‍👧 Comum' : m === 'Todos' ? 'Todos' : esc(m);
+          return `<button class="chip ${quem === m ? 'active' : ''}" data-m="${esc(m)}">${label} <span class="chip-num">${fmtShort(gasto)}</span></button>`;
+        }).join('')}
+      </div>
     </div>
     ${isCurrent ? '<button class="btn ghost" id="btn-recur" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="sync"></span>Lançar custos fixos deste mês</button>' : ''}
     <div id="tx-list">${list}</div>
@@ -409,16 +441,34 @@ function renderExtrato(period) {
 /* ---------- Cartões ---------- */
 function renderCartoes() {
   const cards = DB.all('cards').filter(c => c.active !== false);
+  const contas = DB.all('accounts').filter(a => a.active !== false);
+  const totalContas = contas.reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  const contasHtml = `
+    <div class="card">
+      <div class="card-head">
+        <div><b>Contas e saldos</b><small>toque em uma conta para atualizar o saldo</small></div>
+        <span class="num" style="font-size:17px">${fmtShort(totalContas)}</span>
+      </div>
+      ${contas.length ? contas.map(a => `
+        <div class="acc-row" data-acc="${a.id}">
+          <span class="acc-ico">${a.type === 'Caixinha / Rendimento' ? '🐷' : a.type === 'Investimento' ? '📈' : a.type === 'Carteira Digital' ? '📱' : '🏦'}</span>
+          <span class="acc-info"><b>${esc(a.name)}</b><small>${esc(a.type)}${a.institution ? ' · ' + esc(a.institution) : ''}</small></span>
+          <span class="num">${fmt(a.balance)}</span>
+        </div>`).join('') : '<div class="empty">Nenhuma conta cadastrada. Adicione em Configurações → Contas.</div>'}
+      ${contas.length > 1 ? '<button class="btn ghost" id="btn-transfer" style="margin-top:10px">⇄ Transferir entre contas</button>' : ''}
+    </div>`;
+
   if (!cards.length) {
-    return `<div class="empty"><b>Nenhum cartão cadastrado</b>Adicione em ⚙︎ → Cartões de crédito.</div>
-      <button class="btn ghost" onclick="openConfigSection('cards')">Cadastrar cartão</button>`;
+    return contasHtml + `<div class="card"><div class="empty"><b>Nenhum cartão cadastrado</b>Cadastre seus cartões para o app controlar faturas e parcelas automaticamente.</div>
+      <button class="btn ghost" id="go-cards">Cadastrar cartão</button></div>`;
   }
+
   const committed = DB.committed();
-  let html = committed > 0 ? `
+  let html = contasHtml + (committed > 0 ? `
     <div class="card">
       <div class="card-head" style="margin-bottom:4px"><div><b>Compromissos futuros</b><small>faturas não pagas + contas a pagar — já descontados do seu disponível</small></div>
       <span class="num txt-red" style="font-size:18px">${fmtShort(committed)}</span></div>
-    </div>` : '';
+    </div>` : '');
   for (const card of cards) {
     const invoices = DB.invoicesOf(card);
     const currentKey = DB.invoiceKeyFor(card, todayISO());
@@ -505,8 +555,9 @@ function renderMetas() {
 function renderRelatorios() {
   const period = DB.monthPeriod(new Date(), state.repOffset || 0);
   const prev = DB.monthPeriod(new Date(), (state.repOffset || 0) - 1);
-  const txs = DB.txOfPeriod(period);
+  const txs = DB.expensesOf(period);            // relatórios de gasto: só despesas
   const total = txs.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const receitasPeriodo = DB.realizedIncome(period);
   const prevByCat = DB.spentByCategory(prev);
   const byCat = DB.spentByCategory(period);
   const income = Number(DB.settings().monthly_income) || 0;
@@ -554,7 +605,7 @@ function renderRelatorios() {
   // 5) Evolução 12 meses
   const evo12 = Array.from({ length: 12 }, (_, i) => {
     const p = DB.monthPeriod(new Date(), i - 11);
-    return { label: p.start.toLocaleDateString('pt-BR', { month: 'narrow' }), value: DB.txOfPeriod(p).reduce((s, t) => s + (Number(t.amount) || 0), 0), hint: i === 11 ? '#009ef7' : '#a6d9f7' };
+    return { label: p.start.toLocaleDateString('pt-BR', { month: 'narrow' }), value: DB.expensesOf(p).reduce((s, t) => s + (Number(t.amount) || 0), 0), hint: i === 11 ? '#009ef7' : '#a6d9f7' };
   });
 
   return `
@@ -614,6 +665,9 @@ function bindView() {
   if (rnext) rnext.onclick = () => { state.repOffset = (state.repOffset || 0) + 1; render(); };
   const goRep = $('#go-reports');
   if (goRep) goRep.onclick = () => setTab('relatorios');
+  const goCards = $('#go-cards');
+  if (goCards) goCards.onclick = () => openConfigSection('cards');
+  v.querySelectorAll('[data-setup]').forEach(b => b.onclick = () => openConfigSection(b.dataset.setup));
 
   // Busca instantânea no extrato (filtra sem re-renderizar, mantendo o foco)
   const search = $('#tx-search');
@@ -635,12 +689,15 @@ function bindView() {
     let n = 0;
     for (const t of Object.values(templates)) {
       if (inPeriodDesc.has(t.description.toLowerCase())) continue;
+      if (t.group_id) continue;                       // parcelas já nascem em todas as faturas
       const novo = { ...t, id: null, date: todayISO(), status: 'A Pagar' };
       if (novo.card_id) {
         const card = DB.get('cards', novo.card_id);
         novo.invoice_key = card ? DB.invoiceKeyFor(card, novo.date) : '';
       }
-      delete novo.updated_at; delete novo.dirty;
+      // A cópia não herda o vínculo com o extrato nem com o parcelamento do original
+      delete novo.updated_at; delete novo.dirty; delete novo.fitid;
+      delete novo.group_id; delete novo.installment;
       DB.upsert('transactions', novo);
       n++;
     }
@@ -652,11 +709,12 @@ function bindView() {
   const csvBtn = $('#btn-csv');
   if (csvBtn) csvBtn.onclick = () => {
     const period = DB.monthPeriod(new Date(), state.repOffset || 0);
-    const rows = [['Descricao', 'Valor', 'Data', 'Categoria', 'Ambito', 'Membro', 'Metodo', 'Status', 'Cartao', 'Conta']];
+    const rows = [['Tipo', 'Descricao', 'Valor', 'Data', 'Categoria', 'Ambito', 'Membro', 'Metodo', 'Status', 'Parcela', 'Cartao', 'Conta']];
     for (const t of DB.txOfPeriod(period).sort((a, b) => a.date.localeCompare(b.date))) {
       rows.push([
+        DB.isExpense(t) ? 'Despesa' : 'Receita',
         t.description, String(t.amount).replace('.', ','), t.date,
-        (catOf(t.category_id) || {}).name || '', t.scope, t.member || '', t.method, t.status,
+        (catOf(t.category_id) || {}).name || '', t.scope, t.member || '', t.method, t.status, t.installment || '',
         (DB.get('cards', t.card_id) || {}).name || '', (DB.get('accounts', t.account_id) || {}).name || '',
       ]);
     }
@@ -668,6 +726,25 @@ function bindView() {
     toast('CSV exportado ✓');
   };
   v.querySelectorAll('#scope-chips .chip').forEach(ch => ch.onclick = () => { state.filter = ch.dataset.f; render(); });
+  v.querySelectorAll('#member-chips .chip').forEach(ch => ch.onclick = () => { state.memberFilter = ch.dataset.m; render(); });
+
+  // Ação rápida: marcar um "A Pagar" como pago (ajusta o saldo da conta)
+  v.querySelectorAll('[data-pay-tx]').forEach(b => b.onclick = e => {
+    e.stopPropagation();
+    const t = DB.get('transactions', b.dataset.payTx);
+    if (!t) return;
+    const atualizado = { ...t, status: 'Pago' };
+    adjustBalance(t.account_id, -txEffect(t));
+    DB.upsert('transactions', atualizado);
+    adjustBalance(atualizado.account_id, txEffect(atualizado));
+    Sync.autoSync(); render();
+    toast(DB.isExpense(t) ? 'Marcado como pago ✓' : 'Marcado como recebido ✓');
+  });
+
+  // Contas: tocar para atualizar o saldo (conciliação rápida)
+  v.querySelectorAll('[data-acc]').forEach(el => el.onclick = () => openSaldoSheet(el.dataset.acc));
+  const transf = $('#btn-transfer');
+  if (transf) transf.onclick = () => openTransferSheet();
   const invAdjust = (key, sign) => {
     const card = DB.get('cards', key.split(':')[0]);
     if (!card || !card.account_id) return false;
@@ -694,9 +771,19 @@ function bindView() {
 
 /* ---------- Sheet: lançamento rápido ---------- */
 function openSheet(html) {
-  $('#sheet').innerHTML = `<div class="sheet-handle"></div>${html}`;
-  $('#sheet').hidden = false; $('#sheet-backdrop').hidden = false;
-  paintIcons($('#sheet'));
+  const sheet = $('#sheet');
+  sheet.innerHTML = `<div class="sheet-handle"></div>${html}`;
+  sheet.hidden = false; $('#sheet-backdrop').hidden = false;
+  paintIcons(sheet);
+  // Teclado padrão de TODAS as folhas. Reatribuído a cada abertura e acionando o botão
+  // do formulário atual (via click), para nunca sobrar handler de uma folha anterior.
+  sheet.onkeydown = e => {
+    if (e.key === 'Escape') { e.preventDefault(); return closeSheet(); }
+    if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
+      const save = sheet.querySelector('#sh-save');
+      if (save) { e.preventDefault(); save.click(); }
+    }
+  };
 }
 function closeSheet() { $('#sheet').hidden = true; $('#sheet-backdrop').hidden = true; }
 
@@ -716,30 +803,82 @@ function bindChips(id, onChange) {
     if (onChange) onChange(ch.dataset.v);
   });
 }
+function selectChip(id, value) {
+  if (!value) return;
+  document.querySelectorAll(`#${id} .chip`).forEach(ch => ch.classList.toggle('active', ch.dataset.v === value));
+}
 
-function openTxSheet(tx) {
-  const isEdit = !!tx;
+/* Categorias mais usadas primeiro (as 3 viram botões; o resto fica no dropdown) */
+function topCategoryIds(limit = 3, incluir) {
+  const uso = {};
+  for (const t of DB.all('transactions')) {
+    if (!t.category_id || !DB.isExpense(t)) continue;
+    uso[t.category_id] = (uso[t.category_id] || 0) + 1;
+  }
+  const ids = Object.keys(uso)
+    .filter(id => DB.get('categories', id))
+    .sort((a, b) => uso[b] - uso[a]);
+  for (const c of DB.all('categories')) if (!ids.includes(c.id)) ids.push(c.id);   // completa se houver poucas
+  const top = ids.slice(0, limit);
+  // a categoria já escolhida sempre aparece como botão, mesmo que não seja das mais usadas
+  if (incluir && !top.includes(incluir) && DB.get('categories', incluir)) top[limit - 1] = incluir;
+  return top;
+}
+
+/* Últimos lançamentos distintos por descrição — alimenta o autocomplete e o "repetir classificação" */
+function txHistory() {
+  const map = {};
+  for (const t of DB.all('transactions').sort((a, b) => a.date.localeCompare(b.date))) {
+    map[t.description.toLowerCase()] = t;
+  }
+  return Object.values(map).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 60);
+}
+
+// asNew: abre com os dados preenchidos, mas cria um lançamento novo (usado pelo "Repetir")
+function openTxSheet(tx, asNew) {
+  const isEdit = !!tx && !asNew;
   const orig = isEdit ? { ...tx } : null;   // p/ reverter efeito no saldo ao editar/excluir
-  tx = tx || { description: '', amount: '', date: todayISO(), scope: 'Família', member: '', method: 'PIX', status: 'Pago', category_id: '', account_id: '', card_id: '' };
+  tx = tx || { description: '', amount: '', date: todayISO(), scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', status: 'Pago', category_id: '', account_id: '', card_id: '' };
   const cats = DB.all('categories');
   const cards = DB.all('cards').filter(c => c.active !== false);
   const accounts = DB.all('accounts').filter(a => a.active !== false);
-  const members = ['Comum / Família', ...DB.settings().members];
+  const pessoas = DB.settings().members;
+  const historico = txHistory();
+  const topCats = topCategoryIds(3, tx.category_id);
 
   openSheet(`
-    <div class="sheet-title">${isEdit ? 'Editar lançamento' : 'Novo lançamento'}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="sheet-title"><span id="sh-title">${isEdit ? 'Editar lançamento' : 'Novo lançamento'}</span><button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <div class="field">${chipGroup('g-type', [{ value: 'Despesa', label: '↓ Despesa' }, { value: 'Receita', label: '↑ Receita' }], tx.type || 'Despesa')}</div>
     <div class="field"><input class="amount-input" id="f-amount" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
-    <div class="field"><label>Descrição</label><input id="f-desc" placeholder="Ex: Mercado, Uber, Farmácia…" value="${esc(tx.description)}"></div>
-    <div class="field"><label>Categoria</label>${chipGroup('g-cat', cats.map(c => ({ value: c.id, label: `${c.icon} ${c.name}` })), tx.category_id)}</div>
-    <div class="row2">
-      <div class="field"><label>Data</label><input id="f-date" type="date" value="${tx.date}"></div>
-      <div class="field"><label>Situação</label><select id="f-status"><option ${tx.status === 'Pago' ? 'selected' : ''}>Pago</option><option ${tx.status === 'A Pagar' ? 'selected' : ''}>A Pagar</option></select></div>
+    <div class="field"><label>Descrição</label>
+      <input id="f-desc" list="tx-hist" autocomplete="off" placeholder="Ex: Mercado, Uber, Farmácia…" value="${esc(tx.description)}">
+      <datalist id="tx-hist">${historico.map(h => `<option value="${esc(h.description)}">`).join('')}</datalist>
     </div>
-    <div class="field"><label>Pagamento</label>${chipGroup('g-method', METHODS.map(m => ({ value: m, label: m })), tx.method)}</div>
+    <div class="field" id="wrap-cat">
+      <label>Categoria <span class="muted" id="cat-auto"></span></label>
+      <div class="chips" id="g-cat">
+        ${topCats.map(id => { const c = DB.get('categories', id); return c ? `<button type="button" class="chip ${tx.category_id === id ? 'active' : ''}" data-v="${id}">${esc(c.icon)} ${esc(c.name)}</button>` : ''; }).join('')}
+        <button type="button" class="chip chip-more" id="cat-other" data-v="">Outra ▾</button>
+      </div>
+      <select id="f-cat-more" hidden style="margin-top:8px">
+        <option value="">— escolha a categoria —</option>
+        ${cats.map(c => `<option value="${c.id}">${esc(c.icon)} ${esc(c.name)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="row2">
+      <div class="field"><label>Data</label><input id="f-date" type="date" value="${tx.date}">
+        <div class="chips" id="g-day" style="margin-top:6px"><button type="button" class="chip" data-d="0">Hoje</button><button type="button" class="chip" data-d="1">Ontem</button><button type="button" class="chip" data-d="2">Anteontem</button></div>
+      </div>
+      <div class="field"><label id="lbl-status">Situação</label><select id="f-status">
+        <option value="Pago" ${tx.status === 'Pago' ? 'selected' : ''}>Pago</option>
+        <option value="A Pagar" ${tx.status === 'A Pagar' ? 'selected' : ''}>A Pagar</option>
+      </select></div>
+    </div>
+    <div class="field"><label id="lbl-method">Pagamento</label>${chipGroup('g-method', METHODS.map(m => ({ value: m, label: m })), tx.method)}</div>
     <div class="field" id="wrap-card" ${tx.method === 'Cartão de Crédito' ? '' : 'hidden'}>
-      <label>Cartão (fatura atribuída automaticamente pelo fechamento)</label>
-      <select id="f-card">${cards.map(c => `<option value="${c.id}" ${tx.card_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('') || '<option value="">— cadastre um cartão em ⚙︎ —</option>'}</select>
+      <label>Cartão <span class="muted">— a fatura é escolhida sozinha pelo fechamento</span></label>
+      <select id="f-card">${cards.map(c => `<option value="${c.id}" ${tx.card_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('') || '<option value="">— cadastre um cartão em Configurações —</option>'}</select>
+      <p class="muted" id="fatura-hint" style="margin-top:6px"></p>
     </div>
     ${isEdit ? '' : `<div class="field" id="wrap-parc" ${tx.method === 'Cartão de Crédito' ? '' : 'hidden'}>
       <label>Parcelas</label>
@@ -747,26 +886,139 @@ function openTxSheet(tx) {
       <p class="muted" id="parc-hint" style="margin-top:6px">Informe o <b>valor total</b> da compra — o app divide nas faturas seguintes.</p>
     </div>`}
     <div class="field" id="wrap-account" ${tx.method === 'Cartão de Crédito' ? 'hidden' : ''}>
-      <label>Conta</label>
-      <select id="f-account"><option value="">—</option>${accounts.map(a => `<option value="${a.id}" ${tx.account_id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
+      <label id="lbl-account">Conta <span class="muted">— o saldo é ajustado sozinho</span></label>
+      <select id="f-account"><option value="">— não movimenta conta —</option>${accounts.map(a => `<option value="${a.id}" ${tx.account_id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select>
     </div>
-    <div class="row2">
-      <div class="field"><label>Âmbito</label>${chipGroup('g-scope', [{ value: 'Família', label: '👨‍👩‍👧 Família' }, { value: 'Pessoal', label: '👤 Pessoal' }], tx.scope)}</div>
-      <div class="field"><label>Quem</label><select id="f-member">${members.map(m => `<option ${tx.member === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+    <div class="field"><label>Âmbito</label>
+      ${chipGroup('g-scope', [{ value: 'Família', label: '👨‍👩‍👧 Da família' }, { value: 'Pessoal', label: '👤 Pessoal' }], tx.scope)}
     </div>
-    <div class="field"><label>Custo fixo mensal (recorrente)?</label><select id="f-rec"><option value="">Não</option><option value="1" ${tx.recurring ? 'selected' : ''}>Sim — entra nos relatórios de custos fixos e no lançamento em 1 clique</option></select></div>
+    <div class="field" id="wrap-member" hidden>
+      <label>De quem é este gasto? <span class="txt-red">*</span></label>
+      <select id="f-member">
+        <option value="">— selecione —</option>
+        ${pessoas.map(m => `<option ${tx.member === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
+      </select>
+      <p class="muted" id="member-hint" style="margin-top:6px"></p>
+    </div>
+    <div class="field"><label id="lbl-rec">Custo fixo mensal (recorrente)?</label><select id="f-rec"><option value="">Não</option><option value="1" ${tx.recurring ? 'selected' : ''}>Sim — entra nos custos fixos e no lançamento em 1 clique</option></select></div>
     <button class="btn" id="sh-save">${isEdit ? 'Salvar alterações' : 'Lançar'}</button>
-    ${isEdit ? '<div class="btn-row"><button class="btn danger" id="sh-del">Excluir</button></div>' : ''}
+    ${isEdit ? '<div class="btn-row"><button class="btn ghost" id="sh-dup">Repetir</button><button class="btn danger" id="sh-del">Excluir</button></div>' : ''}
   `);
 
-  bindChips('g-cat'); bindChips('g-scope'); bindChips('g-type');
-  bindChips('g-method', v => {
+  /* --- Formulário adaptativo: cada escolha reconfigura o resto --- */
+  const applyType = v => {
+    const isRec = v === 'Receita';
+    $('#sh-title').textContent = isEdit ? 'Editar lançamento' : (isRec ? 'Nova receita' : 'Novo lançamento');
+    $('#wrap-cat').hidden = isRec;                       // categorias são envelopes de gasto
+    $('#lbl-status').textContent = isRec ? 'Situação' : 'Situação';
+    $('#f-status').options[0].textContent = isRec ? 'Recebido' : 'Pago';
+    $('#f-status').options[1].textContent = isRec ? 'A Receber' : 'A Pagar';
+    $('#lbl-method').textContent = isRec ? 'Entrou por' : 'Pagamento';
+    $('#lbl-rec').textContent = isRec ? 'Receita mensal fixa (ex: salário)?' : 'Custo fixo mensal (recorrente)?';
+    $('#f-desc').placeholder = isRec ? 'Ex: Salário, Freelance, Reembolso…' : 'Ex: Mercado, Uber, Farmácia…';
+    if (isRec && $('#wrap-parc')) $('#wrap-parc').hidden = true;
+  };
+
+  const applyScope = v => {
+    const pessoal = v === 'Pessoal';
+    $('#wrap-member').hidden = !pessoal;
+    if (!pessoal) {
+      $('#member-hint').textContent = '';
+      return;
+    }
+    $('#member-hint').textContent = pessoas.length
+      ? 'Gastos pessoais aparecem separados nos relatórios por membro.'
+      : 'Nenhum membro cadastrado — adicione em Configurações → Membros.';
+  };
+
+  const applyMethod = v => {
     const isCard = v === 'Cartão de Crédito';
     $('#wrap-card').hidden = !isCard;
     $('#wrap-account').hidden = isCard;
-    if ($('#wrap-parc')) $('#wrap-parc').hidden = !isCard;
+    if ($('#wrap-parc')) $('#wrap-parc').hidden = !isCard || chipValue('g-type') === 'Receita';
+    showFatura();
+  };
+
+  // Mostra em qual fatura a compra vai cair — tira a dúvida do ciclo de fechamento
+  const showFatura = () => {
+    const hint = $('#fatura-hint');
+    if (!hint || $('#wrap-card').hidden) return;
+    const card = DB.get('cards', $('#f-card').value);
+    const date = $('#f-date').value;
+    if (!card || !date) { hint.textContent = ''; return; }
+    const { due } = DB.invoiceDates(card, DB.invoiceKeyFor(card, date));
+    hint.innerHTML = `Cai na fatura que vence em <b>${due.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long' })}</b>.`;
+  };
+
+  /* Categoria: 3 botões mais usados + "Outra" abrindo a lista completa */
+  const setCategory = id => {
+    let achou = false;
+    document.querySelectorAll('#g-cat .chip').forEach(ch => {
+      if (ch.id === 'cat-other') return;
+      const match = !!id && ch.dataset.v === id;
+      ch.classList.toggle('active', match);
+      if (match) achou = true;
+    });
+    const outra = $('#cat-other');
+    if (id && !achou) {                       // fora do top 3: vira o rótulo do botão "Outra"
+      const c = DB.get('categories', id);
+      outra.dataset.v = id;
+      outra.textContent = c ? `${c.icon} ${c.name}` : 'Outra ▾';
+      outra.classList.add('active');
+      $('#f-cat-more').value = id;
+    } else {
+      outra.dataset.v = '';
+      outra.textContent = 'Outra ▾';
+      outra.classList.remove('active');
+    }
+    $('#f-cat-more').hidden = true;
+  };
+  bindChips('g-cat', () => {
+    $('#cat-auto').textContent = '';
+    const abriu = $('#cat-other').classList.contains('active') && !$('#cat-other').dataset.v;
+    $('#f-cat-more').hidden = !abriu;
+    if (abriu) setTimeout(() => $('#f-cat-more').focus(), 20);
   });
+  $('#f-cat-more').onchange = e => { if (e.target.value) setCategory(e.target.value); };
+  setCategory(tx.category_id);
+
+  bindChips('g-type', v => { applyType(v); applyMethod(chipValue('g-method')); });
+  bindChips('g-scope', applyScope);
+  bindChips('g-method', applyMethod);
+  applyType(tx.type || 'Despesa');
+  applyScope(tx.scope || 'Família');
+
+  // Atalhos de data
+  document.querySelectorAll('#g-day .chip').forEach(ch => ch.onclick = () => {
+    const d = new Date();
+    d.setDate(d.getDate() - Number(ch.dataset.d));
+    $('#f-date').value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    showFatura();
+  });
+  $('#f-date').addEventListener('change', showFatura);
+  $('#f-card').addEventListener('change', showFatura);
+
+  // Descrição: sugere categoria e repete os dados do último lançamento igual
+  const desc = $('#f-desc');
+  desc.addEventListener('input', () => {
+    const texto = desc.value.trim();
+    if (!texto || chipValue('g-type') === 'Receita') return;
+    const anterior = historico.find(h => h.description.toLowerCase() === texto.toLowerCase());
+    if (anterior) {                                   // já lançou isso antes: repete a classificação
+      setCategory(anterior.category_id);
+      selectChip('g-method', anterior.method);
+      applyMethod(anterior.method);
+      if (anterior.category_id) $('#cat-auto').textContent = '· repetido do último lançamento igual';
+      if (!moneyVal('#f-amount') && anterior.amount) initMoney('#f-amount', anterior.amount);
+      return;
+    }
+    if (chipValue('g-cat')) return;                   // não sobrescreve escolha manual
+    const guess = OFX.guessCategoryId(texto, cats);
+    if (guess) { setCategory(guess); $('#cat-auto').textContent = '· sugerida automaticamente'; }
+  });
+
   initMoney('#f-amount', tx.amount);
+  showFatura();
   const parcSel = $('#f-parc');
   if (parcSel) {
     const showParc = () => {
@@ -782,21 +1034,35 @@ function openTxSheet(tx) {
   $('#sh-close').onclick = closeSheet;
   setTimeout(() => $('#f-amount').focus(), 80);
 
-  $('#sh-save').onclick = () => {
+  const salvar = () => {
     const amount = moneyVal('#f-amount');
-    const desc = $('#f-desc').value.trim();
-    if (!amount || amount <= 0) return toast('Informe o valor');
-    if (!desc) return toast('Informe a descrição');
+    const descricao = $('#f-desc').value.trim();
+    if (!amount || amount <= 0) { $('#f-amount').focus(); return toast('Informe o valor'); }
+    if (!descricao) { $('#f-desc').focus(); return toast('Informe a descrição'); }
+
+    // Âmbito e membro andam juntos: Família ⇒ comum; Pessoal ⇒ exige a pessoa
+    const scope = chipValue('g-scope') || 'Família';
+    let member = MEMBRO_COMUM;
+    if (scope === 'Pessoal') {
+      member = $('#f-member').value;
+      if (!member) {
+        if (!pessoas.length) return toast('Cadastre os membros em Configurações → Membros');
+        $('#wrap-member').hidden = false;
+        $('#f-member').focus();
+        return toast('Escolha de quem é este gasto pessoal');
+      }
+    }
+
+    const isReceita = chipValue('g-type') === 'Receita';
     const method = chipValue('g-method');
     const rec = {
       ...tx,
-      description: desc, amount, date: $('#f-date').value || todayISO(),
+      description: descricao, amount, date: $('#f-date').value || todayISO(),
       status: $('#f-status').value, method,
-      scope: chipValue('g-scope') || 'Família',
-      member: $('#f-member').value,
-      category_id: chipValue('g-cat') || null,
+      scope, member,
+      category_id: isReceita ? null : (chipValue('g-cat') || null),
       recurring: !!$('#f-rec').value,
-      type: chipValue('g-type') || 'Despesa',
+      type: isReceita ? 'Receita' : 'Despesa',
       card_id: null, account_id: null, invoice_key: '',
     };
     if (method === 'Cartão de Crédito') {
@@ -807,7 +1073,7 @@ function openTxSheet(tx) {
 
       // Compra parcelada: gera uma parcela por fatura, com os centavos ajustados na 1ª
       const parcelas = Math.max(1, Math.min(24, parseInt((parcSel || {}).value) || 1));
-      if (!isEdit && parcelas > 1) {
+      if (!isEdit && !isReceita && parcelas > 1) {
         const group = DB.uuid();
         const cents = Math.round(amount * 100);
         const base = Math.floor(cents / parcelas);
@@ -836,7 +1102,19 @@ function openTxSheet(tx) {
     DB.upsert('transactions', rec);
     adjustBalance(rec.account_id, txEffect(rec));                 // aplica efeito novo
     closeSheet(); render(); Sync.autoSync();
-    toast(isEdit ? 'Lançamento atualizado' : 'Gasto lançado ✓');
+    toast(isEdit ? 'Lançamento atualizado ✓' : (isReceita ? 'Receita lançada ✓' : 'Gasto lançado ✓'));
+  };
+  $('#sh-save').onclick = salvar;
+
+  // Repetir: abre um novo lançamento já preenchido com os mesmos dados, na data de hoje
+  const dup = $('#sh-dup');
+  if (dup) dup.onclick = () => {
+    const copia = { ...tx, date: todayISO(), status: 'Pago' };
+    delete copia.id; delete copia.updated_at; delete copia.dirty;
+    delete copia.fitid; delete copia.group_id; delete copia.installment;
+    copia.description = copia.description.replace(/\s*\(\d+\/\d+\)$/, '');
+    closeSheet();
+    setTimeout(() => openTxSheet(copia, true), 60);   // abre como NOVO já preenchido
   };
   const del = $('#sh-del');
   if (del) del.onclick = () => {
@@ -852,6 +1130,53 @@ function openTxSheet(tx) {
     DB.remove('transactions', tx.id);
     closeSheet(); render(); Sync.autoSync();
     toast('Excluído');
+  };
+}
+
+/* ---------- Saldo rápido e transferência entre contas ---------- */
+function openSaldoSheet(accountId) {
+  const a = DB.get('accounts', accountId);
+  if (!a) return;
+  openSheet(`
+    <div class="sheet-title">Saldo — ${esc(a.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin-bottom:10px">Confira no app do banco e ajuste aqui. É a conciliação que mantém o <b>disponível para usar</b> confiável.</p>
+    <div class="field"><input class="amount-input" id="s-bal" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
+    <button class="btn" id="sh-save">Atualizar saldo</button>
+    <div class="btn-row"><button class="btn ghost" id="sh-edit">Editar conta</button></div>
+  `);
+  initMoney('#s-bal', a.balance);
+  $('#sh-close').onclick = closeSheet;
+  $('#sh-edit').onclick = () => { closeSheet(); openConfigSection('accounts'); };
+  $('#sh-save').onclick = () => {
+    DB.upsert('accounts', { ...a, balance: moneyVal('#s-bal') });
+    closeSheet(); render(); Sync.autoSync();
+    toast('Saldo atualizado ✓');
+  };
+}
+
+function openTransferSheet() {
+  const contas = DB.all('accounts').filter(a => a.active !== false);
+  const opts = sel => contas.map(a => `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('');
+  openSheet(`
+    <div class="sheet-title">Transferir entre contas<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin-bottom:10px">Mover dinheiro entre suas contas <b>não é despesa nem receita</b> — só ajusta os saldos, sem poluir seus relatórios.</p>
+    <div class="field"><input class="amount-input" id="t-val" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
+    <div class="field"><label>De</label><select id="t-from">${opts()}</select></div>
+    <div class="field"><label>Para</label><select id="t-to">${opts()}</select></div>
+    <button class="btn" id="sh-save">Transferir</button>
+  `);
+  initMoney('#t-val');
+  if ($('#t-to').options.length > 1) $('#t-to').selectedIndex = 1;
+  $('#sh-close').onclick = closeSheet;
+  $('#sh-save').onclick = () => {
+    const valor = moneyVal('#t-val');
+    const de = $('#t-from').value, para = $('#t-to').value;
+    if (!valor) return toast('Informe o valor');
+    if (de === para) return toast('Escolha contas diferentes');
+    adjustBalance(de, -valor);
+    adjustBalance(para, valor);
+    closeSheet(); render(); Sync.autoSync();
+    toast('Transferência registrada ✓');
   };
 }
 
@@ -897,6 +1222,7 @@ function openGoalSheet(goal) {
 
 function openAporteSheet(goalId) {
   const g = DB.get('goals', goalId);
+  if (!g) return toast('Meta não encontrada — atualize a tela');
   openSheet(`
     <div class="sheet-title">Aporte — ${esc(g.icon)} ${esc(g.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <div class="field"><input class="amount-input" id="a-amount" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
@@ -904,6 +1230,14 @@ function openAporteSheet(goalId) {
       <div class="field"><label>Descrição</label><input id="a-desc" value="Aporte"></div>
       <div class="field"><label>Data</label><input id="a-date" type="date" value="${todayISO()}"></div>
     </div>
+    <div class="field"><label>Saiu de qual conta? <span class="muted">— opcional, ajusta o saldo</span></label>
+      <select id="a-account"><option value="">— não movimentar contas —</option>
+        ${DB.all('accounts').filter(a => a.active !== false).map(a => `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}
+      </select></div>
+    <div class="field"><label>Entrou em qual conta? <span class="muted">— onde o dinheiro ficou guardado</span></label>
+      <select id="a-to"><option value="">— não movimentar contas —</option>
+        ${DB.all('accounts').filter(a => a.active !== false).map(a => `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}
+      </select></div>
     <button class="btn" id="sh-save">Registrar aporte</button>
   `);
   initMoney('#a-amount');
@@ -912,9 +1246,13 @@ function openAporteSheet(goalId) {
   $('#sh-save').onclick = () => {
     const amount = moneyVal('#a-amount');
     if (!amount) return toast('Informe o valor');
+    const de = $('#a-account').value, para = $('#a-to').value;
+    if (de && de === para) return toast('Origem e destino não podem ser a mesma conta');
     DB.upsert('goal_entries', { goal_id: goalId, amount, description: $('#a-desc').value || 'Aporte', date: $('#a-date').value || todayISO() });
+    if (de) adjustBalance(de, -amount);      // saiu da conta corrente
+    if (para) adjustBalance(para, amount);   // entrou na caixinha/reserva
     closeSheet(); render(); Sync.autoSync();
-    toast('Aporte registrado ✓');
+    toast(de || para ? 'Aporte registrado e saldos ajustados ✓' : 'Aporte registrado ✓');
   };
 }
 
@@ -1355,7 +1693,7 @@ function renderOfxPreview(parsed, accounts, cards) {
         type: isExp ? 'Despesa' : 'Receita',
         status: 'Pago',
         scope: 'Família',
-        member: DB.settings().members[0] || '',
+        member: MEMBRO_COMUM,                 // extrato conjunto entra como gasto comum
         method: OFX.guessMethod(t.memo, !!card),
         category_id: (catSel && catSel.value) || null,
         fitid: t.fitid,
