@@ -59,9 +59,11 @@ create table if not exists categories (
   icon text default '🏷️',
   scope text not null default 'Família',
   monthly_budget numeric not null default 0,
+  kind text not null default 'Essencial',   -- 'Essencial' | 'Estilo' (regra 50/30/20)
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
+alter table categories add column if not exists kind text not null default 'Essencial';
 
 create table if not exists transactions (
   id uuid primary key,
@@ -120,9 +122,11 @@ create table if not exists family_settings (
   family_id uuid not null references families(id) on delete cascade,
   members jsonb not null default '["Família"]',
   month_start_day int not null default 1,
+  monthly_income numeric not null default 0,   -- renda líquida familiar (projeções, 50/30/20)
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
+alter table family_settings add column if not exists monthly_income numeric not null default 0;
 
 create index if not exists idx_tx_family_date on transactions(family_id, date);
 create index if not exists idx_tx_family_upd on transactions(family_id, updated_at);

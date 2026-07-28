@@ -116,10 +116,11 @@ const DB = {
   settings() {
     let s = this.all('family_settings')[0];
     if (!s) {
-      s = { id: this.uuid(), members: ['Joctã', 'Cônjuge'], month_start_day: 1, updated_at: this.now(), deleted: false, dirty: true };
+      s = { id: this.uuid(), members: ['Joctã', 'Cônjuge'], month_start_day: 1, monthly_income: 0, updated_at: this.now(), deleted: false, dirty: true };
       this.data.family_settings.push(s);
       this.save();
     }
+    if (s.monthly_income === undefined) s.monthly_income = 0;
     return s;
   },
 
@@ -207,6 +208,73 @@ const DB = {
       .reduce((s, e) => s + (Number(e.amount) || 0), 0);
   },
 
+  /* ---------- Inteligência financeira (conceitos de planejamento) ---------- */
+  // Dias do período e dias já decorridos (mín. 1, máx. total).
+  periodDays(period) { return Math.round((period.end - period.start) / 86400000); },
+  elapsedDays(period) {
+    const today = new Date();
+    if (today < period.start) return 0;
+    return Math.min(this.periodDays(period), Math.floor((today - period.start) / 86400000) + 1);
+  },
+
+  // Run-rate: gasto até agora + média diária × dias restantes.
+  statsFor(period) {
+    const txs = this.txOfPeriod(period);
+    const spent = txs.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    const total = this.periodDays(period);
+    const elapsed = this.elapsedDays(period);
+    const dailyAvg = spent / Math.max(elapsed, 1);
+    const projection = elapsed >= total ? spent : spent + dailyAvg * (total - elapsed);
+    return { spent, count: txs.length, dailyAvg, projection, totalDays: total, elapsedDays: elapsed, remainingDays: Math.max(0, total - elapsed) };
+  },
+
+  // Comprometido = faturas não pagas + lançamentos "A Pagar" fora de cartão (sem contar duas vezes).
+  committed() {
+    let total = 0;
+    for (const card of this.all('cards').filter(c => c.active !== false))
+      for (const inv of this.invoicesOf(card))
+        if (inv.status !== 'Paga') total += inv.total;
+    for (const t of this.all('transactions'))
+      if (t.status === 'A Pagar' && !t.card_id) total += Number(t.amount) || 0;
+    return total;
+  },
+
+  accountsTotal() {
+    return this.all('accounts').filter(a => a.active !== false)
+      .reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  },
+
+  // Disponível de verdade: o que está nas contas menos o que já está comprometido.
+  available() { return this.accountsTotal() - this.committed(); },
+
+  // Reserva = contas de guarda (caixinhas e investimentos).
+  reserveTotal() {
+    return this.all('accounts')
+      .filter(a => a.active !== false && (a.type === 'Caixinha / Rendimento' || a.type === 'Investimento'))
+      .reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  },
+
+  // Gasto médio dos últimos n períodos completos (base p/ cobertura da reserva).
+  avgMonthlySpend(n = 3) {
+    const vals = [];
+    for (let i = 1; i <= n; i++) {
+      const p = this.monthPeriod(new Date(), -i);
+      const v = this.txOfPeriod(p).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+      if (v > 0) vals.push(v);
+    }
+    if (!vals.length) return this.statsFor(this.monthPeriod(new Date())).projection || 0;
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+  },
+
+  // Ritmo de aportes de uma meta (média mensal dos últimos 90 dias).
+  goalPace(goalId) {
+    const cut = new Date(Date.now() - 90 * 86400000);
+    const recent = this.all('goal_entries')
+      .filter(e => e.goal_id === goalId && new Date(e.date + 'T12:00:00') >= cut)
+      .reduce((s, e) => s + (Number(e.amount) || 0), 0);
+    return recent / 3;
+  },
+
   /* ---------- Backup ---------- */
   exportJSON() {
     return JSON.stringify(this.data, null, 2);
@@ -221,15 +289,26 @@ const DB = {
   },
 
   /* ---------- Dados de fábrica ---------- */
+  // Gasto do período dividido em Necessidades x Desejos (base da regra 50/30/20).
+  spentByKind(period) {
+    const out = { Essencial: 0, Estilo: 0 };
+    for (const t of this.txOfPeriod(period)) {
+      const c = this.get('categories', t.category_id);
+      const kind = (c && c.kind) === 'Estilo' ? 'Estilo' : 'Essencial';
+      out[kind] += Number(t.amount) || 0;
+    }
+    return out;
+  },
+
   seed() {
     if (this.data.meta.seeded) return;
-    const cat = (name, icon, budget, scope = 'Família') =>
-      ({ id: this.uuid(), name, icon, monthly_budget: budget, scope, updated_at: this.now(), deleted: false, dirty: true });
+    const cat = (name, icon, budget, kind, scope = 'Família') =>
+      ({ id: this.uuid(), name, icon, monthly_budget: budget, kind, scope, updated_at: this.now(), deleted: false, dirty: true });
     this.data.categories = [
-      cat('Moradia', '🏠', 1800), cat('Alimentação / Mercado', '🍽️', 1500),
-      cat('Transporte', '🚗', 500), cat('Saúde', '💊', 400),
-      cat('Lazer', '🎮', 350), cat('Assinaturas', '🔁', 150),
-      cat('Educação', '📚', 300), cat('Gastos Pessoais', '👤', 600, 'Pessoal'),
+      cat('Moradia', '🏠', 1800, 'Essencial'), cat('Alimentação / Mercado', '🍽️', 1500, 'Essencial'),
+      cat('Transporte', '🚗', 500, 'Essencial'), cat('Saúde', '💊', 400, 'Essencial'),
+      cat('Lazer', '🎮', 350, 'Estilo'), cat('Assinaturas', '🔁', 150, 'Estilo'),
+      cat('Educação', '📚', 300, 'Essencial'), cat('Gastos Pessoais', '👤', 600, 'Estilo', 'Pessoal'),
     ];
     this.data.meta.seeded = true;
     this.save();

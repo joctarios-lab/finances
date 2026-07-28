@@ -48,12 +48,30 @@ function render() {
   bindView();
 }
 
+/* ---------- Situação financeira (conceitos: disponível real, run-rate, 50/30/20, reserva) ---------- */
+function healthOf(stats, refLimit, available) {
+  if (available < 0) return { label: 'Crítico', cls: 'red', msg: 'Comprometido maior que o saldo — reveja as próximas contas.' };
+  if (refLimit > 0) {
+    if (stats.projection > refLimit * 1.1) return { label: 'Crítico', cls: 'red', msg: 'Ritmo de gasto bem acima do limite do mês.' };
+    if (stats.projection > refLimit) return { label: 'Atenção', cls: 'amber', msg: 'Nesse ritmo o mês fecha acima do planejado.' };
+  }
+  return { label: 'Saudável', cls: 'green', msg: 'Gastos sob controle no ritmo atual.' };
+}
+
 /* ---------- Início ---------- */
 function renderInicio(period) {
   const txs = DB.txOfPeriod(period);
   const total = txs.reduce((s, t) => s + Number(t.amount || 0), 0);
   const contas = DB.all('accounts').filter(a => a.active !== false);
   const saldo = contas.reduce((s, a) => s + Number(a.balance || 0), 0);
+
+  const stats = DB.statsFor(period);
+  const committed = DB.committed();
+  const available = saldo - committed;
+  const income = Number(DB.settings().monthly_income) || 0;
+  const budgetTotal = DB.all('categories').reduce((s, c) => s + (Number(c.monthly_budget) || 0), 0);
+  const refLimit = income > 0 ? income : budgetTotal;
+  const health = healthOf(stats, refLimit, available);
 
   let openInvoices = 0, upcoming = [];
   for (const card of DB.all('cards').filter(c => c.active !== false)) {
@@ -117,13 +135,81 @@ function renderInicio(period) {
     </div>`;
   }
 
+  // --- Projeção de fim de mês (run-rate) ---
+  const projPct = refLimit > 0 ? Math.round(stats.projection / refLimit * 100) : 0;
+  const savingsRate = income > 0 ? Math.round((income - stats.projection) / income * 100) : null;
+  const projCard = `
+    <div class="card">
+      <div class="card-head"><div><b>Projeção do mês</b><small>no ritmo atual de gastos (${fmtShort(stats.dailyAvg)}/dia)</small></div><span class="kpi-ico t-warning" data-ico="calendar" style="width:34px;height:34px;margin:0"></span></div>
+      <div class="proj-row"><span>Gasto até hoje (dia ${stats.elapsedDays} de ${stats.totalDays})</span><b>${fmtShort(stats.spent)}</b></div>
+      <div class="proj-row"><span>Fechamento projetado</span><b class="${refLimit > 0 && stats.projection > refLimit ? 'txt-red' : 'txt-green'}">${fmtShort(stats.projection)}</b></div>
+      ${refLimit > 0 ? `
+        <div class="bar ${barClass(projPct)}" style="margin:8px 0 4px"><i style="width:${Math.min(100, projPct)}%"></i></div>
+        <div class="proj-row muted"><span>${projPct}% do ${income > 0 ? 'da renda familiar' : 'orçamento total'} (${fmtShort(refLimit)})</span>
+        ${savingsRate !== null ? `<span>Poupança projetada: <b class="${savingsRate >= 20 ? 'txt-green' : savingsRate >= 0 ? 'txt-amber' : 'txt-red'}">${savingsRate}%</b></span>` : ''}</div>
+      ` : `<p class="muted" style="margin-top:6px">Cadastre a renda familiar em Configurações → Membros &amp; ciclo para ver % da renda e taxa de poupança (especialistas recomendam poupar ≥ 20%).</p>`}
+    </div>`;
+
+  // --- 50/30/20 (Necessidades / Desejos / Poupança) ---
+  let rule5030 = '';
+  if (income > 0) {
+    const byKind = DB.spentByKind(period);
+    const nPct = Math.round(byKind.Essencial / income * 100);
+    const wPct = Math.round(byKind.Estilo / income * 100);
+    const sPct = Math.max(0, 100 - nPct - wPct);
+    const row = (nome, pct, alvo, cls) => `
+      <div class="budget-row">
+        <div class="budget-head"><b>${nome}</b><span class="num">${pct}% <span class="muted">/ alvo ${alvo}%</span></span></div>
+        <div class="bar ${cls}"><i style="width:${Math.min(100, pct)}%"></i></div>
+      </div>`;
+    rule5030 = `
+      <div class="card">
+        <div class="card-head"><div><b>Regra 50 · 30 · 20</b><small>necessidades, desejos e poupança como % da renda</small></div></div>
+        ${row('Necessidades', nPct, 50, nPct > 50 ? 'bar-red' : 'bar-green')}
+        ${row('Desejos', wPct, 30, wPct > 30 ? 'bar-red' : 'bar-green')}
+        ${row('Poupança (sobra)', sPct, 20, sPct < 20 ? 'bar-amber' : 'bar-green')}
+      </div>`;
+  }
+
+  // --- Reserva de emergência (cobertura em meses) ---
+  const reserve = DB.reserveTotal();
+  const avgSpend = DB.avgMonthlySpend();
+  const coverage = avgSpend > 0 ? reserve / avgSpend : 0;
+  const covPct = Math.min(100, Math.round(coverage / 6 * 100));
+  const reserveCard = `
+    <div class="card">
+      <div class="card-head"><div><b>Reserva de emergência</b><small>caixinhas + investimentos vs. custo de vida</small></div><span class="kpi-ico t-success" data-ico="shield" style="width:34px;height:34px;margin:0"></span></div>
+      <div class="proj-row"><span>Guardado</span><b>${fmtShort(reserve)}</b></div>
+      <div class="proj-row"><span>Cobre</span><b class="${coverage >= 6 ? 'txt-green' : coverage >= 3 ? 'txt-amber' : 'txt-red'}">${coverage.toFixed(1)} meses</b></div>
+      <div class="bar ${coverage >= 6 ? 'bar-green' : coverage >= 3 ? 'bar-amber' : 'bar-red'}" style="margin:8px 0 4px"><i style="width:${covPct}%"></i></div>
+      <p class="muted">Recomendação clássica: 3 a 6 meses do gasto médio (${fmtShort(avgSpend)}/mês).</p>
+    </div>`;
+
   return `
+    <div class="hero hero-${health.cls}">
+      <div class="hero-top">
+        <span class="hero-label">Disponível para usar</span>
+        <span class="hero-badge b-${health.cls}">${health.label}</span>
+      </div>
+      <div class="hero-value">${fmt(available)}</div>
+      <p class="hero-msg">${health.msg}</p>
+      <div class="hero-stats">
+        <div><small>Em contas</small><b>${fmtShort(saldo)}</b></div>
+        <div><small>Comprometido</small><b>${fmtShort(committed)}</b></div>
+        <div><small>Projeção do mês</small><b>${fmtShort(stats.projection)}</b></div>
+      </div>
+    </div>
     <div class="kpi-grid">
       <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmtShort(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
       <div class="card kpi"><span class="kpi-ico t-danger" data-ico="invoice"></span><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmtShort(openInvoices)}</div><div class="kpi-label">Faturas em aberto</div><div class="kpi-sub">${upcoming.length} fatura(s)</div></div>
       <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmtShort(saldo)}</div><div class="kpi-label">Saldo em contas</div><div class="kpi-sub">${contas.length} conta(s)</div></div>
       <div class="card kpi"><span class="kpi-ico t-info" data-ico="target"></span><div class="kpi-value">${avgPct}%</div><div class="kpi-label">Metas (média)</div><div class="kpi-sub">${goals.length} em andamento</div></div>
     </div>
+    <div class="grid-2">
+      ${projCard}
+      ${reserveCard}
+    </div>
+    ${rule5030}
     <div class="grid-2">
       <div class="card">
         <div class="card-head"><div><b>Para onde foi o dinheiro</b><small>distribuição do período por categoria</small></div><span class="kpi-ico t-primary" data-ico="pie" style="width:34px;height:34px;margin:0"></span></div>
@@ -161,11 +247,18 @@ function renderExtrato(period) {
   }
   if (!txs.length) list = `<div class="empty"><b>Sem lançamentos</b>Nada registrado neste período com esse filtro.</div>`;
 
+  const st = DB.statsFor(period);
+  const isCurrent = state.monthOffset === 0;
   return `
     <div class="card month-nav">
       <button id="mn-prev" aria-label="Mês anterior" data-ico="chevL"></button>
       <b>${period.label} · ${fmtShort(total)}</b>
       <button id="mn-next" aria-label="Próximo mês" data-ico="chevR"></button>
+    </div>
+    <div class="mini-stats">
+      <div class="card"><small>Média/dia</small><b>${fmtShort(st.dailyAvg)}</b></div>
+      <div class="card"><small>Lançamentos</small><b>${st.count}</b></div>
+      <div class="card"><small>${isCurrent ? 'Projeção' : 'Total'}</small><b>${fmtShort(isCurrent ? st.projection : st.spent)}</b></div>
     </div>
     <div class="chips" id="scope-chips">
       ${['Todos', 'Família', 'Pessoal'].map(f => `<button class="chip ${state.filter === f ? 'active' : ''}" data-f="${f}">${f}</button>`).join('')}
@@ -181,7 +274,12 @@ function renderCartoes() {
     return `<div class="empty"><b>Nenhum cartão cadastrado</b>Adicione em ⚙︎ → Cartões de crédito.</div>
       <button class="btn ghost" onclick="openConfigSection('cards')">Cadastrar cartão</button>`;
   }
-  let html = '';
+  const committed = DB.committed();
+  let html = committed > 0 ? `
+    <div class="card">
+      <div class="card-head" style="margin-bottom:4px"><div><b>Compromissos futuros</b><small>faturas não pagas + contas a pagar — já descontados do seu disponível</small></div>
+      <span class="num txt-red" style="font-size:18px">${fmtShort(committed)}</span></div>
+    </div>` : '';
   for (const card of cards) {
     const invoices = DB.invoicesOf(card);
     const currentKey = DB.invoiceKeyFor(card, todayISO());
@@ -226,6 +324,26 @@ function renderMetas() {
     const total = DB.goalTotal(g.id);
     const pct = g.target_amount > 0 ? Math.round(total / g.target_amount * 100) : 0;
     const entries = DB.all('goal_entries').filter(e => e.goal_id === g.id).sort((a, b) => b.date.localeCompare(a.date));
+
+    // Preditivo: ritmo de aportes → previsão de conclusão; e quanto/mês para cumprir a data alvo.
+    let forecast = '';
+    const remaining = Math.max(0, (Number(g.target_amount) || 0) - total);
+    if (!g.done && remaining > 0) {
+      const pace = DB.goalPace(g.id);
+      if (pace > 0) {
+        const eta = new Date(Date.now() + (remaining / pace) * 30.44 * 86400000);
+        const etaLabel = eta.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
+        forecast += `<div class="muted" style="margin-top:8px">📈 Ritmo: <b>${fmtShort(pace)}/mês</b> → conclusão prevista em <b>${etaLabel}</b></div>`;
+      } else {
+        forecast += `<div class="muted" style="margin-top:8px">📈 Sem aportes nos últimos 90 dias — a meta está parada.</div>`;
+      }
+      if (g.target_date) {
+        const monthsLeft = Math.max(0.5, (new Date(g.target_date) - Date.now()) / (30.44 * 86400000));
+        const needed = remaining / monthsLeft;
+        const pace90 = DB.goalPace(g.id);
+        forecast += `<div class="muted">🎯 Para cumprir até ${fmtDay(g.target_date)}: <b class="${pace90 >= needed ? 'txt-green' : 'txt-amber'}">${fmtShort(needed)}/mês</b></div>`;
+      }
+    }
     html += `
     <div class="card goal-card">
       <div class="goal-head"><span class="goal-ico">${esc(g.icon)}</span>
@@ -233,6 +351,7 @@ function renderMetas() {
         <span class="goal-pct">${pct}%</span></div>
       <div class="goal-nums"><span>Guardado: <b>${fmtShort(total)}</b></span><span>Meta: <b>${fmtShort(g.target_amount)}</b></span></div>
       <div class="bar ${pct >= 100 ? 'bar-green' : barClass(100 - pct) === 'bar-red' ? 'bar-amber' : 'bar-green'}"><i style="width:${Math.min(100, pct)}%"></i></div>
+      ${forecast}
       <div class="btn-row">
         <button class="btn ghost" data-aporte="${g.id}">＋ Aporte</button>
         <button class="btn ghost" data-editgoal="${g.id}">Editar</button>
@@ -538,13 +657,17 @@ function openConfigSection(sec) {
             <div class="field"><label>Âmbito</label><select id="c-scope"><option ${cat.scope === 'Família' ? 'selected' : ''}>Família</option><option ${cat.scope === 'Pessoal' ? 'selected' : ''}>Pessoal</option></select></div>
             <div class="field"><label>Orçamento mensal</label><input id="c-budget" type="number" step="0.01" value="${cat.monthly_budget}"></div>
           </div>
+          <div class="field"><label>Tipo (regra 50/30/20)</label><select id="c-kind">
+            <option value="Essencial" ${cat.kind !== 'Estilo' ? 'selected' : ''}>Necessidade (moradia, mercado, saúde…)</option>
+            <option value="Estilo" ${cat.kind === 'Estilo' ? 'selected' : ''}>Desejo (lazer, assinaturas, extras…)</option>
+          </select></div>
           <button class="btn" id="md-save">Salvar</button>
           ${isEdit ? '<div class="btn-row"><button class="btn danger" id="md-del">Excluir</button></div>' : ''}
         `);
         $('#md-back').onclick = () => openConfigSection('categories');
         $('#md-save').onclick = () => {
           if (!$('#c-name').value.trim()) return toast('Informe o nome');
-          DB.upsert('categories', { ...cat, name: $('#c-name').value.trim(), icon: $('#c-icon').value || '🏷️', scope: $('#c-scope').value, monthly_budget: parseFloat($('#c-budget').value) || 0 });
+          DB.upsert('categories', { ...cat, name: $('#c-name').value.trim(), icon: $('#c-icon').value || '🏷️', scope: $('#c-scope').value, monthly_budget: parseFloat($('#c-budget').value) || 0, kind: $('#c-kind').value });
           Sync.autoSync(); openConfigSection('categories');
         };
         const del = $('#md-del');
@@ -559,12 +682,14 @@ function openConfigSection(sec) {
       <div class="field"><label>Membros (um por linha)</label><textarea id="f-members" rows="4">${esc(s.members.join('\n'))}</textarea></div>
       <div class="field"><label>Dia de início do mês financeiro</label><input id="f-start" type="number" min="1" max="28" value="${s.month_start_day}">
         <p class="muted" style="margin-top:6px">1 = mês calendário. Ex: 5 = período do dia 5 ao dia 4 do mês seguinte (útil para quem se organiza pelo salário).</p></div>
+      <div class="field"><label>Renda mensal da família (líquida)</label><input id="f-income" type="number" step="0.01" min="0" value="${s.monthly_income || ''}" placeholder="Ex: 8500">
+        <p class="muted" style="margin-top:6px">Base para a projeção vs. renda, taxa de poupança e regra 50/30/20 no painel.</p></div>
       <button class="btn" id="md-save">Salvar</button>
     `);
     $('#md-back').onclick = openConfig;
     $('#md-save').onclick = () => {
       const members = $('#f-members').value.split('\n').map(x => x.trim()).filter(Boolean);
-      DB.upsert('family_settings', { ...s, members: members.length ? members : ['Família'], month_start_day: Math.min(28, Math.max(1, parseInt($('#f-start').value) || 1)) });
+      DB.upsert('family_settings', { ...s, members: members.length ? members : ['Família'], month_start_day: Math.min(28, Math.max(1, parseInt($('#f-start').value) || 1)), monthly_income: parseFloat($('#f-income').value) || 0 });
       Sync.autoSync(); toast('Salvo'); openConfig();
     };
   }
