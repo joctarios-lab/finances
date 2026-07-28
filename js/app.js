@@ -738,9 +738,32 @@ function renderExtrato(period) {
   const total = txs.filter(t => DB.isExpense(t) && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
   const receitas = txs.filter(t => !DB.isExpense(t) && !t.card_id && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
 
+  /* Total do dia, somado sobre a lista JÁ FILTRADA: com um filtro ativo, um total
+     vindo de outra base não bateria com as linhas logo abaixo dele.
+     Transferência e conciliação ficam de fora — não são gasto nem entrada, só
+     dinheiro mudando de lugar. */
+  const porDia = {};
+  for (const t of txs) {
+    if (DB.isNeutral(t)) continue;
+    const d = (porDia[t.date] = porDia[t.date] || { saiu: 0, entrou: 0 });
+    const v = Number(t.amount) || 0;
+    if (DB.isExpense(t)) d.saiu += v;
+    else if (!t.card_id) d.entrou += v;      // estorno de cartão abate a fatura, não entra na conta
+  }
+
   let list = '', lastDay = '';
   for (const t of txs) {
-    if (t.date !== lastDay) { lastDay = t.date; list += `<p class="tx-day">${fmtDay(t.date)}</p>`; }
+    if (t.date !== lastDay) {
+      lastDay = t.date;
+      const d = porDia[t.date] || { saiu: 0, entrou: 0 };
+      // Saída e entrada lado a lado em vez de um saldo líquido: um dia com
+      // R$ 3.000 de salário e R$ 3.000 de contas não é um dia sem movimento.
+      const totais = [
+        d.saiu ? `<span class="tx-day-out">− ${fmtShort(d.saiu)}</span>` : '',
+        d.entrou ? `<span class="tx-day-in">+ ${fmtShort(d.entrou)}</span>` : '',
+      ].filter(Boolean).join('');
+      list += `<p class="tx-day"><span>${fmtDay(t.date)}</span>${totais ? `<span class="tx-day-tot">${totais}</span>` : ''}</p>`;
+    }
     const c = catOf(t.category_id);
     const via = t.method === 'Cartão de Crédito'
       ? `💳 ${esc((DB.get('cards', t.card_id) || {}).name || 'Cartão')}`

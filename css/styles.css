@@ -358,7 +358,16 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .bar-red > i { background: var(--red); }
 
 /* Transações */
-.tx-day { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--paper-dim); margin: 12px 2px 6px; }
+.tx-day {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--paper-dim); margin: 12px 2px 6px;
+}
+/* O total do dia acompanha o rótulo, sem competir com o valor de cada lançamento:
+   mesmo tamanho da data, não o corpo da linha. */
+.tx-day-tot { display: flex; gap: 10px; letter-spacing: 0; flex: none; }
+.tx-day-out { color: var(--red); }
+.tx-day-in { color: #47be7d; }
 .tx {
   display: flex; align-items: center; gap: 12px; padding: 11px 14px;
   background: var(--ink-2); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;

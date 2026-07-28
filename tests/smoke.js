@@ -65,7 +65,7 @@ eval(fs.readFileSync(BASE + 'js/ofx.js', 'utf8') + '; global.OFX = OFX;');
 const appSrc = fs.readFileSync(BASE + 'js/app.js', 'utf8').split('/* ---------- Boot ---------- */')[0];
 eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
-  state, fmt, fmtShort, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
+  state, fmt, fmtShort, fmtDay, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
@@ -1216,6 +1216,53 @@ try {
    conta que recebeu, o crédito correspondente não pode virar lançamento novo:
    entraria o mesmo dinheiro duas vezes. O FITID não ajuda — cada banco emite o
    seu, então a mesma transferência tem identificadores diferentes nos dois lados. */
+/* ---- Total por dia no extrato ---- */
+console.log('\n=== Total do dia no extrato ===');
+try {
+  const contaD = DB.all('accounts')[0].id;
+  const diaTeste = dia(23);
+  DB.upsert('transactions', { description: 'Mercado do dia', amount: 200, date: diaTeste, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaD });
+  DB.upsert('transactions', { description: 'Padaria do dia', amount: 50, date: diaTeste, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Dinheiro', account_id: contaD });
+  DB.upsert('transactions', { description: 'Reembolso do dia', amount: 80, date: diaTeste, type: 'Receita', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaD });
+
+  state.filtros = { ...FILTROS_VAZIOS };
+  const pD = DB.monthPeriod(new Date());
+  const linhaDoDia = html => {
+    const m = html.match(new RegExp(`<p class="tx-day">[\\s\\S]*?</p>`, 'g')) || [];
+    return m.find(l => l.includes(fmtDay(diaTeste))) || '';
+  };
+
+  let linha = linhaDoDia(renderExtrato(pD));
+  check('o dia mostra o que saiu', linha.includes(fmtShort(250)), true);
+  check('e o que entrou, separado', linha.includes(fmtShort(80)), true);
+  check('saída em vermelho, entrada em verde', linha.includes('tx-day-out') && linha.includes('tx-day-in'), true);
+
+  // Transferência é dinheiro mudando de lugar: não pode inflar o total do dia
+  const tr = { description: 'Para a poupança', amount: 900, date: diaTeste, type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: contaD, to_account: DB.all('accounts')[1].id };
+  const trId = DB.upsert('transactions', tr);
+  linha = linhaDoDia(renderExtrato(pD));
+  check('transferência não entra no total do dia', linha.includes(fmtShort(250)), true);
+  check('nem como entrada', linha.includes(fmtShort(900)), false);
+  DB.remove('transactions', trId);
+
+  // O total precisa refletir o filtro, senão não bate com as linhas logo abaixo
+  state.filtros = { ...FILTROS_VAZIOS, busca: 'mercado do dia' };
+  linha = linhaDoDia(renderExtrato(pD));
+  check('com filtro, o total acompanha o que é exibido', linha.includes(fmtShort(200)), true);
+  check('e some o que foi filtrado fora', linha.includes(fmtShort(250)), false);
+  state.filtros = { ...FILTROS_VAZIOS };
+
+  // Dia só com entrada não mostra saída zerada
+  const soEntrada = dia(24);
+  DB.upsert('transactions', { description: 'Salário do dia', amount: 500, date: soEntrada, type: 'Receita', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaD });
+  const linhaSo = ((renderExtrato(pD).match(/<p class="tx-day">[\s\S]*?<\/p>/g) || [])
+    .find(l => l.includes(fmtDay(soEntrada))) || '');
+  check('dia só com entrada não mostra saída', linhaSo.includes('tx-day-out'), false);
+  check('mas mostra a entrada', linhaSo.includes('tx-day-in'), true);
+
+  for (const t of DB.all('transactions').filter(t => /do dia$/.test(t.description))) DB.remove('transactions', t.id);
+} catch (e) { console.log(` FALHA | total do dia: ${e.message}`); fail++; }
+
 console.log('\n=== Transferência vista dos dois extratos ===');
 try {
   const contaA = DB.upsert('accounts', { name: 'Banco A', type: 'Conta Corrente', balance: 5000, active: true });
