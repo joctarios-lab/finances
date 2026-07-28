@@ -29,6 +29,28 @@ function toast(msg) {
 
 function barClass(pct) { return pct >= 90 ? 'bar-red' : pct >= 70 ? 'bar-amber' : 'bar-green'; }
 
+/* ---------- Máscara monetária em tempo real (padrão bancário BR: dígitos entram como centavos) ---------- */
+function initMoney(sel, initialValue) {
+  const el = typeof sel === 'string' ? $(sel) : sel;
+  if (!el) return;
+  const set = cents => {
+    el.dataset.cents = cents;
+    el.value = cents === '' ? '' : (Number(cents) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
+  const initial = Number(initialValue);
+  set(initial > 0 ? String(Math.round(initial * 100)) : '');
+  el.addEventListener('input', () => {
+    const digits = el.value.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, 12);
+    set(digits);
+    el.setSelectionRange(el.value.length, el.value.length);   // cursor sempre no fim
+  });
+  el.addEventListener('focus', () => setTimeout(() => el.setSelectionRange(el.value.length, el.value.length), 0));
+}
+function moneyVal(sel) {
+  const el = typeof sel === 'string' ? $(sel) : sel;
+  return el ? (Number(el.dataset.cents) || 0) / 100 : 0;
+}
+
 function catOf(id) { return DB.get('categories', id); }
 function catLabel(id) { const c = catOf(id); return c ? `${c.icon} ${c.name}` : 'Sem categoria'; }
 
@@ -413,7 +435,7 @@ function openTxSheet(tx) {
 
   openSheet(`
     <div class="sheet-title">${isEdit ? 'Editar lançamento' : 'Lançar gasto'}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <div class="field"><input class="amount-input" id="f-amount" type="number" inputmode="decimal" step="0.01" min="0" placeholder="R$ 0,00" value="${tx.amount || ''}"></div>
+    <div class="field"><input class="amount-input" id="f-amount" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
     <div class="field"><label>Descrição</label><input id="f-desc" placeholder="Ex: Mercado, Uber, Farmácia…" value="${esc(tx.description)}"></div>
     <div class="field"><label>Categoria</label>${chipGroup('g-cat', cats.map(c => ({ value: c.id, label: `${c.icon} ${c.name}` })), tx.category_id)}</div>
     <div class="row2">
@@ -442,11 +464,12 @@ function openTxSheet(tx) {
     $('#wrap-card').hidden = v !== 'Cartão de Crédito';
     $('#wrap-account').hidden = v === 'Cartão de Crédito';
   });
+  initMoney('#f-amount', tx.amount);
   $('#sh-close').onclick = closeSheet;
   setTimeout(() => $('#f-amount').focus(), 80);
 
   $('#sh-save').onclick = () => {
-    const amount = parseFloat($('#f-amount').value);
+    const amount = moneyVal('#f-amount');
     const desc = $('#f-desc').value.trim();
     if (!amount || amount <= 0) return toast('Informe o valor');
     if (!desc) return toast('Informe a descrição');
@@ -492,20 +515,21 @@ function openGoalSheet(goal) {
       <div class="field"><label>Nome</label><input id="g-name" placeholder="Ex: Viagem Nordeste" value="${esc(goal.name)}"></div>
     </div>
     <div class="row2">
-      <div class="field"><label>Valor alvo</label><input id="g-target" type="number" inputmode="decimal" step="0.01" value="${goal.target_amount || ''}"></div>
+      <div class="field"><label>Valor alvo</label><input id="g-target" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
       <div class="field"><label>Data alvo</label><input id="g-date" type="date" value="${goal.target_date || ''}"></div>
     </div>
     ${isEdit ? `<div class="field"><label>Concluída</label><select id="g-done"><option value="">Não</option><option value="1" ${goal.done ? 'selected' : ''}>Sim</option></select></div>` : ''}
     <button class="btn" id="sh-save">Salvar</button>
     ${isEdit ? '<div class="btn-row"><button class="btn danger" id="sh-del">Excluir meta</button></div>' : ''}
   `);
+  initMoney('#g-target', goal.target_amount);
   $('#sh-close').onclick = closeSheet;
   $('#sh-save').onclick = () => {
     const name = $('#g-name').value.trim();
     if (!name) return toast('Dê um nome à meta');
     DB.upsert('goals', {
       ...goal, name, icon: $('#g-icon').value || '🎯',
-      target_amount: parseFloat($('#g-target').value) || 0,
+      target_amount: moneyVal('#g-target'),
       target_date: $('#g-date').value || null,
       done: isEdit ? !!$('#g-done').value : false,
     });
@@ -524,17 +548,18 @@ function openAporteSheet(goalId) {
   const g = DB.get('goals', goalId);
   openSheet(`
     <div class="sheet-title">Aporte — ${esc(g.icon)} ${esc(g.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <div class="field"><input class="amount-input" id="a-amount" type="number" inputmode="decimal" step="0.01" placeholder="R$ 0,00"></div>
+    <div class="field"><input class="amount-input" id="a-amount" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
     <div class="row2">
       <div class="field"><label>Descrição</label><input id="a-desc" value="Aporte"></div>
       <div class="field"><label>Data</label><input id="a-date" type="date" value="${todayISO()}"></div>
     </div>
     <button class="btn" id="sh-save">Registrar aporte</button>
   `);
+  initMoney('#a-amount');
   $('#sh-close').onclick = closeSheet;
   setTimeout(() => $('#a-amount').focus(), 80);
   $('#sh-save').onclick = () => {
-    const amount = parseFloat($('#a-amount').value);
+    const amount = moneyVal('#a-amount');
     if (!amount) return toast('Informe o valor');
     DB.upsert('goal_entries', { goal_id: goalId, amount, description: $('#a-desc').value || 'Aporte', date: $('#a-date').value || todayISO() });
     closeSheet(); render(); Sync.autoSync();
@@ -592,14 +617,15 @@ function openConfigSection(sec) {
           <div class="field"><label>Nome</label><input id="c-name" value="${esc(acc.name)}"></div>
           <div class="field"><label>Tipo</label><select id="c-type">${['Conta Corrente', 'Carteira Digital', 'Caixinha / Rendimento', 'Investimento'].map(t => `<option ${acc.type === t ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
           <div class="field"><label>Instituição</label><input id="c-inst" value="${esc(acc.institution)}"></div>
-          <div class="field"><label>Saldo atual</label><input id="c-bal" type="number" step="0.01" value="${acc.balance}"></div>
+          <div class="field"><label>Saldo atual</label><input id="c-bal" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
           <button class="btn" id="md-save">Salvar</button>
           ${isEdit ? '<div class="btn-row"><button class="btn danger" id="md-del">Excluir</button></div>' : ''}
         `);
+        initMoney('#c-bal', acc.balance);
         $('#md-back').onclick = () => openConfigSection('accounts');
         $('#md-save').onclick = () => {
           if (!$('#c-name').value.trim()) return toast('Informe o nome');
-          DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value, balance: parseFloat($('#c-bal').value) || 0 });
+          DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value, balance: moneyVal('#c-bal') });
           Sync.autoSync(); openConfigSection('accounts');
         };
         const del = $('#md-del');
@@ -621,10 +647,11 @@ function openConfigSection(sec) {
             <div class="field"><label>Dia de fechamento</label><input id="c-close" type="number" min="1" max="28" value="${card.closing_day}"></div>
             <div class="field"><label>Dia de vencimento</label><input id="c-due" type="number" min="1" max="28" value="${card.due_day}"></div>
           </div>
-          <div class="field"><label>Limite</label><input id="c-limit" type="number" step="0.01" value="${card.limit_amount}"></div>
+          <div class="field"><label>Limite</label><input id="c-limit" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
           <button class="btn" id="md-save">Salvar</button>
           ${isEdit ? '<div class="btn-row"><button class="btn danger" id="md-del">Excluir</button></div>' : ''}
         `);
+        initMoney('#c-limit', card.limit_amount);
         $('#md-back').onclick = () => openConfigSection('cards');
         $('#md-save').onclick = () => {
           if (!$('#c-name').value.trim()) return toast('Informe o nome');
@@ -632,7 +659,7 @@ function openConfigSection(sec) {
             ...card, name: $('#c-name').value.trim(), brand: $('#c-brand').value,
             closing_day: Math.min(28, Math.max(1, parseInt($('#c-close').value) || 25)),
             due_day: Math.min(28, Math.max(1, parseInt($('#c-due').value) || 5)),
-            limit_amount: parseFloat($('#c-limit').value) || 0,
+            limit_amount: moneyVal('#c-limit'),
           });
           Sync.autoSync(); openConfigSection('cards');
         };
@@ -655,7 +682,7 @@ function openConfigSection(sec) {
           </div>
           <div class="row2">
             <div class="field"><label>Âmbito</label><select id="c-scope"><option ${cat.scope === 'Família' ? 'selected' : ''}>Família</option><option ${cat.scope === 'Pessoal' ? 'selected' : ''}>Pessoal</option></select></div>
-            <div class="field"><label>Orçamento mensal</label><input id="c-budget" type="number" step="0.01" value="${cat.monthly_budget}"></div>
+            <div class="field"><label>Orçamento mensal</label><input id="c-budget" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
           </div>
           <div class="field"><label>Tipo (regra 50/30/20)</label><select id="c-kind">
             <option value="Essencial" ${cat.kind !== 'Estilo' ? 'selected' : ''}>Necessidade (moradia, mercado, saúde…)</option>
@@ -664,10 +691,11 @@ function openConfigSection(sec) {
           <button class="btn" id="md-save">Salvar</button>
           ${isEdit ? '<div class="btn-row"><button class="btn danger" id="md-del">Excluir</button></div>' : ''}
         `);
+        initMoney('#c-budget', cat.monthly_budget);
         $('#md-back').onclick = () => openConfigSection('categories');
         $('#md-save').onclick = () => {
           if (!$('#c-name').value.trim()) return toast('Informe o nome');
-          DB.upsert('categories', { ...cat, name: $('#c-name').value.trim(), icon: $('#c-icon').value || '🏷️', scope: $('#c-scope').value, monthly_budget: parseFloat($('#c-budget').value) || 0, kind: $('#c-kind').value });
+          DB.upsert('categories', { ...cat, name: $('#c-name').value.trim(), icon: $('#c-icon').value || '🏷️', scope: $('#c-scope').value, monthly_budget: moneyVal('#c-budget'), kind: $('#c-kind').value });
           Sync.autoSync(); openConfigSection('categories');
         };
         const del = $('#md-del');
@@ -682,14 +710,15 @@ function openConfigSection(sec) {
       <div class="field"><label>Membros (um por linha)</label><textarea id="f-members" rows="4">${esc(s.members.join('\n'))}</textarea></div>
       <div class="field"><label>Dia de início do mês financeiro</label><input id="f-start" type="number" min="1" max="28" value="${s.month_start_day}">
         <p class="muted" style="margin-top:6px">1 = mês calendário. Ex: 5 = período do dia 5 ao dia 4 do mês seguinte (útil para quem se organiza pelo salário).</p></div>
-      <div class="field"><label>Renda mensal da família (líquida)</label><input id="f-income" type="number" step="0.01" min="0" value="${s.monthly_income || ''}" placeholder="Ex: 8500">
+      <div class="field"><label>Renda mensal da família (líquida)</label><input id="f-income" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00">
         <p class="muted" style="margin-top:6px">Base para a projeção vs. renda, taxa de poupança e regra 50/30/20 no painel.</p></div>
       <button class="btn" id="md-save">Salvar</button>
     `);
+    initMoney('#f-income', s.monthly_income);
     $('#md-back').onclick = openConfig;
     $('#md-save').onclick = () => {
       const members = $('#f-members').value.split('\n').map(x => x.trim()).filter(Boolean);
-      DB.upsert('family_settings', { ...s, members: members.length ? members : ['Família'], month_start_day: Math.min(28, Math.max(1, parseInt($('#f-start').value) || 1)), monthly_income: parseFloat($('#f-income').value) || 0 });
+      DB.upsert('family_settings', { ...s, members: members.length ? members : ['Família'], month_start_day: Math.min(28, Math.max(1, parseInt($('#f-start').value) || 1)), monthly_income: moneyVal('#f-income') });
       Sync.autoSync(); toast('Salvo'); openConfig();
     };
   }
