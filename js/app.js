@@ -51,6 +51,18 @@ function moneyVal(sel) {
   return el ? (Number(el.dataset.cents) || 0) / 100 : 0;
 }
 
+/* ---------- Saldo automático ----------
+   Gasto Pago em conta (fora de cartão) debita o saldo; fatura marcada paga debita a conta
+   de pagamento do cartão. Edições e exclusões revertem o efeito. */
+function adjustBalance(accountId, delta) {
+  if (!accountId || !delta) return;
+  const a = DB.get('accounts', accountId);
+  if (a) DB.upsert('accounts', { ...a, balance: (Number(a.balance) || 0) + delta });
+}
+function txEffect(t) {
+  return (t && t.status === 'Pago' && t.account_id && !t.card_id) ? -(Number(t.amount) || 0) : 0;
+}
+
 function catOf(id) { return DB.get('categories', id); }
 function catLabel(id) { const c = catOf(id); return c ? `${c.icon} ${c.name}` : 'Sem categoria'; }
 
@@ -260,6 +272,32 @@ function renderInicio(period) {
       <p class="muted">Recomendação clássica: 3 a 6 meses do gasto médio (${fmtShort(avgSpend)}/mês).</p>
     </div>`;
 
+  // --- Conselheiro: insights automáticos por regras de especialista ---
+  const tips = [];
+  if (available < 0) tips.push({ cls: 'red', txt: `Compromissos superam o saldo em ${fmtShort(-available)} — priorize quitar ou remanejar.` });
+  for (const c of DB.all('categories')) {
+    if (!c.monthly_budget) continue;
+    const pct = Math.round((byCat[c.id] || 0) / c.monthly_budget * 100);
+    const pace = Math.round(stats.elapsedDays / Math.max(stats.totalDays, 1) * 100);
+    if (pct >= 100) tips.push({ cls: 'red', txt: `${c.icon} ${c.name} estourou o orçamento (${pct}%).` });
+    else if (pct >= 80 && pct > pace + 15) tips.push({ cls: 'amber', txt: `${c.icon} ${c.name} já usou ${pct}% do orçamento no dia ${stats.elapsedDays} — freie o ritmo.` });
+  }
+  for (const card of DB.all('cards').filter(c => c.active !== false && c.limit_amount > 0)) {
+    const cur = DB.invoicesOf(card).find(i => i.key === DB.invoiceKeyFor(card, todayISO()));
+    if (cur && cur.total / card.limit_amount >= 0.8) tips.push({ cls: 'amber', txt: `Fatura do ${card.name} em ${Math.round(cur.total / card.limit_amount * 100)}% do limite.` });
+  }
+  if (savingsRate !== null && savingsRate < 20) tips.push({ cls: savingsRate < 0 ? 'red' : 'amber', txt: `Poupança projetada em ${savingsRate}% da renda — o recomendado é guardar pelo menos 20%.` });
+  if (coverage < 3 && avgSpend > 0) tips.push({ cls: 'amber', txt: `Reserva cobre ${coverage.toFixed(1)} meses — abaixo do mínimo recomendado de 3.` });
+  for (const g of goals) {
+    if (DB.goalPace(g.id) === 0 && DB.goalTotal(g.id) < (g.target_amount || 0)) tips.push({ cls: 'amber', txt: `Meta "${g.name}" sem aportes há 90 dias.` });
+  }
+  if (!tips.length) tips.push({ cls: 'green', txt: 'Nenhum alerta: orçamento, faturas, reserva e metas dentro do esperado. Continue assim! 👏' });
+  const adviceCard = `
+    <div class="card">
+      <div class="card-head"><div><b>Conselheiro</b><small>análise automática da sua situação</small></div><span class="kpi-ico t-info" data-ico="bell" style="width:34px;height:34px;margin:0"></span></div>
+      ${tips.slice(0, 5).map(t => `<div class="tip tip-${t.cls}">${esc(t.txt)}</div>`).join('')}
+    </div>`;
+
   return `
     <div class="hero hero-${health.cls}">
       <div class="hero-top">
@@ -274,6 +312,7 @@ function renderInicio(period) {
         <div><small>Projeção do mês</small><b>${fmtShort(stats.projection)}</b></div>
       </div>
     </div>
+    ${adviceCard}
     <div class="kpi-grid">
       <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmtShort(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
       <div class="card kpi"><span class="kpi-ico t-danger" data-ico="invoice"></span><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmtShort(openInvoices)}</div><div class="kpi-label">Faturas em aberto</div><div class="kpi-sub">${upcoming.length} fatura(s)</div></div>
@@ -352,10 +391,12 @@ function renderExtrato(period) {
       <div class="card"><small>Lançamentos</small><b>${st.count}</b></div>
       <div class="card"><small>${isCurrent ? 'Projeção' : 'Total'}</small><b>${fmtShort(isCurrent ? st.projection : st.spent)}</b></div>
     </div>
+    <input id="tx-search" type="search" placeholder="🔎 Buscar no período…" autocomplete="off" style="margin-bottom:2px">
     <div class="chips" id="scope-chips">
       ${['Todos', 'Família', 'Pessoal'].map(f => `<button class="chip ${state.filter === f ? 'active' : ''}" data-f="${f}">${f}</button>`).join('')}
     </div>
-    <div>${list}</div>
+    ${isCurrent ? '<button class="btn ghost" id="btn-recur" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="sync"></span>Lançar custos fixos deste mês</button>' : ''}
+    <div id="tx-list">${list}</div>
   `;
 }
 
@@ -516,6 +557,7 @@ function renderRelatorios() {
       <b>Relatórios · ${period.label}</b>
       <button id="rep-next" aria-label="Próximo mês" data-ico="chevR"></button>
     </div>
+    <button class="btn ghost" id="btn-csv" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="download"></span>Exportar CSV do período (Excel)</button>
 
     <div class="card">
       <div class="card-head"><div><b>Evolução — 12 meses</b><small>gasto total por período${income > 0 ? ' · tracejada = renda' : ''}</small></div></div>
@@ -566,9 +608,78 @@ function bindView() {
   if (rnext) rnext.onclick = () => { state.repOffset = (state.repOffset || 0) + 1; render(); };
   const goRep = $('#go-reports');
   if (goRep) goRep.onclick = () => setTab('relatorios');
+
+  // Busca instantânea no extrato (filtra sem re-renderizar, mantendo o foco)
+  const search = $('#tx-search');
+  if (search) search.oninput = () => {
+    const q = search.value.trim().toLowerCase();
+    v.querySelectorAll('#tx-list .tx').forEach(row => {
+      row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  };
+
+  // Custos fixos do mês em 1 clique: copia recorrentes que ainda não existem no período
+  const recurBtn = $('#btn-recur');
+  if (recurBtn) recurBtn.onclick = () => {
+    const period = DB.monthPeriod(new Date());
+    const inPeriodDesc = new Set(DB.txOfPeriod(period).map(t => t.description.toLowerCase()));
+    const templates = {};
+    for (const t of DB.all('transactions').filter(t => t.recurring).sort((a, b) => a.date.localeCompare(b.date)))
+      templates[t.description.toLowerCase()] = t;
+    let n = 0;
+    for (const t of Object.values(templates)) {
+      if (inPeriodDesc.has(t.description.toLowerCase())) continue;
+      const novo = { ...t, id: null, date: todayISO(), status: 'A Pagar' };
+      if (novo.card_id) {
+        const card = DB.get('cards', novo.card_id);
+        novo.invoice_key = card ? DB.invoiceKeyFor(card, novo.date) : '';
+      }
+      delete novo.updated_at; delete novo.dirty;
+      DB.upsert('transactions', novo);
+      n++;
+    }
+    Sync.autoSync(); render();
+    toast(n ? `${n} custo(s) fixo(s) lançado(s) como "A Pagar" ✓` : 'Todos os custos fixos já estão lançados neste mês');
+  };
+
+  // Exportar CSV do período (Relatórios)
+  const csvBtn = $('#btn-csv');
+  if (csvBtn) csvBtn.onclick = () => {
+    const period = DB.monthPeriod(new Date(), state.repOffset || 0);
+    const rows = [['Descricao', 'Valor', 'Data', 'Categoria', 'Ambito', 'Membro', 'Metodo', 'Status', 'Cartao', 'Conta']];
+    for (const t of DB.txOfPeriod(period).sort((a, b) => a.date.localeCompare(b.date))) {
+      rows.push([
+        t.description, String(t.amount).replace('.', ','), t.date,
+        (catOf(t.category_id) || {}).name || '', t.scope, t.member || '', t.method, t.status,
+        (DB.get('cards', t.card_id) || {}).name || '', (DB.get('accounts', t.account_id) || {}).name || '',
+      ]);
+    }
+    const csv = '﻿' + rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';')).join('\r\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `financas-${period.label.toLowerCase().replace(/ /g, '-')}.csv`;
+    a.click();
+    toast('CSV exportado ✓');
+  };
   v.querySelectorAll('#scope-chips .chip').forEach(ch => ch.onclick = () => { state.filter = ch.dataset.f; render(); });
-  v.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => { DB.setInvoicePaid(b.dataset.pay, true); Sync.autoSync(); render(); toast('Fatura marcada como paga'); });
-  v.querySelectorAll('[data-unpay]').forEach(b => b.onclick = () => { DB.setInvoicePaid(b.dataset.unpay, false); Sync.autoSync(); render(); });
+  const invAdjust = (key, sign) => {
+    const card = DB.get('cards', key.split(':')[0]);
+    if (!card || !card.account_id) return false;
+    const inv = DB.invoicesOf(card).find(i => i.key === key);
+    if (inv) adjustBalance(card.account_id, sign * inv.total);
+    return true;
+  };
+  v.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => {
+    const debited = invAdjust(b.dataset.pay, -1);
+    DB.setInvoicePaid(b.dataset.pay, true);
+    Sync.autoSync(); render();
+    toast(debited ? 'Fatura paga — saldo da conta debitado ✓' : 'Fatura paga (vincule uma conta ao cartão para debitar o saldo)');
+  });
+  v.querySelectorAll('[data-unpay]').forEach(b => b.onclick = () => {
+    invAdjust(b.dataset.unpay, +1);
+    DB.setInvoicePaid(b.dataset.unpay, false);
+    Sync.autoSync(); render();
+  });
   const ng = $('#btn-new-goal');
   if (ng) ng.onclick = () => openGoalSheet(null);
   v.querySelectorAll('[data-editgoal]').forEach(b => b.onclick = () => openGoalSheet(DB.get('goals', b.dataset.editgoal)));
@@ -602,6 +713,7 @@ function bindChips(id, onChange) {
 
 function openTxSheet(tx) {
   const isEdit = !!tx;
+  const orig = isEdit ? { ...tx } : null;   // p/ reverter efeito no saldo ao editar/excluir
   tx = tx || { description: '', amount: '', date: todayISO(), scope: 'Família', member: '', method: 'PIX', status: 'Pago', category_id: '', account_id: '', card_id: '' };
   const cats = DB.all('categories');
   const cards = DB.all('cards').filter(c => c.active !== false);
@@ -630,6 +742,7 @@ function openTxSheet(tx) {
       <div class="field"><label>Âmbito</label>${chipGroup('g-scope', [{ value: 'Família', label: '👨‍👩‍👧 Família' }, { value: 'Pessoal', label: '👤 Pessoal' }], tx.scope)}</div>
       <div class="field"><label>Quem</label><select id="f-member">${members.map(m => `<option ${tx.member === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
     </div>
+    <div class="field"><label>Custo fixo mensal (recorrente)?</label><select id="f-rec"><option value="">Não</option><option value="1" ${tx.recurring ? 'selected' : ''}>Sim — entra nos relatórios de custos fixos e no lançamento em 1 clique</option></select></div>
     <button class="btn" id="sh-save">${isEdit ? 'Salvar alterações' : 'Lançar'}</button>
     ${isEdit ? '<div class="btn-row"><button class="btn danger" id="sh-del">Excluir</button></div>' : ''}
   `);
@@ -656,6 +769,7 @@ function openTxSheet(tx) {
       scope: chipValue('g-scope') || 'Família',
       member: $('#f-member').value,
       category_id: chipValue('g-cat') || null,
+      recurring: !!$('#f-rec').value,
       card_id: null, account_id: null, invoice_key: '',
     };
     if (method === 'Cartão de Crédito') {
@@ -666,13 +780,16 @@ function openTxSheet(tx) {
     } else {
       rec.account_id = $('#f-account').value || null;
     }
+    if (orig) adjustBalance(orig.account_id, -txEffect(orig));   // reverte efeito antigo
     DB.upsert('transactions', rec);
+    adjustBalance(rec.account_id, txEffect(rec));                 // aplica efeito novo
     closeSheet(); render(); Sync.autoSync();
     toast(isEdit ? 'Lançamento atualizado' : 'Gasto lançado ✓');
   };
   const del = $('#sh-del');
   if (del) del.onclick = () => {
     if (!confirm('Excluir este lançamento?')) return;
+    if (orig) adjustBalance(orig.account_id, -txEffect(orig));   // devolve ao saldo
     DB.remove('transactions', tx.id);
     closeSheet(); render(); Sync.autoSync();
     toast('Excluído');
@@ -759,6 +876,7 @@ function openConfig() {
     <div class="settings-item" data-go="categories"><span class="cfg-left"><span class="cfg-ico" data-ico="pie"></span><span>Categorias &amp; orçamentos<br><small>${DB.all('categories').length} categoria(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Membros &amp; ciclo do mês<br><small>Início no dia ${DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="sync"><span class="cfg-left"><span class="cfg-ico" data-ico="cloud"></span><span>Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="notif"><span class="cfg-left"><span class="cfg-ico" data-ico="bell"></span><span>Notificações<br><small>${Notif.enabled() ? 'Ativas — faturas, orçamentos e metas' : 'Desativadas'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="security"><span class="cfg-left"><span class="cfg-ico" data-ico="shield"></span><span>Segurança<br><small>${Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'Sem proteção local'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="backup"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Backup (exportar / importar)<br><small>Arquivo JSON local</small></span></span><span class="chev" data-ico="chev"></span></div>
   `);
@@ -823,6 +941,8 @@ function openConfigSection(sec) {
             <div class="field"><label>Dia de vencimento</label><input id="c-due" type="number" min="1" max="28" value="${card.due_day}"></div>
           </div>
           <div class="field"><label>Limite</label><input id="c-limit" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
+          <div class="field"><label>Conta de pagamento (debita o saldo ao pagar a fatura)</label>
+            <select id="c-account"><option value="">— nenhuma —</option>${DB.all('accounts').map(a => `<option value="${a.id}" ${card.account_id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`).join('')}</select></div>
           <button class="btn" id="md-save">Salvar</button>
           ${isEdit ? '<div class="btn-row"><button class="btn danger" id="md-del">Excluir</button></div>' : ''}
         `);
@@ -835,6 +955,7 @@ function openConfigSection(sec) {
             closing_day: Math.min(28, Math.max(1, parseInt($('#c-close').value) || 25)),
             due_day: Math.min(28, Math.max(1, parseInt($('#c-due').value) || 5)),
             limit_amount: moneyVal('#c-limit'),
+            account_id: $('#c-account').value || null,
           });
           Sync.autoSync(); openConfigSection('cards');
         };
@@ -899,6 +1020,30 @@ function openConfigSection(sec) {
   }
 
   if (sec === 'sync') openSyncConfig();
+
+  if (sec === 'notif') {
+    openModal(`
+      <div class="modal-title">🔔 Notificações<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+      <p class="muted" style="margin-bottom:12px">Avisos de ações importantes: fatura fechando/vencendo/vencida, orçamento estourado e meta atingida. Cada aviso sai no máximo 1x por dia.</p>
+      <p class="muted" style="margin-bottom:12px"><b>Como funciona de verdade:</b> sem um servidor de push, os avisos disparam quando o app é aberto ou sincroniza. Quando desativadas (ou no iPhone sem instalar o app), os mesmos avisos aparecem como mensagens dentro do app.</p>
+      ${Notif.enabled()
+        ? '<button class="btn danger" id="nt-off">Desativar notificações</button>'
+        : '<button class="btn" id="nt-on">Ativar notificações</button>'}
+      <div class="btn-row"><button class="btn ghost" id="nt-test">Testar agora</button></div>
+    `);
+    $('#md-back').onclick = openConfig;
+    const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
+    on('#nt-on', async () => {
+      const ok = await Notif.enable();
+      toast(ok ? 'Notificações ativas ✓' : 'Permissão negada pelo navegador');
+      openConfigSection('notif');
+    });
+    on('#nt-off', () => { Notif.disable(); toast('Notificações desativadas'); openConfigSection('notif'); });
+    on('#nt-test', () => {
+      delete (Notif.cfg.sent || {})['teste']; Notif.save();
+      Notif.push('teste', '💰 Finanças da Família', 'Notificações funcionando! Você será avisado de faturas, orçamentos e metas.');
+    });
+  }
 
   if (sec === 'security') {
     openModal(`
@@ -1038,6 +1183,59 @@ function openSyncConfig() {
   on('#s-logout', () => { if (confirm('Sair da conta? Os dados locais permanecem no aparelho.')) { Sync.signOut(); openSyncConfig(); } });
 }
 
+/* ---------- Notificações de ações importantes ----------
+   Sem servidor de push, elas disparam quando o app abre/atualiza (limitação honesta da web).
+   Cada aviso sai no máximo 1x por dia. */
+const Notif = {
+  key: 'financas.notif.v1',
+  cfg: null,
+  load() { try { this.cfg = JSON.parse(localStorage.getItem(this.key)) || {}; } catch (_) { this.cfg = {}; } },
+  save() { localStorage.setItem(this.key, JSON.stringify(this.cfg)); },
+  enabled() { return this.cfg.enabled && 'Notification' in window && Notification.permission === 'granted'; },
+  async enable() {
+    if (!('Notification' in window)) { toast('Este navegador não suporta notificações'); return false; }
+    const perm = await Notification.requestPermission();
+    this.cfg.enabled = perm === 'granted';
+    this.save();
+    return this.cfg.enabled;
+  },
+  disable() { this.cfg.enabled = false; this.save(); },
+  push(id, title, body) {
+    const today = todayISO();
+    this.cfg.sent = this.cfg.sent || {};
+    if (this.cfg.sent[id] === today) return;   // 1x por dia por aviso
+    this.cfg.sent[id] = today; this.save();
+    if (this.enabled()) new Notification(title, { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png' });
+    else toast(`${title} — ${body}`);
+  },
+  check() {
+    const today = new Date();
+    for (const card of DB.all('cards').filter(c => c.active !== false)) {
+      for (const inv of DB.invoicesOf(card)) {
+        if (inv.status === 'Paga') continue;
+        const days = Math.ceil((inv.due - today) / 86400000);
+        if (days < 0) this.push(`venc-${inv.key}`, '🔴 Fatura vencida', `${card.name}: ${fmtShort(inv.total)} venceu há ${-days} dia(s).`);
+        else if (days <= 3) this.push(`venc-${inv.key}`, '💳 Fatura vencendo', `${card.name}: ${fmtShort(inv.total)} vence em ${days} dia(s).`);
+        if (inv.status === 'Aberta') {
+          const closeDays = Math.ceil((inv.closing - today) / 86400000);
+          if (closeDays >= 0 && closeDays <= 2) this.push(`fech-${inv.key}`, '📅 Fatura fechando', `${card.name} fecha em ${closeDays} dia(s) — confira os lançamentos.`);
+        }
+      }
+    }
+    const period = DB.monthPeriod(new Date());
+    const byCat = DB.spentByCategory(period);
+    for (const c of DB.all('categories')) {
+      if (!c.monthly_budget) continue;
+      const pct = Math.round((byCat[c.id] || 0) / c.monthly_budget * 100);
+      if (pct >= 100) this.push(`orc-${c.id}-${period.label}`, '⚠️ Orçamento estourado', `${c.icon} ${c.name} chegou a ${pct}% do limite do mês.`);
+    }
+    for (const g of DB.all('goals').filter(g => !g.done)) {
+      if ((g.target_amount || 0) > 0 && DB.goalTotal(g.id) >= g.target_amount)
+        this.push(`meta-${g.id}`, '🎉 Meta atingida!', `"${g.name}" chegou a 100% — parabéns à família!`);
+    }
+  },
+};
+
 /* ---------- Boot ---------- */
 Sync.onStatus = (msg, ok = true) => {
   const el = $('#sync-status');
@@ -1073,7 +1271,9 @@ function refreshUserChip() {
 refreshUserChip();
 paintIcons();   // ícones do shell estático (sidebar, topbar, tabbar)
 
+Notif.load();
 Auth.init(() => {
   render();
   Sync.autoSync();
+  setTimeout(() => Notif.check(), 800);
 });
