@@ -1010,6 +1010,66 @@ check('função is_member definida antes das policies', schema.indexOf('function
     check('e para ao terminar o envio', vistos[vistos.length - 1] !== 'sync', true);
   }
 
+  /* ---- Lote de envio precisa ter chaves uniformes ----
+     O Supabase recusa com 400 PGRST102 quando os objetos de um POST em lote não
+     têm as mesmas chaves. Aqui o fetch falso reproduz essa recusa. */
+  console.log('\n=== Envio em lote aceito pelo Supabase ===');
+  {
+    const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S.saveCfg = () => {}; S.GIRO_MINIMO = 0;
+    S.cfg = {
+      url: 'https://exemplo.supabase.co', anonKey: 'k', access_token: 'a',
+      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: 'fam-1',
+    };
+
+    const dadosAntes = DB.data;
+    const envelope = { updated_at: DB.now(), deleted: false, dirty: true };
+    // Mistura proposital: uma categoria gravada por versão anterior (sem a chave
+    // parent_id) e duas gravadas agora. Era exatamente esse lote que quebrava.
+    DB.data = {
+      meta: { seeded: true, lastSync: null },
+      accounts: [], cards: [], transactions: [], goals: [], goal_entries: [], invoice_status: [], family_settings: [],
+      categories: [
+        { id: 'c-antiga', name: 'Alimentação / Mercado', icon: '🍽️', scope: 'Família', monthly_budget: 1500, kind: 'Essencial', ...envelope },
+        { id: 'c-nova', name: 'Pets', icon: '🐾', scope: 'Família', monthly_budget: 150, kind: 'Essencial', parent_id: null, ...envelope },
+        { id: 'c-filha', name: 'Ração', icon: '🐾', scope: 'Família', monthly_budget: 0, kind: 'Essencial', parent_id: 'c-nova', ...envelope },
+      ],
+    };
+
+    const enviados = [];
+    global.navigator.onLine = true;
+    global.fetch = async (url, opts) => {
+      const u = String(url);
+      if (opts && opts.method === 'POST' && !u.includes('/auth/')) {
+        const corpo = JSON.parse(opts.body);
+        if (Array.isArray(corpo)) {
+          enviados.push(corpo);
+          const assinaturas = new Set(corpo.map(o => Object.keys(o).sort().join(',')));
+          if (assinaturas.size > 1) {
+            return { ok: false, status: 400, json: async () => ({}),
+              text: async () => '{"code":"PGRST102","message":"All object keys must match"}' };
+          }
+        }
+      }
+      return { ok: true, status: 200, json: async () => [], text: async () => '' };
+    };
+
+    let erro = null;
+    await S.syncAll(false).catch(e => { erro = e.message; });
+    check('sincroniza sem PGRST102', erro, null);
+    check('as três categorias foram enviadas', enviados.reduce((n, l) => n + l.length, 0), 3);
+    check('mais de um lote, porque as chaves diferem', enviados.length > 1, true);
+    check('cada lote tem chaves uniformes',
+      enviados.every(l => new Set(l.map(o => Object.keys(o).sort().join(','))).size === 1), true);
+    check('registro antigo não ganha parent_id nulo à força',
+      enviados.flat().find(o => o.id === 'c-antiga').parent_id === undefined, true);
+    check('a filha leva o pai', enviados.flat().find(o => o.id === 'c-filha').parent_id, 'c-nova');
+    check('nada fica pendente depois do envio', S.pendentes(), 0);
+
+    DB.data = dadosAntes;
+    clearTimeout(S._debounce);
+  }
+
   /* ---- Login numa conta que já tem família ---- */
   console.log('\n=== Refazer login não cria família nova ===');
   {

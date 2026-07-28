@@ -171,16 +171,34 @@ const Sync = {
         const dirty = DB.data[table].filter(r => r.dirty);
         if (!dirty.length) continue;
         enviados += dirty.length;
-        const payload = dirty.map(r => {
+
+        /* O PostgREST exige que todos os objetos de um lote tenham as MESMAS
+           chaves — senão responde 400 PGRST102 "All object keys must match".
+
+           E os registros não têm as mesmas chaves: cada um leva só os campos que
+           possui, para que campo ausente assuma o default do banco em vez de virar
+           null (monthly_budget, name e outros são NOT NULL). Registro gravado por
+           uma versão antiga do app não conhece coluna nova nenhuma — foi o que
+           aconteceu quando parent_id entrou: categoria antiga sem a chave e
+           categoria nova com ela caíam no mesmo lote e a sincronização parava.
+
+           Agrupar por assinatura de chaves resolve os dois lados: cada requisição
+           fica uniforme e cada registro continua enviando só o que tem. */
+        const lotes = new Map();
+        for (const r of dirty) {
           const row = { id: r.id, family_id: fid, updated_at: r.updated_at, deleted: !!r.deleted };
           for (const c of cols) if (r[c] !== undefined) row[c] = r[c];
-          return row;
-        });
-        await this.rest(`${table}?on_conflict=id`, {
-          method: 'POST',
-          headers: { 'Prefer': 'resolution=merge-duplicates' },
-          body: JSON.stringify(payload),
-        });
+          const assinatura = Object.keys(row).sort().join(',');
+          if (!lotes.has(assinatura)) lotes.set(assinatura, []);
+          lotes.get(assinatura).push(row);
+        }
+        for (const lote of lotes.values()) {
+          await this.rest(`${table}?on_conflict=id`, {
+            method: 'POST',
+            headers: { 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify(lote),
+          });
+        }
         for (const r of dirty) delete r.dirty;
       }
 
