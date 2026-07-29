@@ -897,8 +897,10 @@ function renderInicio(period) {
 
   return `
     ${setupCard}
+    ${atual ? filaDePendencias() : ''}
     ${periodBar}
     ${atual ? heroAtual : heroFechado}
+    ${atual ? avisoDeAperto() : ''}
     ${adviceCard}
     <div class="kpi-grid">
       <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
@@ -2166,10 +2168,37 @@ function relProjecao({ period, st, atual, total, receitas, juizo, filtrado }) {
              <div class="proj-row"><span>Receita do mês</span><b class="txt-green">${fmt(receitas)}</b></div>`}
       </div>
       <div class="card">
-        <div class="card-head"><div><b>Ritmo do mês</b><small>gasto acumulado dia a dia</small></div></div>
-        ${svgBurnup(period, DB.budgetTotal() || undefined)}
+        <div class="card-head"><div><b>${atual ? 'Saldo projetado' : 'Ritmo do mês'}</b>
+          <small>${atual ? 'cruzando o que ainda entra e sai, nas datas' : 'gasto acumulado dia a dia'}</small></div></div>
+        ${atual ? projecaoCard(period) : svgBurnup(period, DB.budgetTotal() || undefined)}
       </div>
     </div>`;
+}
+
+/* A curva do saldo até o fim do ciclo.
+
+   Responde o que nenhuma outra tela responde: EM QUE DIA o dinheiro acaba. Um
+   mês que fecha positivo pode passar por zero no meio do caminho, e é no meio do
+   caminho que a conta atrasa. */
+function projecaoCard(period) {
+  const serie = DB.projecaoSaldo(DB.fimISO(period));
+  if (serie.length < 2) return '<div class="empty">Sem movimento previsto até o fim do ciclo.</div>';
+  const negativo = serie.find(p => p.saldo < 0);
+  const fim = serie[serie.length - 1];
+  const menor = serie.reduce((m, p) => (p.saldo < m.saldo ? p : m), serie[0]);
+  const dia = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+
+  return `
+    ${svgLinhaFaixa(serie.map(p => ({ valor: p.saldo, rot: String(new Date(p.data + 'T12:00:00').getDate()) })),
+      { alt: 'Saldo projetado dia a dia até o fim do ciclo', height: 190 })}
+    <div class="chart-foot">
+      <span>Hoje <b>${fmtShort(serie[0].saldo)}</b></span>
+      <span>Menor ponto <b class="${menor.saldo < 0 ? 'txt-red' : ''}">${fmtShort(menor.saldo)}</b> <span class="muted">${dia(menor.data)}</span></span>
+      <span>Fecha em <b class="${fim.saldo < 0 ? 'txt-red' : 'txt-green'}">${fmtShort(fim.saldo)}</b></span>
+    </div>
+    ${negativo
+      ? `<p class="muted" style="margin-top:8px">⚠️ Fica negativo em <b>${dia(negativo.data)}</b>, chegando a <b class="txt-red">${fmt(negativo.saldo)}</b>. Antecipar uma entrada ou adiar uma conta resolve.</p>`
+      : '<p class="muted" style="margin-top:8px">O saldo se mantém positivo até o fim do ciclo com o que está previsto.</p>'}`;
 }
 
 /* 6. O que está sendo construído. Um relatório que só mede gasto conta metade da
@@ -2248,6 +2277,50 @@ function bindView() {
     const aberto = tr.classList.toggle('aberto');
     v.querySelectorAll(`[data-sub-de="${cid}"]`).forEach(sub => { sub.hidden = !aberto; });
   });
+  /* Ações da fila de pendências, resolvidas ali mesmo. Mandar a pessoa abrir o
+     lançamento para marcar como pago transformaria três toques no que deve ser
+     um — e a fila existe justamente para o que venceu não apodrecer. */
+  v.querySelectorAll('[data-pend-ok]').forEach(b => b.onclick = () => {
+    const tipo = b.dataset.pendTipo;
+    if (tipo === 'fatura') return openPagarFaturaSheet(b.dataset.pendOk);
+    const t = DB.get('transactions', b.dataset.pendOk);
+    if (!t) return;
+    const pago = { ...t, status: 'Pago' };
+    DB.upsert('transactions', pago);
+    applyTxEffect(pago, +1);          // é agora que o dinheiro se move
+    Sync.autoSync(); render();
+    toast(DB.isExpense(t) ? 'Pago ✓' : 'Recebido ✓');
+    avisarSeUsouGuardado(pago);
+  });
+  /* Adiar muda a data, não some com a conta: o boleto que não foi pago hoje
+     continua existindo, e escondê-lo seria a forma mais rápida de o app perder a
+     confiança de quem usa. */
+  v.querySelectorAll('[data-pend-adiar]').forEach(b => b.onclick = () => {
+    const t = DB.get('transactions', b.dataset.pendAdiar);
+    if (!t) return;
+    openSheet(`
+      <div class="sheet-title">Adiar — ${esc(t.description)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+      <p class="muted" style="margin:-4px 0 12px">A conta continua a pagar, só muda a data. Ela volta à fila no novo dia.</p>
+      <div class="field"><label>Nova data</label><input id="ad-data" type="date" value="${somarDias(DB.paraISO(new Date()), 1)}"></div>
+      <button class="btn" id="sh-save">Adiar</button>
+      <div class="btn-row"><button class="btn ghost t-danger" id="ad-cancelar">Não vou pagar — excluir</button></div>
+    `);
+    $('#sh-close').onclick = closeSheet;
+    $('#sh-save').onclick = () => {
+      const nova = $('#ad-data').value;
+      if (!nova) return toast('Escolha a nova data');
+      DB.upsert('transactions', { ...t, date: nova });
+      closeSheet(); Sync.autoSync(); render();
+      toast(`Adiado para ${fmtDate(new Date(nova + 'T12:00:00'))} ✓`);
+    };
+    $('#ad-cancelar').onclick = () => {
+      if (!confirm('Excluir este lançamento?\n\nEle sai da fila e do extrato. O saldo não muda, porque ainda não tinha sido pago.')) return;
+      DB.remove('transactions', t.id);
+      closeSheet(); Sync.autoSync(); render();
+      toast('Excluído');
+    };
+  });
+
   const rprev = $('#rep-prev'), rnext = $('#rep-next');
   if (rprev) rprev.onclick = () => { state.repOffset = (state.repOffset || 0) - 1; render(); };
   if (rnext) rnext.onclick = () => { state.repOffset = (state.repOffset || 0) + 1; render(); };
@@ -4324,6 +4397,76 @@ function openEntrySheet(entryId, goalId) {
     voltarParaDetalhe();
     toast('Aporte excluído');
   };
+}
+
+/* A fila do que espera decisão, no topo de tudo.
+
+   Lançar sozinho só serve se o que venceu não apodrecer na lista — foi o pedido
+   que fechou o ciclo da geração automática. Por isso ela vem ANTES do saldo: de
+   nada adianta o número bonito no topo se há três contas vencidas embaixo.
+
+   Despesa, receita e fatura na mesma fila: o critério não é o tipo, é "isto está
+   parado esperando você". Separar faria procurar em dois lugares a mesma coisa. */
+function filaDePendencias() {
+  const itens = DB.pendencias();
+  if (!itens.length) return '';
+  const hoje = DB.paraISO(new Date());
+  const vencidos = itens.filter(i => i.data < hoje);
+  const soma = itens.filter(i => i.tipo !== 'receita').reduce((s, i) => s + i.valor, 0);
+
+  const linha = i => {
+    const atrasado = i.data < hoje;
+    const quando = atrasado
+      ? `${i.atraso} ${i.atraso === 1 ? 'dia' : 'dias'} de atraso`
+      : 'vence hoje';
+    const acao = i.tipo === 'fatura' ? 'Pagar'
+      : i.tipo === 'receita' ? 'Recebi' : 'Paguei';
+    return `<div class="pend-item ${atrasado ? 'atraso' : ''}">
+      <span class="pend-ico">${i.tipo === 'fatura' ? '💳' : i.tipo === 'receita' ? '💰' : '📄'}</span>
+      <span class="pend-info">
+        <b>${esc(i.titulo)}</b>
+        <small>${quando} · ${fmtDate(new Date(i.data + 'T12:00:00'))}</small>
+      </span>
+      <span class="pend-val ${i.tipo === 'receita' ? 'txt-green' : ''}">${fmt(i.valor)}</span>
+      <span class="pend-acoes">
+        <button class="sec-btn" data-pend-ok="${esc(i.id)}" data-pend-tipo="${i.tipo}">${acao}</button>
+        ${i.tipo !== 'fatura' ? `<button class="sec-btn" data-pend-adiar="${esc(i.id)}">Adiar</button>` : ''}
+      </span>
+    </div>`;
+  };
+
+  return `
+    <div class="card pend">
+      <div class="pend-cab">
+        <div>
+          <b>${itens.length} ${itens.length === 1 ? 'pendência' : 'pendências'}</b>
+          <small>${vencidos.length ? `${vencidos.length} em atraso · ` : ''}${fmt(soma)} a pagar</small>
+        </div>
+        <span class="pend-selo ${vencidos.length ? 'ruim' : ''}">${vencidos.length ? 'atrasado' : 'hoje'}</span>
+      </div>
+      ${itens.slice(0, 6).map(linha).join('')}
+      ${itens.length > 6 ? `<p class="muted" style="margin-top:8px">e mais ${itens.length - 6} — veja no extrato, filtrando por “A Pagar”.</p>` : ''}
+    </div>`;
+}
+
+/* O aviso de aperto: em que dia o dinheiro acaba.
+
+   O total do mês fechando positivo esconde exatamente isto — dá para terminar o
+   mês no azul e ficar negativo no dia 8, porque o aluguel vence antes do
+   salário. Saber com antecedência é o que permite agir. */
+function avisoDeAperto() {
+  const ponto = DB.primeiroDiaNegativo();
+  if (!ponto) return '';
+  const quando = new Date(ponto.data + 'T12:00:00');
+  const dias = DB.diasEntre(DB.paraISO(new Date()), ponto.data);
+  return `
+    <div class="card aperto">
+      <span class="aperto-ico">⚠️</span>
+      <div>
+        <b>O saldo fica negativo em ${fmtDate(quando)}${dias > 0 ? ` — daqui a ${dias} ${dias === 1 ? 'dia' : 'dias'}` : ', hoje'}</b>
+        <p class="muted">Chega a <b class="txt-red">${fmt(ponto.saldo)}</b> considerando o que ainda entra e sai até lá. Antecipar uma entrada ou adiar uma conta resolve.</p>
+      </div>
+    </div>`;
 }
 
 /* Cria o contrato da repetição a partir do lançamento recém-salvo.

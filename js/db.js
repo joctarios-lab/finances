@@ -949,6 +949,110 @@ const DB = {
     return Math.max(0, Number(r.fim_vezes) - (Number(r.geradas) || 0));
   },
 
+  /* ---------- Pendências: o que espera decisão ----------
+     Lançar sozinho só serve se o que venceu não apodrecer na lista. Estas são as
+     linhas que precisam de uma ação humana hoje — e por isso a fila mistura
+     despesa, receita e fatura: o critério não é o tipo, é "isto está parado
+     esperando você". */
+  pendencias(hojeISO) {
+    const hoje = hojeISO || this.paraISO(new Date());
+    const itens = [];
+
+    for (const t of this.all('transactions')) {
+      if (t.status !== 'A Pagar' || t.card_id) continue;   // compra no cartão vence junto da fatura
+      if (this.isNeutral(t)) continue;
+      if (String(t.date) > hoje) continue;                  // ainda não chegou a hora
+      itens.push({
+        tipo: this.isExpense(t) ? 'despesa' : 'receita',
+        id: t.id, tx: t, data: String(t.date),
+        valor: Number(t.amount) || 0,
+        titulo: t.description,
+        atraso: this.diasEntre(String(t.date), hoje),
+      });
+    }
+
+    /* Fatura entra na mesma fila: ela vence, atrasa e cobra juros como qualquer
+       conta — separá-la faria a pessoa procurar em dois lugares o que é a mesma
+       pergunta. */
+    for (const card of this.all('cards').filter(c => c.active !== false)) {
+      for (const inv of this.invoicesOf(card)) {
+        if (inv.status === 'Paga') continue;
+        const venceISO = this.paraISO(inv.due);
+        if (venceISO > hoje) continue;
+        if (!(inv.falta > 0.005)) continue;
+        itens.push({
+          tipo: 'fatura',
+          id: inv.key, data: venceISO, valor: inv.falta,
+          titulo: `Fatura ${card.name}`,
+          atraso: this.diasEntre(venceISO, hoje),
+        });
+      }
+    }
+
+    // Mais atrasado primeiro: é a ordem em que o problema cresce
+    return itens.sort((a, b) => b.atraso - a.atraso || b.valor - a.valor);
+  },
+
+  diasEntre(deISO, ateISO) {
+    return Math.round((Date.parse(ateISO + 'T12:00:00') - Date.parse(deISO + 'T12:00:00')) / 86400000);
+  },
+
+  /* ---------- Projeção de saldo, dia a dia ----------
+     Cruza o que ainda entra e o que ainda sai nas datas certas, partindo do saldo
+     de hoje. Responde a pergunta que nenhuma outra tela responde: EM QUE DIA o
+     dinheiro acaba.
+
+     Só o que está "A Pagar" entra: o que já foi pago está dentro do saldo, e
+     somá-lo de novo contaria duas vezes. Vencido conta no primeiro dia, porque é
+     dinheiro que pode sair a qualquer momento. */
+  projecaoSaldo(ateISO, deISO) {
+    const inicio = deISO || this.paraISO(new Date());
+    const fim = ateISO || this.fimISO(this.monthPeriod(new Date()));
+    const movimento = {};
+    const soma = (data, v) => { movimento[data] = (movimento[data] || 0) + v; };
+
+    for (const t of this.all('transactions')) {
+      if (t.status !== 'A Pagar' || t.card_id || this.isNeutral(t)) continue;
+      const v = Number(t.amount) || 0;
+      // O que venceu e não foi pago pesa já no primeiro dia
+      const quando = String(t.date) < inicio ? inicio : String(t.date);
+      if (quando >= fim) continue;
+      soma(quando, this.isExpense(t) ? -v : v);
+    }
+    for (const card of this.all('cards').filter(c => c.active !== false)) {
+      for (const inv of this.invoicesOf(card)) {
+        if (inv.status === 'Paga' || !(inv.falta > 0.005)) continue;
+        const venceISO = this.paraISO(inv.due);
+        const quando = venceISO < inicio ? inicio : venceISO;
+        if (quando >= fim) continue;
+        soma(quando, -inv.falta);
+      }
+    }
+
+    let saldo = this.accountsTotal();
+    const serie = [];
+    for (let d = inicio; d < fim; d = this.somarDiasISO(d, 1)) {
+      saldo += (movimento[d] || 0);
+      serie.push({ data: d, saldo, movimento: movimento[d] || 0 });
+    }
+    return serie;
+  },
+
+  somarDiasISO(iso, n) {
+    const d = new Date(iso + 'T12:00:00');
+    d.setDate(d.getDate() + n);
+    return this.paraISO(d);
+  },
+
+  /* O primeiro dia em que o saldo fica negativo, se houver.
+
+     É o aviso que muda comportamento: saber que "dia 8 o saldo fica negativo,
+     porque o aluguel vence antes do salário" dá três dias para agir. O total do
+     mês fechando positivo esconde exatamente isso. */
+  primeiroDiaNegativo(ateISO, deISO) {
+    return this.projecaoSaldo(ateISO, deISO).find(p => p.saldo < 0) || null;
+  },
+
   /* ---------- Estatística dos relatórios ----------
      Mediana e desvio mediano (MAD), não média e desvio padrão.
 

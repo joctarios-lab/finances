@@ -4522,3 +4522,130 @@ DB.data.recurrences = [];
 DB.data.transactions = DB.data.transactions.filter(t => !/UI Rec|Netflix UI|Financiamento UI/.test(t.description || ''));
 DB.data.accounts = DB.data.accounts.filter(a => a.name !== 'Conta UI Rec');
 DB.save();
+
+/* ---- Fase 3: pendências e projeção ----
+   Lançar sozinho só serve se o que venceu não apodrecer na lista. E o total do
+   mês fechando positivo esconde o dia em que o dinheiro acaba. */
+console.log('\n=== Pendências e projeção ===');
+const apF3 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+try {
+  const cP = DB.upsert('accounts', { name: 'Conta Pendencia', type: 'Conta Corrente', balance: 3000 });
+  const hoje = DB.paraISO(new Date());
+  const nova = (desc, valor, quando, extra) => DB.upsert('transactions', {
+    description: desc, amount: valor, date: quando, type: 'Despesa', status: 'A Pagar',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cP, ...extra,
+  });
+
+  const antes = DB.pendencias().length;
+  nova('Vencida ha 3 dias', 400, DB.somarDiasISO(hoje, -3));
+  nova('Vence hoje', 200, hoje);
+  nova('Vence daqui a 5 dias', 900, DB.somarDiasISO(hoje, 5));
+  const fila = DB.pendencias().filter(i => /Vencida|Vence/.test(i.titulo));
+
+  check('a fila traz o que venceu', fila.some(i => i.titulo === 'Vencida ha 3 dias'), true);
+  check('e o que vence hoje', fila.some(i => i.titulo === 'Vence hoje'), true);
+  /* O que ainda não venceu NÃO entra: a fila é do que espera decisão agora, e
+     enchê-la de futuro faria ninguém mais olhar. */
+  check('mas não o que ainda vai vencer', fila.some(i => i.titulo === 'Vence daqui a 5 dias'), false);
+  check('o mais atrasado vem primeiro', fila[0].titulo, 'Vencida ha 3 dias');
+  check('com os dias de atraso contados', fila[0].atraso, 3);
+  check('e o que vence hoje tem atraso zero',
+    (fila.find(i => i.titulo === 'Vence hoje') || {}).atraso, 0);
+  void antes;
+
+  /* Receita esperada que não caiu é pendência do mesmo jeito: salário que não
+     entrou precisa de decisão tanto quanto conta que não foi paga. */
+  nova('Salario nao caiu', 6200, DB.somarDiasISO(hoje, -1), { type: 'Receita', method: 'PIX' });
+  const comReceita = DB.pendencias().find(i => i.titulo === 'Salario nao caiu');
+  check('receita que não caiu entra na fila', !!comReceita, true);
+  check('marcada como receita', comReceita.tipo, 'receita');
+
+  /* Fatura entra na MESMA fila: ela vence, atrasa e cobra juros como qualquer
+     conta — separá-la faria procurar em dois lugares a mesma pergunta. */
+  const cardP = DB.upsert('cards', { name: 'Cartao Pendencia', closing_day: 1, due_day: 1, account_id: cP, active: true });
+  const chaveP = DB.invoiceKeyFor(DB.get('cards', cardP), DB.somarDiasISO(hoje, -70));
+  DB.upsert('transactions', { description: 'Compra antiga', amount: 700, date: DB.somarDiasISO(hoje, -70), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito', card_id: cardP, invoice_key: chaveP });
+  const comFatura = DB.pendencias().find(i => i.tipo === 'fatura');
+  check('fatura vencida entra na fila', !!comFatura, true);
+  check('com o valor que falta', comFatura && comFatura.valor, 700);
+
+  // Compra no cartão não vira pendência sozinha: ela vence junto da fatura
+  check('compra no cartão não vira pendência avulsa',
+    DB.pendencias().some(i => i.titulo === 'Compra antiga'), false);
+
+  /* ---- Projeção ----
+     Só o que está "A Pagar" entra: o já pago está dentro do saldo, e somá-lo de
+     novo contaria duas vezes. */
+  const fimP = DB.fimISO(DB.monthPeriod(new Date()));
+  const proj = DB.projecaoSaldo(fimP, hoje);
+  check('a projeção começa hoje', proj[0].data, hoje);
+  check('e vai até o fim do ciclo', proj[proj.length - 1].data < fimP, true);
+  check('um ponto por dia, sem buracos',
+    proj.every((p, i) => i === 0 || p.data === DB.somarDiasISO(proj[i - 1].data, 1)), true);
+  // O saldo do último dia é o de hoje mais tudo que ainda se move
+  const movimentoTotal = proj.reduce((s, p) => s + p.movimento, 0);
+  check('o fim bate com o saldo mais o movimento previsto',
+    Math.round(proj[proj.length - 1].saldo * 100) / 100,
+    Math.round((DB.accountsTotal() + movimentoTotal) * 100) / 100);
+
+  /* O vencido pesa JÁ no primeiro dia: é dinheiro que pode sair a qualquer
+     momento, e empurrá-lo para a data original (no passado) o deixaria fora da
+     projeção inteira.
+
+     Mede a DIFERENÇA que a conta vencida faz no primeiro dia — olhar o sinal do
+     movimento não serviria, porque nesse cenário há também um salário atrasado
+     de +6.200 caindo ali, e a soma fica positiva mesmo com a conta dentro. */
+  const semVencida = DB.projecaoSaldo(fimP, hoje)[0].movimento;
+  const idVencida = nova('Vencida extra proj', 350, DB.somarDiasISO(hoje, -10));
+  check('o vencido conta no primeiro dia',
+    Math.round((DB.projecaoSaldo(fimP, hoje)[0].movimento - semVencida) * 100) / 100, -350);
+  DB.remove('transactions', idVencida);
+  check('e sai da conta quando o lançamento some',
+    DB.projecaoSaldo(fimP, hoje)[0].movimento, semVencida);
+
+  // Já pago não entra de novo
+  const antesDoPago = DB.projecaoSaldo(fimP, hoje)[0].movimento;
+  DB.upsert('transactions', { description: 'Ja pago P', amount: 5000, date: hoje, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cP });
+  check('lançamento já pago não entra na projeção',
+    DB.projecaoSaldo(fimP, hoje)[0].movimento, antesDoPago);
+
+  /* O aviso que muda comportamento: o mês pode fechar positivo e mesmo assim
+     passar por zero no meio do caminho. */
+  const contaGrande = nova('Conta gigante', 99999, DB.somarDiasISO(hoje, 2));
+  const ponto = DB.primeiroDiaNegativo(fimP, hoje);
+  check('acha o dia em que o saldo fica negativo', !!ponto, true);
+  check('e é o dia da conta que derruba', ponto && ponto.data, DB.somarDiasISO(hoje, 2));
+  check('com o valor que ele atinge', ponto && ponto.saldo < 0, true);
+  DB.remove('transactions', contaGrande);
+  check('sem aperto previsto, não inventa aviso',
+    DB.primeiroDiaNegativo(fimP, hoje) && DB.primeiroDiaNegativo(fimP, hoje).saldo < 0, null);
+
+  /* A fila vem ANTES do saldo no Painel: de nada adianta o número bonito no topo
+     se há três contas vencidas embaixo. */
+  const corpoInicio = apF3.slice(apF3.indexOf('${setupCard}'), apF3.indexOf('${adviceCard}'));
+  check('a fila aparece antes do saldo',
+    corpoInicio.indexOf('filaDePendencias()') < corpoInicio.indexOf('heroAtual'), true);
+  check('e o aviso de aperto logo depois dele',
+    corpoInicio.indexOf('avisoDeAperto()') > corpoInicio.indexOf('heroAtual'), true);
+  // Só no mês corrente: pendência de um mês fechado não é decisão de hoje
+  check('a fila só existe no mês corrente', /\$\{atual \? filaDePendencias\(\) : ''\}/.test(apF3), true);
+
+  /* Adiar muda a data, não some com a conta: escondê-la seria a forma mais rápida
+     de o app perder a confiança de quem usa. */
+  const corpoAdiar = apF3.slice(apF3.indexOf('data-pend-adiar]'), apF3.indexOf('const rprev'));
+  check('adiar só muda a data', corpoAdiar.includes('{ ...t, date: nova }'), true);
+  check('e oferece excluir explicitamente', corpoAdiar.includes('Não vou pagar'), true);
+  check('avisando que o saldo não muda', corpoAdiar.includes('ainda não tinha sido pago'), true);
+  // Pagar pela fila move o dinheiro e checa o guardado
+  const corpoOk = apF3.slice(apF3.indexOf('data-pend-ok]'), apF3.indexOf('data-pend-adiar]'));
+  check('pagar pela fila move o saldo', corpoOk.includes('applyTxEffect(pago, +1)'), true);
+  check('e checa se usou o guardado', corpoOk.includes('avisarSeUsouGuardado(pago)'), true);
+  check('fatura abre a folha de pagamento', corpoOk.includes('openPagarFaturaSheet'), true);
+} catch (e) { console.log(` FALHA | pendências: ${e.message}`); fail++; }
+/* Limpeza fora do try: registro dirty faz os testes async de sync girarem por
+   sujeira, e o erro apareceria longe da causa. */
+DB.data.transactions = DB.data.transactions.filter(t =>
+  !/Vencida ha 3|Vence hoje|Vence daqui|Salario nao caiu|Compra antiga|Ja pago P|Conta gigante/.test(t.description || ''));
+DB.data.cards = DB.data.cards.filter(c => c.name !== 'Cartao Pendencia');
+DB.data.accounts = DB.data.accounts.filter(a => a.name !== 'Conta Pendencia');
+DB.save();

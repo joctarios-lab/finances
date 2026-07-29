@@ -150,6 +150,36 @@ body {
 }
 .section-title::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
+/* A fila de pendências, no topo de tudo. Borda âmbar à esquerda em vez de cartão
+   inteiro colorido: chama sem gritar, e a lista continua legível. */
+.pend { border-left: 3px solid var(--amber); }
+.pend-cab { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.pend-cab b { display: block; font-size: 14px; }
+.pend-cab small { display: block; font-size: 11.5px; color: var(--paper-dim); margin-top: 1px; }
+.pend-selo { flex: none; padding: 3px 9px; border-radius: 6px; font-size: 11px; font-weight: 700;
+  background: rgba(246, 166, 9, .14); color: #d18b00; }
+.pend-selo.ruim { background: rgba(241, 65, 108, .12); color: var(--red); }
+.pend-item {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px;
+  align-items: center; padding: 9px 0; border-top: 1px solid var(--line);
+}
+.pend-ico { font-size: 16px; }
+.pend-info { min-width: 0; }
+.pend-info b { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pend-info small { font-size: 11px; color: var(--paper-dim); }
+.pend-item.atraso .pend-info small { color: var(--red); font-weight: 600; }
+.pend-val { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* As ações ocupam a linha inteira embaixo: espremidas ao lado do valor elas
+   ficariam com alvo pequeno demais para o polegar */
+.pend-acoes { grid-column: 2 / -1; display: flex; gap: 6px; }
+.pend-acoes .sec-btn { padding: 5px 12px; min-height: 32px; font-size: 12px; }
+
+/* O aviso de aperto: o dia em que o dinheiro acaba */
+.aperto { display: flex; gap: 12px; align-items: flex-start; border-left: 3px solid var(--red); }
+.aperto-ico { font-size: 20px; flex: none; }
+.aperto b { font-size: 13.5px; line-height: 1.4; }
+.aperto p { margin-top: 3px; font-size: 12px; }
+
 /* Contas fixas: uma por bloco, com as ações à mão. Pausada e cancelada recuam
    sem sumir — quem parou uma assinatura precisa achá-la para reativar. */
 .rec-item { padding: 11px 0; border-bottom: 1px solid var(--line); }

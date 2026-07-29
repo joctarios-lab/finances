@@ -55,6 +55,11 @@ gasta; meta de viagem existe para ser gasta na hora certa.**
 | 9 | Receita futura entra em projeção e pendências, **nunca no disponível** | Senão vira "posso gastar o que ainda não recebi" |
 | 10 | **Projeção de saldo dia a dia**, com alerta de negativo | Pega o aperto antes: "dia 8 fica negativo, o salário só cai dia 10" |
 
+## Estado
+
+As três fases estão implementadas (versão 72). O que foi encontrado durante a
+construção e mudou o desenho está registrado abaixo, em cada fase.
+
 ## Fases
 
 A ordem tem dependência real, não é preferência.
@@ -85,6 +90,31 @@ um número que só erra para menos, sem conserto.
 - Faturas de cartão entram na mesma fila
 - Projeção de saldo dia a dia, cruzando entradas e saídas nas datas
 - Alerta do primeiro dia em que o saldo fica negativo
+
+## O que só apareceu construindo
+
+Estes não estavam previstos e mudaram o resultado:
+
+**A fatura vencia fora do ciclo e sumia do comprometido.** A regra "até o fim do
+ciclo" excluía uma fatura que vence dia 5 do mês seguinte. Mas fatura é dinheiro
+**já gasto**, só não debitado — diferente do IPVA de setembro, que é compromisso
+futuro. Fatura passou a contar sempre; o horizonte vale só para avulsos.
+
+**O gatilho do resgate usava o número errado.** Media contra `available()`, que
+desconta o comprometido — mas comprometido ainda está na conta. Isso antecipava
+um débito que não aconteceu. Agora o gatilho usa `caixaLivre()` (contas −
+guardado), e o pagamento da fatura é que provoca a pergunta.
+
+**Dia 31 em fevereiro.** `new Date(ano, mes, 31)` transborda para 3 de março em
+silêncio. Cai no último dia real do mês.
+
+**Duplicação com o OFX.** A geração automática cria "A Pagar" e o extrato traz o
+mesmo débito dias depois. Sem casar, o mês fica com duas linhas e o comprometido
+nunca zera. Janela de 5 dias, valor como âncora, e sem adivinhar quando há dois
+candidatos sem parecença de nome.
+
+**O Sync quebrava com tabela nova.** Uma versão que traz tabela nova derrubava a
+sincronização inteira num aparelho que abrisse antes de recarregar o app.
 
 ## Cenários que a Fase 2 precisa cobrir
 
