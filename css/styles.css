@@ -150,6 +150,34 @@ body {
 }
 .section-title::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
+/* Saúde dos próximos meses: uma barra por mês, altura pelo saldo projetado.
+   Mês negativo cai para baixo da linha e fica vermelho — é a forma mais rápida de
+   ler "aperto em outubro" sem comparar seis números. */
+.fut-barras { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 6px; }
+.fut-col { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
+.fut-val {
+  font-size: 10.5px; font-weight: 700; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+/* O tubo é a moldura: dá a mesma referência de altura para todos os meses, e é o
+   que permite comparar de relance em vez de medir cada barra */
+.fut-tubo {
+  width: 100%; height: 62px; display: flex; align-items: flex-end;
+  background: var(--ink-3); border-radius: 5px; overflow: hidden;
+}
+.fut-tubo i { display: block; width: 100%; background: var(--gold); border-radius: 4px 4px 0 0; }
+.fut-tubo i.neg { background: var(--red); }
+.fut-mes { font-size: 10.5px; color: var(--paper-dim); font-weight: 600; text-transform: capitalize; }
+.fut-nota { margin-top: 10px; font-size: 12px; }
+
+/* Linha prevista no extrato (fatura que ainda vai vencer): tracejada e recuada,
+   para não se confundir com movimento que já aconteceu.
+
+   Sem regra aninhada em .tx-amount de propósito: os testes de alvo de toque e de
+   truncamento localizam a PRIMEIRA regra de cada classe, e um seletor aninhado
+   passaria na frente do original e faria o teste medir outra coisa. */
+.tx-prev { border-left: 2px dashed var(--amber); padding-left: 8px; }
+
 /* A fila de pendências, no topo de tudo. Borda âmbar à esquerda em vez de cartão
    inteiro colorido: chama sem gritar, e a lista continua legível. */
 .pend { border-left: 3px solid var(--amber); }

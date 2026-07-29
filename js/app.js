@@ -920,6 +920,7 @@ function renderInicio(period) {
     ${periodBar}
     ${atual ? heroAtual : heroFechado}
     ${atual ? avisoDeAperto() : ''}
+    ${atual ? saudeDosProximosMeses() : ''}
     ${adviceCard}
     <div class="kpi-grid">
       <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
@@ -1361,6 +1362,14 @@ function renderExtrato(period) {
 
   /* Total do dia, somado sobre a lista JÁ FILTRADA: com um filtro ativo, um total
      vindo de outra base não bateria com as linhas logo abaixo dele. */
+  /* Faturas do período entram na lista como linhas PREVISTAS.
+
+     Elas não são transações — são derivadas das compras — mas o dinheiro sai da
+     conta no vencimento. Um extrato de agosto sem a fatura de agosto esconde a
+     maior saída do mês, que foi exatamente o defeito relatado. */
+  const faturasNoPeriodo = (state.filtros.tipo.length && !state.filtros.tipo.includes('Despesa'))
+    ? [] : DB.faturasDoPeriodo(period, contasFiltradas);
+
   const porDia = {};
   for (const t of txs) {
     const d = (porDia[t.date] = porDia[t.date] || { saiu: 0, entrou: 0 });
@@ -1384,13 +1393,63 @@ function renderExtrato(period) {
     else if (!t.card_id) d.entrou += v;      // estorno de cartão abate a fatura, não entra na conta
   }
 
+  /* A fatura conta no total do dia SÓ quando se está conferindo contas.
+
+     Mesma regra do pagamento de fatura, pelo mesmo motivo: com conta filtrada, o
+     total do dia é CAIXA e a fatura sai dali de verdade — tem de bater com o
+     extrato do banco. Sem filtro, o total é GASTO, e as compras do cartão já
+     contaram quando foram feitas: somar a fatura seria o mesmo dinheiro duas
+     vezes. Por isso a linha aparece nos dois casos, mas o total só num. */
+  if (contasFiltradas.length) {
+    for (const inv of faturasNoPeriodo) {
+      const d = (porDia[inv.venceISO] = porDia[inv.venceISO] || { saiu: 0, entrou: 0 });
+      d.saiu += Math.max(0, inv.falta);
+    }
+  }
+
   // Totais do período nesta conta: a soma dos dias, para o topo e a lista contarem
   // a mesma história
   const saiuNaConta = Object.values(porDia).reduce((s, d) => s + d.saiu, 0);
   const entrouNaConta = Object.values(porDia).reduce((s, d) => s + d.entrou, 0);
 
+  /* Marcadas como previstas e sem ação de pagar na própria linha: quem paga usa a
+     folha, que trata parcial e escolhe a conta. */
+  const linhaFatura = inv => `<div class="tx tx-prev" data-fatura="${esc(inv.key)}">
+    <span class="tx-ico">💳</span>
+    <span class="tx-info"><span class="tx-name">Fatura ${esc(inv.card.name)}</span>
+    <span class="tx-meta">Previsto · vence ${fmtDate(inv.due)} · ${inv.count} compra(s)${
+      inv.pago > 0.005 ? ` · já pago ${fmtShort(inv.pago)}` : ''} · toque para pagar</span></span>
+    <span class="tx-amount pending">− ${fmt(inv.falta)}</span>
+  </div>`;
+
+  /* Mistura transações e faturas numa lista só, ordenada por data. Renderizar as
+     faturas à parte as tiraria da leitura cronológica, que é o que faz um extrato
+     ser extrato. */
+  const linhas = [
+    ...txs.map(t => ({ data: t.date, tx: t })),
+    ...faturasNoPeriodo.map(inv => ({ data: inv.venceISO, inv })),
+  ].sort((a, b) => b.data.localeCompare(a.data));
+
   let list = '', lastDay = '';
-  for (const t of txs) {
+  for (const item of linhas) {
+    if (item.inv) {
+      if (item.data !== lastDay) {
+        lastDay = item.data;
+        const d = porDia[item.data] || { saiu: 0, entrou: 0 };
+        const liqF = d.entrou - d.saiu;
+        const badgeF = (rot, cls, valor) => `<span class="dia-badge ${cls}"><i>${rot}</i>${valor}</span>`;
+        const totF = [
+          d.entrou ? badgeF('Entradas', 'ok', fmt(d.entrou)) : '',
+          d.saiu ? badgeF('Saídas', 'ruim', fmt(d.saiu)) : '',
+          (d.entrou && d.saiu) ? badgeF('Saldo', liqF >= 0 ? 'saldo pos' : 'saldo neg',
+            `${liqF >= 0 ? '+' : '−'} ${fmt(Math.abs(liqF))}`) : '',
+        ].filter(Boolean).join('');
+        list += `<p class="tx-day"><span>${fmtDay(item.data)}</span>${totF ? `<span class="tx-day-tot">${totF}</span>` : ''}</p>`;
+      }
+      list += linhaFatura(item.inv);
+      continue;
+    }
+    const t = item.tx;
     if (t.date !== lastDay) {
       lastDay = t.date;
       const d = porDia[t.date] || { saiu: 0, entrou: 0 };
@@ -1442,7 +1501,11 @@ function renderExtrato(period) {
   }
   // Vazio com filtro ativo é ambíguo: pode ser que não haja nada, ou que o filtro
   // esteja escondendo tudo. A mensagem diz qual dos dois é, e oferece a saída.
-  if (!txs.length) {
+  /* Vazio é `linhas`, não `txs`: um mês futuro pode não ter transação nenhuma e
+     ainda assim ter a fatura vencendo nele. Checar txs sobrescrevia a lista com a
+     mensagem de vazio e jogava a linha da fatura fora — a maior saída do mês
+     desaparecia justamente no mês em que ela importa. */
+  if (!linhas.length) {
     list = ativos.length
       ? `<div class="empty"><b>Nenhum lançamento com esses filtros</b>Há ${DB.txOfPeriod(period).length} no período. <button class="btn ghost" id="limpar-vazio" style="margin-top:10px">Limpar os filtros</button></div>`
       : `<div class="empty"><b>Sem lançamentos</b>Nada registrado neste período ainda.
@@ -1500,8 +1563,8 @@ function renderExtrato(period) {
 
          Quando sobra diferença, ela é a conciliação, e aparece dita por extenso
          em vez de deixar a conta parecer errada. */
-      const anterior = DB.saldoNaData(contasFiltradas, bordaDe);
-      const finalMes = DB.saldoNaData(contasFiltradas, bordaAte);
+      const anterior = DB.saldoPrevistoNaData(contasFiltradas, bordaDe);
+      const finalMes = DB.saldoPrevistoNaData(contasFiltradas, bordaAte);
       const conciliado = finalMes - (anterior + entrouNaConta - saiuNaConta);
       return resumoExtrato({
         titulo: `${varias ? 'Saldo somado' : 'Saldo'} em ${fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
@@ -1521,8 +1584,8 @@ function renderExtrato(period) {
          parece começar do zero e a soma nunca fecha com o saldo das contas. */
       // Os dois saldos vêm do saldo real das contas, cada um na sua data — ver o
       // comentário no ramo de cima: derivar o fechamento da soma ignora a conciliação
-      const anterior = DB.saldoNaData(null, bordaDe);
-      const finalMes = DB.saldoNaData(null, bordaAte);
+      const anterior = DB.saldoPrevistoNaData(null, bordaDe);
+      const finalMes = DB.saldoPrevistoNaData(null, bordaAte);
       const resultado = receitas - total;
       const conciliado = finalMes - (anterior + resultado);
       const onde = recortado ? 'neste intervalo' : 'neste mês';
@@ -2341,6 +2404,8 @@ function bindView() {
   ligarComposicao();
   const btnMassa = $('#btn-massa');
   if (btnMassa) btnMassa.onclick = () => openMassaModal(DB.monthPeriod(new Date(), state.monthOffset));
+  // Fatura na lista do extrato leva direto para o pagamento
+  v.querySelectorAll('[data-fatura]').forEach(el => el.onclick = () => openPagarFaturaSheet(el.dataset.fatura));
   /* Abre as subcategorias de um envelope sem redesenhar a tela: refazer o
      relatório inteiro recalcularia 12 meses de histórico e perderia a rolagem,
      num toque que só precisa mostrar quatro linhas. */
@@ -2404,6 +2469,8 @@ function bindView() {
   if (rnext) rnext.onclick = () => { state.repOffset = (state.repOffset || 0) + 1; render(); };
   const goRep = $('#go-reports');
   if (goRep) goRep.onclick = () => setTab('relatorios');
+  const futVer = $('#fut-ver');
+  if (futVer) futVer.onclick = () => setTab('relatorios');
   const goCards = $('#go-cards');
   if (goCards) goCards.onclick = () => openConfigSection('cards');
   v.querySelectorAll('[data-setup]').forEach(b => b.onclick = () => openConfigSection(b.dataset.setup));
@@ -4524,6 +4591,52 @@ function filaDePendencias() {
       </div>
       ${itens.slice(0, 6).map(linha).join('')}
       ${itens.length > 6 ? `<p class="muted" style="margin-top:8px">e mais ${itens.length - 6} — veja no extrato, filtrando por “A Pagar”.</p>` : ''}
+    </div>`;
+}
+
+/* Saúde dos próximos meses, no Painel.
+
+   Abrir o app responde "como estamos?", e essa pergunta não para no dia 31. O
+   financiamento tem 22 parcelas, o IPVA vence em setembro e o aluguel não vai
+   parar — tudo já decidido. Ver a curva antes é o que permite agir enquanto ainda
+   dá tempo.
+
+   Uma barra por mês, altura pelo saldo projetado: mês negativo cai abaixo da
+   linha e fica vermelho. É a forma mais rápida de ler "aperto em outubro" sem
+   comparar seis números. */
+function saudeDosProximosMeses() {
+  const meses = DB.previsaoMeses(6);
+  if (!meses.some(m => m.itens.length)) return '';
+  const saldos = meses.map(m => m.saldoAoFim);
+  const teto = Math.max(...saldos.map(Math.abs), 1);
+  const negativo = meses.find(m => m.saldoAoFim < 0);
+  const nome = p => p.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
+
+  return `
+    <div class="card fut">
+      <div class="card-head"><div><b>Os próximos meses</b>
+        <small>saldo projetado com o que já está previsto</small></div>
+        ${negativo
+          ? `<span class="rel-selo ruim">aperto em ${esc(nome(negativo.period))}</span>`
+          : '<span class="rel-selo bom">no azul</span>'}
+      </div>
+      <div class="fut-barras">
+        ${meses.map(m => {
+          const alt = Math.max(4, Math.abs(m.saldoAoFim) / teto * 100);
+          const neg = m.saldoAoFim < 0;
+          return `<div class="fut-col" title="${esc(nome(m.period))}: ${fmt(m.saldoAoFim)}">
+            <span class="fut-val ${neg ? 'txt-red' : ''}">${fmtShort(m.saldoAoFim)}</span>
+            <span class="fut-tubo">
+              <i class="${neg ? 'neg' : ''}" style="height:${alt.toFixed(1)}%"></i>
+            </span>
+            <span class="fut-mes">${esc(nome(m.period))}</span>
+          </div>`;
+        }).join('')}
+      </div>
+      <p class="muted fut-nota">${negativo
+        ? `Com o previsto, o saldo fecha <b class="txt-red">${fmt(negativo.saldoAoFim)}</b> em <b>${esc(nome(negativo.period))}</b>.`
+        : `O saldo se mantém positivo nos próximos seis meses, fechando em <b class="txt-green">${fmt(meses[meses.length - 1].saldoAoFim)}</b>.`}
+        <button class="link-btn" id="fut-ver">ver o detalhe</button></p>
     </div>`;
 }
 

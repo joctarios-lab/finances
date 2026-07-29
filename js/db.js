@@ -562,6 +562,66 @@ const DB = {
     return atual - desde;
   },
 
+  /* Saldo numa data, contando o que está AGENDADO quando a data é futura.
+
+     saldoNaData sozinha olha só para trás: parte do saldo real e desfaz o que já
+     foi pago. Para uma data futura ela devolve o saldo de hoje, ignorando salário
+     e contas agendadas — foi o defeito relatado, com o extrato de agosto mostrando
+     receita de R$ 6.200 na lista e saldo inalterado no topo.
+
+     Aqui o passado continua vindo do saldo real (é o número confiável, vem da
+     conciliação) e o futuro soma o que está previsto para acontecer até lá. */
+  saldoPrevistoNaData(contaIds, dataISO) {
+    const hoje = this.paraISO(new Date());
+    const base = this.saldoNaData(contaIds, dataISO < hoje ? dataISO : hoje);
+    if (dataISO <= hoje) return base;
+
+    const contas = (contaIds && contaIds.length) ? contaIds : this.all('accounts').map(a => a.id);
+    const dentro = id => contas.includes(id);
+    let previsto = 0;
+
+    for (const t of this.all('transactions')) {
+      if (t.status !== 'A Pagar' || t.card_id || this.isNeutral(t)) continue;
+      // Vencido e não pago entra também: é dinheiro que ainda vai sair
+      if (String(t.date) >= dataISO) continue;
+      if (!dentro(t.account_id)) continue;
+      previsto += (this.isExpense(t) ? -1 : 1) * (Number(t.amount) || 0);
+    }
+    /* Fatura conta pelo VENCIMENTO, e é o que faltava para o extrato de um mês
+       futuro fechar: a compra no cartão não sai da conta quando é feita, sai
+       quando a fatura é paga. */
+    for (const card of this.all('cards').filter(c => c.active !== false)) {
+      const contaPgto = card.account_id;
+      if (contaPgto && !dentro(contaPgto)) continue;
+      for (const inv of this.invoicesOf(card)) {
+        if (inv.status === 'Paga' || !(inv.falta > 0.005)) continue;
+        if (this.paraISO(inv.due) >= dataISO) continue;
+        previsto -= Math.max(0, inv.falta);
+      }
+    }
+    return base + previsto;
+  },
+
+  /* Faturas que vencem dentro de um período, para aparecerem no extrato dele.
+
+     Elas não são transações — são derivadas das compras. Mas o dinheiro sai da
+     conta no vencimento, e um extrato de agosto sem a fatura de agosto esconde a
+     maior saída do mês. */
+  faturasDoPeriodo(period, contaIds) {
+    const de = this.inicioISO(period), ate = this.fimISO(period);
+    const fora = [];
+    for (const card of this.all('cards').filter(c => c.active !== false)) {
+      if (contaIds && contaIds.length && card.account_id && !contaIds.includes(card.account_id)) continue;
+      for (const inv of this.invoicesOf(card)) {
+        if (inv.status === 'Paga' || !(inv.falta > 0.005)) continue;
+        const vence = this.paraISO(inv.due);
+        if (vence < de || vence >= ate) continue;
+        fora.push({ ...inv, venceISO: vence });
+      }
+    }
+    return fora.sort((a, b) => a.venceISO.localeCompare(b.venceISO));
+  },
+
   // Data de início do período no formato do banco, para comparar com t.date
   inicioISO(period) {
     const d = period.start;

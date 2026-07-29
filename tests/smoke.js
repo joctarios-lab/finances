@@ -4840,3 +4840,122 @@ DB.data.recurrences = [];
 DB.data.cards = DB.data.cards.filter(c => !/Cartao Ajuste/.test(c.name || ''));
 DB.data.accounts = DB.data.accounts.filter(a => a.name !== 'Conta Ajuste');
 DB.save();
+
+/* ---- O futuro nas visões de tempo ----
+   Defeitos relatados em uso: salário lançado para o futuro não mexia no saldo do
+   extrato, e a fatura prevista não aparecia no mês em que vence. A causa era a
+   mesma: saldoNaData só olha para trás. */
+console.log('\n=== Saldo e fatura no futuro ===');
+const apFu = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+try {
+  const cFu = DB.upsert('accounts', { name: 'Conta Fut', type: 'Conta Corrente', balance: 5000 });
+  const hj = DB.paraISO(new Date());
+  const saldoHoje = DB.accountsTotal();
+  // Mede a VARIAÇÃO: o cenário base já tem lançamentos pendentes, e comparar
+  // absolutos faria o teste depender da ordem em que os blocos rodam
+  const previstoAntes = DB.saldoPrevistoNaData(null, DB.fimISO(DB.monthPeriod(new Date(), 1)));
+
+  /* saldoNaData sozinha devolve o saldo de HOJE para qualquer data futura: ela
+     parte do saldo real e desfaz o que foi pago, então não conhece agendamento.
+     Era isso que fazia o extrato de agosto mostrar receita na lista e saldo
+     inalterado no topo. */
+  const pProx = DB.monthPeriod(new Date(), 1);
+  const fimProx = DB.fimISO(pProx);
+  check('saldoNaData ignora o futuro, como sempre fez', DB.saldoNaData(null, fimProx), saldoHoje);
+
+  const dSal = DB.somarDiasISO(DB.inicioISO(pProx), 4);
+  DB.upsert('transactions', { description: 'Salario fut', amount: 6200, date: dSal, type: 'Receita',
+    status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: cFu });
+  check('mas o saldo PREVISTO conta o salário agendado',
+    DB.saldoPrevistoNaData(null, fimProx) - previstoAntes, 6200);
+  check('e para hoje continua igual ao real',
+    DB.saldoPrevistoNaData(null, hj), DB.saldoNaData(null, hj));
+  /* Data passada não muda: o passado vem do saldo real, que é o número confiável
+     porque sai da conciliação com o banco. */
+  const ontem = DB.somarDiasISO(hj, -1);
+  check('data passada segue vindo do saldo real',
+    DB.saldoPrevistoNaData(null, ontem), DB.saldoNaData(null, ontem));
+
+  /* A FATURA conta pelo VENCIMENTO, e era o que faltava para um mês futuro
+     fechar: a compra no cartão não sai da conta quando é feita, sai quando a
+     fatura é paga. */
+  const cardFu = DB.upsert('cards', { name: 'Cartao Fut', closing_day: 28, due_day: 10, account_id: cFu, active: true });
+  const chaveFu = DB.invoiceKeyFor(DB.get('cards', cardFu), hj);
+  DB.upsert('transactions', { description: 'Compra fut', amount: 900, date: hj, type: 'Despesa',
+    status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito',
+    card_id: cardFu, invoice_key: chaveFu });
+  const invFu = DB.invoicesOf(DB.get('cards', cardFu)).find(i => i.key === chaveFu);
+  const venceFu = DB.paraISO(invFu.due);
+  const pVence = DB.monthPeriod(new Date(Date.parse(venceFu + 'T12:00:00')));
+  check('a fatura aparece no período em que vence',
+    DB.faturasDoPeriodo(pVence).some(i => i.key === chaveFu), true);
+  check('e não em outro', DB.faturasDoPeriodo(DB.monthPeriod(new Date())).some(i => i.key === chaveFu),
+    DB.paraISO(invFu.due) < DB.fimISO(DB.monthPeriod(new Date())));
+  /* A queda ENTRE o dia do vencimento e o seguinte tem de conter os 900 da
+     fatura. Comparar dois pontos da mesma série prova que ela pesa na data certa,
+     sem depender do resto do cenário — que tem outros pendentes. */
+  const depoisDoVencimento = DB.somarDiasISO(venceFu, 1);
+  const noDia = DB.saldoPrevistoNaData(null, venceFu);
+  const noDiaSeguinte = DB.saldoPrevistoNaData(null, depoisDoVencimento);
+  check('o saldo previsto cai no dia do vencimento da fatura',
+    Math.round((noDia - noDiaSeguinte) * 100) / 100 >= 900, true);
+  /* E não pesa ANTES: saldoPrevistoNaData(D) é o saldo antes do que acontece em
+     D, então a fatura só entra a partir do dia seguinte. */
+  const antesDoVencimento = DB.saldoPrevistoNaData(null, venceFu);
+  DB.setInvoicePaid(chaveFu, true);
+  check('e deixa de pesar quando a fatura é quitada',
+    DB.saldoPrevistoNaData(null, depoisDoVencimento) > noDiaSeguinte, true);
+  DB.setInvoicePaid(chaveFu, false);
+  check('voltando a pesar se a quitação é desfeita',
+    DB.saldoPrevistoNaData(null, venceFu), antesDoVencimento);
+
+  // No extrato do mês em que vence, ela é uma LINHA
+  state.filtros = filtrosVazios();
+  state.monthOffset = DB.diasEntre(hj, venceFu) > 0 ? 1 : 0;
+  const htmlVence = renderExtrato(pVence);
+  check('a fatura vira linha no extrato', htmlVence.includes('Fatura Cartao Fut'), true);
+  check('marcada como prevista', /tx tx-prev[^>]*data-fatura=/.test(htmlVence), true);
+  check('e leva para o pagamento ao toque', apFu.includes("v.querySelectorAll('[data-fatura]')"), true);
+
+  /* A fatura pesa no total do dia SÓ com conta filtrada. Sem filtro o total é
+     GASTO, e as compras do cartão já contaram quando foram feitas — somá-la seria
+     o mesmo dinheiro duas vezes. Mesma regra do pagamento de fatura. */
+  const corpoFu = apFu.slice(apFu.indexOf('A fatura conta no total do dia'), apFu.indexOf('// Totais do período nesta conta'));
+  check('a fatura só entra no total do dia com conta filtrada',
+    corpoFu.includes('if (contasFiltradas.length) {'), true);
+  check('e a razão está escrita', corpoFu.includes('o mesmo dinheiro duas'), true);
+
+  /* Mês futuro se anuncia: extrato quase vazio pareceria perda de dados. */
+  check('o mês futuro se identifica', apFu.includes('ainda não chegou'), true);
+
+  /* SAÚDE DOS PRÓXIMOS MESES no Painel: abrir o app pergunta "como estamos?", e
+     essa pergunta não para no dia 31. */
+  const rFu = DB.upsert('recurrences', {
+    description: 'Aluguel fut', amount: 1800, valor_tipo: 'fixo', type: 'Despesa',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto',
+    category_id: null, account_id: cFu, card_id: null, tags: [], notes: '',
+    periodicidade: 'mensal', dia: 10, inicio: hj,
+    fim_tipo: 'sem_prazo', fim_data: null, fim_vezes: null,
+    geradas: 0, status: 'ativa', ultima_geracao: null,
+  });
+  state.monthOffset = 0;
+  const painel = renderInicio(DB.monthPeriod(new Date()));
+  check('o painel mostra os próximos meses', painel.includes('Os próximos meses'), true);
+  check('com uma barra por mês', (painel.match(/class="fut-col"/g) || []).length, 6);
+  check('e leva ao detalhe', painel.includes('id="fut-ver"'), true);
+  // Mês negativo se distingue pela cor, não só pelo número
+  const prev = DB.previsaoMeses(6);
+  if (prev.some(m => m.saldoAoFim < 0)) {
+    check('mês negativo fica vermelho', painel.includes('class="neg"'), true);
+  } else {
+    check('sem aperto, o selo diz que está no azul', painel.includes('no azul'), true);
+  }
+  void rFu;
+} catch (e) { console.log(` FALHA | futuro: ${e.message}`); fail++; }
+// Limpeza fora do try
+state.monthOffset = 0; state.filtros = filtrosVazios();
+DB.data.transactions = DB.data.transactions.filter(t => !/Salario fut|Compra fut|Aluguel fut/.test(t.description || ''));
+DB.data.recurrences = [];
+DB.data.cards = DB.data.cards.filter(c => c.name !== 'Cartao Fut');
+DB.data.accounts = DB.data.accounts.filter(a => a.name !== 'Conta Fut');
+DB.save();
