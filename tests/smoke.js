@@ -67,7 +67,7 @@ eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
   state, fmt, fmtShort, fmtSemMoeda, fmtDay, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
-  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
+  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, ligarGrafico, caminhoSuave,
@@ -3671,3 +3671,110 @@ check('função is_member definida antes das policies', schema.indexOf('function
   console.log(`\n${fail === 0 ? '✅ TUDO CERTO' : '❌ PROBLEMAS ENCONTRADOS'} — ${ok} passaram, ${fail} falharam\n`);
   process.exit(fail ? 1 : 0);
 })();
+
+/* ---- Relatórios: a narrativa ----
+   A tela responde seis perguntas em ordem, cada uma preparando a seguinte.
+   "Gastei R$ 4.200 em Alimentação" só quer dizer algo depois de "sobrou R$ 300". */
+console.log('\n=== Relatórios: narrativa e estatística ===');
+try {
+  state.repOffset = 0;
+  const rel = renderRelatorios();
+  const ordem = ['rel-frase', 'De onde vem o dinheiro', 'O caminho do dinheiro',
+    'Isso é normal', 'Para onde foi', 'Quem gastou', 'O que está sendo construído'];
+  let anterior = -1, foraDeOrdem = '';
+  for (const marca of ordem) {
+    const i = rel.indexOf(marca);
+    if (i < 0) { foraDeOrdem = `${marca} ausente`; break; }
+    if (i < anterior) { foraDeOrdem = `${marca} fora de ordem`; break; }
+    anterior = i;
+  }
+  check('as seis perguntas aparecem na ordem da explicação', foraDeOrdem, '');
+  check('abre com a frase, não com números soltos',
+    rel.indexOf('rel-frase') < rel.indexOf('g-cascata'), true);
+  check('a cascata mostra o caminho do dinheiro', rel.includes('g-cascata'), true);
+  check('e a faixa de normalidade aparece', rel.includes('g-faixa-svg'), true);
+
+  /* Mediana e desvio mediano, não média: uma compra grande num mês puxa a média
+     e infla o desvio, e aí NADA parece anormal depois. */
+  check('mediana ignora o ponto fora da curva', DB.mediana([100, 110, 120, 5000]), 115);
+  check('média seria distorcida pelo mesmo dado',
+    [100, 110, 120, 5000].reduce((a, b) => a + b, 0) / 4 > 1300, true);
+  check('desvio mediano resiste ao extremo', DB.desvioMediano([100, 110, 120, 5000]) < 100, true);
+
+  // O veredito precisa saber dizer "não sei" com histórico curto
+  const curto = DB.anormalidade(500, [400, 450]);
+  check('com pouco histórico o app admite não saber', curto.incerto, true);
+  check('e não afirma anormalidade', curto.rotulo, 'sem histórico');
+  const normal = DB.anormalidade(1050, [1000, 1010, 990, 1020, 1005, 995]);
+  check('variação pequena é rotina, não notícia', normal.rotulo, 'dentro do normal');
+  const alto = DB.anormalidade(3000, [1000, 1010, 990, 1020, 1005, 995]);
+  check('desvio grande é apontado', alto.rotulo.includes('acima'), true);
+  check('e a mediana usada é a do histórico', alto.med, 1002.5);
+
+  /* Duas condições, não uma. Numa família de gasto muito regular o MAD fica
+     minúsculo, então gastar 5% a mais dá 6 desvios — tecnicamente correto e
+     praticamente absurdo. Significância sem tamanho de efeito faz o app gritar
+     lobo, e quem lê aprende a ignorar o aviso. */
+  const regular = [1000, 1010, 990, 1020, 1005, 995];
+  const seisDesvios = DB.anormalidade(1050, regular);
+  check('desvio estatístico grande mas diferença pequena é rotina', seisDesvios.rotulo, 'dentro do normal');
+  check('mesmo estando a muitos desvios da mediana', Math.abs(seisDesvios.desvios) > 3, true);
+  check('porque a diferença relativa não chega a 8%', seisDesvios.relevante, false);
+  check('já 30% acima é apontado', DB.anormalidade(1300, regular).rotulo.includes('acima'), true);
+  check('e para baixo também', DB.anormalidade(700, regular).rotulo.includes('abaixo'), true);
+
+  // A cascata soma: cada bloco começa onde o anterior parou
+  const casc = svgCascata([
+    { rot: 'Entrou', valor: 1000, tipo: 'entra' },
+    { rot: 'Saiu', valor: 400, tipo: 'sai' },
+    { rot: 'Sobrou', valor: 0, tipo: 'total' },
+  ]);
+  check('a cascata desenha um bloco por passo', (casc.match(/<rect/g) || []).length, 3);
+  check('com conector entre eles', casc.includes('g-liga'), true);
+  check('e o total fecha na diferença', casc.includes(fmtShort(600)), true);
+
+  /* A propriedade que define uma cascata: cada bloco COMEÇA onde o anterior
+     parou. Se isso quebrar, viram colunas soltas e a soma deixa de ser a forma —
+     o gráfico perde exatamente o que ele existe para mostrar. */
+  const barras = [...svgCascata([
+    { rot: 'Entrou', valor: 8500, tipo: 'entra' },
+    { rot: 'Necessidades', valor: 5200, tipo: 'sai' },
+    { rot: 'Desejos', valor: 2100, tipo: 'sai' },
+    { rot: 'Sobrou', valor: 0, tipo: 'total' },
+  ]).matchAll(/<rect x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/g)]
+    .map(m => ({ y: +m[1], h: +m[2] }));
+  check('a segunda barra parte do topo da primeira', barras[1].y.toFixed(1), barras[0].y.toFixed(1));
+  check('e a terceira começa onde a segunda parou',
+    barras[2].y.toFixed(1), (barras[1].y + barras[1].h).toFixed(1));
+  check('o total começa onde a última saída parou',
+    barras[3].y.toFixed(1), (barras[2].y + barras[2].h).toFixed(1));
+  check('e o total fecha no valor certo (8500 − 5200 − 2100)',
+    svgCascata([
+      { rot: 'E', valor: 8500, tipo: 'entra' }, { rot: 'N', valor: 5200, tipo: 'sai' },
+      { rot: 'D', valor: 2100, tipo: 'sai' }, { rot: 'S', valor: 0, tipo: 'total' },
+    ]).includes(fmtShort(1200)), true);
+  // Marca fina: nunca preenche a faixa inteira, senão o gráfico lê como bloco
+  check('a barra não preenche a faixa', /<rect x="[\d.]+" y="[\d.]+" width="(56|[1-5]?\d(\.\d)?)"/.test(casc), true);
+  // Grade sólida: tracejada leria como projeção, e aqui é só régua
+  check('a grade é hairline sólida', /class="g-grid"/.test(casc) && !/g-grid[^>]*dasharray/.test(casc), true);
+
+  /* Empréstimo entra na conta mas NÃO é ganho. Um relatório que soma empréstimo
+     à receita e anuncia "sobrou" diz a maior mentira possível num app assim. */
+  const apRel = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('o aviso de empréstimo vem antes da cascata',
+    apRel.indexOf('relEntradas(period, receitas)') < apRel.indexOf('relCascata({ receitas'), true);
+  check('e diz que não é ganho', apRel.includes('não são ganho'), true);
+
+  /* Categorias comparadas contra a mediana DELAS, não contra o mês anterior:
+     se o mês anterior teve o IPVA, toda categoria apareceria "caindo". */
+  const corpoCat = apRel.slice(apRel.indexOf('function relCategorias'), apRel.indexOf('function relCortes'));
+  check('categoria compara com a própria mediana', corpoCat.includes('DB.mediana(hist)'), true);
+  check('e usa seis meses de histórico', /i <= 6/.test(corpoCat), true);
+  check('variação pequena não vira notícia', corpoCat.includes('Math.max(20, l.med * 0.15)'), true);
+
+  // Sem biblioteca de gráficos: o app é offline-first e o service worker cacheia tudo
+  const indexHtml = fs.readFileSync(BASE + 'index.html', 'utf8');
+  check('nenhuma lib de chart foi puxada',
+    /apexcharts|chart\.js|highcharts|d3\.min/i.test(indexHtml), false);
+  check('e nada vem de CDN', /src="https?:\/\//.test(indexHtml), false);
+} catch (e) { console.log(` FALHA | relatórios: ${e.message}`); fail++; }

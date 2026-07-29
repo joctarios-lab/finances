@@ -708,6 +708,70 @@ const DB = {
     return true;
   },
 
+  /* ---------- Estatística dos relatórios ----------
+     Mediana e desvio mediano (MAD), não média e desvio padrão.
+
+     Motivo concreto: uma compra grande num mês — o IPVA, uma viagem — puxa a
+     média e infla o desvio, e aí NADA parece anormal depois. A mediana ignora o
+     ponto fora da curva, então "este mês está fora do normal" continua querendo
+     dizer alguma coisa. É a diferença entre um relatório que avisa e um que só
+     mostra números. */
+  mediana(vals) {
+    const v = vals.filter(x => Number.isFinite(x)).sort((a, b) => a - b);
+    if (!v.length) return 0;
+    const meio = Math.floor(v.length / 2);
+    return v.length % 2 ? v[meio] : (v[meio - 1] + v[meio]) / 2;
+  },
+
+  // Desvio mediano absoluto: a mediana das distâncias até a mediana
+  desvioMediano(vals) {
+    const med = this.mediana(vals);
+    return this.mediana(vals.map(v => Math.abs(v - med)));
+  },
+
+  /* Série dos últimos n períodos fechados + o atual. `medir` recebe o período.
+     Ordem cronológica, o atual por último. */
+  serieMensal(n, medir) {
+    const out = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const p = this.monthPeriod(new Date(), -i);
+      out.push({ period: p, valor: medir(p) || 0 });
+    }
+    return out;
+  },
+
+  /* Quão fora do normal está um valor, em desvios medianos.
+
+     Devolve também o rótulo, porque o número cru não serve para quem lê: 1,2
+     desvios é "dentro do normal" e 3,5 é "muito acima". O limite de 1,5 vem da
+     prática de detecção robusta de anômalos — abaixo disso a variação é ruído do
+     dia a dia, e apontá-la como notícia treinaria a pessoa a ignorar os avisos. */
+  anormalidade(valor, historico) {
+    const base = historico.filter(v => v > 0);
+    if (base.length < 3) return { desvios: 0, rotulo: 'sem histórico', med: this.mediana(base), incerto: true };
+    const med = this.mediana(base);
+    const mad = this.desvioMediano(base) || med * 0.1 || 1;
+    const desvios = (valor - med) / mad;
+    const abs = Math.abs(desvios);
+    /* DUAS condições, não uma: o desvio tem de ser estatisticamente fora da faixa
+       E materialmente relevante.
+
+       Sem a segunda, uma família de gasto muito regular tem MAD minúsculo, e
+       gastar 5% a mais vira "muito acima do normal" — R$ 1.050 contra mediana de
+       R$ 1.002 dá 6,3 desvios. Tecnicamente correto e praticamente absurdo: o
+       app grita lobo, e quem lê aprende a ignorar o aviso.
+
+       Significância sem tamanho de efeito engana. O piso de 8% é o mesmo espírito
+       da regra de "=" nas categorias: abaixo disso é oscilação de mercado, mês
+       com cinco fins de semana, prazo de fatura. */
+    const relativo = med > 0 ? Math.abs(valor - med) / med : 0;
+    const relevante = relativo >= 0.08;
+    const rotulo = (abs < 1.5 || !relevante) ? 'dentro do normal'
+      : (abs < 3 || relativo < 0.25) ? (desvios > 0 ? 'acima do normal' : 'abaixo do normal')
+      : (desvios > 0 ? 'muito acima do normal' : 'muito abaixo do normal');
+    return { desvios, rotulo, med, mad, relativo, relevante, incerto: base.length < 6 };
+  },
+
   /* ---------- Dados de fábrica ---------- */
   // Gasto do período dividido em Necessidades x Desejos (base da regra 50/30/20).
   spentByKind(period) {

@@ -150,6 +150,67 @@ body {
 }
 .section-title::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
+/* ---------- Relatórios ----------
+   A frase de abertura. Um relatório que começa com doze números obriga o leitor a
+   montar a conclusão sozinho — e quem não é do ramo não monta. */
+.rel-frase { display: flex; align-items: flex-start; gap: 13px; }
+.rel-frase-ico {
+  flex: none; width: 40px; height: 40px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+}
+.rel-frase-ico svg { width: 19px; height: 19px; }
+.rel-frase-ico.ok { background: rgba(80, 205, 137, .14); color: #1f9d61; }
+.rel-frase-ico.ruim { background: rgba(241, 65, 108, .11); color: var(--red); }
+.rel-frase b { font-size: 15px; font-weight: 700; line-height: 1.4; }
+.rel-frase p { margin-top: 4px; font-size: 12.5px; line-height: 1.5; }
+/* Selo de veredito no cabeçalho (padrão badge-light-* do Metronic) */
+.rel-selo { flex: none; padding: 4px 10px; border-radius: 7px; font-size: 11.5px; font-weight: 700; }
+.rel-selo.ok { background: rgba(0, 158, 247, .1); color: #0072b8; }
+.rel-selo.bom { background: rgba(80, 205, 137, .16); color: #1f9d61; }
+.rel-selo.ruim { background: rgba(241, 65, 108, .12); color: var(--red); }
+
+/* Os desvios que explicam o mês. Cada um é uma frase curta: categoria, quanto
+   fugiu do costume, e o costume — nessa ordem, porque é a ordem da leitura. */
+.rel-movers { display: grid; grid-template-columns: 1fr; gap: 8px; }
+@media (min-width: 560px) { .rel-movers { grid-template-columns: 1fr 1fr; } }
+.mover {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 10px;
+  padding: 10px 12px; border-radius: 9px; background: var(--ink-3);
+  border-left: 3px solid var(--line);
+}
+.mover.sobe { border-left-color: var(--red); }
+.mover.desce { border-left-color: var(--green); }
+.mover-cat { font-size: 13px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mover-delta { font-size: 13px; font-weight: 700; white-space: nowrap; }
+.mover.sobe .mover-delta { color: var(--red); }
+.mover.desce .mover-delta { color: #1f9d61; }
+.mover small { grid-column: 1 / -1; font-size: 11px; color: var(--paper-dim); }
+
+/* ---------- Cascata ---------- */
+.g-cascata, .g-faixa-svg { display: block; width: 100%; height: auto; margin-top: 6px; }
+.g-cascata .c-entra { fill: var(--green); }
+.g-cascata .c-sai { fill: var(--red); opacity: .85; }
+.g-cascata .c-saldo { fill: var(--gold); }
+.g-cascata .c-neg { fill: var(--red); }
+/* Hairline sólida e recessiva: grade tracejada lê como projeção ou limite, e
+   aqui é só régua */
+.g-grid { stroke: var(--line); stroke-width: 1; }
+/* O conector é o que faz a leitura fluir de um bloco ao seguinte */
+.g-liga { stroke: #c4cad4; stroke-width: 1; stroke-dasharray: 3 3; }
+.g-val { font-size: 12px; font-weight: 700; fill: var(--paper); text-anchor: middle; }
+.g-rot { font-size: 11px; font-weight: 600; fill: var(--paper-dim); text-anchor: middle; }
+
+/* ---------- Faixa de normalidade ----------
+   A faixa é o que "normal" significa PARA ESTA FAMÍLIA. Sem ela toda subida
+   parece alarme, e o leitor aprende a ignorar o gráfico. */
+.g-faixa { fill: rgba(0, 158, 247, .09); }
+.g-mediana { stroke: var(--gold); stroke-width: 1; stroke-dasharray: 4 4; opacity: .6; vector-effect: non-scaling-stroke; }
+.g-area { fill: rgba(0, 158, 247, .07); }
+.g-linha { fill: none; stroke: var(--gold); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+/* Anel na cor da superfície para o ponto seguir legível onde cruza a linha */
+.g-ponto { fill: #fff; stroke: var(--gold); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.g-ponto.agora { fill: var(--gold); }
+
 /* Cabeçalho de seção com ações à direita (padrão card-header + card-toolbar do
    Metronic). Nomeia a seção e ancora as ações dela, no lugar de botões de
    largura inteira que cortavam a leitura e pesavam mais que o conteúdo. */

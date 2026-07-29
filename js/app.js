@@ -358,6 +358,103 @@ function svgBars(series, refLine, opts = {}) {
 }
 
 // Arredonda o topo da escala para um número redondo — deixa a grade legível
+/* ---------- Cascata: o caminho do dinheiro ----------
+   Cada barra começa onde a anterior parou, então a soma É a forma: dá para
+   VER a receita sendo consumida bloco a bloco até o que sobrou. Uma pizza
+   responde "qual a maior fatia"; a cascata responde "por que sobrou tão pouco",
+   que é a pergunta de quem abre um relatório financeiro.
+
+   passos = [{ rot, valor, tipo }] — tipo 'entra' | 'sai' | 'total'. */
+function svgCascata(passos, opts = {}) {
+  const W = 720, H = opts.height || 250;
+  const padT = 26, padB = 44, padL = 8, padR = 8;
+  const plotH = H - padT - padB, plotW = W - padL - padR;
+
+  // Acumula para achar a escala e o piso de cada barra
+  let acum = 0;
+  const barras = passos.map(p => {
+    const v = Number(p.valor) || 0;
+    if (p.tipo === 'total') return { ...p, de: 0, ate: acum, valor: acum };
+    const de = acum;
+    acum += p.tipo === 'entra' ? v : -v;
+    return { ...p, de, ate: acum, valor: v };
+  });
+  const teto = niceCeil(Math.max(...barras.map(b => Math.max(b.de, b.ate)), 1));
+  const y = v => padT + plotH - (v / teto) * plotH;
+  const banda = plotW / barras.length;
+  const larg = Math.min(56, banda - 18);          // marca fina: nunca preenche a faixa
+
+  let grade = '';
+  for (let i = 0; i <= 3; i++) {
+    const gy = y(teto * i / 3);
+    grade += `<line x1="${padL}" y1="${gy.toFixed(1)}" x2="${W - padR}" y2="${gy.toFixed(1)}" class="g-grid"/>`;
+  }
+
+  let marcas = '';
+  barras.forEach((b, i) => {
+    const cx = padL + banda * i + banda / 2;
+    const topo = Math.min(y(b.de), y(b.ate));
+    const alt = Math.max(2, Math.abs(y(b.de) - y(b.ate)));
+    const cls = b.tipo === 'total' ? (b.ate >= 0 ? 'c-saldo' : 'c-neg') : b.tipo === 'entra' ? 'c-entra' : 'c-sai';
+    /* Conector até a barra seguinte: é ele que faz a leitura fluir e mostra que
+       um bloco começa onde o outro parou. Sem ele, viram colunas soltas. */
+    if (i < barras.length - 1 && b.tipo !== 'total') {
+      const px = padL + banda * (i + 1) + banda / 2;
+      marcas += `<line x1="${(cx + larg / 2).toFixed(1)}" y1="${y(b.ate).toFixed(1)}" x2="${(px - larg / 2).toFixed(1)}" y2="${y(b.ate).toFixed(1)}" class="g-liga"/>`;
+    }
+    marcas += `<rect x="${(cx - larg / 2).toFixed(1)}" y="${topo.toFixed(1)}" width="${larg.toFixed(1)}" height="${alt.toFixed(1)}" rx="4" class="${cls}"/>`;
+    // Valor sobre a barra e rótulo embaixo: com 4 ou 5 blocos, cabe em todos
+    marcas += `<text x="${cx.toFixed(1)}" y="${(topo - 8).toFixed(1)}" class="g-val">${fmtShort(b.valor)}</text>`;
+    marcas += `<text x="${cx.toFixed(1)}" y="${(H - padB + 18).toFixed(1)}" class="g-rot">${esc(b.rot)}</text>`;
+  });
+
+  return `<svg class="g-cascata" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
+    role="img" aria-label="${esc(opts.alt || 'Caminho do dinheiro no período')}">
+    ${grade}${marcas}
+  </svg>`;
+}
+
+/* ---------- Linha com faixa de normalidade ----------
+   A faixa é mediana ± desvio mediano: o que "normal" significa PARA ESTA
+   FAMÍLIA, medido no próprio histórico dela. Ponto dentro da faixa é rotina;
+   fora, é notícia — e é isso que separa um gráfico que informa de um que só
+   desenha. Sem a faixa, toda subida parece alarme e o leitor aprende a ignorar. */
+function svgLinhaFaixa(serie, opts = {}) {
+  const W = 720, H = opts.height || 210;
+  const padT = 18, padB = 30, padL = 8, padR = 8;
+  const plotH = H - padT - padB, plotW = W - padL - padR;
+  const vals = serie.map(s => s.valor);
+  const positivos = vals.filter(v => v > 0);
+  const med = DB.mediana(positivos);
+  const mad = DB.desvioMediano(positivos) || med * 0.1;
+  const teto = niceCeil(Math.max(...vals, med + mad, 1));
+  const y = v => padT + plotH - (Math.max(0, v) / teto) * plotH;
+  const x = i => padL + (serie.length <= 1 ? plotW / 2 : (i / (serie.length - 1)) * plotW);
+
+  const faixa = positivos.length >= 3 ? `
+    <rect x="${padL}" y="${y(med + mad).toFixed(1)}" width="${plotW}"
+      height="${Math.max(2, y(Math.max(0, med - mad)) - y(med + mad)).toFixed(1)}" class="g-faixa"/>
+    <line x1="${padL}" y1="${y(med).toFixed(1)}" x2="${W - padR}" y2="${y(med).toFixed(1)}" class="g-mediana"/>` : '';
+
+  const pts = serie.map((s, i) => [x(i), y(s.valor)]);
+  const linha = caminhoSuave(pts);
+  const area = positivos.length ? `<path d="${linha} L${x(serie.length - 1).toFixed(1)} ${H - padB} L${padL} ${H - padB} Z" class="g-area"/>` : '';
+
+  // Só as pontas e o extremo recebem marcador: um ponto em cada mês vira ruído
+  const iMax = vals.indexOf(Math.max(...vals));
+  const destaque = [0, serie.length - 1, iMax];
+  const bolas = pts.map(([px, py], i) => (destaque.includes(i)
+    ? `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4" class="g-ponto${i === serie.length - 1 ? ' agora' : ''}"/>` : '')).join('');
+
+  const rotulos = serie.map((s, i) => (i % Math.ceil(serie.length / 6) === 0 || i === serie.length - 1
+    ? `<text x="${x(i).toFixed(1)}" y="${(H - padB + 18).toFixed(1)}" class="g-rot">${esc(s.rot)}</text>` : '')).join('');
+
+  return `<svg class="g-faixa-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+    role="img" aria-label="${esc(opts.alt || 'Evolução mensal com faixa de normalidade')}">
+    ${faixa}${area}<path d="${linha}" class="g-linha"/>${bolas}${rotulos}
+  </svg>`;
+}
+
 function niceCeil(v) {
   if (v <= 0) return 1;
   const exp = Math.pow(10, Math.floor(Math.log10(v)));
@@ -1469,205 +1566,357 @@ function refreshIdentity() {
 }
 
 /* ---------- Relatórios ---------- */
+/* ---------- Relatórios ----------
+   A tela responde SEIS perguntas, em ordem, cada uma preparando a seguinte:
+
+     1. O que aconteceu?        — a frase, com veredito estatístico
+     2. Para onde foi o dinheiro? — a cascata: receita consumida bloco a bloco
+     3. Isso é normal?          — 12 meses contra a faixa de normalidade da família
+     4. O que mudou, e importa? — categorias contra a própria mediana delas
+     5. Onde isso vai parar?    — projeção e orçamento
+     6. O que está sendo construído? — reserva, metas, patrimônio
+
+   A ordem não é decorativa: "gastei R$ 4.200 em Alimentação" só quer dizer algo
+   depois de "sobrou R$ 300 este mês". Número sem o antes dele é trivia. */
 function renderRelatorios() {
   const period = DB.monthPeriod(new Date(), state.repOffset || 0);
-  const prev = DB.monthPeriod(new Date(), (state.repOffset || 0) - 1);
-  const txs = DB.expensesOf(period);            // relatórios de gasto: só despesas
+  const atual = (state.repOffset || 0) === 0;
+  const txs = DB.expensesOf(period);
   const total = txs.reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const receitasPeriodo = DB.realizedIncome(period);
-  const prevByCat = DB.spentByCategory(prev);
+  const receitas = DB.realizedIncome(period);
+  const resultado = receitas - total;
   const byCat = DB.spentByCategory(period);
-  const income = Number(DB.settings().monthly_income) || 0;
+  const kinds = DB.spentByKind(period);
+  const st = DB.statsFor(period);
 
-  // 1) Comparativo por categoria (mês vs anterior, com variação)
-  let catRows = '';
-  const catIds = [...new Set([...Object.keys(byCat), ...Object.keys(prevByCat)])]
-    .sort((a, b) => (byCat[b] || 0) - (byCat[a] || 0));
-  for (const cid of catIds) {
-    const cur = byCat[cid] || 0, ant = prevByCat[cid] || 0;
-    const delta = ant > 0 ? Math.round((cur - ant) / ant * 100) : (cur > 0 ? null : 0);
-    const deltaTxt = delta === null ? '<span class="muted">novo</span>'
-      : delta === 0 ? '<span class="muted">=</span>'
-      : `<span class="${delta > 0 ? 'txt-red' : 'txt-green'}">${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)}%</span>`;
-    catRows += `<tr><td>${esc(catLabel(cid === '_sem' ? null : cid))}</td>
-      <td class="num">${fmtShort(cur)}</td><td class="num muted">${fmtShort(ant)}</td><td>${deltaTxt}</td></tr>`;
-  }
+  /* Histórico de 12 meses, base de tudo que a tela afirma. Os meses ANTERIORES
+     ao atual formam a régua — incluir o mês em curso, que está incompleto,
+     puxaria a mediana para baixo e faria todo mês parecer alto no dia 5. */
+  const evo = DB.serieMensal(12, p => DB.expensesOf(p).reduce((s, t) => s + (Number(t.amount) || 0), 0))
+    .map(e => ({ ...e, rot: e.period.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '') }));
+  const fechados = evo.slice(0, -1).map(e => e.valor);
+  const juizo = DB.anormalidade(total, fechados);
 
-  // 2) Por membro e por método (barras horizontais reutilizando .bar)
-  const groupSum = key => {
-    const out = {};
-    for (const t of txs) { const k = t[key] || '—'; out[k] = (out[k] || 0) + (Number(t.amount) || 0); }
-    return Object.entries(out).sort((a, b) => b[1] - a[1]);
-  };
-  const hb = entries => svgRanking(entries);
-
-  // 3) Maiores gastos
-  const top = [...txs].sort((a, b) => (b.amount || 0) - (a.amount || 0)).slice(0, 10)
-    .map(t => `<tr><td>${esc(t.description)}<br><small class="muted">${fmtDay(t.date)} · ${esc(catLabel(t.category_id))}</small></td>
-      <td class="num">${fmt(t.amount)}</td></tr>`).join('');
-
-  // 4) Custos fixos (recorrentes)
-  const rec = DB.all('transactions').filter(t => t.recurring);
-  const recSeen = {}; // um por descrição (último valor)
-  for (const t of [...rec].sort((a, b) => a.date.localeCompare(b.date))) recSeen[t.description.toLowerCase()] = t;
-  const recList = Object.values(recSeen);
-  const recTotal = recList.reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const recRows = recList.sort((a, b) => (b.amount || 0) - (a.amount || 0))
-    .map(t => `<tr><td>${esc(t.description)}</td><td class="num">${fmt(t.amount)}</td></tr>`).join('');
-
-  // 5) Evolução 12 meses
-  const evo12 = Array.from({ length: 12 }, (_, i) => {
-    const p = DB.monthPeriod(new Date(), i - 11);
-    return { label: p.start.toLocaleDateString('pt-BR', { month: 'narrow' }), value: DB.expensesOf(p).reduce((s, t) => s + (Number(t.amount) || 0), 0), hint: i === 11 ? '#009ef7' : '#a6d9f7' };
-  });
+  const fmtPct = v => `${v > 0 ? '+' : ''}${Math.round(v)}%`;
+  const vsMediana = juizo.med > 0 ? (total - juizo.med) / juizo.med * 100 : 0;
 
   return `
     <div class="card month-nav">
       <button id="rep-prev" aria-label="Mês anterior" data-ico="chevL"></button>
-      <b>Relatórios · ${period.label}</b>
-      <button id="rep-next" aria-label="Próximo mês" data-ico="chevR"></button>
-    </div>
-    <div class="kpi-grid">
-      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Despesas</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
-      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmt(receitasPeriodo)}</div><div class="kpi-label">Receitas</div><div class="kpi-sub">no período</div></div>
-      <div class="card kpi"><span class="kpi-ico ${receitasPeriodo - total >= 0 ? 't-success' : 't-danger'}" data-ico="pie"></span><div class="kpi-value ${receitasPeriodo - total >= 0 ? 'green' : 'red'}">${fmt(receitasPeriodo - total)}</div><div class="kpi-label">Resultado</div><div class="kpi-sub">${receitasPeriodo > 0 ? Math.round((receitasPeriodo - total) / receitasPeriodo * 100) + '% da receita' : 'sem receita lançada'}</div></div>
-      <div class="card kpi"><span class="kpi-ico t-warning" data-ico="calendar"></span><div class="kpi-value">${fmt(total / Math.max(1, DB.elapsedDays(period)))}</div><div class="kpi-label">Média por dia</div><div class="kpi-sub">${DB.elapsedDays(period)} de ${DB.periodDays(period)} dias</div></div>
-    </div>
-
-    <div class="card">
-      <div class="card-head">
-        <div><b>Evolução dos gastos</b><small>últimos 12 períodos${income > 0 ? ' · linha vermelha = renda mensal' : ''}</small></div>
-        <button class="btn ghost" id="btn-csv" style="width:auto;padding:8px 14px;display:flex;align-items:center;gap:7px"><span data-ico="download"></span>CSV</button>
+      <div style="text-align:center">
+        <b>${period.label}</b>
+        <div class="muted" style="font-size:11.5px">${atual ? `dia ${st.elapsedDays} de ${st.totalDays}` : 'mês encerrado'}</div>
       </div>
-      ${svgBars(evo12, income, { height: 260 })}
-      ${(() => {
-        const vals = evo12.map(e => e.value).filter(v => v > 0);
-        if (vals.length < 2) return '';
-        const media = vals.reduce((a, b) => a + b, 0) / vals.length;
-        const ultimo = evo12[11].value, penultimo = evo12[10].value;
-        const var2 = penultimo > 0 ? Math.round((ultimo - penultimo) / penultimo * 100) : 0;
-        return `<div class="chart-foot">
-          <span>Média do período <b>${fmtShort(media)}</b></span>
-          <span>Maior <b>${fmtShort(Math.max(...vals))}</b></span>
-          <span>Menor <b>${fmtShort(Math.min(...vals))}</b></span>
-          <span>Vs. mês anterior <b class="${var2 > 0 ? 'txt-red' : 'txt-green'}">${var2 > 0 ? '▲' : var2 < 0 ? '▼' : ''} ${Math.abs(var2)}%</b></span>
-        </div>`;
-      })()}
+      <button id="rep-next" aria-label="Próximo mês" data-ico="chevR" ${atual ? 'disabled style="opacity:.35"' : ''}></button>
     </div>
 
+    ${relFrase({ period, atual, total, receitas, resultado, juizo, vsMediana, st, kinds })}
+    ${relEntradas(period, receitas)}
+    ${relCascata({ receitas, kinds, resultado, total })}
+    ${relNormal({ evo, fechados, juizo, total, atual, fmtPct, vsMediana })}
+    ${relCategorias({ period, byCat, total })}
+    ${relCortes(period, txs, total)}
+    ${relProjecao({ period, st, atual, total, receitas, juizo })}
+    ${relConstrucao({ period, receitas, resultado })}
+
+    <button class="btn ghost" id="btn-csv" style="display:flex;align-items:center;justify-content:center;gap:8px">
+      <span data-ico="download"></span>Exportar ${period.label} em CSV</button>
+  `;
+}
+
+/* 1. A frase. Um relatório que abre com doze números obriga o leitor a montar a
+   conclusão sozinho — e quem não é do ramo não monta. Aqui o app diz o que
+   entendeu, e o resto da tela serve de prova. */
+function relFrase({ atual, total, receitas, resultado, juizo, vsMediana, st, kinds }) {
+  const sobrou = resultado >= 0;
+  const pctRenda = receitas > 0 ? Math.abs(resultado) / receitas * 100 : 0;
+  const desejo = (kinds.Essencial + kinds.Estilo) > 0
+    ? kinds.Estilo / (kinds.Essencial + kinds.Estilo) * 100 : 0;
+
+  // Só afirma "acima do normal" com histórico bastante; senão diz que não sabe
+  const contexto = juizo.incerto
+    ? 'Ainda são poucos meses registrados para dizer se isso é o seu normal.'
+    : Math.abs(juizo.desvios) < 1.5
+      ? `O gasto está <b>dentro do seu normal</b> — a variação de ${Math.abs(Math.round(vsMediana))}% contra os meses anteriores é a oscilação de sempre.`
+      : `O gasto está <b class="${juizo.desvios > 0 ? 'txt-red' : 'txt-green'}">${juizo.rotulo}</b>: ${
+          Math.abs(Math.round(vsMediana))}% ${juizo.desvios > 0 ? 'acima' : 'abaixo'} da sua mediana de ${fmt(juizo.med)}.`;
+
+  const projecao = atual && st.projection > 0
+    ? ` No ritmo atual o mês fecha em <b>${fmt(st.projection)}</b>.` : '';
+
+  return `
+    <div class="card rel-frase">
+      <span class="rel-frase-ico ${sobrou ? 'ok' : 'ruim'}" data-ico="${sobrou ? 'trend' : 'pie'}"></span>
+      <div>
+        <b>${receitas > 0
+          ? `${sobrou ? 'Sobrou' : 'Faltou'} <span class="${sobrou ? 'txt-green' : 'txt-red'}">${fmt(Math.abs(resultado))}</span>${
+              pctRenda ? `, ${Math.round(pctRenda)}% do que entrou` : ''}.`
+          : `Saíram <span class="txt-red">${fmt(total)}</span> — nenhuma receita lançada no período.`}</b>
+        <p class="muted">${contexto}${projecao}${
+          desejo > 0 ? ` Dos gastos, <b>${Math.round(desejo)}%</b> foram desejos e ${100 - Math.round(desejo)}% necessidades.` : ''}</p>
+      </div>
+    </div>`;
+}
+
+/* De onde veio o dinheiro — e o aviso que vem ANTES da cascata de propósito.
+
+   Empréstimo entra na conta como entrada, mas não é ganho: é dívida adiantada.
+   Um relatório que soma empréstimo à receita e anuncia "sobrou R$ 2.000" está
+   dizendo a maior mentira que um app de finanças consegue dizer. Por isso o
+   aviso precede o cálculo do resultado. */
+function relEntradas(period, receitas) {
+  const porOrigem = DB.incomeByCategory(period);
+  const linhas = Object.entries(porOrigem).sort((a, b) => b[1] - a[1]);
+  if (!linhas.length) return '';
+
+  // Empréstimo é reconhecido pelo envelope, não pelo nome do lançamento
+  const ehEmprestimo = cid => /empr[eé]stimo|financiamento|antecipa/i.test(
+    DB.categoryPath(cid === '_sem' ? null : cid) || '');
+  const divida = linhas.filter(([cid]) => ehEmprestimo(cid)).reduce((s, l) => s + l[1], 0);
+
+  return `
     <div class="card">
-      <div class="card-head"><div><b>Categorias — comparativo</b><small>${period.label} vs. período anterior</small></div></div>
-      <div class="table-wrap"><table class="rep-table">
-        <thead><tr><th>Categoria</th><th>Atual</th><th>Anterior</th><th>Δ</th></tr></thead>
-        <tbody>${catRows || '<tr><td colspan="4" class="empty">Sem dados.</td></tr>'}</tbody>
-      </table></div>
-    </div>
+      <div class="card-head"><div><b>De onde vem o dinheiro</b>
+        <small>origem das entradas do período</small></div>
+        <span class="num" style="font-size:16px">${fmtShort(receitas)}</span></div>
+      ${svgRanking(linhas.map(([cid, v]) => [catLabel(cid === '_sem' ? null : cid), v]))}
+      ${divida > 0 ? `<p class="muted" style="margin-top:10px">⚠️ <b>${fmt(divida)}</b> vieram de empréstimo ou antecipação — <b>não são ganho</b>, são dívida adiantada. Descontando isso, a renda real do período foi <b>${fmt(receitas - divida)}</b>.</p>` : ''}
+    </div>`;
+}
+
+/* 2. A cascata. Responde "por que sobrou tão pouco?", que uma pizza de
+   categorias não responde: pizza mostra proporção entre gastos, não o consumo
+   da receita até o resto. */
+function relCascata({ receitas, kinds, resultado, total }) {
+  if (!receitas && !total) return '';
+  const passos = [];
+  if (receitas > 0) passos.push({ rot: 'Entrou', valor: receitas, tipo: 'entra' });
+  if (kinds.Essencial > 0) passos.push({ rot: 'Necessidades', valor: kinds.Essencial, tipo: 'sai' });
+  if (kinds.Estilo > 0) passos.push({ rot: 'Desejos', valor: kinds.Estilo, tipo: 'sai' });
+  const semKind = total - kinds.Essencial - kinds.Estilo;
+  if (semKind > 0.005) passos.push({ rot: 'Sem categoria', valor: semKind, tipo: 'sai' });
+  passos.push({ rot: resultado >= 0 ? 'Sobrou' : 'Faltou', valor: 0, tipo: 'total' });
+  if (passos.length < 3) return '';
+
+  return `
+    <div class="card">
+      <div class="card-head"><div><b>O caminho do dinheiro</b>
+        <small>cada bloco começa onde o anterior parou — a soma é a própria forma</small></div></div>
+      ${svgCascata(passos, { alt: 'Receita consumida por necessidades e desejos até o resultado' })}
+      <div class="chart-foot">
+        ${receitas > 0 ? `<span>Comprometido <b>${Math.round(total / receitas * 100)}%</b> da receita</span>` : ''}
+        <span>Necessidades <b>${fmtShort(kinds.Essencial)}</b></span>
+        <span>Desejos <b>${fmtShort(kinds.Estilo)}</b></span>
+      </div>
+    </div>`;
+}
+
+/* 3. A faixa de normalidade. "Normal" medido no histórico da própria família, e
+   não contra um ideal de fora — comparar o gasto de alguém com uma média
+   nacional não ajuda a decidir nada. */
+function relNormal({ evo, fechados, juizo, total, atual, fmtPct, vsMediana }) {
+  const positivos = fechados.filter(v => v > 0);
+  const mad = DB.desvioMediano(positivos);
+  const dentro = Math.abs(juizo.desvios) < 1.5;
+  return `
+    <div class="card">
+      <div class="card-head"><div><b>Isso é normal para vocês?</b>
+        <small>12 meses · a faixa clara é o seu padrão (mediana ± variação típica)</small></div>
+        ${!juizo.incerto ? `<span class="rel-selo ${dentro ? 'ok' : juizo.desvios > 0 ? 'ruim' : 'bom'}">${
+          dentro ? 'no padrão' : juizo.rotulo}</span>` : ''}
+      </div>
+      ${svgLinhaFaixa(evo, { alt: 'Gasto mensal dos últimos 12 meses contra a faixa de normalidade' })}
+      <div class="chart-foot">
+        <span>Seu normal <b>${fmtShort(juizo.med)}</b>${mad ? ` <span class="muted">± ${fmtShort(mad)}</span>` : ''}</span>
+        <span>${atual ? 'Até agora' : 'Neste mês'} <b>${fmtShort(total)}</b></span>
+        ${juizo.med > 0 ? `<span>Diferença <b class="${vsMediana > 0 ? 'txt-red' : 'txt-green'}">${fmtPct(vsMediana)}</b></span>` : ''}
+        ${positivos.length ? `<span>Menor mês <b>${fmtShort(Math.min(...positivos))}</b></span>` : ''}
+      </div>
+      ${juizo.incerto ? '<p class="muted" style="margin-top:8px">Com menos de seis meses registrados, a faixa ainda é um chute. Ela fica confiável conforme o histórico cresce.</p>' : ''}
+    </div>`;
+}
+
+/* 4. O que mudou — contra a mediana de cada categoria, não contra o mês
+   anterior. Mês anterior é um ponto só: se ele teve o IPVA, TODA categoria
+   aparece "caindo" e o relatório mente sem errar uma conta. */
+function relCategorias({ period, byCat, total }) {
+  const historico = {};
+  for (let i = 1; i <= 6; i++) {
+    const porCat = DB.spentByCategory(DB.monthPeriod(new Date(), (state.repOffset || 0) - i));
+    for (const [cid, v] of Object.entries(porCat)) (historico[cid] = historico[cid] || []).push(v);
+  }
+  const ids = [...new Set([...Object.keys(byCat), ...Object.keys(historico)])];
+  const linhas = ids.map(cid => {
+    const agora = byCat[cid] || 0;
+    const hist = historico[cid] || [];
+    const med = DB.mediana(hist);
+    const delta = agora - med;
+    return { cid, agora, med, delta, novo: !hist.length && agora > 0 };
+  }).filter(l => l.agora > 0 || Math.abs(l.delta) > 0.005);
+
+  const porGasto = [...linhas].sort((a, b) => b.agora - a.agora);
+  // Quem mais mexeu no resultado, para cima ou para baixo — é a explicação
+  const movers = [...linhas].filter(l => Math.abs(l.delta) > Math.max(20, l.med * 0.15))
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 4);
+
+  const fatias = porGasto.slice(0, 6)
+    .map((l, i) => ({ label: catLabel(l.cid === '_sem' ? null : l.cid), value: l.agora, color: PALETTE[i % PALETTE.length] }))
+    .filter(f => f.value > 0);
+  const resto = porGasto.slice(6).reduce((s, l) => s + l.agora, 0);
+  if (resto > 0) fatias.push({ label: 'Outras', value: resto, color: '#c4cad4' });
+
+  return `
+    ${movers.length ? `<div class="card">
+      <div class="card-head"><div><b>O que explica a diferença</b>
+        <small>maiores desvios contra a mediana de cada categoria nos últimos 6 meses</small></div></div>
+      <div class="rel-movers">
+        ${movers.map(l => `<div class="mover ${l.delta > 0 ? 'sobe' : 'desce'}">
+          <span class="mover-cat">${esc(catLabel(l.cid === '_sem' ? null : l.cid))}</span>
+          <span class="mover-delta"><i class="pt pt-${l.delta > 0 ? 'dn' : 'up'}"></i>${fmtShort(Math.abs(l.delta))}</span>
+          <small>${l.novo ? 'não aparecia antes' : `${fmtShort(l.agora)} contra ${fmtShort(l.med)} de costume`}</small>
+        </div>`).join('')}
+      </div>
+    </div>` : ''}
 
     <div class="grid-2">
       <div class="card">
-        <div class="card-head"><div><b>Para onde foi</b><small>divisão por categoria no período</small></div></div>
-        ${(() => {
-          const cats6 = catIds.slice(0, 6).map((cid, i) => ({ label: catLabel(cid === '_sem' ? null : cid), value: byCat[cid] || 0, color: PALETTE[i % PALETTE.length] })).filter(f => f.value > 0);
-          const outras = catIds.slice(6).reduce((s, cid) => s + (byCat[cid] || 0), 0);
-          if (outras > 0) cats6.push({ label: 'Outras', value: outras, color: '#c4cad4' });
-          if (!cats6.length) return '<div class="empty">Sem gastos no período.</div>';
-          return `<div class="donut-wrap">${svgDonut(cats6, total, { caption: 'no período' })}
-            <div class="legend">${cats6.map(f => `<div class="legend-row"><i class="legend-dot" style="background:${f.color}"></i>
-              <span class="legend-name">${esc(f.label)}</span><span class="legend-pct">${Math.round(f.value / total * 100)}%</span>
-              <span class="legend-val">${fmtShort(f.value)}</span></div>`).join('')}</div></div>`;
-        })()}
+        <div class="card-head"><div><b>Para onde foi</b><small>divisão do gasto no período</small></div></div>
+        ${fatias.length ? `<div class="donut-wrap">${svgDonut(fatias, total, { caption: 'no período' })}
+          <div class="legend">${fatias.map(f => `<div class="legend-row"><i class="legend-dot" style="background:${f.color}"></i>
+            <span class="legend-name">${esc(f.label)}</span><span class="legend-pct">${Math.round(f.value / total * 100)}%</span>
+            <span class="legend-val">${fmtShort(f.value)}</span></div>`).join('')}</div></div>`
+          : '<div class="empty">Sem gastos no período.</div>'}
       </div>
       <div class="card">
-        <div class="card-head"><div><b>Necessidades × Desejos</b><small>equilíbrio dos gastos (regra 50/30/20)</small></div></div>
-        ${(() => {
-          const k = DB.spentByKind(period);
-          const soma = k.Essencial + k.Estilo;
-          if (!soma) return '<div class="empty">Sem gastos no período.</div>';
-          const fat = [
-            { label: 'Necessidades', value: k.Essencial, color: '#009ef7' },
-            { label: 'Desejos', value: k.Estilo, color: '#7239ea' },
-          ].filter(f => f.value > 0);
-          const pctD = Math.round(k.Estilo / soma * 100);
-          return `<div class="donut-wrap">${svgDonut(fat, soma, { caption: 'total de gastos' })}
-            <div class="legend">${fat.map(f => `<div class="legend-row"><i class="legend-dot" style="background:${f.color}"></i>
-              <span class="legend-name">${f.label}</span><span class="legend-pct">${Math.round(f.value / soma * 100)}%</span>
-              <span class="legend-val">${fmtShort(f.value)}</span></div>`).join('')}</div></div>
-            <div class="chart-foot"><span>${pctD <= 30 ? '✅ Desejos dentro do recomendado (até 30% da renda)' : `⚠️ Desejos em ${pctD}% dos gastos — vale revisar`}</span></div>`;
-        })()}
+        <div class="card-head"><div><b>Categoria por categoria</b><small>contra o costume de cada uma</small></div></div>
+        <div class="table-wrap"><table class="rep-table">
+          <thead><tr><th>Categoria</th><th class="num">Neste mês</th><th class="num">De costume</th><th>Δ</th></tr></thead>
+          <tbody>${porGasto.length ? porGasto.map(l => `<tr>
+            <td>${esc(catLabel(l.cid === '_sem' ? null : l.cid))}</td>
+            <td class="num">${fmtShort(l.agora)}</td>
+            <td class="num muted">${l.med > 0 ? fmtShort(l.med) : '—'}</td>
+            <td>${l.novo ? '<span class="muted">novo</span>'
+              : Math.abs(l.delta) < Math.max(20, l.med * 0.15) ? '<span class="muted">=</span>'
+              : `<span class="${l.delta > 0 ? 'txt-red' : 'txt-green'}">${l.delta > 0 ? '▲' : '▼'} ${fmtShort(Math.abs(l.delta))}</span>`}</td>
+          </tr>`).join('') : '<tr><td colspan="4" class="empty">Sem dados.</td></tr>'}</tbody>
+        </table></div>
+        <p class="muted" style="margin-top:8px">“=” quer dizer variação pequena demais para ser notícia — abaixo de 15% ou R$ 20.</p>
       </div>
-    </div>
+    </div>`;
+}
 
+/* Cortes transversais: os mesmos gastos vistos por outros eixos. Categoria
+   responde "em quê"; estes respondem "por quem", "de que forma" e "a serviço de
+   quê" — a etiqueta atravessa envelopes e é a única que mede um assunto inteiro
+   (uma viagem, uma reforma) espalhado por várias categorias. */
+function relCortes(period, txs, total) {
+  const soma = chave => {
+    const out = {};
+    for (const t of txs) { const k = t[chave] || '—'; out[k] = (out[k] || 0) + (Number(t.amount) || 0); }
+    return Object.entries(out).sort((a, b) => b[1] - a[1]);
+  };
+  const porTag = Object.entries(DB.spentByTag(period)).sort((a, b) => b[1] - a[1]);
+  const maiores = [...txs].sort((a, b) => (b.amount || 0) - (a.amount || 0)).slice(0, 8);
+
+  return `
     <div class="grid-2">
       <div class="card">
         <div class="card-head"><div><b>Quem gastou</b><small>por membro da família</small></div></div>
-        ${hb(groupSum('member'))}
+        ${svgRanking(soma('member'))}
       </div>
       <div class="card">
         <div class="card-head"><div><b>Como pagou</b><small>por forma de pagamento</small></div></div>
-        ${hb(groupSum('method'))}
+        ${svgRanking(soma('method'))}
       </div>
     </div>
+    ${porTag.length ? `<div class="card">
+      <div class="card-head"><div><b>Por etiqueta</b>
+        <small>assuntos que atravessam categorias — toque para ver os lançamentos</small></div></div>
+      <div class="rank">${porTag.map(([tag, v], i) => `<div class="rank-row">
+        <span class="rank-name"><button class="link-btn" data-ver-tag="${esc(tag)}">#${esc(tag)}</button></span>
+        <span class="rank-bar"><i style="width:${Math.max(2, v / porTag[0][1] * 100).toFixed(1)}%;background:${PALETTE[i % PALETTE.length]}"></i></span>
+        <span class="rank-val">${fmtShort(v)}</span></div>`).join('')}</div>
+    </div>` : ''}
+    ${maiores.length ? `<div class="card">
+      <div class="card-head"><div><b>Maiores gastos</b>
+        <small>os ${maiores.length} lançamentos que mais pesaram${total > 0 ? ` — juntos, ${Math.round(maiores.reduce((s, t) => s + Number(t.amount || 0), 0) / total * 100)}% do total` : ''}</small></div></div>
+      <div class="table-wrap"><table class="rep-table">
+        <tbody>${maiores.map(t => `<tr>
+          <td>${esc(t.description)}<br><small class="muted">${fmtDay(t.date)} · ${esc(catLabel(t.category_id))}</small></td>
+          <td class="num">${fmt(t.amount)}</td></tr>`).join('')}</tbody>
+      </table></div>
+    </div>` : ''}`;
+}
 
-    <div class="card">
-      <div class="card-head"><div><b>Ranking de categorias</b><small>do maior para o menor gasto no período</small></div></div>
-      ${svgRanking(catIds.map(cid => [catLabel(cid === '_sem' ? null : cid), byCat[cid] || 0]).filter(e => e[1] > 0))}
-    </div>
+/* 5. Onde vai parar. Projeção só faz sentido no mês corrente; em mês fechado a
+   pergunta é outra — quanto do orçamento foi usado. */
+function relProjecao({ period, st, atual, total, receitas, juizo }) {
+  const orcamento = DB.budgetTotal();
+  const pctOrc = orcamento > 0 ? Math.round(total / orcamento * 100) : 0;
+  const proj = st.projection;
+  const estoura = orcamento > 0 && proj > orcamento;
 
-    <!-- De onde vem o dinheiro. Separar salário de empréstimo recebido é o ponto:
-         os dois entram na conta, e só um é ganho. -->
-    ${(() => {
-      const porOrigem = DB.incomeByCategory(period);
-      const linhas = Object.entries(porOrigem).sort((a, b) => b[1] - a[1]);
-      if (!linhas.length) return '';
-      const total = linhas.reduce((s, l) => s + l[1], 0);
-      const emprestado = linhas
-        .filter(([id]) => /emprest/i.test((catOf(id) || {}).name || ''))
-        .reduce((s, l) => s + l[1], 0);
-      return `
-    <div class="card">
-      <div class="card-head"><div><b>De onde vem o dinheiro</b><small>entradas do período por origem</small></div>
-        <span class="kpi-ico t-success" data-ico="trend" style="width:34px;height:34px;margin:0"></span></div>
-      ${svgRanking(linhas.map(([id, v]) => [id === '_sem' ? 'Sem origem' : catLabel(id), v]))}
-      <div class="chart-foot"><span>${emprestado > 0
-        ? `⚠️ ${fmtShort(emprestado)} vieram de empréstimo — entram na conta, mas não são ganho: viram dívida a pagar.`
-        : `${fmtShort(total)} de entradas classificadas no período.`}</span></div>
-    </div>`;
-    })()}
-
-    <!-- Etiqueta só compensa se der para ver o total dela. É aqui que "separar do
-         todo" acontece: quanto custou a viagem, somando categorias diferentes. -->
-    ${(() => {
-      const porTag = DB.spentByTag(period);
-      const linhas = Object.entries(porTag).sort((a, b) => b[1] - a[1]);
-      if (!linhas.length) return '';
-      const somaTags = linhas.reduce((s, l) => s + l[1], 0);
-      return `
-    <div class="card">
-      <div class="card-head"><div><b>Por etiqueta</b><small>assunto que atravessa categorias — toque para ver os lançamentos</small></div>
-        <span class="kpi-ico t-primary" data-ico="tag" style="width:34px;height:34px;margin:0"></span></div>
-      <div class="rank">
-        ${linhas.map(([tag, v], i) => `
-          <div class="rank-row rank-clicavel" data-ver-tag="${esc(tag)}">
-            <span class="rank-name">#${esc(tag)}</span>
-            <span class="rank-bar"><i style="width:${Math.max(2, v / linhas[0][1] * 100).toFixed(1)}%;background:${PALETTE[i % PALETTE.length]}"></i></span>
-            <span class="rank-val">${fmtShort(v)}</span>
-          </div>`).join('')}
-      </div>
-      <div class="chart-foot"><span>${fmtShort(somaTags)} etiquetado no período — um lançamento com duas etiquetas conta nas duas.</span></div>
-    </div>`;
-    })()}
-
+  return `
     <div class="grid-2">
       <div class="card">
-        <div class="card-head"><div><b>Maiores gastos</b><small>top 10 do período</small></div></div>
-        <div class="table-wrap"><table class="rep-table"><tbody>${top || '<tr><td class="empty">Sem dados.</td></tr>'}</tbody></table></div>
+        <div class="card-head"><div><b>${atual ? 'Onde isso vai parar' : 'Como o mês fechou'}</b>
+          <small>${atual ? `média de ${fmt(st.dailyAvg)} por dia nos ${st.elapsedDays} dias corridos` : 'gasto contra orçamento'}</small></div></div>
+        ${orcamento > 0 ? `
+          <div class="budget-head"><span class="muted">Uso do orçamento</span>
+            <span class="num">${pctOrc}% <span class="muted">de ${fmtShort(orcamento)}</span></span></div>
+          <div class="bar ${barClass(pctOrc)}"><i style="width:${Math.min(100, pctOrc)}%"></i></div>` : ''}
+        ${atual ? `<div class="proj-row" style="margin-top:12px"><span>Projeção do fechamento</span><b class="${estoura ? 'txt-red' : ''}">${fmt(proj)}</b></div>
+          ${orcamento > 0 ? `<div class="proj-row"><span>${estoura ? 'Deve passar do orçamento em' : 'Deve sobrar do orçamento'}</span><b class="${estoura ? 'txt-red' : 'txt-green'}">${fmt(Math.abs(orcamento - proj))}</b></div>` : ''}
+          <div class="proj-row"><span>Para fechar no seu normal, gastar por dia</span><b>${
+            st.remainingDays > 0 && juizo.med > total ? fmt((juizo.med - total) / st.remainingDays) : fmt(0)}</b></div>`
+          : `<div class="proj-row" style="margin-top:12px"><span>Gasto do mês</span><b>${fmt(total)}</b></div>
+             <div class="proj-row"><span>Receita do mês</span><b class="txt-green">${fmt(receitas)}</b></div>`}
       </div>
       <div class="card">
-        <div class="card-head"><div><b>Custos fixos (recorrentes)</b><small>compromisso mensal estimado: <b class="txt-red">${fmtShort(recTotal)}</b>${income > 0 ? ` · ${Math.round(recTotal / income * 100)}% da renda` : ''}</small></div></div>
-        <div class="table-wrap"><table class="rep-table"><tbody>${recRows || '<tr><td class="empty">Marque lançamentos como Recorrente para vê-los aqui.</td></tr>'}</tbody></table></div>
+        <div class="card-head"><div><b>Ritmo do mês</b><small>gasto acumulado dia a dia</small></div></div>
+        ${svgBurnup(period, DB.budgetTotal() || undefined)}
       </div>
-    </div>
-  `;
+    </div>`;
+}
+
+/* 6. O que está sendo construído. Um relatório que só mede gasto conta metade da
+   história: sobrar dinheiro sem destino e sobrar dinheiro virando reserva são
+   coisas diferentes, e é a segunda que muda uma vida financeira. */
+function relConstrucao({ period, receitas, resultado }) {
+  const reserva = DB.reserveTotal();
+  const gastoMedio = DB.avgMonthlySpend();
+  const meses = gastoMedio > 0 ? reserva / gastoMedio : 0;
+  const contas = DB.accountsTotal();
+  const metas = DB.all('goals').filter(g => !g.done && !DB.isReserveGoal(g));
+  const taxa = receitas > 0 ? resultado / receitas * 100 : 0;
+
+  return `
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><div><b>O que está sendo construído</b><small>reserva e patrimônio</small></div></div>
+        <div class="proj-row"><span>Em contas hoje</span><b>${fmt(contas)}</b></div>
+        <div class="proj-row"><span>Reserva de emergência</span><b class="${meses >= 6 ? 'txt-green' : meses >= 3 ? '' : 'txt-red'}">${fmt(reserva)}</b></div>
+        <div class="proj-row"><span>Cobre quanto tempo</span><b class="${meses >= 6 ? 'txt-green' : meses >= 3 ? '' : 'txt-red'}">${
+          meses > 0 ? `${meses.toFixed(1)} meses` : '—'}</b></div>
+        ${receitas > 0 ? `<div class="proj-row"><span>Taxa de poupança do mês</span><b class="${taxa >= 20 ? 'txt-green' : taxa >= 0 ? '' : 'txt-red'}">${Math.round(taxa)}%</b></div>` : ''}
+        <p class="muted" style="margin-top:8px">${
+          meses >= 6 ? 'A reserva cobre seis meses de gasto — o patamar em que uma emergência deixa de virar dívida.'
+          : meses >= 3 ? `Faltam ${fmt(gastoMedio * 6 - reserva)} para chegar aos seis meses de cobertura.`
+          : `Uma reserva de seis meses seria ${fmt(gastoMedio * 6)}, medida pelo seu próprio gasto médio.`}</p>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><b>Metas em andamento</b><small>${metas.length || 'nenhuma'} ativa${metas.length === 1 ? '' : 's'}</small></div></div>
+        ${metas.length ? metas.slice(0, 4).map(g => {
+          const tot = DB.goalTotal(g.id);
+          const pct = g.target_amount > 0 ? Math.round(tot / g.target_amount * 100) : 0;
+          return `<div class="budget-item">
+            <div class="budget-head"><span>${esc(g.icon || '🎯')} ${esc(g.name)}</span>
+              <span class="num">${fmtShort(tot)} <span class="muted">de ${fmtShort(g.target_amount)}</span></span></div>
+            <div class="bar bar-green"><i style="width:${Math.min(100, pct)}%"></i></div>
+          </div>`;
+        }).join('') : '<div class="empty">Nenhuma meta ativa. O dinheiro que sobra rende mais quando tem nome.</div>'}
+      </div>
+    </div>`;
 }
 
 /* ---------- Ligações por view ---------- */
