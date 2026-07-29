@@ -547,14 +547,9 @@ svg:hover .ch-bar-on { fill: #005a92; }
 /* Fora da animação de entrada da tela: transform num elemento preso o desloca
    justamente enquanto ele deveria estar ancorado */
 .view > .ext-topo { animation: none; }
-.ext-mes { display: flex; align-items: center; justify-content: center; gap: 10px; }
-.ext-mes b { font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
-.ext-mes button {
-  width: 30px; height: 30px; border-radius: 8px; flex: none;
-  background: var(--ink-2); border: 1px solid var(--line); color: var(--paper-dim); cursor: pointer;
-}
-.ext-mes button:hover { color: var(--gold); border-color: #d8e3ea; }
-.ext-mes svg { width: 15px; height: 15px; }
+/* O cartão de mês é o mesmo do Painel; aqui ele só ganha um respiro menor,
+   porque a barra inteira precisa caber sem roubar a lista */
+.ext-topo .month-nav { padding: 8px 12px; }
 
 /* ---------- A régua do mês ----------
    Seletor de intervalo E mapa de movimento: as marcas mostram onde o dinheiro se
@@ -614,25 +609,27 @@ svg:hover .ch-bar-on { fill: #005a92; }
    Cada pílula mostra o próprio valor, então ela É o estado do filtro — foi o que
    permitiu tirar da tela a fileira de etiquetas ativas, que repetia a mesma
    informação um bloco abaixo. */
-/* scroll-snap para a pílula parar sempre inteira na borda: meia pílula visível
-   lê como defeito, não como "tem mais ao lado". A sombra na direita é quem diz
-   que há mais — e ela some ao chegar ao fim da rolagem. */
-.ext-pilulas {
-  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
-  margin: 0 -16px; padding: 0 16px 2px;
-  scroll-snap-type: x proximity; scroll-padding-left: 16px;
-  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 26px), transparent 100%);
-  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 26px), transparent 100%);
-}
-.ext-pilulas::-webkit-scrollbar { display: none; }
+/* QUEBRA DE LINHA, não rolagem horizontal.
+
+   A fileira rolava e mostrava só as primeiras: o resto existia e ninguém
+   alcançava. Filtro escondido é filtro que não é usado, e aqui o custo de
+   esconder é alto — a pessoa fica sem saber por que a lista está daquele jeito.
+   Duas linhas de altura valem mais que uma linha com metade dos filtros fora
+   de vista. */
+.ext-pilulas { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 2px; }
 .pilula {
-  position: relative; flex: none; display: inline-flex; align-items: center; gap: 5px;
-  max-width: 62vw; padding: 6px 10px; border-radius: 999px;
-  scroll-snap-align: start;
+  position: relative; flex: 0 1 auto; display: inline-flex; align-items: center; gap: 5px;
+  max-width: 100%; padding: 6px 10px; border-radius: 999px;
   background: var(--ink-2); border: 1px solid var(--line); color: var(--paper-dim);
   font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
   white-space: nowrap; cursor: pointer;
   transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+/* Em tela muito estreita, encolher a fonte antes de deixar cair para uma
+   terceira linha — a barra é fixa, e cada linha dela é altura roubada da lista */
+@media (max-width: 360px) {
+  .ext-pilulas { gap: 5px; }
+  .pilula { font-size: 12px; padding: 5px 9px; }
 }
 /* O corte com reticências mora AQUI, não na pílula: em contêiner flex o
    text-overflow não alcança o texto solto, e o rótulo saía decepado. */
@@ -1093,14 +1090,51 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 /* A lista rola sozinha para a barra de ação ficar sempre alcançável: com 200
    linhas, um rodapé que rola junto obrigaria a percorrer tudo para agir. */
 .massa-lista { max-height: calc(100dvh - 320px); overflow-y: auto; overscroll-behavior: contain; margin: 0 -4px; padding: 0 4px; }
-.massa-linha {
-  display: flex; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 9px;
-  border: 1px solid transparent; cursor: pointer;
+/* ---------- Linha editável ----------
+   Cada lançamento traz os próprios controles, porque o caso comum não é "os 34
+   viram a mesma categoria" — é cada um querer o seu. O lote continua existindo
+   para quando o valor realmente é o mesmo em todos. */
+.ed-linha {
+  padding: 9px 8px; border-radius: 9px; border: 1px solid transparent;
+  border-bottom-color: var(--line);
 }
-.massa-linha + .massa-linha { border-top: 1px solid var(--line); border-top-left-radius: 0; border-top-right-radius: 0; }
-.massa-linha.is-on { background: rgba(0, 158, 247, .07); border-color: rgba(0, 158, 247, .28); }
-.massa-linha input { width: 20px; height: 20px; flex: none; accent-color: var(--blue); }
-.massa-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ed-linha.is-on { background: rgba(0, 158, 247, .06); border-color: rgba(0, 158, 247, .28); }
+.ed-cabeca { display: flex; align-items: center; gap: 9px; }
+.ed-cabeca input { width: 19px; height: 19px; flex: none; accent-color: var(--gold); }
+.ed-nome {
+  flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ed-ctrls { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin: 6px 0 0 28px; }
+.ed-data { font-size: 11px; color: var(--paper-dim); font-weight: 600; margin-right: 2px; }
+.ed-btn {
+  max-width: 100%; padding: 4px 9px; border-radius: 7px;
+  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper);
+  font-family: var(--font-body); font-size: 11.5px; font-weight: 600;
+  cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ed-btn:hover { border-color: #d8e3ea; }
+/* Campo em branco fica visivelmente pendente: numa tela de conserto, o que
+   falta preencher tem de saltar antes do que já está pronto */
+.ed-btn.vazio { color: var(--paper-dim); border-style: dashed; }
+.ed-btn.ed-mais { padding: 4px 8px; letter-spacing: 1px; }
+/* A cor do tipo é a mesma da semântica do app: despesa vermelha, receita verde,
+   transferência azul — trocar o tipo aqui muda a cor na hora, e é essa mudança
+   que confirma o acerto sem precisar ler */
+.ed-tipo { font-weight: 700; }
+.ed-tipo.t-desp { color: var(--red); border-color: rgba(241, 65, 108, .3); background: rgba(241, 65, 108, .06); }
+.ed-tipo.t-rec { color: #1f9d61; border-color: rgba(80, 205, 137, .35); background: rgba(80, 205, 137, .08); }
+.ed-tipo.t-tr { color: var(--blue); border-color: rgba(114, 57, 234, .3); background: rgba(114, 57, 234, .06); }
+.ed-grupo { padding: 8px 10px 4px; }
+.ed-grupo small { display: block; font-size: 10.5px; font-weight: 700; color: var(--paper-dim); margin-bottom: 5px; }
+.ed-op {
+  display: inline-block; margin: 0 4px 4px 0; padding: 5px 10px; border-radius: 7px;
+  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper);
+  font-family: var(--font-body); font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.ed-op.is-sel { background: rgba(0, 158, 247, .1); border-color: var(--gold); color: #0072b8; }
+.ed-mais-corpo { max-height: 320px; overflow-y: auto; }
+.ed-destino { border-top: 1px solid var(--line); }
 .massa-barra {
   position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 12px 0 2px; margin-top: 6px; border-top: 1px solid var(--line);

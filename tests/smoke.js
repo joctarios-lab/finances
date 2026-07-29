@@ -70,7 +70,7 @@ eval(appSrc + `; Object.assign(global, {
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
-  Massa, openMassaModal, renderMassa, closeModal, openModal, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
+  Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
@@ -1420,15 +1420,21 @@ try {
   check('e usa o fundo da página, não o de cartão', /\.ext-topo \{[^}]*background: var\(--ink\);/.test(cssPil), true);
   check('sem sombra competindo com a lista', /\.ext-topo \{[^}]*box-shadow/.test(cssPil), false);
   check('a barra sai da animação de entrada', cssPil.includes('.view > .ext-topo { animation: none; }'), true);
-  check('a fileira de pílulas rola na horizontal', /\.ext-pilulas \{[^}]*overflow-x: auto/.test(cssPil), true);
+  /* Nada de rolagem horizontal aqui: a fileira mostrava só as primeiras e o
+     resto ficava inalcançável. Filtro escondido é filtro que não se usa — e o
+     custo é a pessoa não entender por que a lista está daquele jeito. */
+  check('as pílulas quebram linha em vez de rolar',
+    /\.ext-pilulas \{[^}]*flex-wrap: wrap/.test(cssPil), true);
+  check('e nenhuma fica fora de alcance',
+    /\.ext-pilulas \{[^}]*overflow-x: auto/.test(cssPil), false);
+  check('todas as pílulas saem no HTML de uma vez',
+    (renderExtrato(p2).match(/data-pilula="/g) || []).length, pilulasDeFiltro().length + 2);
   /* text-overflow não alcança texto solto dentro de contêiner flex: sem um span
      próprio, o rótulo era cortado no seco e a pílula aparecia pela metade. */
   check('o rótulo tem elemento próprio para as reticências',
     /\.pilula-rot \{[^}]*text-overflow: ellipsis/.test(cssPil), true);
   check('e a pílula não corta mais o conteúdo dela',
     /\.pilula \{[^}]*text-overflow/.test(cssPil), false);
-  check('a pílula para inteira na borda ao rolar',
-    /\.ext-pilulas \{[^}]*scroll-snap-type/.test(cssPil) && /\.pilula \{[^}]*scroll-snap-align/.test(cssPil), true);
   check('todo rótulo de pílula sai embrulhado',
     (renderExtrato(p2).match(/data-pilula="/g) || []).length,
     (renderExtrato(p2).match(/class="pilula-rot"/g) || []).length);
@@ -2388,6 +2394,44 @@ try {
   check('a confirmação diz quantos recebem a mudança', /Categoria vira[\s\S]*?<b>1<\/b>/.test(conf), true);
   closeSheet();
 
+  /* ---- Trocar o tipo ----
+     Não é trocar um campo: é mudar quantas contas o lançamento toca. Virar
+     transferência em despesa sem soltar o to_account deixaria a conta de destino
+     com um credito que nada mais explica. */
+  const tConv = DB.upsert('transactions', {
+    description: 'Conversao teste', amount: 80, date: dia(10), type: 'Transferência',
+    status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência',
+    account_id: contaM, to_account: contaM2,
+  });
+  applyTxEffect(DB.get('transactions', tConv), +1);
+  const origAntes = DB.get('accounts', contaM).balance;
+  const destAntes = DB.get('accounts', contaM2).balance;
+  const totalAntes = somaSaldos();
+
+  aplicarNaLinha(tConv, { type: 'Despesa' });
+  const convertido = DB.get('transactions', tConv);
+  check('a transferência virou despesa', convertido.type, 'Despesa');
+  check('e soltou a conta de destino', !convertido.to_account, true);
+  check('o método deixa de ser Transferência', convertido.method, 'PIX');
+  check('a origem continua debitada', DB.get('accounts', contaM).balance, origAntes);
+  check('o destino devolve o que tinha recebido', DB.get('accounts', contaM2).balance, destAntes - 80);
+  check('e some 80 do total da família, que agora saiu de verdade', somaSaldos(), totalAntes - 80);
+
+  // Voltar a ser transferência exige dizer para onde: sem destino não há a outra
+  // ponta, que é o defeito que já quebrou 28 lançamentos nesta base
+  aplicarNaLinha(tConv, { type: 'Transferência', to_account: contaM2 });
+  check('voltou a ser transferência', DB.get('transactions', tConv).type, 'Transferência');
+  check('com o destino de volta', DB.get('transactions', tConv).to_account, contaM2);
+  check('e o total da família volta ao que era', somaSaldos(), totalAntes);
+  check('a categoria não sobrevive à travessia', !DB.get('transactions', tConv).category_id, true);
+
+  // Converter e categorizar na mesma ação: olhar o registro ANTES recusaria a
+  // categoria, porque transferência não aceita — e é justamente o conserto útil
+  aplicarNaLinha(tConv, { type: 'Despesa', category_id: catM });
+  check('converter e categorizar de uma vez funciona', DB.get('transactions', tConv).category_id, catM);
+  applyTxEffect(DB.get('transactions', tConv), -1);   // devolve o saldo antes de sumir com ele
+  DB.remove('transactions', tConv);
+
   // Etiquetas: os três modos
   check('adicionar mantém o que já existia', aplicarTags(['a'], 'adicionar', ['b']).sort().join(), 'a,b');
   check('adicionar não duplica', aplicarTags(['a'], 'adicionar', ['a']).join(), 'a');
@@ -2422,13 +2466,39 @@ try {
     telaM.includes('id="massa-editar"') && telaM.includes('id="massa-excluir"'), true);
   check('o cabeçalho conta quantos estão marcados', telaM.includes(`${Massa.ids.length} de ${Massa.ids.length}`), true);
 
+  /* Cada linha traz os próprios controles: o caso comum não é "os 34 viram a
+     mesma categoria", é cada um querer o seu. */
+  const umaLinha = linhaEditavel(DB.get('transactions', t1));
+  for (const campo of ['tipo', 'cat', 'tags', 'mais']) {
+    check(`a linha tem o controle de ${campo}`, umaLinha.includes(`data-ed="${campo}"`), true);
+  }
+  check('e a linha diz de qual lançamento é', umaLinha.includes(`data-id="${t1}"`), true);
+  check('o tipo aparece escrito na própria linha', /ed-tipo t-desp[^>]*>Despesa</.test(umaLinha), true);
+  /* Campo em branco fica visivelmente pendente: numa tela de conserto, o que
+     falta preencher tem de saltar antes do que já está pronto. */
+  const semCat = linhaEditavel({ ...DB.get('transactions', t1), category_id: null, type: 'Despesa' });
+  check('categoria vazia se marca como pendente', /ed-btn vazio[^>]*data-ed="cat"/.test(semCat), true);
+  check('e a preenchida não', /ed-btn vazio[^>]*data-ed="cat"/.test(umaLinha), false);
+  // Transferência mostra o destino no lugar da categoria, porque categoria ela não tem
+  const linhaTr = linhaEditavel(DB.get('transactions', tTr));
+  check('transferência mostra o destino no lugar da categoria', linhaTr.includes('→ Conta Massa 2'), true);
+  check('e se anuncia como transferência', linhaTr.includes('>Transferência<'), true);
+  /* Botão + popover em vez de <select> por linha: com 200 linhas seriam 400
+     componentes montados de uma vez, e o celular engasga antes de a lista sair. */
+  const apEd = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const corpoLinha = apEd.slice(apEd.indexOf('function linhaEditavel'), apEd.indexOf('function renderMassa'));
+  check('a linha não monta select nenhum', corpoLinha.includes('<select'), false);
+  check('e redesenha só a si mesma ao mudar', apEd.includes('function repintarLinha'), true);
+
   openMassaEditSheet();
   const formM = els['#sheet'].innerHTML;
   check('todo campo do formulário tem interruptor',
-    ['category_id', 'tags', 'status', 'scope', 'member', 'method', 'account_id', 'recurring', 'notes']
+    ['type', 'category_id', 'tags', 'status', 'scope', 'member', 'method', 'account_id', 'recurring', 'notes']
       .every(c => formM.includes(`data-liga="${c}"`)), true);
+  check('o lote também troca o tipo', formM.includes('id="ma-tipo"'), true);
+  check('e pede o destino ao virar transferência', formM.includes('id="ma-destino"'), true);
   check('e os controles nascem escondidos',
-    (formM.match(/class="massa-ctrl"[^>]*hidden/g) || []).length >= 9, true);
+    (formM.match(/class="massa-ctrl"[^>]*hidden/g) || []).length, 10);
   check('o formulário avisa que situação mexe no saldo', formM.includes('Mexe no saldo'), true);
   check('e que trocar de conta move os saldos', formM.includes('move os saldos') || formM.includes('Move dinheiro'), true);
   check('etiqueta oferece os três modos',

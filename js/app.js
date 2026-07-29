@@ -1062,6 +1062,7 @@ function renderExtrato(period) {
   }
 
   const isCurrent = state.monthOffset === 0;
+  const st = DB.statsFor(period);
 
   /* Movimento por dia para as marcas da régua: conta os lançamentos do mês
      inteiro sob os DEMAIS filtros, ignorando o recorte de dias. */
@@ -1077,10 +1078,17 @@ function renderExtrato(period) {
          lista rola. Usa o fundo da página, não o dos cartões — ela não flutua
          sobre o conteúdo, ela É o topo da página, preso. -->
     <div class="ext-topo">
-      <div class="ext-mes">
+      <!-- Mesmo cartão de mês do Painel: trocar de tela não deve trocar a forma
+           de andar no tempo. A sublinha diz os limites do mês; a régua abaixo
+           diz o trecho escolhido dentro dele — coisas diferentes. -->
+      <div class="card month-nav">
         <button id="mn-prev" aria-label="Mês anterior" data-ico="chevL"></button>
-        <b>${esc(period.label)}</b>
-        <button id="mn-next" aria-label="Próximo mês" data-ico="chevR"></button>
+        <div style="text-align:center">
+          <b>${esc(period.label)}</b>
+          <div class="muted" style="font-size:11.5px">${fmtDate(period.start)} a ${fmtDate(new Date(period.end.getTime() - 86400000))}${
+            isCurrent ? ` · dia ${st.elapsedDays} de ${st.totalDays}` : ' · encerrado'}</div>
+        </div>
+        <button id="mn-next" aria-label="Próximo mês" data-ico="chevR" ${isCurrent ? 'disabled style="opacity:.35"' : ''}></button>
       </div>
       ${reguaDoMes(period, movimentoPorDia)}
       <div class="ext-pilulas" id="ext-pilulas">
@@ -1859,6 +1867,55 @@ const MASSA_ACEITA = {
 };
 const massaAceita = (campo, t) => (MASSA_ACEITA[campo] ? MASSA_ACEITA[campo](t) : true);
 
+/* Trocar o TIPO não é trocar um campo: é mudar quantas contas o lançamento
+   toca. Transferência sai de uma conta e entra em outra; despesa e receita
+   mexem só numa. Virar transferência em despesa sem soltar o to_account
+   deixaria a conta de destino com um crédito que nada mais explica.
+
+   Método e categoria vêm junto porque não sobrevivem à travessia: "Transferência"
+   não é forma de pagamento de uma despesa, e transferência não tem categoria. */
+function trocarTipo(t, novoTipo, destino) {
+  const novo = { ...t, type: novoTipo };
+  if (novoTipo === 'Transferência') {
+    novo.to_account = destino || t.to_account || null;
+    novo.category_id = null;
+    novo.method = 'Transferência';
+    novo.card_id = null;                      // transferência é entre contas
+  } else {
+    novo.to_account = null;
+    if (t.method === 'Transferência') novo.method = 'PIX';
+  }
+  return novo;
+}
+
+/* Grava UMA linha, com o saldo acertado e desfazer armazenado. É o caminho da
+   edição linha a linha: o lote inteiro continua existindo para quando o valor é
+   o mesmo em todos, mas o caso comum é cada lançamento querer o seu. */
+function aplicarNaLinha(id, campos) {
+  const t = DB.get('transactions', id);
+  if (!t) return null;
+  /* A troca de tipo vem primeiro porque ela redefine to_account, método e
+     categoria; os campos pedidos entram por cima e vencem, para quem trocou o
+     tipo E escolheu a categoria na mesma ação não perder a categoria. */
+  const base = campos.type && campos.type !== t.type
+    ? trocarTipo(t, campos.type, campos.to_account)
+    : t;
+  const novo = { ...base, ...campos };
+
+  const deltas = {};
+  const somar = (obj, sinal) => {
+    for (const [conta, v] of Object.entries(obj)) deltas[conta] = (deltas[conta] || 0) + v * sinal;
+  };
+  DB.emLote(() => {
+    somar(efeitoNasContas(t), -1);
+    somar(efeitoNasContas(novo), +1);
+    DB.upsert('transactions', novo);
+    for (const [conta, d] of Object.entries(deltas)) if (Math.abs(d) > 0.004) adjustBalance(conta, d);
+  });
+  Massa.desfazer = { antes: [{ ...t }], deltas };
+  return novo;
+}
+
 function massaAlvos() {
   return [...Massa.marcados].map(id => DB.get('transactions', id)).filter(Boolean);
 }
@@ -1880,6 +1937,41 @@ function openMassaModal(period) {
   renderMassa();
 }
 
+/* Uma linha com os próprios controles.
+
+   O caso comum não é "os 34 viram a mesma categoria" — é cada um querer o seu.
+   Por isso categoria e tipo ficam na linha, a um toque, e o lote continua
+   existindo só para quando o valor realmente é o mesmo em todos.
+
+   Botão + popover em vez de <select> por linha: com 200 linhas seriam 400
+   componentes montados de uma vez, e o celular engasga antes de a lista
+   aparecer. O popover é um só, reaproveitado. */
+function linhaEditavel(t) {
+  const isTr = DB.isTransfer(t);
+  const marcado = Massa.marcados.has(t.id);
+  const tipo = isTr ? 'Transferência' : DB.isExpense(t) ? 'Despesa' : 'Receita';
+  const catTxt = isTr
+    ? `→ ${esc((DB.get('accounts', t.to_account) || {}).name || 'sem destino')}`
+    : esc(DB.categoryPath(t.category_id) || 'Sem categoria');
+  const tags = DB.tagsOf(t);
+  return `<div class="ed-linha${marcado ? ' is-on' : ''}" data-massa="${t.id}">
+    <div class="ed-cabeca">
+      <input type="checkbox" ${marcado ? 'checked' : ''} aria-label="Selecionar ${esc(t.description)}">
+      <span class="ed-nome">${esc(t.description)}</span>
+      <span class="tx-amount ${isTr ? 'transfer' : DB.isExpense(t) ? '' : 'income'}">${fmt(t.amount)}</span>
+    </div>
+    <div class="ed-ctrls">
+      <span class="ed-data">${fmtDay(t.date)}</span>
+      <button class="ed-btn ed-tipo t-${tipo === 'Transferência' ? 'tr' : tipo === 'Receita' ? 'rec' : 'desp'}"
+        data-ed="tipo" data-id="${t.id}">${tipo}</button>
+      <button class="ed-btn${!isTr && !t.category_id ? ' vazio' : ''}" data-ed="cat" data-id="${t.id}">${catTxt}</button>
+      <button class="ed-btn${tags.length ? '' : ' vazio'}" data-ed="tags" data-id="${t.id}">${
+        tags.length ? tags.map(x => '#' + esc(x)).join(' ') : '# etiqueta'}</button>
+      <button class="ed-btn ed-mais" data-ed="mais" data-id="${t.id}" aria-label="Mais campos">⋯</button>
+    </div>
+  </div>`;
+}
+
 function renderMassa() {
   const txs = Massa.ids.map(id => DB.get('transactions', id)).filter(Boolean);
   const n = Massa.marcados.size;
@@ -1887,7 +1979,7 @@ function renderMassa() {
     .reduce((s, t) => s + (Number(t.amount) || 0), 0);
 
   openModal(`
-    <div class="modal-title">Editar em massa<button class="close-x" id="md-close"><span data-ico="x"></span></button></div>
+    <div class="modal-title">Editar lançamentos<button class="close-x" id="md-close"><span data-ico="x"></span></button></div>
     <div class="massa-head">
       <div><b>${n} de ${txs.length}</b> <span class="muted">selecionados · ${fmt(soma)}</span></div>
       <div class="btn-row" style="margin:0">
@@ -1896,20 +1988,7 @@ function renderMassa() {
       </div>
     </div>
     <div class="massa-lista">
-      ${txs.map(t => {
-        const marcado = Massa.marcados.has(t.id);
-        const isTr = DB.isTransfer(t);
-        return `<label class="massa-linha ${marcado ? 'is-on' : ''}" data-massa="${t.id}">
-          <input type="checkbox" ${marcado ? 'checked' : ''}>
-          <span class="massa-info">
-            <span class="tx-name">${esc(t.description)}</span>
-            <span class="tx-meta">${fmtDay(t.date)} · ${isTr ? '⇄ Transferência'
-              : t.adjustment ? '⚖️ Conciliação'
-              : esc(DB.categoryPath(t.category_id) || 'Sem categoria')}</span>
-          </span>
-          <span class="tx-amount ${isTr ? 'transfer' : DB.isExpense(t) ? '' : 'income'}">${fmt(t.amount)}</span>
-        </label>`;
-      }).join('') || '<div class="empty">Nada no filtro atual.</div>'}
+      ${txs.map(t => linhaEditavel(t)).join('') || '<div class="empty">Nada no filtro atual.</div>'}
     </div>
     <div class="massa-barra">
       <span>${n} selecionado${n === 1 ? '' : 's'}</span>
@@ -1927,7 +2006,7 @@ function renderMassa() {
   liga('#massa-editar', () => openMassaEditSheet());
   liga('#massa-excluir', () => excluirMassa());
   modal.querySelectorAll('[data-massa]').forEach(el => {
-    const box = el.querySelector('input');
+    const box = el.querySelector('input[type="checkbox"]');
     if (!box) return;
     box.onchange = ev => {
       const id = el.dataset.massa;
@@ -1938,6 +2017,191 @@ function renderMassa() {
       atualizarBarraMassa();
     };
   });
+  modal.querySelectorAll('[data-ed]').forEach(b => b.onclick = e => {
+    e.preventDefault(); e.stopPropagation();
+    const id = b.dataset.id;
+    if (b.dataset.ed === 'tipo') return abrirEdTipo(b, id);
+    if (b.dataset.ed === 'cat') return abrirEdCategoria(b, id);
+    if (b.dataset.ed === 'tags') return abrirEdTags(b, id);
+    abrirEdMais(b, id);
+  });
+}
+
+/* Redesenha UMA linha no lugar. Refazer o modal inteiro a cada toque perderia a
+   rolagem — e numa tela feita para percorrer dezenas de lançamentos, voltar ao
+   topo a cada ajuste inviabiliza a tarefa. */
+function repintarLinha(id) {
+  const t = DB.get('transactions', id);
+  const el = document.querySelector(`.ed-linha[data-massa="${id}"]`);
+  if (!el || !t) { renderMassa(); return; }
+  const novo = document.createElement('div');
+  novo.innerHTML = linhaEditavel(t);
+  const troca = novo.firstElementChild;
+  el.replaceWith(troca);
+  paintIcons(troca);
+  const box = troca.querySelector('input[type="checkbox"]');
+  if (box) box.onchange = ev => {
+    if (ev.target.checked) Massa.marcados.add(id); else Massa.marcados.delete(id);
+    troca.classList.toggle('is-on', ev.target.checked);
+    atualizarBarraMassa();
+  };
+  troca.querySelectorAll('[data-ed]').forEach(b => b.onclick = e => {
+    e.preventDefault(); e.stopPropagation();
+    if (b.dataset.ed === 'tipo') return abrirEdTipo(b, id);
+    if (b.dataset.ed === 'cat') return abrirEdCategoria(b, id);
+    if (b.dataset.ed === 'tags') return abrirEdTags(b, id);
+    abrirEdMais(b, id);
+  });
+}
+
+// Grava um campo de uma linha e avisa, com desfazer — as edições são imediatas,
+// então a saída tem de estar sempre à mão
+function gravarLinha(id, campos, aviso) {
+  aplicarNaLinha(id, campos);
+  repintarLinha(id);
+  Sync.autoSync();
+  toastAcao(aviso, 'Desfazer', desfazerMassa, 8000);
+}
+
+/* Trocar o tipo muda quantas contas o lançamento toca, então virar transferência
+   exige dizer para onde o dinheiro foi — sem destino ela não teria a outra ponta. */
+function abrirEdTipo(ancora, id) {
+  const t = DB.get('transactions', id);
+  if (!t) return;
+  const atual = DB.isTransfer(t) ? 'Transferência' : DB.isExpense(t) ? 'Despesa' : 'Receita';
+  const contas = DB.all('accounts').filter(a => a.active !== false && a.id !== t.account_id);
+  const painel = UI.popover(ancora, `
+    <div class="ui-list" role="listbox">
+      ${['Despesa', 'Receita', 'Transferência'].map(v =>
+        `<div class="ui-opt${v === atual ? ' is-sel' : ''}" data-v="${v}">${v}${v === atual ? '<span class="ui-check">✓</span>' : ''}</div>`).join('')}
+    </div>
+    <div class="ed-destino" hidden>
+      <p class="muted" style="padding:8px 10px 0;margin:0">Para qual conta o dinheiro foi?</p>
+      <div class="ui-list">${contas.map(a => `<div class="ui-opt" data-destino="${a.id}">${esc(a.name)}</div>`).join('')
+        || '<div class="ui-empty">Só há uma conta cadastrada</div>'}</div>
+    </div>
+  `);
+  if (!painel) return;
+  painel.querySelectorAll('[data-v]').forEach(el => el.onclick = ev => {
+    ev.stopPropagation();
+    const v = el.dataset.v;
+    if (v === atual) return UI.fechar();
+    if (v === 'Transferência') {
+      // Pede o destino antes de gravar: transferência sem a outra ponta é o
+      // defeito que já custou 28 lançamentos quebrados nesta base
+      painel.querySelector('.ed-destino').hidden = false;
+      return;
+    }
+    UI.fechar();
+    gravarLinha(id, { type: v }, `Agora é ${v.toLowerCase()} ✓`);
+  });
+  painel.querySelectorAll('[data-destino]').forEach(el => el.onclick = ev => {
+    ev.stopPropagation();
+    UI.fechar();
+    gravarLinha(id, { type: 'Transferência', to_account: el.dataset.destino }, 'Agora é transferência ✓');
+  });
+}
+
+function abrirEdCategoria(ancora, id) {
+  const t = DB.get('transactions', id);
+  if (!t) return;
+  if (DB.isTransfer(t)) return toast('Transferência não tem categoria — troque o tipo primeiro');
+  const ops = opcoesCategoriaPilula();
+  const linha = o => `<div class="ui-opt${o.v === t.category_id ? ' is-sel' : ''}${o.filha ? ' e-filha' : ''}${
+    o.grupo ? ' e-grupo' : ''}" data-v="${esc(o.v)}">${esc(o.l)}${o.v === t.category_id ? '<span class="ui-check">✓</span>' : ''}</div>`;
+  const painel = UI.popover(ancora, `
+    <div class="ui-search"><input type="text" placeholder="Buscar categoria…" autocomplete="off"></div>
+    <div class="ui-list" role="listbox">${ops.map(linha).join('')}</div>
+    <div class="ui-pop-pe"><button type="button" data-pop-limpar>Sem categoria</button></div>
+  `);
+  if (!painel) return;
+  const lista = painel.querySelector('.ui-list');
+  const ligar = () => lista.querySelectorAll('[data-v]').forEach(el => el.onclick = ev => {
+    ev.stopPropagation(); UI.fechar();
+    gravarLinha(id, { category_id: el.dataset.v }, 'Categoria alterada ✓');
+  });
+  ligar();
+  const busca = painel.querySelector('.ui-search input');
+  busca.oninput = () => {
+    const f = UI.norm(busca.value);
+    const vis = ops.filter(o => !f || UI.norm(o.l).includes(f));
+    lista.innerHTML = vis.length ? vis.map(linha).join('') : '<div class="ui-empty">Nada encontrado</div>';
+    ligar();
+  };
+  painel.querySelector('[data-pop-limpar]').onclick = ev => {
+    ev.stopPropagation(); UI.fechar();
+    gravarLinha(id, { category_id: null }, 'Categoria removida');
+  };
+}
+
+function abrirEdTags(ancora, id) {
+  const t = DB.get('transactions', id);
+  if (!t) return;
+  const atuais = DB.tagsOf(t);
+  const todas = DB.allTags();
+  const linha = tg => `<div class="ui-opt${atuais.includes(tg) ? ' is-sel' : ''}" data-v="${esc(tg)}">#${esc(tg)}${
+    atuais.includes(tg) ? '<span class="ui-check">✓</span>' : ''}</div>`;
+  const painel = UI.popover(ancora, `
+    <div class="ui-search"><input type="text" id="ed-tag-nova" placeholder="Nova etiqueta e Enter…" autocomplete="off"></div>
+    ${todas.length ? `<div class="ui-list" role="listbox">${todas.map(linha).join('')}</div>` : '<div class="ui-empty">Nenhuma etiqueta ainda</div>'}
+  `);
+  if (!painel) return;
+  // Alterna sem fechar: marcar três etiquetas não deve custar três aberturas
+  painel.querySelectorAll('[data-v]').forEach(el => el.onclick = ev => {
+    ev.stopPropagation();
+    const tg = el.dataset.v;
+    const t2 = DB.get('transactions', id);
+    const agora = DB.tagsOf(t2);
+    const novas = agora.includes(tg) ? agora.filter(x => x !== tg) : [...agora, tg];
+    aplicarNaLinha(id, { tags: novas });
+    el.classList.toggle('is-sel');
+    el.innerHTML = `#${UI.esc(tg)}${novas.includes(tg) ? '<span class="ui-check">✓</span>' : ''}`;
+    repintarLinha(id);
+    Sync.autoSync();
+  });
+  const nova = painel.querySelector('#ed-tag-nova');
+  nova.onkeydown = ev => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    const tg = DB.normTag(nova.value);
+    if (!tg) return;
+    const agora = DB.tagsOf(DB.get('transactions', id));
+    if (!agora.includes(tg)) aplicarNaLinha(id, { tags: [...agora, tg] });
+    UI.fechar(); repintarLinha(id); Sync.autoSync();
+    toastAcao(`#${tg} aplicada ✓`, 'Desfazer', desfazerMassa, 8000);
+  };
+}
+
+// O resto dos campos de uma linha só: situação, âmbito, quem e conta
+function abrirEdMais(ancora, id) {
+  const t = DB.get('transactions', id);
+  if (!t) return;
+  const membros = [MEMBRO_COMUM, ...DB.settings().members];
+  const contas = DB.all('accounts').filter(a => a.active !== false);
+  const grupo = (rot, campo, opcoes, atual) => `
+    <div class="ed-grupo"><small>${rot}</small>
+      ${opcoes.map(o => `<button type="button" class="ed-op${o.v === atual ? ' is-sel' : ''}"
+        data-campo="${campo}" data-v="${esc(o.v)}">${esc(o.l)}</button>`).join('')}
+    </div>`;
+  const painel = UI.popover(ancora, `
+    <div class="ed-mais-corpo">
+      ${DB.isTransfer(t) ? '' : grupo('Situação', 'status', [{ v: 'Pago', l: 'Pago' }, { v: 'A Pagar', l: 'A pagar' }], t.status)}
+      ${grupo('Âmbito', 'scope', [{ v: 'Família', l: 'Família' }, { v: 'Pessoal', l: 'Pessoal' }], t.scope)}
+      ${grupo('De quem', 'member', membros.map(m => ({ v: m, l: m === MEMBRO_COMUM ? 'Comum' : m })), t.member || MEMBRO_COMUM)}
+      ${grupo(DB.isTransfer(t) ? 'Conta de origem' : 'Conta', 'account_id', contas.map(a => ({ v: a.id, l: a.name })), t.account_id)}
+    </div>
+    <div class="ui-pop-pe"><button type="button" data-abrir-completo>Abrir lançamento</button></div>
+  `);
+  if (!painel) return;
+  painel.querySelectorAll('[data-campo]').forEach(el => el.onclick = ev => {
+    ev.stopPropagation();
+    UI.fechar();
+    gravarLinha(id, { [el.dataset.campo]: el.dataset.v }, 'Alterado ✓');
+  });
+  painel.querySelector('[data-abrir-completo]').onclick = ev => {
+    ev.stopPropagation(); UI.fechar();
+    openTxSheet(DB.get('transactions', id));
+  };
 }
 
 function atualizarBarraMassa() {
@@ -1975,6 +2239,17 @@ function openMassaEditSheet() {
     <div class="sheet-title">Editar ${alvos.length} lançamento${alvos.length === 1 ? '' : 's'}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <p class="muted" style="margin:-4px 0 14px">Ligue só o que quer mudar. O que ficar desligado permanece como está em cada lançamento.</p>
 
+    ${campo('type', 'Tipo', `
+      ${chipGroup('ma-tipo', [
+        { value: 'Despesa', label: 'Despesa' },
+        { value: 'Receita', label: 'Receita' },
+        { value: 'Transferência', label: 'Transferência' },
+      ], 'Despesa')}
+      <div class="field" id="ma-destino-campo" hidden style="margin-top:8px"><label>Conta de destino</label>
+        <select id="ma-destino">${DB.all('accounts').filter(a => a.active !== false)
+          .map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
+      </div>`,
+      'Virar transferência solta a categoria e passa a mexer em duas contas; virar despesa ou receita solta a conta de destino.')}
     ${campo('category_id', 'Categoria',
       `<select id="ma-cat">${optionsCategorias('')}</select>`, nota('category_id'))}
     ${campo('tags', 'Etiquetas', `
@@ -2011,6 +2286,12 @@ function openMassaEditSheet() {
   `);
   $('#sh-close').onclick = closeSheet;
   bindChips('ma-tagmodo'); bindChips('ma-notamodo');
+  // O destino só existe para transferência: pedir conta de destino de uma
+  // despesa seria uma pergunta sem resposta possível
+  bindChips('ma-tipo', v => {
+    const campoDestino = $('#ma-destino-campo');
+    if (campoDestino) campoDestino.hidden = v !== 'Transferência';
+  });
   document.querySelectorAll('[data-liga]').forEach(cb => cb.onchange = () => {
     const ctrl = document.querySelector(`[data-ctrl="${cb.dataset.liga}"]`);
     if (ctrl) ctrl.hidden = !cb.checked;
@@ -2018,6 +2299,10 @@ function openMassaEditSheet() {
   $('#sh-save').onclick = () => {
     const ligado = c => { const el = document.querySelector(`[data-liga="${c}"]`); return !!(el && el.checked); };
     const campos = {};
+    if (ligado('type')) {
+      campos.type = chipValue('ma-tipo') || 'Despesa';
+      if (campos.type === 'Transferência') campos.to_account = $('#ma-destino').value || null;
+    }
     if (ligado('category_id')) campos.category_id = $('#ma-cat').value || null;
     if (ligado('status')) campos.status = $('#ma-status').value;
     if (ligado('scope')) campos.scope = $('#ma-scope').value;
@@ -2048,7 +2333,17 @@ function openMassaEditSheet() {
 function confirmarMassa(campos, extras) {
   const alvos = massaAlvos();
   const linhas = [];
-  const conta = chave => alvos.filter(t => massaAceita(chave, t)).length;
+  // Conta sobre o registro DEPOIS da troca de tipo, para o número bater com o
+  // que a aplicação realmente vai fazer
+  const depois = t => (campos.type && campos.type !== t.type ? trocarTipo(t, campos.type, campos.to_account) : t);
+  const conta = chave => alvos.filter(t => massaAceita(chave, depois(t))).length;
+  if ('type' in campos) {
+    const mudam = alvos.filter(t => t.type !== campos.type).length;
+    linhas.push([`Tipo vira <b>${esc(campos.type)}</b>${
+      campos.type === 'Transferência'
+        ? ` para <b>${esc((DB.get('accounts', campos.to_account) || {}).name || '?')}</b>`
+        : ' — solta a conta de destino'}`, mudam]);
+  }
   if ('category_id' in campos) linhas.push([`Categoria vira <b>${esc(DB.categoryPath(campos.category_id) || 'sem categoria')}</b>`, conta('category_id')]);
   if (extras.tags) {
     const rot = { adicionar: 'Acrescenta', remover: 'Remove', substituir: 'Passa a ter só' }[extras.tags.modo];
@@ -2086,10 +2381,19 @@ function aplicarMassa(campos, extras) {
   let mexidos = 0;
   DB.emLote(() => {
     for (const t of alvos) {
-      const novo = { ...t };
-      let mudou = false;
+      // Tipo primeiro: ele redefine to_account, método e categoria, e o que vier
+      // pedido em seguida vence — mesma regra da edição linha a linha
+      const base = campos.type && campos.type !== t.type
+        ? trocarTipo(t, campos.type, campos.to_account)
+        : t;
+      const novo = { ...base };
+      let mudou = base !== t;
       for (const [chave, valor] of Object.entries(campos)) {
-        if (!massaAceita(chave, t)) continue;
+        if (chave === 'to_account') continue;                 // já tratado por trocarTipo
+        /* Testa o registro DEPOIS da troca de tipo, não antes: converter uma
+           transferência em despesa e dar categoria na mesma ação é justamente
+           o conserto que se quer, e olhar o original recusaria a categoria. */
+        if (!massaAceita(chave, base)) continue;
         novo[chave] = valor;
         mudou = true;
       }
