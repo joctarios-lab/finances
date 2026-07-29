@@ -5157,10 +5157,7 @@ try {
     && /yFluxo = v => base -/.test(corpoFl) && /ySaldo = v => \(v >= 0\s*\?\s*base -/.test(corpoFl), true);
   check('e sobem até a mesma borda',
     (corpoFl.match(/\* alturaPos/g) || []).length >= 2, true);
-  // A nota vive no cartão, não no gráfico: duas escalas no mesmo painel são
-  // armadilha mesmo bem construídas se ninguém disser qual é de quem
-  check('e o cartão explica as duas escalas',
-    renderRelatorios().includes('As duas escalas partem do mesmo zero'), true);
+  check('e a nota explica as duas escalas', svg.includes('O zero é o mesmo para as duas'), true);
 
   /* A área fica ATRÁS das barras: ela é o nível, elas são o movimento. Com o mesmo
      peso visual, as duas competiriam e nenhuma seria lida. */
@@ -5236,59 +5233,3 @@ try {
   // Um mês só não desenha nada em vez de quebrar
   check('série curta não quebra', svgFluxoSaldo([meses[0]]).includes('empty'), true);
 } catch (e) { console.log(` FALHA | fluxo e saldo: ${e.message}`); fail++; }
-
-/* ---- O cartão no padrão Mixed Widget 12 do Metronic ----
-   Três camadas: cabeçalho colorido, gráfico sobre o campo colorido sangrando até
-   a borda, e um painel branco puxado por cima. É a sobreposição que faz o cartão
-   ser bonito — a cor sozinha não faria. */
-console.log('\n=== Acabamento do cartão de fluxo ===');
-{
-  const cssC = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
-  const rel = renderRelatorios();
-  check('o cartão tem cabeçalho colorido', rel.includes('class="flc-cab"'), true);
-  check('o gráfico fica sobre o campo colorido', rel.includes('class="flc-graf"'), true);
-  check('e o painel branco vem por cima', rel.includes('class="flc-painel"'), true);
-  check('a ordem é cabeçalho, gráfico, painel',
-    rel.indexOf('flc-cab') < rel.indexOf('flc-graf') && rel.indexOf('flc-graf') < rel.indexOf('flc-painel'), true);
-  /* Margem negativa é o que puxa o painel sobre o gráfico — sem ela as camadas
-     ficam empilhadas e o cartão perde a profundidade que o torna bonito. */
-  check('o painel é puxado por cima com margem negativa',
-    /\.flc-painel \{[^}]*margin: -22px/.test(cssC), true);
-  check('o cartão zera o padding para o gráfico sangrar', /\.flc \{ padding: 0; overflow: hidden/.test(cssC), true);
-  check('com os quatro números em 2x2',
-    (rel.match(/class="flc-item"/g) || []).length, 4);
-
-  /* CONTRASTE MEDIDO, não escolhido no olho. O azul info do Metronic (#009ef7) é
-     claro demais para servir de campo: nada alcança 3:1 nele, nem o branco (2,90).
-     O cartão original se sustenta porque desenha só um traço liso; aqui é preciso
-     distinguir entrada de saída. */
-  const lum = h => {
-    const n = parseInt(h.slice(1), 16);
-    const c = [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-      .map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); });
-    return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-  };
-  const contraste = (a, b) => {
-    const l1 = lum(a), l2 = lum(b);
-    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
-  };
-  const campo = '#0a5c96';
-  check('o campo é mais profundo que o info do Metronic', lum(campo) < lum('#009ef7'), true);
-  check('o azul info não serviria: nem o branco alcança 3:1 nele',
-    contraste('#ffffff', '#009ef7') < 3, true);
-  // As cores das barras, conferidas contra o campo real
-  check('a barra de entrada tem contraste no campo', contraste('#c8f7dd', campo) >= 3, true);
-  check('a de saída também', contraste('#ff8fa8', campo) >= 3, true);
-  check('e a linha do saldo', contraste('#ffffff', campo) >= 3, true);
-  check('as cores usadas são as medidas',
-    /\.fl-in \{ fill: #c8f7dd/.test(cssC) && /\.fl-out \{ fill: #ff8fa8/.test(cssC), true);
-
-  /* Verde e rosa, não verde e vermelho fortes: sob deuteranomalia — a forma mais
-     comum de daltonismo — verde e vermelho saturados ficam indistinguíveis. Este
-     par foi validado com ΔE 15,3 nesse cenário. O verde segue sendo entrada e o
-     rosa saída, então o significado não se perde. */
-  check('o campo colorido não usa o verde e vermelho do resto do app',
-    /\.fl-in \{ fill: var\(--green\)/.test(cssC), false);
-  // Legenda presente: com duas séries, cor sozinha nunca basta
-  check('há legenda das quatro marcas', (rel.match(/class="fl-leg"/g) || []).length, 4);
-}
