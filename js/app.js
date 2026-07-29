@@ -971,7 +971,7 @@ function serieDeSaldo(contas, dias, anterior) {
 function sparkArea(vals) {
   const n = vals.length;
   if (n < 2) return '';
-  const W = 300, H = 46, padT = 5, padB = 5;
+  const W = 300, H = 100, padT = 12, padB = 8;
   const max = Math.max(...vals), min = Math.min(...vals);
   const amplitude = (max - min) || Math.abs(max) || 1;
   const y = v => padT + (1 - (v - min) / amplitude) * (H - padT - padB);
@@ -979,8 +979,14 @@ function sparkArea(vals) {
   const linha = vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
   const zero = (min < 0 && max > 0)
     ? `<line x1="0" y1="${y(0).toFixed(1)}" x2="${W}" y2="${y(0).toFixed(1)}" class="spark-zero"/>` : '';
-  return `<svg class="spark-area" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
-    role="img" aria-label="Evolução do saldo dia a dia no período">
+  /* Degradê que apaga para baixo, como nos widgets do Metronic. Lavagem chapada
+     vira bloco e briga com a linha; o degradê dá volume e devolve o branco do
+     cartão embaixo, que é o que faz o gráfico assentar em vez de flutuar. */
+  return `<svg class="spark-area" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+    <defs><linearGradient id="grad-saldo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#009ef7" stop-opacity=".2"/>
+      <stop offset="100%" stop-color="#009ef7" stop-opacity="0"/>
+    </linearGradient></defs>
     <path d="${linha} L${W} ${H} L0 ${H} Z" class="spark-fill"/>
     ${zero}
     <path d="${linha}" class="spark-linha"/>
@@ -988,69 +994,42 @@ function sparkArea(vals) {
   </svg>`;
 }
 
-/* Colunas do que entrou e do que saiu. Barra parte do zero — aqui a leitura é
-   magnitude, e barra que não nasce no zero mente sobre a proporção. */
-function sparkCols(vals, classe) {
-  const n = vals.length;
-  if (!n) return '';
-  const H = 22, W = Math.max(n * 5, 40);
-  const max = Math.max(...vals) || 1;
-  const banda = W / n;
-  const larg = Math.min(4, Math.max(1.6, banda - 1.2));
-  const cols = vals.map((v, i) => {
-    if (!v) return '';
-    const h = Math.max(1.5, (v / max) * H);
-    return `<rect x="${(i * banda + (banda - larg) / 2).toFixed(1)}" y="${(H - h).toFixed(1)}"
-      width="${larg.toFixed(1)}" height="${h.toFixed(1)}" rx="1.2"/>`;
-  }).join('');
-  return `<svg class="spark-cols ${classe}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${cols}</svg>`;
-}
-
 function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSaiu, nota, dias, serie, porDia }) {
   const aberto = state.resumoAberto !== false;
   const variacao = saldo - anterior;
   const dia = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
-  const entrouDia = dias.map(d => (porDia[d] || {}).entrou || 0);
-  const saiuDia = dias.map(d => (porDia[d] || {}).saiu || 0);
+  const intervalo = dias.length ? `${dia(dias[0])} a ${dia(dias[dias.length - 1])}` : '';
 
+  /* Anatomia do Mixed Widget 10 do Metronic: título e subtítulo à esquerda,
+     valor à direita, gráfico generoso sangrando até a borda de baixo. A
+     elegância ali vem da CONTENÇÃO — o número não é herói, é par do título; quem
+     carrega o peso visual é o gráfico. Foi o inverso disto que fez a versão
+     anterior parecer amadora: número de 22px e gráfico de 40px.
+
+     O selo de variação segue o Statistics Widget 3 (symbol-label bg-light-*):
+     fundo tingido, texto na cor forte. */
   return `
     <div class="card res${aberto ? '' : ' fechado'}" id="ext-resumo">
-      <!-- O cabeçalho inteiro é o botão que abre a explicação. Um botão próprio
-           embaixo custava mais 36px de altura para dizer o que uma seta já diz —
-           e altura aqui é lista a menos. -->
       <button class="res-topo" id="ext-resumo-toggle" aria-expanded="${aberto}">
         <span class="res-rot">
-          <small>${esc(titulo)}</small>
-          <b class="${saldo >= 0 ? '' : 'txt-red'}">${fmt(saldo)}</b>
+          <b>${esc(titulo)}</b>
+          <small id="res-sub">${esc(intervalo)} · <i class="pt pt-up"></i>${fmtSemMoeda(entrou)} ${esc(rotEntrou)} · <i class="pt pt-dn"></i>${fmtSemMoeda(saiu)} ${esc(rotSaiu)}</small>
         </span>
-        <!-- Selo de variação no padrão Metronic (badge-light-*): fundo tingido,
-             texto na cor forte. A seta diz a direção junto com a cor. -->
-        <span class="res-selo ${variacao >= 0 ? 'ok' : 'ruim'}"><i class="pt pt-${variacao >= 0 ? 'up' : 'dn'}"></i>${fmtSemMoeda(Math.abs(variacao))}</span>
+        <span class="res-dir">
+          <b class="${saldo >= 0 ? '' : 'txt-red'}">${fmt(saldo)}</b>
+          <span class="res-selo ${variacao >= 0 ? 'ok' : 'ruim'}"><i class="pt pt-${variacao >= 0 ? 'up' : 'dn'}"></i>${fmtSemMoeda(Math.abs(variacao))}</span>
+        </span>
         <span class="res-seta" data-ico="chev"></span>
       </button>
-      <div class="res-graf" id="res-graf" data-dias="${esc(dias.join(','))}" data-vals="${esc(serie.join(','))}">
+      <p class="muted res-nota">${nota}</p>
+      <!-- Sangra até a borda, com o raio de baixo do cartão. É o que separa um
+           gráfico desenhado de um gráfico encaixotado, e é o padrão do Metronic
+           (card-body p-0 + card-rounded-bottom). -->
+      <div class="res-graf" id="res-graf" data-dias="${esc(dias.join(','))}" data-vals="${esc(serie.join(','))}"
+        data-antes="${fmtSemMoeda(anterior)}"
+        role="img" aria-label="Saldo dia a dia de ${esc(intervalo)}, de ${fmtSemMoeda(anterior)} a ${fmtSemMoeda(saldo)}">
         ${sparkArea(serie)}
       </div>
-      <!-- As duas pontas escritas: a forma mostra o caminho, os números dizem de
-           onde para onde. Ao arrastar o dedo sobre a área, esta linha vira o dia
-           tocado — o gráfico deixa de ser só silhueta. -->
-      <div class="res-pe" id="res-pe">
-        <span>${dias.length ? dia(dias[0]) : ''} · de <b>${fmtSemMoeda(anterior)}</b></span>
-        <span>${dias.length ? dia(dias[dias.length - 1]) : ''}</span>
-      </div>
-      <div class="res-meia">
-        <div class="res-meia-c">
-          <small>${esc(rotEntrou)}</small>
-          <b class="txt-green">${fmtSemMoeda(entrou)}</b>
-          ${sparkCols(entrouDia, 'c-ok')}
-        </div>
-        <div class="res-meia-c">
-          <small>${esc(rotSaiu)}</small>
-          <b class="txt-red">${fmtSemMoeda(saiu)}</b>
-          ${sparkCols(saiuDia, 'c-ruim')}
-        </div>
-      </div>
-      <p class="muted res-nota">${nota}</p>
     </div>`;
 }
 
@@ -1824,7 +1803,7 @@ function ligarRegua(period) {
    traz o total de cada dia. */
 function ligarGrafico() {
   const caixa = $('#res-graf');
-  const pe = $('#res-pe');
+  const pe = $('#res-sub');
   if (!caixa || !pe) return;
   const dias = (caixa.dataset.dias || '').split(',').filter(Boolean);
   const vals = (caixa.dataset.vals || '').split(',').filter(x => x !== '').map(Number);
@@ -1839,8 +1818,8 @@ function ligarGrafico() {
     const px = ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) / r.width;
     const i = Math.max(0, Math.min(dias.length - 1, Math.round(px * (dias.length - 1))));
     const d = new Date(dias[i] + 'T12:00:00');
-    pe.innerHTML = `<span><b>${d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}</b></span>`
-      + `<span>saldo <b>${fmtSemMoeda(vals[i])}</b></span>`;
+    pe.innerHTML = `<b>${d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })}</b>`
+      + ` · saldo <b>${fmtSemMoeda(vals[i])}</b>`;
     if (cursor && svg) {
       const x = (i / (dias.length - 1)) * 300;
       cursor.setAttribute('x1', x); cursor.setAttribute('x2', x);

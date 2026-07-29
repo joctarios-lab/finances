@@ -70,7 +70,7 @@ eval(appSrc + `; Object.assign(global, {
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
-  serieDeSaldo, sparkArea, sparkCols, ligarGrafico,
+  serieDeSaldo, sparkArea, ligarGrafico,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -1366,7 +1366,8 @@ try {
   state.filtros.de = dias[meio + 1]; state.filtros.ate = dias[dias.length - 1];
   const extMetade = renderExtrato(p2);
   // O saldo anterior agora é o ponto de partida da linha, escrito no pé dela
-  const antes = html => (html.match(/res-pe[\s\S]*?de <b>([^<]+)</) || [])[1];
+  // O saldo anterior é o ponto de partida da série, guardado no próprio gráfico
+  const antes = html => (html.match(/res-graf[^>]*data-antes="([^"]+)"/) || [])[1];
   check('o saldo anterior muda com o recorte', antes(extMes) !== antes(extMetade), true);
   check('e é o saldo real na data de início do recorte',
     antes(extMetade), fmtSemMoeda(DB.saldoNaData(null, dias[meio + 1])));
@@ -1557,14 +1558,22 @@ try {
      Formas diferentes para perguntas diferentes: área para o caminho do saldo,
      colunas a partir do zero para o volume de cada dia. */
   const cabecalho = renderExtrato(pD);
+  const cssF0 = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
   check('o resumo virou cartão com gráfico', cabecalho.includes('class="card res'), true);
   check('nem voltou o grid de quatro cartões', cabecalho.includes('stat-2x2'), false);
   check('o saldo tem área de evolução', cabecalho.includes('class="spark-area"'), true);
-  check('entrou e saiu têm colunas', (cabecalho.match(/class="spark-cols /g) || []).length, 2);
+  /* Um gráfico só, generoso — não três espremidos. A elegância do Mixed Widget
+     10 vem da contenção: título e valor no mesmo corpo, o gráfico levando o
+     peso visual. Era o inverso disto que fazia a versão anterior parecer
+     amadora: número de 22px e gráfico de 40px. */
+  check('há um gráfico só, não três', (cabecalho.match(/<svg/g) || []).length, 1);
+  check('e ele é generoso, não um filete',
+    /\.res-graf \{[^}]*height: 130px/.test(cssF0), true);
+  check('o valor não é maior que o título',
+    /\.res-rot > b \{[^}]*font-size: 16px/.test(cssF0) && /\.res-dir > b \{[^}]*font-size: 16px/.test(cssF0), true);
   /* Saldo anterior NÃO virou gráfico: é uma constante, e sparkline em constante
-     é decoração. Ele é o ponto de partida da linha, e aparece escrito no pé. */
-  check('o saldo anterior aparece como ponto de partida', /res-pe[\s\S]*?de <b>/.test(cabecalho), true);
-  check('e não ganhou gráfico próprio', (cabecalho.match(/spark-area/g) || []).length, 1);
+     é decoração. Ele é o ponto de partida da série. */
+  check('o saldo anterior é o ponto de partida', /data-antes="[\d.,]+"/.test(cabecalho), true);
   check('a variação vem com seta além da cor', /res-selo (ok|ruim)"><i class="pt pt-(up|dn)/.test(cabecalho), true);
   check('e diz o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(cabecalho), true);
 
@@ -1579,9 +1588,15 @@ try {
   // Traço de 2px que não engorda quando o SVG é esticado na largura
   check('a linha não engorda ao esticar',
     /\.spark-linha \{[^}]*vector-effect: non-scaling-stroke/.test(cssF), true);
-  // Lavagem, nunca bloco saturado
-  check('a área é lavagem, não bloco', /\.spark-fill \{ fill: rgba\(0, 158, 247, \.1\)/.test(cssF), true);
-  check('as colunas partem do zero', /const h = Math\.max\(1\.5, \(v \/ max\) \* H\)/.test(apF), true);
+  /* Degradê que apaga para baixo, como nos widgets do Metronic: lavagem chapada
+     vira bloco e briga com a linha. A opacidade máxima fica em 20%. */
+  check('a área usa degradê, não bloco chapado', /\.spark-fill \{ fill: url\(#grad-saldo\)/.test(cssF), true);
+  check('e o degradê apaga até o transparente',
+    /stop-opacity="\.2"[\s\S]*?stop-opacity="0"/.test(apF), true);
+  /* O gráfico sangra até a borda e herda o raio do cartão — é o que separa um
+     gráfico desenhado de um gráfico encaixotado (card-p-0 + rounded-bottom). */
+  check('o cartão zera o padding para o gráfico encostar',
+    /\.res \{ padding: 0; overflow: hidden; \}/.test(cssF), true);
 
   /* O INVARIANTE do gráfico: a ponta da série tem de bater com o saldo escrito
      ao lado dela. Um gráfico que termina num número diferente do número que o
@@ -1607,7 +1622,8 @@ try {
   // Régua do zero só quando a série realmente cruza o zero
   check('série toda positiva não desenha o zero', sparkArea([100, 200]).includes('spark-zero'), false);
   check('série que cruza o zero ganha a régua', sparkArea([-100, 200]).includes('spark-zero'), true);
-  check('colunas sem movimento nenhum não quebram', sparkCols([0, 0, 0], 'c-ok').includes('<svg'), true);
+  // Série sem variação nenhuma (dias parados) não pode dividir por zero
+  check('série parada não quebra', sparkArea([500, 500, 500]).includes('spark-linha'), true);
   check('KPIs do painel também', !/kpi-value[^"]*">\$\{fmtShort\(/.test(apF), true);
   check('e o hero do painel', /<small>Em contas<\/small><b>\$\{fmt\(/.test(apF), true);
 
@@ -1662,7 +1678,7 @@ try {
   // Na tela
   state.filtros = { ...filtrosVazios(), contas: [cM] };
   const tela = renderExtrato(mesAtual);
-  check('o extrato mostra o saldo anterior', /res-pe[\s\S]*?de <b>/.test(tela), true);
+  check('o extrato mostra o saldo anterior', /data-antes="[\d.,]+"/.test(tela), true);
   check('com o valor que veio do mês passado', tela.includes(fmtSemMoeda(1000)), true);
   check('e o saldo do mês fechando', tela.includes(fmtSemMoeda(700)), true);
 
@@ -1682,7 +1698,7 @@ try {
   // O valor aparece na linha do próprio ajuste; o que importa é o total que saiu
   // no resumo, que deve contar só o gasto real do mês (300), não os 300 + 250
   // Pega a coluna "saiu" do resumo, não o selo de variação — os dois trazem seta
-  const totalSaiu = (comConc.match(/<small>(?:saiu|despesas)<\/small>\s*<b class="txt-red">([^<]*)</) || [])[1];
+  const totalSaiu = (comConc.match(/pt pt-dn"><\/i>([\d.,]+) (?:saiu|despesas)/) || [])[1];
   check('a conciliação não entra no total que saiu', (totalSaiu || '').trim(), fmtSemMoeda(300));
   check('mas é explicada por extenso', comConc.includes('de conciliação'), true);
   // O erro que existia: derivar o fechamento da soma dava 250 a mais
@@ -1702,7 +1718,7 @@ try {
   check('a visão geral também tem saldo anterior', typeof geral, 'number');
   check('e o geral inclui esta conta', geral !== 0 || somaContas === 0, true);
   const telaGeral = renderExtrato(mesAtual);
-  check('a visão geral mostra o saldo anterior', /res-pe[\s\S]*?de <b>/.test(telaGeral), true);
+  check('a visão geral mostra o saldo anterior', /data-antes="[\d.,]+"/.test(telaGeral), true);
   check('e explica o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(telaGeral), true);
 
   for (const t of DB.all('transactions').filter(t => /passado$|atual$|futuro$/.test(t.description))) DB.remove('transactions', t.id);
@@ -1739,7 +1755,7 @@ try {
   state.filtros = { ...filtrosVazios(), contas: [cA] };
   saida = renderExtrato(pC);
   check('na conta, a saída inclui a transferência', linhaDia(saida).includes(fmtShort(800)), true);
-  check('o topo mostra o que saiu da conta', saida.includes('<small>saiu</small>'), true);
+  check('o topo mostra o que saiu da conta', /pt pt-dn"><\/i>[\d.,]+ saiu/.test(saida), true);
   check('e o saldo atual dela', saida.includes(fmtSemMoeda(DB.get('accounts', cA).balance)), true);
   check('a linha ganha sinal de saída', /transfer">− /.test(saida), true);
   check('dizendo para onde foi', saida.includes('para Conta Conf B'), true);

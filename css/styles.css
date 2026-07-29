@@ -684,54 +684,51 @@ svg:hover .ch-bar-on { fill: #005a92; }
 
    O saldo anterior não virou gráfico porque não tem evolução — é uma constante.
    Ele é o PONTO DE PARTIDA da linha, e aparece escrito no pé dela. */
-.res { padding: 0 14px; }
+/* padding 0 + overflow hidden: é o que deixa o gráfico encostar nas bordas e
+   herdar o raio do cartão (card-body p-0 + card-rounded-bottom, no Metronic) */
+.res { padding: 0; overflow: hidden; }
 .res-topo {
-  width: 100%; display: flex; align-items: center; gap: 10px;
-  padding: 11px 0 2px; background: none; border: none; cursor: pointer;
+  width: 100%; display: flex; align-items: flex-start; gap: 10px;
+  padding: 15px 16px 12px; background: none; border: none; cursor: pointer;
   font-family: var(--font-body); text-align: left; color: var(--paper);
 }
 .res-rot { flex: 1; min-width: 0; }
-.res-rot small { display: block; font-size: 11.5px; font-weight: 600; color: var(--paper-dim); }
-.res-seta { flex: none; color: var(--paper-dim); transition: transform .2s ease; }
-.res-seta svg { width: 13px; height: 13px; }
-.res.fechado .res-seta { transform: rotate(-90deg); }
-/* Figuras proporcionais, não tabulares: em corpo grande, dígitos de largura
-   igual deixam o número frouxo. Tabular só onde há colunas a alinhar. */
-.res-rot b { display: block; font-size: 22px; font-weight: 800; letter-spacing: -.025em; margin-top: 1px; }
+/* Título e valor no MESMO corpo: a hierarquia vem do rótulo mudo embaixo, não de
+   um número gigante. Proporcionais, não tabulares — dígitos de largura igual
+   deixam um valor frouxo neste corpo. */
+.res-rot > b { display: block; font-size: 16px; font-weight: 700; letter-spacing: -.015em; }
+.res-rot small {
+  display: block; margin-top: 3px; font-size: 11.5px; font-weight: 600;
+  color: var(--paper-dim); line-height: 1.45;
+}
+.res-dir { flex: none; text-align: right; }
+.res-dir > b { display: block; font-size: 16px; font-weight: 700; letter-spacing: -.015em; white-space: nowrap; }
 .res-selo {
-  flex: none; display: inline-flex; align-items: center; gap: 4px;
-  padding: 4px 9px; border-radius: 7px; font-size: 12px; font-weight: 700;
+  display: inline-flex; align-items: center; gap: 3px; margin-top: 4px;
+  padding: 3px 8px; border-radius: 6px; font-size: 11.5px; font-weight: 700;
 }
 .res-selo.ok { background: rgba(80, 205, 137, .16); color: #1f9d61; }
 .res-selo.ruim { background: rgba(241, 65, 108, .12); color: var(--red); }
+.res-seta { flex: none; margin-top: 3px; color: var(--paper-dim); transition: transform .2s ease; }
+.res-seta svg { width: 13px; height: 13px; }
+.res.fechado .res-seta { transform: rotate(-90deg); }
 
-.res-graf { position: relative; margin: 6px -2px 0; height: 40px; touch-action: pan-y; cursor: crosshair; }
-.spark-area { display: block; width: 100%; height: 40px; overflow: visible; }
+/* 130px, não 40: os gráficos do Metronic têm 150–200px, e era essa proporção que
+   faltava. Gráfico espremido entre textos parece encaixado às pressas; gráfico
+   generoso parece desenhado. */
+.res-graf { position: relative; height: 130px; touch-action: pan-y; cursor: crosshair; }
+.spark-area { display: block; width: 100%; height: 130px; }
 /* Traço de 2px que não engorda quando o SVG é esticado na largura */
 .spark-linha { fill: none; stroke: var(--gold); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 /* Lavagem, nunca bloco saturado: a área dá o volume sem competir com a linha */
-.spark-fill { fill: rgba(0, 158, 247, .1); stroke: none; }
+.spark-fill { fill: url(#grad-saldo); stroke: none; }
 .spark-zero { stroke: #d8e0e8; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .spark-cursor { stroke: var(--gold); stroke-width: 1; opacity: .5; vector-effect: non-scaling-stroke; }
-.res-pe {
-  display: flex; justify-content: space-between; gap: 10px;
-  margin-top: 5px; font-size: 11px; color: var(--paper-dim); font-weight: 600;
-}
-.res-pe b { color: var(--paper); font-weight: 700; }
-
-/* Rótulo e valor na MESMA linha, colunas logo abaixo: empilhar os três custava
-   altura que só a lista deveria usar */
-.res-meia { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); }
-.res-meia-c { min-width: 0; }
-.res-meia-c small { font-size: 10.5px; font-weight: 600; color: var(--paper-dim); margin-right: 5px; }
-.res-meia-c b { font-size: 13.5px; font-weight: 700; letter-spacing: -.02em; }
-.spark-cols { display: block; width: 100%; height: 20px; margin-top: 4px; }
-.spark-cols.c-ok rect { fill: var(--green); }
-.spark-cols.c-ruim rect { fill: var(--red); }
-
-.res-nota { padding: 9px 0 0; margin: 0 0 12px; font-size: 12px; border-top: 1px solid var(--line); }
-.res.fechado .res-nota { display: none; }
-.res-meia { margin-bottom: 12px; }
+.res-nota { padding: 0 16px 12px; margin: 0; font-size: 11.5px; }
+.res.fechado .res-nota,
+.res.fechado .res-graf { display: none; }
+/* Recolhido, o cartão vira só a linha de cabeçalho — 56px em vez de 190 */
+.res.fechado .res-topo { padding-bottom: 15px; }
 /* Seta em vez de bolinha colorida: a direção do dinheiro fica dita pela forma,
    não só pela cor */
 .pt { width: 0; height: 0; display: inline-block; margin-right: 5px;
