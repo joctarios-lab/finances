@@ -103,9 +103,16 @@ function lerEnv() {
   console.log(`  AGORA   saldo final ${brl(conta.balance).padStart(14)}   ·  inicial implícito ${brl(inicialAtual)}`);
   console.log(`  DEPOIS  saldo final ${brl(saldoFinal).padStart(14)}   ·  inicial implícito ${brl(inicialNovo)}`);
   console.log('');
-  if (!ajustes.length) { console.log('  Não há ajustes a remover.\n'); return; }
-  console.log(`  Os ${ajustes.length} ajuste(s) somem, e o dinheiro que já estava na conta vira saldo inicial.`);
-  console.log('  Cada mês passa a abrir com o que realmente sobrou do anterior.\n');
+  const mudaSaldo = Math.abs(saldoFinal - Number(conta.balance || 0)) > 0.005;
+  if (!ajustes.length && !mudaSaldo) { console.log('  Nada a fazer: não há ajustes e o saldo já é esse.\n'); return; }
+  if (ajustes.length) {
+    console.log(`  Os ${ajustes.length} ajuste(s) somem, e o dinheiro que já estava na conta vira saldo inicial.`);
+    console.log('  Cada mês passa a abrir com o que realmente sobrou do anterior.\n');
+  } else {
+    // Saldo contaminado sem ajuste: o campo foi escrito por um extrato que não
+    // era desta conta, e nenhum lançamento explica a diferença
+    console.log('  Não há ajustes — só o saldo da conta será regravado.\n');
+  }
 
   if (!APLICAR) {
     console.log('── Simulação. Nada foi alterado. ──');
