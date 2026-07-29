@@ -497,6 +497,120 @@ function svgComposicao(grupos, opts = {}) {
   }).join('')}</div>`;
 }
 
+/* ---------- Fluxo e saldo: doze meses, duas escalas honestas ----------
+   Barras em cima (o que entrou e saiu em cada mês), saldo embaixo (a posição
+   acumulada). DOIS PAINÉIS, não dois eixos no mesmo painel.
+
+   O motivo é o erro mais comum em gráfico financeiro: fluxo mensal vive na casa
+   dos milhares e saldo acumulado nas dezenas de milhares. Sobrepor os dois exige
+   dois eixos Y, e alinhar dois eixos é arbitrário — o gráfico passa a insinuar
+   uma correlação que não está no dado. Compartilhando só o eixo do TEMPO, cada
+   painel guarda a própria escala e os dois se leem juntos sem mentir.
+
+   A fronteira de hoje é a informação mais importante da tela: à esquerda é fato
+   conciliado, à direita é estimativa. Por isso ela aparece três vezes — divisória
+   marcada, barra vazada e linha tracejada. */
+function svgFluxoSaldo(meses, opts = {}) {
+  if (meses.length < 2) return '<div class="empty">Sem histórico suficiente.</div>';
+  const W = 720, Hb = 118, Hl = 84;         // painel de barras e painel de linha
+  const padL = 8, padR = 8;
+  const plotW = W - padL - padR;
+  const banda = plotW / meses.length;
+  const iHoje = meses.findIndex(m => m.futuro) - 1;   // último mês realizado
+
+  /* --- painel de cima: entradas e saídas --- */
+  const maxFluxo = niceCeil(Math.max(...meses.flatMap(m => [m.entra, m.sai]), 1));
+  const yb = v => 8 + (Hb - 16) - (v / maxFluxo) * (Hb - 16);
+  const base = yb(0);
+  const larg = Math.min(11, (banda - 6) / 2);          // marca fina: par cabe na faixa
+  let barras = '', gradeB = '';
+  for (let i = 0; i <= 2; i++) {
+    const gy = yb(maxFluxo * i / 2);
+    gradeB += `<line x1="${padL}" x2="${W - padR}" y1="${gy.toFixed(1)}" y2="${gy.toFixed(1)}" class="ch-grid"/>`;
+  }
+  /* Ponta arredondada, pé reto: o topo é o dado e ganha o arredondamento; a base
+     encosta na linha do zero e arredondá-la faria a barra parecer flutuar. */
+  const barra = (x, topo, cls) => {
+    const alt = Math.max(0, base - topo);
+    if (alt < 0.5) return '';
+    const r = Math.min(3, alt, larg / 2);
+    return `<path d="M${x.toFixed(1)} ${base.toFixed(1)} V${(topo + r).toFixed(1)}`
+      + ` Q${x.toFixed(1)} ${topo.toFixed(1)} ${(x + r).toFixed(1)} ${topo.toFixed(1)}`
+      + ` H${(x + larg - r).toFixed(1)} Q${(x + larg).toFixed(1)} ${topo.toFixed(1)} ${(x + larg).toFixed(1)} ${(topo + r).toFixed(1)}`
+      + ` V${base.toFixed(1)} Z" class="${cls}"/>`;
+  };
+  meses.forEach((m, i) => {
+    const cx = padL + banda * i + banda / 2;
+    // Gap de 2px entre o par: separa sem desenhar borda, que somaria tinta que não é dado
+    barras += barra(cx - larg - 1, yb(m.entra), `fl-in${m.futuro ? ' prev' : ''}`);
+    barras += barra(cx + 1, yb(m.sai), `fl-out${m.futuro ? ' prev' : ''}`);
+  });
+
+  /* --- painel de baixo: o saldo --- */
+  const saldos = meses.map(m => m.saldo);
+  const topoS = Math.max(...saldos, 0), pisoS = Math.min(...saldos, 0);
+  const amp = (topoS - pisoS) || Math.abs(topoS) || 1;
+  const yl = v => 10 + (Hl - 22) - ((v - pisoS) / amp) * (Hl - 22);
+  const xs = i => padL + banda * i + banda / 2;
+  const pts = saldos.map((v, i) => [xs(i), yl(v)]);
+  // Duas linhas: a realizada é sólida, a prevista é tracejada — o traço é o que
+  // diz "daqui para frente é estimativa" sem precisar de legenda
+  const corte = Math.max(0, iHoje);
+  const real = caminhoSuave(pts.slice(0, corte + 1));
+  const prev = caminhoSuave(pts.slice(corte));
+  const zeroL = (pisoS < 0 && topoS > 0)
+    ? `<line x1="${padL}" x2="${W - padR}" y1="${yl(0).toFixed(1)}" y2="${yl(0).toFixed(1)}" class="fl-zero"/>` : '';
+
+  /* --- a fronteira de hoje, alinhada nos dois painéis --- */
+  const xHoje = padL + banda * (iHoje + 1);
+  const divisor = `<line x1="${xHoje.toFixed(1)}" x2="${xHoje.toFixed(1)}" y1="0" y2="100%" class="fl-hoje"/>`;
+
+  const pctX = v => (v / W * 100).toFixed(2);
+  const rotulos = meses.map((m, i) => {
+    // Um rótulo a cada dois meses: treze nomes lado a lado colidem no celular
+    if (i % 2 !== 0 && i !== meses.length - 1) return '';
+    const nome = m.period.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
+    return `<span class="g-t g-t-rot${i === iHoje ? ' on' : ''}" style="left:${pctX(xs(i))}%">${esc(nome)}</span>`;
+  }).join('');
+
+  return `
+    <div class="fl">
+      <div class="fl-topo">
+        <span class="fl-leg"><i class="fl-k in"></i>entrou</span>
+        <span class="fl-leg"><i class="fl-k out"></i>saiu</span>
+        <span class="fl-leg"><i class="fl-k line"></i>saldo</span>
+        <span class="fl-leg fl-leg-prev"><i class="fl-k prev"></i>previsto</span>
+      </div>
+      <div class="g-wrap fl-barras">
+        <svg viewBox="0 0 ${W} ${Hb}" preserveAspectRatio="none" role="img"
+          aria-label="${esc(opts.altBarras || 'Entradas e saídas por mês')}">
+          ${gradeB}${barras}${divisor}
+        </svg>
+        <div class="g-textos">
+          <span class="g-t g-t-eixo" style="left:0;top:6%">${fmtShort(maxFluxo)}</span>
+        </div>
+      </div>
+      <div class="g-wrap fl-linha">
+        <svg viewBox="0 0 ${W} ${Hl}" preserveAspectRatio="none" role="img"
+          aria-label="${esc(opts.altLinha || 'Saldo real e projetado')}">
+          ${zeroL}
+          <path d="${real}" class="fl-saldo"/>
+          <path d="${prev}" class="fl-saldo prev"/>
+          ${divisor}
+        </svg>
+        <div class="g-textos">
+          ${pts.map(([x, y], i) => (i === corte || i === pts.length - 1 || saldos[i] === Math.min(...saldos)
+            ? `<span class="fl-pt${meses[i].futuro ? ' prev' : ''}${saldos[i] < 0 ? ' neg' : ''}"
+                 style="left:${pctX(x)}%;top:${(y / Hl * 100).toFixed(2)}%"></span>` : '')).join('')}
+          <span class="g-t g-t-val" style="left:${pctX(pts[corte][0])}%;top:${(pts[corte][1] / Hl * 100 - 6).toFixed(2)}%">${fmtShort(saldos[corte])}</span>
+          <span class="g-t g-t-val ${saldos[saldos.length - 1] < 0 ? 'ruim' : ''}"
+            style="right:2px;left:auto;transform:translateY(-100%);top:${(pts[pts.length - 1][1] / Hl * 100 - 6).toFixed(2)}%">${fmtShort(saldos[saldos.length - 1])}</span>
+          ${rotulos}
+        </div>
+      </div>
+    </div>`;
+}
+
 /* ---------- Linha com faixa de normalidade ----------
    A faixa é mediana ± desvio mediano: o que "normal" significa PARA ESTA
    FAMÍLIA, medido no próprio histórico dela. Ponto dentro da faixa é rotina;
@@ -868,9 +982,9 @@ function renderInicio(period) {
       <button id="mn-prev" aria-label="Mês anterior" data-ico="chevL"></button>
       <div style="text-align:center">
         <b>${period.label}</b>
-        <div class="muted" style="font-size:11.5px">${period.start.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} a ${fimExibido.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}${atual ? ` · dia ${stats.elapsedDays} de ${stats.totalDays}` : ' · encerrado'}</div>
+        <div class="muted" style="font-size:11.5px">${period.start.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })} a ${fimExibido.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}${atual ? ` · dia ${stats.elapsedDays} de ${stats.totalDays}` : state.monthOffset > 0 ? ' · ainda não chegou' : ' · encerrado'}</div>
       </div>
-      <button id="mn-next" aria-label="Próximo mês" data-ico="chevR" ${atual ? 'disabled style="opacity:.35"' : ''}></button>
+      <button id="mn-next" aria-label="Próximo mês" data-ico="chevR" ${state.monthOffset >= 6 ? 'disabled style="opacity:.35"' : ''}></button>
     </div>`;
 
   // Mês encerrado: o "disponível hoje" não faz sentido — mostra o resultado daquele mês
@@ -920,7 +1034,6 @@ function renderInicio(period) {
     ${periodBar}
     ${atual ? heroAtual : heroFechado}
     ${atual ? avisoDeAperto() : ''}
-    ${atual ? saudeDosProximosMeses() : ''}
     ${adviceCard}
     <div class="kpi-grid">
       <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
@@ -1877,9 +1990,9 @@ function renderRelatorios() {
         <button id="rep-prev" aria-label="Mês anterior" data-ico="chevL"></button>
         <div style="text-align:center">
           <b>${period.label}</b>
-          <div class="muted" style="font-size:11.5px">${atual ? `dia ${st.elapsedDays} de ${st.totalDays}` : 'mês encerrado'}</div>
+          <div class="muted" style="font-size:11.5px">${atual ? `dia ${st.elapsedDays} de ${st.totalDays}` : (state.repOffset || 0) > 0 ? 'ainda não chegou' : 'mês encerrado'}</div>
         </div>
-        <button id="rep-next" aria-label="Próximo mês" data-ico="chevR" ${atual ? 'disabled style="opacity:.35"' : ''}></button>
+        <button id="rep-next" aria-label="Próximo mês" data-ico="chevR" ${(state.repOffset || 0) >= 6 ? 'disabled style="opacity:.35"' : ''}></button>
       </div>
       ${barraDePilulas()}
     </div>
@@ -2297,35 +2410,34 @@ function projecaoCard(period) {
    O saldo ROLA de um mês para o outro: um mês negativo no meio contamina os
    seguintes, e olhar mês a mês isolado esconde exatamente isso. */
 function relProximosMeses() {
-  const meses = DB.previsaoMeses(6);
-  if (!meses.some(m => m.itens.length)) return '';
-  const primeiroNegativo = meses.find(m => m.saldoAoFim < 0);
+  const meses = DB.fluxoMensal(6, 6);
+  if (meses.length < 3) return '';
+  const futuros = meses.filter(m => m.futuro);
+  const negativo = futuros.find(m => m.saldo < 0);
   const nomeMes = p => p.start.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '');
+  const hoje = meses.find(m => !m.futuro && m === meses[meses.filter(x => !x.futuro).length - 1]);
+  const fim = meses[meses.length - 1];
 
   return `
     <div class="card">
-      <div class="card-head"><div><b>Próximos meses</b>
-        <small>o que já está prometido — recorrências, parcelas e faturas</small></div>
-        ${primeiroNegativo ? `<span class="rel-selo ruim">aperto em ${esc(nomeMes(primeiroNegativo.period))}</span>` : ''}
+      <div class="card-head"><div><b>De onde vim, para onde vou</b>
+        <small>seis meses atrás e seis à frente · à direita da linha é previsão</small></div>
+        ${negativo ? `<span class="rel-selo ruim">aperto em ${esc(nomeMes(negativo.period))}</span>`
+          : '<span class="rel-selo bom">no azul</span>'}
       </div>
-      <div class="table-wrap"><table class="rep-table">
-        <thead><tr><th>Mês</th><th class="num">Entra</th><th class="num">Sai</th><th class="num">Sobra</th><th class="num">Saldo</th></tr></thead>
-        <tbody>${meses.map(m => `<tr class="prox-linha" data-prox="${m.period.start.getTime()}">
-          <td><span class="rep-seta" data-ico="chev"></span>${esc(nomeMes(m.period))}
-            <small class="muted">${m.itens.length} ${m.itens.length === 1 ? 'item' : 'itens'}</small></td>
-          <td class="num ${m.entra ? 'txt-green' : 'muted'}">${m.entra ? fmtShort(m.entra) : '—'}</td>
-          <td class="num ${m.sai ? 'txt-red' : 'muted'}">${m.sai ? fmtShort(m.sai) : '—'}</td>
-          <td class="num ${m.resultado >= 0 ? '' : 'txt-red'}">${fmtShort(m.resultado)}</td>
-          <td class="num"><b class="${m.saldoAoFim >= 0 ? '' : 'txt-red'}">${fmtShort(m.saldoAoFim)}</b></td>
-        </tr>` + m.itens.map(i => `<tr class="rep-sub prox-item" data-prox-de="${m.period.start.getTime()}" hidden>
-          <td colspan="2">${esc(i.titulo)}
-            <small class="muted">${fmtDate(new Date(i.data + 'T12:00:00'))} · ${i.origem}</small></td>
-          <td class="num ${i.receita ? 'txt-green' : 'txt-red'}" colspan="3">${i.receita ? '+ ' : '− '}${fmtShort(i.valor)}</td>
-        </tr>`).join('')).join('')}</tbody>
-      </table></div>
-      ${primeiroNegativo
-        ? `<p class="muted" style="margin-top:8px">⚠️ Com o que está previsto, o saldo fecha <b class="txt-red">${fmt(primeiroNegativo.saldoAoFim)}</b> em <b>${esc(nomeMes(primeiroNegativo.period))}</b>. Ainda dá tempo de mudar.</p>`
-        : '<p class="muted" style="margin-top:8px">O saldo se mantém positivo nos próximos seis meses com o que já está previsto. Receita ainda não cadastrada como recorrência não entra nesta conta.</p>'}
+      ${svgFluxoSaldo(meses, {
+        altBarras: 'Entradas e saídas mês a mês, seis meses atrás e seis à frente',
+        altLinha: 'Saldo real até hoje e projetado daqui para frente',
+      })}
+      <div class="chart-foot">
+        <span>Hoje <b>${fmtShort(hoje ? hoje.saldo : 0)}</b></span>
+        <span>Em ${esc(nomeMes(fim.period))} <b class="${fim.saldo < 0 ? 'txt-red' : 'txt-green'}">${fmtShort(fim.saldo)}</b></span>
+        <span>Previsto entrar <b class="txt-green">${fmtShort(futuros.reduce((s, m) => s + m.entra, 0))}</b></span>
+        <span>Previsto sair <b class="txt-red">${fmtShort(futuros.reduce((s, m) => s + m.sai, 0))}</b></span>
+      </div>
+      <p class="muted" style="margin-top:8px">${negativo
+        ? `⚠️ Com o que já está prometido, o saldo fecha <b class="txt-red">${fmt(negativo.saldo)}</b> em <b>${esc(nomeMes(negativo.period))}</b>. Ainda dá tempo de mudar.`
+        : 'O saldo se mantém positivo nos próximos seis meses. A previsão só conhece o que está cadastrado como conta fixa — receita fora disso não entra nesta conta.'}</p>
     </div>`;
 }
 
@@ -2466,7 +2578,7 @@ function bindView() {
 
   const rprev = $('#rep-prev'), rnext = $('#rep-next');
   if (rprev) rprev.onclick = () => { state.repOffset = (state.repOffset || 0) - 1; render(); };
-  if (rnext) rnext.onclick = () => { state.repOffset = (state.repOffset || 0) + 1; render(); };
+  if (rnext) rnext.onclick = () => { if ((state.repOffset || 0) >= 6) return; state.repOffset = (state.repOffset || 0) + 1; render(); };
   const goRep = $('#go-reports');
   if (goRep) goRep.onclick = () => setTab('relatorios');
   const futVer = $('#fut-ver');
@@ -4594,52 +4706,6 @@ function filaDePendencias() {
     </div>`;
 }
 
-/* Saúde dos próximos meses, no Painel.
-
-   Abrir o app responde "como estamos?", e essa pergunta não para no dia 31. O
-   financiamento tem 22 parcelas, o IPVA vence em setembro e o aluguel não vai
-   parar — tudo já decidido. Ver a curva antes é o que permite agir enquanto ainda
-   dá tempo.
-
-   Uma barra por mês, altura pelo saldo projetado: mês negativo cai abaixo da
-   linha e fica vermelho. É a forma mais rápida de ler "aperto em outubro" sem
-   comparar seis números. */
-function saudeDosProximosMeses() {
-  const meses = DB.previsaoMeses(6);
-  if (!meses.some(m => m.itens.length)) return '';
-  const saldos = meses.map(m => m.saldoAoFim);
-  const teto = Math.max(...saldos.map(Math.abs), 1);
-  const negativo = meses.find(m => m.saldoAoFim < 0);
-  const nome = p => p.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
-
-  return `
-    <div class="card fut">
-      <div class="card-head"><div><b>Os próximos meses</b>
-        <small>saldo projetado com o que já está previsto</small></div>
-        ${negativo
-          ? `<span class="rel-selo ruim">aperto em ${esc(nome(negativo.period))}</span>`
-          : '<span class="rel-selo bom">no azul</span>'}
-      </div>
-      <div class="fut-barras">
-        ${meses.map(m => {
-          const alt = Math.max(4, Math.abs(m.saldoAoFim) / teto * 100);
-          const neg = m.saldoAoFim < 0;
-          return `<div class="fut-col" title="${esc(nome(m.period))}: ${fmt(m.saldoAoFim)}">
-            <span class="fut-val ${neg ? 'txt-red' : ''}">${fmtShort(m.saldoAoFim)}</span>
-            <span class="fut-tubo">
-              <i class="${neg ? 'neg' : ''}" style="height:${alt.toFixed(1)}%"></i>
-            </span>
-            <span class="fut-mes">${esc(nome(m.period))}</span>
-          </div>`;
-        }).join('')}
-      </div>
-      <p class="muted fut-nota">${negativo
-        ? `Com o previsto, o saldo fecha <b class="txt-red">${fmt(negativo.saldoAoFim)}</b> em <b>${esc(nome(negativo.period))}</b>.`
-        : `O saldo se mantém positivo nos próximos seis meses, fechando em <b class="txt-green">${fmt(meses[meses.length - 1].saldoAoFim)}</b>.`}
-        <button class="link-btn" id="fut-ver">ver o detalhe</button></p>
-    </div>`;
-}
-
 /* O aviso de aperto: em que dia o dinheiro acaba.
 
    O total do mês fechando positivo esconde exatamente isto — dá para terminar o
@@ -4647,15 +4713,33 @@ function saudeDosProximosMeses() {
    salário. Saber com antecedência é o que permite agir. */
 function avisoDeAperto() {
   const ponto = DB.primeiroDiaNegativo();
-  if (!ponto) return '';
-  const quando = new Date(ponto.data + 'T12:00:00');
-  const dias = DB.diasEntre(DB.paraISO(new Date()), ponto.data);
+  if (ponto) {
+    const quando = new Date(ponto.data + 'T12:00:00');
+    const dias = DB.diasEntre(DB.paraISO(new Date()), ponto.data);
+    return `
+      <div class="card aperto">
+        <span class="aperto-ico">⚠️</span>
+        <div>
+          <b>O saldo fica negativo em ${fmtDate(quando)}${dias > 0 ? ` — daqui a ${dias} ${dias === 1 ? 'dia' : 'dias'}` : ', hoje'}</b>
+          <p class="muted">Chega a <b class="txt-red">${fmt(ponto.saldo)}</b> considerando o que ainda entra e sai até lá. Antecipar uma entrada ou adiar uma conta resolve.</p>
+        </div>
+      </div>`;
+  }
+
+  /* Nada aperta neste ciclo, mas o mês que vem não deixa de existir. Uma linha de
+     texto no lugar do gráfico que estava aqui: o topo do Painel é caro, e a curva
+     inteira tem lugar próprio nos Relatórios. */
+  const futuros = DB.fluxoMensal(0, 6).filter(m => m.futuro);
+  const apertoFuturo = futuros.find(m => m.saldo < 0);
+  if (!apertoFuturo) return '';
+  const nome = apertoFuturo.period.start.toLocaleDateString('pt-BR', { month: 'long' });
   return `
     <div class="card aperto">
-      <span class="aperto-ico">⚠️</span>
+      <span class="aperto-ico">📅</span>
       <div>
-        <b>O saldo fica negativo em ${fmtDate(quando)}${dias > 0 ? ` — daqui a ${dias} ${dias === 1 ? 'dia' : 'dias'}` : ', hoje'}</b>
-        <p class="muted">Chega a <b class="txt-red">${fmt(ponto.saldo)}</b> considerando o que ainda entra e sai até lá. Antecipar uma entrada ou adiar uma conta resolve.</p>
+        <b>Este mês fecha bem, mas ${esc(nome)} aperta</b>
+        <p class="muted">Com o que já está prometido, o saldo chega a <b class="txt-red">${fmt(apertoFuturo.saldo)}</b> em ${esc(nome)}.
+          <button class="link-btn" id="fut-ver">ver a curva</button></p>
       </div>
     </div>`;
 }

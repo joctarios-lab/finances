@@ -1286,6 +1286,47 @@ const DB = {
     return fora;
   },
 
+  /* ---------- Fluxo mensal: o passado real e o futuro previsto ----------
+     Doze meses no mesmo eixo, com a fronteira de hoje no meio. É a única visão
+     que responde "de onde vim e para onde vou" sem trocar de tela — e a linha do
+     saldo cruzando de sólida para tracejada mostra exatamente onde o dado acaba e
+     a previsão começa.
+
+     As duas metades vêm de fontes diferentes, e tem de ser assim: o passado sai
+     do saldo REAL (conciliado com o banco, é o número confiável) e o futuro rola
+     a partir de hoje somando o que está previsto. Misturar as duas origens numa
+     só faria o passado herdar a incerteza da previsão. */
+  fluxoMensal(passados = 6, futuros = 6) {
+    const fora = [];
+
+    // Passado e mês corrente: realizado, com o saldo real no fim de cada um
+    for (let i = passados; i >= 0; i--) {
+      const p = this.monthPeriod(new Date(), -i);
+      const entra = this.incomesOf(p).filter(t => !t.card_id && t.status === 'Pago')
+        .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+      const sai = this.expensesOf(p).filter(t => t.status === 'Pago')
+        .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+      fora.push({
+        period: p, entra, sai, futuro: false,
+        // No mês corrente o fim ainda não chegou: vale o previsto até lá
+        saldo: i === 0 ? this.saldoPrevistoNaData(null, this.fimISO(p))
+          : this.saldoNaData(null, this.fimISO(p)),
+      });
+    }
+
+    /* Futuro: rola a partir do saldo do fim do mês corrente. previsaoDoMes conta
+       as recorrências, que NÃO estão materializadas além do ciclo atual — sem
+       elas a linha ficaria plana e a projeção não diria nada. */
+    let saldo = fora[fora.length - 1].saldo;
+    for (let i = 1; i <= futuros; i++) {
+      const p = this.monthPeriod(new Date(), i);
+      const m = this.previsaoDoMes(p);
+      saldo += m.resultado;
+      fora.push({ period: p, entra: m.entra, sai: m.sai, futuro: true, saldo, itens: m.itens });
+    }
+    return fora;
+  },
+
   /* ---------- Estatística dos relatórios ----------
      Mediana e desvio mediano (MAD), não média e desvio padrão.
 

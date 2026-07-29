@@ -67,7 +67,7 @@ eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
   state, fmt, fmtShort, fmtSemMoeda, fmtDay, esc, todayISO, avisarSeUsouGuardado, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
-  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa,
+  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, ligarGrafico, caminhoSuave,
@@ -4938,18 +4938,20 @@ try {
     fim_tipo: 'sem_prazo', fim_data: null, fim_vezes: null,
     geradas: 0, status: 'ativa', ultima_geracao: null,
   });
+  /* O gráfico saiu do TOPO do Painel: aquele espaço é caro, e a curva inteira tem
+     lugar próprio nos Relatórios. O Painel guarda só o aviso em texto, para o
+     alerta não se perder junto com o gráfico. */
   state.monthOffset = 0;
   const painel = renderInicio(DB.monthPeriod(new Date()));
-  check('o painel mostra os próximos meses', painel.includes('Os próximos meses'), true);
-  check('com uma barra por mês', (painel.match(/class="fut-col"/g) || []).length, 6);
-  check('e leva ao detalhe', painel.includes('id="fut-ver"'), true);
-  // Mês negativo se distingue pela cor, não só pelo número
-  const prev = DB.previsaoMeses(6);
-  if (prev.some(m => m.saldoAoFim < 0)) {
-    check('mês negativo fica vermelho', painel.includes('class="neg"'), true);
-  } else {
-    check('sem aperto, o selo diz que está no azul', painel.includes('no azul'), true);
+  check('o painel não traz mais o bloco de barras', painel.includes('fut-col'), false);
+  const fluxo = DB.fluxoMensal(0, 6).filter(m => m.futuro);
+  if (fluxo.some(m => m.saldo < 0) && !DB.primeiroDiaNegativo()) {
+    check('mas avisa em texto quando um mês futuro aperta', painel.includes('aperta'), true);
+    check('e leva à curva', painel.includes('id="fut-ver"'), true);
   }
+  // A curva vive nos Relatórios
+  const relF = renderRelatorios();
+  check('a curva de 12 meses está nos relatórios', relF.includes('De onde vim, para onde vou'), true);
   void rFu;
 } catch (e) { console.log(` FALHA | futuro: ${e.message}`); fail++; }
 // Limpeza fora do try
@@ -5112,3 +5114,83 @@ DB.data.invoice_status = DB.data.invoice_status.filter(s =>
 DB.data.cards = DB.data.cards.filter(c => !/Parcial X/.test(c.name || ''));
 DB.data.accounts = DB.data.accounts.filter(a => !/Parcial X/.test(a.name || ''));
 DB.save();
+
+/* ---- Fluxo e saldo: dois painéis, um eixo de tempo ----
+   Barras de fluxo mensal vivem nos milhares; saldo acumulado, nas dezenas de
+   milhares. Sobrepor os dois exigiria DOIS EIXOS Y no mesmo painel — e alinhar
+   duas escalas é arbitrário: o gráfico passa a insinuar uma correlação que não
+   está no dado. É o erro mais comum em gráfico financeiro. */
+console.log('\n=== Gráfico de fluxo e saldo ===');
+try {
+  const meses = DB.fluxoMensal(6, 6);
+  check('cobre seis atrás, o atual e seis à frente', meses.length, 13);
+  check('os seis primeiros são realizados', meses.slice(0, 7).every(m => !m.futuro), true);
+  check('e os seis últimos são previstos', meses.slice(7).every(m => m.futuro), true);
+  check('em ordem cronológica',
+    meses.every((m, i) => i === 0 || m.period.start > meses[i - 1].period.start), true);
+
+  /* As duas metades vêm de fontes diferentes, e tem de ser assim: o passado sai do
+     saldo REAL (conciliado com o banco) e o futuro rola somando o previsto.
+     Misturar as origens faria o passado herdar a incerteza da previsão. */
+  const passado = meses[3];
+  check('o saldo do passado é o saldo real daquela data',
+    passado.saldo, DB.saldoNaData(null, DB.fimISO(passado.period)));
+  check('e o futuro rola a partir do mês anterior',
+    Math.round(meses[8].saldo * 100) / 100,
+    Math.round((meses[7].saldo + DB.previsaoDoMes(meses[8].period).resultado) * 100) / 100);
+
+  const svg = svgFluxoSaldo(meses);
+  /* DOIS painéis, cada um com o próprio viewBox: é o que garante escalas
+     independentes sem alinhamento arbitrário. */
+  check('são dois painéis', (svg.match(/<svg /g) || []).length, 2);
+  check('barras num, saldo no outro',
+    svg.includes('class="g-wrap fl-barras"') && svg.includes('class="g-wrap fl-linha"'), true);
+  const cssFl = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('com alturas próprias, então escalas próprias',
+    /\.fl-barras \{ height: 118px/.test(cssFl) && /\.fl-linha \{ height: 84px/.test(cssFl), true);
+
+  // Entradas e saídas lado a lado, não empilhadas: elas não compõem um total
+  check('entrada e saída são barras separadas',
+    svg.includes('class="fl-in"') && svg.includes('class="fl-out"'), true);
+  /* Ponta arredondada, pé reto: o topo é o dado e ganha o arredondamento; a base
+     encosta no zero, e arredondá-la faria a barra parecer flutuar. */
+  check('a barra tem ponta arredondada', /Q[\d.]+ [\d.]+ [\d.]+ [\d.]+/.test(svg), true);
+  check('e fecha reta na base', /V[\d.]+ Z/.test(svg), true);
+
+  /* A FRONTEIRA DE HOJE é a informação mais importante: à esquerda é fato
+     conciliado, à direita é estimativa. Aparece três vezes — divisória, barra
+     vazada e linha tracejada — porque uma só seria fácil de não notar. */
+  check('há divisória marcando hoje', svg.includes('class="fl-hoje"'), true);
+  /* Testa o DESENHO com dados sintéticos: o cenário do teste pode não ter receita
+     futura, e barra de valor zero não é desenhada — o teste passaria ou falharia
+     por causa da fixture, não do código. */
+  const sinteticos = [0, 1, 2, 3].map(i => ({
+    period: DB.monthPeriod(new Date(), i - 2),
+    entra: 5000, sai: 3000, saldo: 10000 + i * 1000, futuro: i >= 2,
+  }));
+  const svgS = svgFluxoSaldo(sinteticos);
+  check('a barra futura é vazada', svgS.includes('fl-in prev') && svgS.includes('fl-out prev'), true);
+  check('e a realizada é cheia', /class="fl-in"/.test(svgS), true);
+  /* Checa que o caminho futuro tem GEOMETRIA, não só a classe: um path vazio com
+     a classe certa passaria pela verificação e deixaria a metade prevista da
+     linha invisível. */
+  const dPrev = (svgS.match(/<path d="([^"]*)" class="fl-saldo prev"/) || [])[1] || '';
+  check('e a linha do saldo é tracejada no futuro', /^M[\d.]+ [\d.]+ C/.test(dPrev), true);
+  const dReal = (svgS.match(/<path d="([^"]*)" class="fl-saldo"/) || [])[1] || '';
+  check('com a parte realizada também desenhada', /^M[\d.]+ [\d.]+ C/.test(dReal), true);
+  check('e as duas se encontram no ponto de hoje',
+    dPrev.slice(0, dPrev.indexOf(' C')), 'M' + dReal.split(' C').pop().trim().split(' ').slice(-2).join(' '));
+  check('com o tracejado definido no CSS', /\.fl-saldo\.prev \{[^}]*stroke-dasharray/.test(cssFl), true);
+  check('e são duas linhas, não uma', (svg.match(/class="fl-saldo/g) || []).length, 2);
+
+  // Texto fora do SVG esticado, como em todos os outros
+  check('sem texto dentro do SVG', /<svg[\s\S]*?<text/.test(svg), false);
+  check('e o traço não engorda ao esticar',
+    /\.fl-saldo \{[^}]*vector-effect: non-scaling-stroke/.test(cssFl), true);
+  // Rótulo a cada dois meses: treze nomes lado a lado colidem no celular
+  const rots = (svg.match(/class="g-t g-t-rot/g) || []).length;
+  check('os rótulos são espaçados para não colidir', rots > 3 && rots <= 8, true);
+
+  // Um mês só não desenha nada em vez de quebrar
+  check('série curta não quebra', svgFluxoSaldo([meses[0]]).includes('empty'), true);
+} catch (e) { console.log(` FALHA | fluxo e saldo: ${e.message}`); fail++; }

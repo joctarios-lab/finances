@@ -150,25 +150,49 @@ body {
 }
 .section-title::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
-/* Saúde dos próximos meses: uma barra por mês, altura pelo saldo projetado.
-   Mês negativo cai para baixo da linha e fica vermelho — é a forma mais rápida de
-   ler "aperto em outubro" sem comparar seis números. */
-.fut-barras { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin-top: 6px; }
-.fut-col { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; }
-.fut-val {
-  font-size: 10.5px; font-weight: 700; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+/* ---------- Fluxo e saldo: dois painéis, um eixo de tempo ----------
+   Barras em cima, saldo embaixo. Dois painéis e não dois eixos no mesmo: fluxo
+   mensal vive nos milhares e saldo acumulado nas dezenas de milhares, e sobrepor
+   os dois exigiria alinhar duas escalas — o que é arbitrário e faz o gráfico
+   insinuar uma correlação que não está no dado. */
+.fl { margin-top: 4px; }
+.fl-topo { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 6px; }
+.fl-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--paper-dim); font-weight: 600; }
+.fl-k { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.fl-k.in { background: var(--green); }
+.fl-k.out { background: var(--red); }
+.fl-k.line { height: 2px; border-radius: 1px; background: var(--gold); }
+/* A legenda do previsto usa a mesma marca vazada das barras futuras, para o olho
+   casar legenda e gráfico sem precisar de explicação */
+.fl-k.prev { background: repeating-linear-gradient(45deg, #c4cad4 0 2px, transparent 2px 4px); border: 1px solid #c4cad4; }
+.fl-barras { height: 118px; }
+.fl-linha { height: 84px; margin-top: 2px; }
+@media (max-width: 560px) { .fl-barras { height: 104px; } .fl-linha { height: 76px; } }
+
+.fl-in { fill: var(--green); }
+.fl-out { fill: var(--red); }
+/* Futuro vazado: é estimativa, e preenchimento cheio o faria pesar igual ao fato */
+.fl-in.prev { fill: rgba(80, 205, 137, .3); }
+.fl-out.prev { fill: rgba(241, 65, 108, .28); }
+
+.fl-saldo {
+  fill: none; stroke: var(--gold); stroke-width: 2;
+  stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke;
 }
-/* O tubo é a moldura: dá a mesma referência de altura para todos os meses, e é o
-   que permite comparar de relance em vez de medir cada barra */
-.fut-tubo {
-  width: 100%; height: 62px; display: flex; align-items: flex-end;
-  background: var(--ink-3); border-radius: 5px; overflow: hidden;
+/* Tracejado é o que diz "daqui para frente é estimativa" sem precisar de rótulo */
+.fl-saldo.prev { stroke-dasharray: 5 4; opacity: .85; }
+.fl-zero { stroke: #d8e0e8; stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* A fronteira de hoje: a informação mais importante da tela — à esquerda é fato
+   conciliado, à direita é estimativa */
+.fl-hoje { stroke: var(--paper-dim); stroke-width: 1; stroke-dasharray: 2 3; opacity: .45; vector-effect: non-scaling-stroke; }
+.fl-pt {
+  position: absolute; width: 9px; height: 9px; border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--gold); border: 2px solid #fff; box-sizing: border-box;
 }
-.fut-tubo i { display: block; width: 100%; background: var(--gold); border-radius: 4px 4px 0 0; }
-.fut-tubo i.neg { background: var(--red); }
-.fut-mes { font-size: 10.5px; color: var(--paper-dim); font-weight: 600; text-transform: capitalize; }
-.fut-nota { margin-top: 10px; font-size: 12px; }
+.fl-pt.prev { background: #fff; border-color: var(--gold); }
+.fl-pt.neg { background: var(--red); border-color: #fff; }
+.g-t-val.ruim { color: var(--red); }
 
 /* Linha prevista no extrato (fatura que ainda vai vencer): tracejada e recuada,
    para não se confundir com movimento que já aconteceu.
