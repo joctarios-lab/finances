@@ -6431,6 +6431,10 @@ Auth.init(() => {
      comprometido que ainda não conhece o aluguel deste mês, e o número mudaria
      sozinho um segundo depois. Como decidimos não estimar custo fixo, é esta
      geração que mantém o comprometido fiel. */
+  /* Recupera faturas pagas antes de o pagamento virar lançamento. Sem isto, o
+     saldo anterior de qualquer mês com fatura paga no modelo antigo vem errado e
+     a soma do extrato não fecha — foi o defeito relatado na conta C6. */
+  try { DB.migrarFaturasPagasAntigas(); } catch (_) {}
   try { DB.gerarRecorrencias(); } catch (_) {}
   setTab(state.tab);          // restaura a aba e marca o menu corretamente
   Sync.startAuto();           // mantém o aparelho em dia sempre que houver conexão

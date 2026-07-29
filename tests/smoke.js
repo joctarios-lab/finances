@@ -4959,3 +4959,156 @@ DB.data.recurrences = [];
 DB.data.cards = DB.data.cards.filter(c => c.name !== 'Cartao Fut');
 DB.data.accounts = DB.data.accounts.filter(a => a.name !== 'Conta Fut');
 DB.save();
+
+/* ---- Fatura paga no modelo antigo ----
+   Defeito relatado: somar os lançamentos do extrato não batia com o total, na
+   conta C6 em julho. A causa é pior do que parece: antes da versão 63, pagar
+   fatura era um adjustBalance silencioso — o saldo caía e nada no extrato
+   explicava. E como saldoNaData trabalha de trás para frente a partir do saldo
+   atual, sem lançamento para desfazer ela devolve um SALDO ANTERIOR errado. */
+console.log('\n=== Migração de fatura paga no modelo antigo ===');
+try {
+  const cL = DB.upsert('accounts', { name: 'Conta Legado', type: 'Conta Corrente', balance: 4000 });
+  const cardL = DB.upsert('cards', { name: 'Cartao Legado', closing_day: 1, due_day: 10, account_id: cL, active: true });
+  const pL = DB.monthPeriod(new Date());
+  const compraEm = DB.somarDiasISO(DB.inicioISO(pL), -20);
+  const chaveL = DB.invoiceKeyFor(DB.get('cards', cardL), compraEm);
+  DB.upsert('transactions', { description: 'Compra legado', amount: 800, date: compraEm, type: 'Despesa',
+    status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito',
+    card_id: cardL, invoice_key: chaveL });
+
+  // Reproduz o caminho antigo: marca paga e debita a conta, sem lançamento
+  DB.setInvoicePaid(chaveL, true);
+  adjustBalance(cL, -800);
+  const antesDaMigracao = DB.saldoPrevistoNaData([cL], DB.inicioISO(pL));
+  check('sem lançamento, o saldo anterior vem errado', antesDaMigracao, 3200);
+
+  const migradas = DB.migrarFaturasPagasAntigas();
+  check('a migração recupera a fatura', migradas >= 1, true);
+  const pgto = DB.all('transactions').find(t => t.pays_invoice === chaveL);
+  check('criando o lançamento que faltava', !!pgto, true);
+  check('com o valor da fatura', pgto.amount, 800);
+  check('na data do vencimento, a única que a fatura conhece',
+    pgto.date, DB.paraISO(DB.invoicesOf(DB.get('cards', cardL)).find(i => i.key === chaveL).due));
+  check('na conta de pagamento do cartão', pgto.account_id, cL);
+  check('e dizendo de onde veio', /versão anterior/.test(pgto.notes || ''), true);
+
+  /* O SALDO NÃO PODE SER DEBITADO DE NOVO: o caminho antigo já tirou o dinheiro
+     da conta. Aplicar o efeito na migração cobraria a fatura duas vezes. */
+  check('o saldo da conta não muda com a migração', DB.get('accounts', cL).balance, 3200);
+  // E o saldo anterior volta ao que realmente era
+  check('o saldo anterior volta ao correto', DB.saldoPrevistoNaData([cL], DB.inicioISO(pL)), 4000);
+
+  /* Idempotência: a migração roda a cada abertura do app. Criar de novo faria a
+     fatura aparecer duas vezes e o extrato passar a mentir para o outro lado. */
+  check('rodar de novo não duplica', DB.migrarFaturasPagasAntigas(), 0);
+  check('e continua com um lançamento só',
+    DB.all('transactions').filter(t => t.pays_invoice === chaveL).length, 1);
+
+  /* Fatura paga pelo caminho NOVO não é tocada: ela já tem lançamento, e um
+     segundo pagamento cobraria duas vezes. */
+  const cN = DB.upsert('accounts', { name: 'Conta Nova Pg', type: 'Conta Corrente', balance: 5000 });
+  const cardN = DB.upsert('cards', { name: 'Cartao Nova Pg', closing_day: 1, due_day: 10, account_id: cN, active: true });
+  const chaveN = DB.invoiceKeyFor(DB.get('cards', cardN), compraEm);
+  DB.upsert('transactions', { description: 'Compra nova', amount: 500, date: compraEm, type: 'Despesa',
+    status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito',
+    card_id: cardN, invoice_key: chaveN });
+  const pgN = { description: 'Fatura Cartao Nova Pg', amount: 500, date: DB.paraISO(new Date()),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Fatura',
+    account_id: cN, category_id: null, pays_invoice: chaveN };
+  DB.upsert('transactions', pgN); applyTxEffect(pgN, +1);
+  DB.setInvoicePaid(chaveN, true);
+  const antesN = DB.all('transactions').filter(t => t.pays_invoice === chaveN).length;
+  DB.migrarFaturasPagasAntigas();
+  check('fatura já paga com lançamento não é duplicada',
+    DB.all('transactions').filter(t => t.pays_invoice === chaveN).length, antesN);
+
+  /* O pedido: a fatura paga aparece no extrato. Ela aparece como o LANÇAMENTO de
+     pagamento — não como uma linha de fatura à parte, que somaria o mesmo
+     dinheiro duas vezes na mesma tela. */
+  state.filtros = { ...filtrosVazios(), contas: [cL] };
+  const htmlL = renderExtrato(pL);
+  check('a fatura paga aparece no extrato', htmlL.includes('Fatura Cartao Legado'), true);
+  check('e não em duplicidade', (htmlL.match(/Fatura Cartao Legado/g) || []).length, 1);
+
+  /* A identidade que o usuário conferiu na mão: anterior + entrou − saiu = final.
+     É o teste de que o extrato não esconde nem inventa movimento. */
+  const num = re => { const m = htmlL.match(re); return m ? Number(m[1].replace(/\./g, '').replace(',', '.')) : null; };
+  const antes = num(/data-antes="([\d.,]+)"/);
+  const entrou = num(/pt pt-up"><\/i>([\d.,]+) <small>/);
+  const saiu = num(/pt pt-dn"><\/i>([\d.,]+) <small>/);
+  const fim = num(/res-dir">\s*<b[^>]*>R\$\s*([\d.,]+)/);
+  check('a soma do extrato fecha com o saldo',
+    Math.abs((antes + entrou - saiu) - fim) < 0.01, true);
+  check('e a fatura está dentro do que saiu', saiu >= 800, true);
+} catch (e) { console.log(` FALHA | migração de fatura: ${e.message}`); fail++; }
+// Limpeza fora do try
+state.filtros = filtrosVazios();
+DB.data.transactions = DB.data.transactions.filter(t => !/legado|Legado|Compra nova|Nova Pg/.test(t.description || ''));
+DB.data.invoice_status = DB.data.invoice_status.filter(s =>
+  !DB.data.cards.some(c => /Legado|Nova Pg/.test(c.name || '') && String(s.invoice_key).startsWith(c.id)));
+DB.data.cards = DB.data.cards.filter(c => !/Legado|Nova Pg/.test(c.name || ''));
+DB.data.accounts = DB.data.accounts.filter(a => !/Legado|Nova Pg/.test(a.name || ''));
+DB.save();
+
+/* ---- Pagamento parcial: o que resta é o que pesa ---- */
+console.log('\n=== Fatura com pagamento parcial ===');
+try {
+  const cPp = DB.upsert('accounts', { name: 'Conta Parcial X', type: 'Conta Corrente', balance: 9000 });
+  const cardPp = DB.upsert('cards', { name: 'Cartao Parcial X', closing_day: 1, due_day: 10, account_id: cPp, active: true });
+  const pPp = DB.monthPeriod(new Date());
+  const compraEm = DB.somarDiasISO(DB.inicioISO(pPp), -20);
+  const chavePp = DB.invoiceKeyFor(DB.get('cards', cardPp), compraEm);
+  DB.upsert('transactions', { description: 'Compra parcial X', amount: 1000, date: compraEm, type: 'Despesa',
+    status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito',
+    card_id: cardPp, invoice_key: chavePp });
+  const fat = () => DB.invoicesOf(DB.get('cards', cardPp)).find(i => i.key === chavePp);
+  check('a fatura soma a compra', fat().total, 1000);
+  check('e nasce devendo tudo', fat().falta, 1000);
+
+  const compAntes = DB.committed();
+  // Paga 300 dos 1000
+  const pg1 = { description: 'Fatura Cartao Parcial X', amount: 300, date: DB.paraISO(fat().due),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Fatura',
+    account_id: cPp, category_id: null, pays_invoice: chavePp };
+  DB.upsert('transactions', pg1); applyTxEffect(pg1, +1);
+
+  check('o pago é registrado', fat().pago, 300);
+  /* O que RESTA é o que pesa: falta = total − pago. Contar a fatura inteira
+     depois de pagar parte tiraria do disponível dinheiro que já saiu. */
+  check('o que falta é o total menos o pago', fat().falta, 700);
+  check('a fatura fica Parcial', fat().status, 'Parcial');
+  const dentroDoCiclo = DB.paraISO(fat().due) < DB.fimISO(pPp);
+  if (dentroDoCiclo) {
+    check('e o comprometido cai só o que foi pago', DB.committed(), compAntes - 300);
+  }
+  // A linha do extrato mostra o saldo devedor, não o valor original
+  state.filtros = { ...filtrosVazios(), contas: [cPp] };
+  const htmlPp = renderExtrato(DB.monthPeriod(new Date(Date.parse(DB.paraISO(fat().due) + 'T12:00:00'))));
+  if (htmlPp.includes('data-fatura=')) {
+    check('a linha prevista mostra o que falta', htmlPp.includes(fmt(700)), true);
+    check('e diz quanto já foi pago', /já pago/.test(htmlPp), true);
+  }
+  // Quitar o resto zera
+  const pg2 = { ...pg1, id: null, amount: 700 };
+  DB.upsert('transactions', pg2); applyTxEffect(pg2, +1);
+  check('quitando o resto, nada falta', fat().falta, 0);
+  check('e a fatura fica Paga', fat().status, 'Paga');
+  check('sem sobrar no comprometido',
+    DB.faturasAbertas(DB.fimISO(pPp)).some(i => i.key === chavePp), false);
+
+  /* A migração do modelo antigo não pode reabrir isso: a chave já tem lançamento,
+     então ela passa longe — senão cobraria a fatura de novo por inteiro. */
+  DB.setInvoicePaid(chavePp, true);
+  const pagamentosAntes = DB.all('transactions').filter(t => t.pays_invoice === chavePp).length;
+  DB.migrarFaturasPagasAntigas();
+  check('a migração não toca em fatura com pagamento parcial registrado',
+    DB.all('transactions').filter(t => t.pays_invoice === chavePp).length, pagamentosAntes);
+} catch (e) { console.log(` FALHA | parcial: ${e.message}`); fail++; }
+state.filtros = filtrosVazios();
+DB.data.transactions = DB.data.transactions.filter(t => !/Parcial X/.test(t.description || ''));
+DB.data.invoice_status = DB.data.invoice_status.filter(s =>
+  !DB.data.cards.some(c => /Parcial X/.test(c.name || '') && String(s.invoice_key).startsWith(c.id)));
+DB.data.cards = DB.data.cards.filter(c => !/Parcial X/.test(c.name || ''));
+DB.data.accounts = DB.data.accounts.filter(a => !/Parcial X/.test(a.name || ''));
+DB.save();

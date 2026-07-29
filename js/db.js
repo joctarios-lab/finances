@@ -602,6 +602,63 @@ const DB = {
     return base + previsto;
   },
 
+  /* Migra fatura marcada como paga no caminho ANTIGO para lançamento de verdade.
+
+     Antes da versão 63, pagar fatura era um adjustBalance silencioso: o saldo da
+     conta caía e nada no extrato explicava. O efeito colateral é pior do que
+     parece — saldoNaData trabalha de trás para frente a partir do saldo atual, e
+     sem lançamento para desfazer ela devolve um SALDO ANTERIOR errado. No teste,
+     um julho que começou com R$ 4.000 aparecia como R$ 3.200.
+
+     Consertar isso caso a caso em cinco telas seria remendo. Aqui a fatura vira o
+     lançamento que ela sempre deveria ter sido, e todos os caminhos passam a
+     funcionar de graça: extrato, total do dia, saldo anterior e projeção.
+
+     SEM applyTxEffect de propósito: o saldo já foi debitado quando a pessoa
+     marcou como paga. Aplicar de novo cobraria a fatura duas vezes. */
+  migrarFaturasPagasAntigas() {
+    const marcadas = this.all('invoice_status').filter(s => s.paid);
+    if (!marcadas.length) return 0;
+    const jaTemLancamento = new Set(this.all('transactions')
+      .filter(t => t.pays_invoice).map(t => t.pays_invoice));
+    let n = 0;
+    this.emLote(() => {
+      for (const s of marcadas) {
+        const chave = s.invoice_key;
+        if (!chave || jaTemLancamento.has(chave)) continue;
+        const card = this.get('cards', String(chave).split(':')[0]);
+        if (!card) continue;
+        const inv = this.invoicesOf(card).find(i => i.key === chave);
+        /* `falta`, não `total`: se houver pagamento parcial a chave já está em
+           jaTemLancamento e nem chegamos aqui — mas usar o saldo devedor deixa a
+           intenção explícita e protege se essa guarda mudar. */
+        if (!inv || !(inv.falta > 0.005)) continue;
+        /* A data é o VENCIMENTO: o caminho antigo não guardava quando o pagamento
+           foi feito, e o vencimento é a única data que a fatura conhece. */
+        this.upsert('transactions', {
+          description: `Fatura ${card.name} — ${this.rotuloMesDaChave(chave)}`,
+          amount: inv.falta,
+          date: this.paraISO(inv.due),
+          type: 'Despesa', status: 'Pago',
+          scope: 'Família', member: '', method: 'Fatura',
+          account_id: card.account_id || null, card_id: null, category_id: null,
+          pays_invoice: chave,
+          notes: 'Pagamento recuperado de versão anterior do app — a data é a do vencimento.',
+        });
+        n++;
+      }
+    });
+    return n;
+  },
+
+  rotuloMesDaChave(chave) {
+    const mes = String(chave).split(':')[1] || '';
+    const [a, m] = mes.split('-');
+    if (!a || !m) return mes;
+    return new Date(Number(a), Number(m) - 1, 1)
+      .toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  },
+
   /* Faturas que vencem dentro de um período, para aparecerem no extrato dele.
 
      Elas não são transações — são derivadas das compras. Mas o dinheiro sai da
