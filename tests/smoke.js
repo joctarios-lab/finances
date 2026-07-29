@@ -68,7 +68,8 @@ eval(appSrc + `; Object.assign(global, {
   state, fmt, fmtShort, fmtDay, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
-  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, filtrosVazios, janelasDoMes, somarDias, openJanelaSheet, bindView, fmt,
+  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
+  diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   Massa, openMassaModal, renderMassa, closeModal, openModal, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -1227,7 +1228,7 @@ try {
   check('filtrar envelope traz as subcategorias', porEnvelope.some(t => t.category_id === mercado.id), true);
   /* Antes, escolher a subcategoria subia ao envelope e arrastava tudo junto —
      impreciso, e sem como desfazer. Agora "Mercado" traz só mercado, e quem quer
-     o envelope inteiro escolhe "Tudo de Alimentação". */
+     o envelope inteiro escolhe a linha do próprio envelope na pílula. */
   zerar(); state.filtros.categorias = [mercado.id];
   const soMercado = txsFiltradas(p2);
   check('filtrar subcategoria traz só ela', soMercado.every(t => t.category_id === mercado.id), true);
@@ -1238,12 +1239,13 @@ try {
   // Busca sem acento, em vários campos
   zerar(); state.filtros.busca = 'pousada';
   check('busca pela descrição', qtd(), 1);
-  // O painel oferece o envelope como opção própria; o formulário de lançamento não,
-  // senão o gasto pararia no envelope e a subcategoria nunca aconteceria
-  check('painel deixa escolher o envelope inteiro',
-    optionsCategorias([], undefined, true).includes('Tudo de Alimentação'), true);
-  check('lançamento continua só com as folhas',
-    optionsCategorias('').includes('Tudo de Alimentação'), false);
+  /* A pílula oferece o envelope como linha própria; o formulário de lançamento
+     não, senão o gasto pararia no envelope e a subcategoria nunca aconteceria. */
+  const opsCat = pilulasDeFiltro().find(p => p.chave === 'categorias').ops;
+  check('a pílula deixa escolher o envelope inteiro',
+    opsCat.some(o => o.grupo && o.v === alim.id), true);
+  check('o lançamento continua só com as folhas',
+    optionsCategorias('').includes(`>${alim.name}<`), false);
   // A busca varre descrição, categoria, etiqueta, membro e forma de pagamento. Como
   // existe a subcategoria "Viagem", procurar por viagem acha os dois etiquetados e
   // também o classificado nela — que é justamente o que se espera de uma busca ampla.
@@ -1280,68 +1282,93 @@ try {
   zerar(); state.filtros.busca = 'x';
   check('filtro de valor único não carrega valor', filtrosAtivos()[0].valor, null);
 
-  // A tela: só busca e âmbito ficam fora do painel
+  /* ---- Filtros como pílulas na própria tela ----
+     Não há mais folha nem modal: cobrir a lista para escolher o que a lista
+     mostra tira a referência do que se está filtrando. */
   zerar();
   const ext = renderExtrato(p2);
-  check('busca fica na tela', ext.includes('id="tx-search"'), true);
-  check('âmbito fica na tela', ext.includes('id="scope-chips"'), true);
-  check('botão de filtros fica na tela', ext.includes('id="btn-filtros"'), true);
-  check('chips de membro saíram da tela', ext.includes('id="member-chips"'), false);
+  check('a barra do topo fica presa na tela', ext.includes('class="ext-topo"'), true);
+  check('a busca é uma pílula', ext.includes('data-pilula="busca"'), true);
+  for (const chave of ['tipo', 'situacao', 'categorias', 'contas', 'membro', 'scope', 'metodos']) {
+    check(`há pílula de ${chave}`, ext.includes(`data-pilula="${chave}"`), true);
+  }
+  check('o resto fica atrás de "Mais"', ext.includes('data-pilula="mais"'), true);
+  check('não sobrou botão de folha de filtros', ext.includes('id="btn-filtros"'), false);
+  check('nem a fileira de etiquetas ativas', ext.includes('class="ativos"'), false);
+
+  /* A pílula É o estado: mostra o próprio valor e traz o × que limpa só ela.
+     Foi isso que permitiu tirar da tela a fileira de etiquetas ativas, que
+     repetia a mesma informação um bloco abaixo. */
   state.filtros.tags = ['viagem'];
   const comFiltro = renderExtrato(p2);
-  check('contador aparece no botão', /filtros-num">1</.test(comFiltro), true);
-  check('etiqueta removível aparece', comFiltro.includes('data-limpa="tags"'), true);
-  check('e diz qual valor ela tira', comFiltro.includes('data-valor="viagem"'), true);
-  check('há como limpar tudo', comFiltro.includes('id="limpar-filtros"'), true);
-  check('etiquetas do lançamento aparecem na linha', comFiltro.includes('data-tag="viagem"'), true);
+  check('a pílula ativa se destaca', /class="pilula on" data-pilula="tags"/.test(comFiltro), true);
+  check('e mostra o valor escolhido', comFiltro.includes('#viagem'), true);
+  check('com × que limpa só ela', comFiltro.includes('data-limpa-pilula="tags"'), true);
+  const defsTag = pilulasDeFiltro().find(p => p.chave === 'tags');
+  check('um valor mostra o nome', rotuloPilula(defsTag), '#viagem');
+  state.filtros.tags = ['viagem', 'lazer'];
+  check('vários mostram a contagem', rotuloPilula(defsTag), 'Etiqueta · 2');
+  state.filtros.tags = [];
+  check('nenhum mostra o rótulo', rotuloPilula(defsTag), 'Etiqueta');
+  state.filtros.tags = ['viagem'];
+  check('há como limpar tudo', renderExtrato(p2).includes('id="limpar-filtros"'), true);
+  check('etiquetas do lançamento aparecem na linha', renderExtrato(p2).includes('data-tag="viagem"'), true);
 
   // Vazio por filtro tem de se distinguir de vazio de verdade
   zerar(); state.filtros.busca = 'zzzz';
   const vazio = renderExtrato(p2);
   check('vazio por filtro explica o motivo', vazio.includes('Nenhum lançamento com esses filtros'), true);
   check('e oferece limpar', vazio.includes('id="limpar-vazio"'), true);
-
-  // O painel abre com os controles todos
   zerar();
-  openFiltrosSheet();
-  const folha = els['#sheet'].innerHTML;
-  for (const campo of ['fl-tipo', 'fl-sit', 'fl-scope', 'fl-membro', 'fl-cat', 'fl-tag', 'fl-metodo', 'fl-contas', 'fl-min', 'fl-max', 'fl-rec']) {
-    check(`painel tem ${campo}`, folha.includes(campo), true);
-  }
-  check('painel oferece limpar tudo', folha.includes('fl-limpar'), true);
 
-  /* ---- Recorte de dias dentro do mês ---- */
+  /* ---- A régua do mês ---- */
   zerar();
-  const janelas = janelasDoMes(p2);
+  const dias = diasDoPeriodo(p2);
   const iniP = DB.inicioISO(p2), fimP = somarDias(DB.fimISO(p2), -1);
-  check('o mês todo é a primeira janela', janelas[0].de, '');
-  check('a 1ª quinzena começa no início do mês', janelas[1].de, iniP);
-  check('a 2ª quinzena termina no fim do mês', janelas[2].ate, fimP);
-  check('as quinzenas se encostam sem buraco', somarDias(janelas[1].ate, 1), janelas[2].de);
-  check('nenhuma janela escapa do mês', janelas.every(j => !j.de || (j.de >= iniP && j.ate <= fimP)), true);
+  check('a régua cobre o período inteiro', dias[0] + '|' + dias[dias.length - 1], iniP + '|' + fimP);
+  check('sem buracos entre os dias', dias.every((d, i) => i === 0 || d === somarDias(dias[i - 1], 1)), true);
+
+  const reguaHtml = reguaDoMes(p2, { [dias[3]]: 5, [dias[4]]: 1 });
+  check('a régua tem dois polegares',
+    reguaHtml.includes('id="regua-de"') && reguaHtml.includes('id="regua-ate"'), true);
+  check('cada polegar se anuncia para leitor de tela',
+    reguaHtml.includes('aria-label="Primeiro dia do intervalo"')
+    && reguaHtml.includes('aria-label="Último dia do intervalo"'), true);
+  check('os polegares vão de 0 ao último dia', reguaHtml.includes(`max="${dias.length - 1}"`), true);
+  check('sem recorte, o rótulo diz mês todo', reguaHtml.includes('Mês todo'), true);
+  /* As marcas de movimento são o que diferencia a régua de um slider qualquer:
+     mostram onde o dinheiro se mexeu, então dá para ver o aglomerado antes de
+     arrastar até ele. Um dia com pouco movimento ainda precisa aparecer. */
+  const alturas = [...reguaHtml.matchAll(/regua-marca[^"]*" style="height:(\d+)%/g)].map(m => Number(m[1]));
+  check('o dia de maior movimento vai ao topo', Math.max(...alturas), 100);
+  check('o dia de pouco movimento ainda aparece', alturas.filter(a => a >= 18 && a < 100).length, 1);
+  check('dia sem movimento não desenha marca', alturas.filter(a => a === 0).length, dias.length - 2);
 
   zerar();
   const tudoDoMes = qtd();
-  state.filtros.de = janelas[1].de; state.filtros.ate = janelas[1].ate;
-  const naQuinzena = txsFiltradas(p2);
-  check('o recorte reduz a lista', naQuinzena.length < tudoDoMes, true);
+  const meio = Math.floor(dias.length / 2);
+  state.filtros.de = dias[0]; state.filtros.ate = dias[meio];
+  const primeiraMetade = txsFiltradas(p2);
+  check('o recorte reduz a lista', primeiraMetade.length < tudoDoMes, true);
   check('e não deixa passar dia de fora',
-    naQuinzena.every(t => t.date >= janelas[1].de && t.date <= janelas[1].ate), true);
-  zerar(); state.filtros.de = janelas[2].de; state.filtros.ate = janelas[2].ate;
-  check('as duas quinzenas somam o mês inteiro', naQuinzena.length + qtd(), tudoDoMes);
+    primeiraMetade.every(t => t.date >= dias[0] && t.date <= dias[meio]), true);
+  check('as marcas ignoram o recorte, senão o trilho ficaria cego',
+    txsFiltradas(p2, true).length, tudoDoMes);
+  zerar(); state.filtros.de = dias[meio + 1]; state.filtros.ate = dias[dias.length - 1];
+  check('as duas metades somam o mês inteiro', primeiraMetade.length + qtd(), tudoDoMes);
 
-  /* O cabeçalho tem de seguir o recorte junto com a lista. Saldo anterior do dia 1
-     sobre uma lista que começa no dia 16 é exatamente a divergência que já fez o
+  /* O cabeçalho tem de seguir o recorte junto com a lista. Saldo do dia 1 sobre
+     uma lista que começa no dia 16 é exatamente a divergência que já fez o
      extrato discordar do saldo da conta. */
   zerar();
   const extMes = renderExtrato(p2);
-  state.filtros.de = janelas[2].de; state.filtros.ate = janelas[2].ate;
-  const extQuinzena = renderExtrato(p2);
-  const saldoAnterior = html => (html.match(/Saldo anterior<\/small><b[^>]*>([^<]+)/) || [])[1];
-  check('o saldo anterior muda com o recorte', saldoAnterior(extMes) !== saldoAnterior(extQuinzena), true);
-  check('e o saldo anterior do recorte é o saldo na data de início',
-    saldoAnterior(extQuinzena), fmt(DB.saldoNaData(null, janelas[2].de)));
-  check('o texto explica de quando é o saldo anterior', extQuinzena.includes('que havia em'), true);
+  state.filtros.de = dias[meio + 1]; state.filtros.ate = dias[dias.length - 1];
+  const extMetade = renderExtrato(p2);
+  const antes = html => (html.match(/ext-resumo-antes">antes ([^<]+)/) || [])[1];
+  check('o saldo anterior muda com o recorte', antes(extMes) !== antes(extMetade), true);
+  check('e é o saldo real na data de início do recorte',
+    antes(extMetade), fmt(DB.saldoNaData(null, dias[meio + 1])));
+  check('o texto explica de quando é o saldo anterior', extMetade.includes('que havia em'), true);
   check('sem recorte, volta a falar do mês anterior', extMes.includes('vieram do anterior'), true);
 
   /* Trocar de mês volta ao mês todo: o recorte guarda datas absolutas, e levá-lo
@@ -1350,11 +1377,92 @@ try {
      por conta própria e o teste passaria sem o clique provar nada. */
   setTab('extrato');
   bindView();
-  state.filtros.de = janelas[1].de; state.filtros.ate = janelas[1].ate;
-  check('o recorte está de pé antes do clique', state.filtros.de, janelas[1].de);
+  state.filtros.de = dias[0]; state.filtros.ate = dias[meio];
+  check('o recorte está de pé antes do clique', state.filtros.de, dias[0]);
   els['#mn-prev'].onclick();
   check('trocar de mês desfaz o recorte', state.filtros.de, '');
   check('e o mês realmente andou', state.monthOffset, -1);
+  state.monthOffset = 0;
+
+  /* Arrastar: o rótulo e a faixa acompanham ao vivo, mas o extrato só é
+     redesenhado ao SOLTAR. Redesenhar a cada pixel refaria a lista dezenas de
+     vezes por segundo e engasgaria justamente o gesto que precisa ser fluido. */
+  zerar();
+  setTab('extrato'); bindView();
+  const thumbDe = els['#regua-de'], thumbAte = els['#regua-ate'];
+  check('a régua ficou ligada', !!(thumbDe && thumbDe.onchange && thumbDe.oninput), true);
+  thumbDe.value = 2; thumbAte.value = 6;
+  thumbDe.oninput();
+  check('arrastar sozinho não aplica o recorte', state.filtros.de, '');
+  thumbDe.onchange();
+  check('soltar aplica', state.filtros.de, dias[2]);
+  check('e o fim também', state.filtros.ate, dias[6]);
+
+  // Polegares cruzados: vale o menor primeiro, em vez de devolver lista vazia
+  bindView();
+  els['#regua-de'].value = 9; els['#regua-ate'].value = 4;
+  els['#regua-de'].onchange();
+  check('polegar cruzado não inverte o intervalo', state.filtros.de, dias[4]);
+  check('o maior vira o fim', state.filtros.ate, dias[9]);
+
+  // Abrir tudo é "sem recorte", não um recorte que cobre o mês
+  bindView();
+  els['#regua-de'].value = 0; els['#regua-ate'].value = dias.length - 1;
+  els['#regua-de'].onchange();
+  check('régua toda aberta limpa o recorte', state.filtros.de + state.filtros.ate, '');
+  zerar();
+
+  /* ---- Pílulas de filtro ---- */
+  const cssPil = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('a barra do topo gruda ao rolar', /\.ext-topo \{[^}]*position: sticky/.test(cssPil), true);
+  /* Fundo da PÁGINA, não o dos cartões: a barra não flutua sobre o conteúdo,
+     ela é o topo da página preso. Cartão branco leria como algo que pousou ali. */
+  check('e usa o fundo da página, não o de cartão', /\.ext-topo \{[^}]*background: var\(--ink\);/.test(cssPil), true);
+  check('sem sombra competindo com a lista', /\.ext-topo \{[^}]*box-shadow/.test(cssPil), false);
+  check('a barra sai da animação de entrada', cssPil.includes('.view > .ext-topo { animation: none; }'), true);
+  check('a fileira de pílulas rola na horizontal', /\.ext-pilulas \{[^}]*overflow-x: auto/.test(cssPil), true);
+  check('o polegar da régua recebe o toque de volta',
+    /::-webkit-slider-thumb \{[^}]*pointer-events: auto/.test(cssPil), true);
+  /* O painel da pílula vive no <body>: dentro da fileira, o overflow-x:auto dela
+     cortaria o painel na altura da própria pílula. */
+  const uiPop = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
+  check('o popover não fica preso dentro da âncora', uiPop.includes('document.body.appendChild(painel)'), true);
+  check('e é posicionado como fixo', /\.ui-pop \{[^}]*position: fixed/.test(cssPil), true);
+  check('clique dentro do painel não conta como clique fora',
+    uiPop.includes('!this.aberto.painel.contains(alvo)'), true);
+
+  /* Duas pílulas ativas: cada × precisa carregar a PRÓPRIA chave, senão limpar
+     "Tipo" levaria "Situação" junto. */
+  zerar();
+  state.filtros.tipo = ['Despesa']; state.filtros.situacao = ['Pago'];
+  const duasAtivas = renderExtrato(p2);
+  check('cada × diz qual filtro limpa',
+    duasAtivas.includes('data-limpa-pilula="tipo"') && duasAtivas.includes('data-limpa-pilula="situacao"'), true);
+  check('e só as ativas ganham ×',
+    (duasAtivas.match(/data-limpa-pilula=/g) || []).length, 2);
+  // O handler zera só a chave dele — é uma linha, e é a linha que importa
+  const apPil = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('o × zera apenas a própria chave',
+    /state\.filtros\[x\.dataset\.limpaPilula\] = \[\];/.test(apPil), true);
+  check('e o clique no × não abre o painel atrás dele',
+    /if \(e\.target\.dataset && e\.target\.dataset\.limpaPilula\) return;/.test(apPil), true);
+
+  // Categoria na pílula traz envelope e subcategoria na mesma lista
+  const defCat = pilulasDeFiltro().find(p => p.chave === 'categorias');
+  check('a lista de categoria tem envelopes', defCat.ops.some(o => o.grupo), true);
+  check('e as subcategorias dele', defCat.ops.some(o => o.filha), true);
+  check('o envelope vem antes das filhas dele',
+    defCat.ops.findIndex(o => o.grupo) < defCat.ops.findIndex(o => o.filha), true);
+
+  // Resumo recolhível
+  zerar();
+  state.resumoAberto = true;
+  check('o resumo abre expandido', renderExtrato(p2).includes('class="card ext-resumo"'), true);
+  state.resumoAberto = false;
+  check('e recolhido esconde o apoio', renderExtrato(p2).includes('ext-resumo fechado'), true);
+  check('mas o saldo continua à vista', renderExtrato(p2).includes('ext-resumo-val'), true);
+  state.resumoAberto = true;
+  zerar();
   state.monthOffset = 0;
   zerar();
 } catch (e) { console.log(` FALHA | etiquetas/filtros: ${e.message}`); fail++; }
@@ -1381,7 +1489,7 @@ try {
   DB.upsert('transactions', { description: 'Padaria do dia', amount: 50, date: diaTeste, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Dinheiro', account_id: contaD });
   DB.upsert('transactions', { description: 'Reembolso do dia', amount: 80, date: diaTeste, type: 'Receita', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaD });
 
-  state.filtros = { ...FILTROS_VAZIOS };
+  state.filtros = filtrosVazios();
   const pD = DB.monthPeriod(new Date());
   const linhaDoDia = html => {
     const m = html.match(new RegExp(`<p class="tx-day">[\\s\\S]*?</p>`, 'g')) || [];
@@ -1403,33 +1511,35 @@ try {
   DB.remove('transactions', trId);
 
   // O total precisa refletir o filtro, senão não bate com as linhas logo abaixo
-  state.filtros = { ...FILTROS_VAZIOS, busca: 'mercado do dia' };
+  state.filtros = { ...filtrosVazios(), busca: 'mercado do dia' };
   linha = linhaDoDia(renderExtrato(pD));
   check('com filtro, o total acompanha o que é exibido', linha.includes(fmt(200)), true);
   check('e some o que foi filtrado fora', linha.includes(fmt(250)), false);
-  state.filtros = { ...FILTROS_VAZIOS };
+  state.filtros = filtrosVazios();
 
   /* Saldo do dia: só quando houve entrada E saída. Num dia de um tipo só ele
      repetiria o mesmo número, e repetir número faz a pessoa parar de ler. */
-  state.filtros = { ...FILTROS_VAZIOS };
+  state.filtros = filtrosVazios();
   linha = linhaDoDia(renderExtrato(pD));
   check('dia misto mostra o saldo', linha.includes('dia-badge saldo'), true);
   check('e o saldo é entrada menos saída', linha.includes(fmt(170)), true);
 
   /* Totalizadores com centavos: arredondar escondia diferença de centavos
      justamente na conferência contra o extrato do banco. */
+  /* O resumo tem UM número grande, não quatro iguais. Quatro cartões do mesmo
+     tamanho obrigavam a medir os quatro para descobrir qual responder. */
   const cabecalho = renderExtrato(pD);
-  check('cards do extrato em 2 colunas', cabecalho.includes('stat-2x2'), true);
-  // O que veio do mês anterior abre o cabeçalho: é a primeira linha de um extrato
-  check('saldo anterior vem primeiro',
-    cabecalho.indexOf('>Saldo anterior<') >= 0 &&
-    cabecalho.indexOf('>Saldo anterior<') < cabecalho.indexOf('>Receitas<'), true);
-  check('receitas antes de despesas',
-    cabecalho.indexOf('>Receitas<') < cabecalho.indexOf('>Despesas<'), true);
+  check('o resumo é um cartão só', cabecalho.includes('class="card ext-resumo'), true);
+  check('e não voltou o grid de quatro', cabecalho.includes('stat-2x2'), false);
+  check('o saldo do período é o número em destaque', cabecalho.includes('ext-resumo-val'), true);
+  check('entrou e saiu ficam na linha de apoio', cabecalho.includes('ext-resumo-linha'), true);
+  check('a direção vem pela forma, não só pela cor',
+    cabecalho.includes('pt pt-up') && cabecalho.includes('pt pt-dn'), true);
   check('e diz o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(cabecalho), true);
+  check('o resumo abre expandido', cabecalho.includes('class="card ext-resumo"'), true);
   const apF = fs.readFileSync(BASE + 'js/app.js', 'utf8');
-  check('cards totalizadores usam centavos',
-    /<small>Receitas<\/small><b[^>]*>\$\{fmt\(/.test(apF) && /<small>Despesas<\/small><b[^>]*>\$\{fmt\(/.test(apF), true);
+  check('os totais do resumo usam centavos',
+    /entrou: receitas, saiu: total/.test(apF) && /\$\{fmt\(entrou\)\}/.test(apF), true);
   check('KPIs do painel também', !/kpi-value[^"]*">\$\{fmtShort\(/.test(apF), true);
   check('e o hero do painel', /<small>Em contas<\/small><b>\$\{fmt\(/.test(apF), true);
 
@@ -1482,9 +1592,9 @@ try {
   check('anterior + movimento do mês = saldo atual', antesDoAtual - 300, DB.get('accounts', cM).balance);
 
   // Na tela
-  state.filtros = { ...FILTROS_VAZIOS, contas: [cM] };
+  state.filtros = { ...filtrosVazios(), contas: [cM] };
   const tela = renderExtrato(mesAtual);
-  check('o extrato mostra o saldo anterior', tela.includes('>Saldo anterior<'), true);
+  check('o extrato mostra o saldo anterior', tela.includes('ext-resumo-antes'), true);
   check('com o valor que veio do mês passado', tela.includes(fmt(1000)), true);
   check('e o saldo do mês fechando', tela.includes(fmt(700)), true);
 
@@ -1501,10 +1611,10 @@ try {
   const fechamento = DB.saldoNaData([cM], DB.fimISO(mesAtual));
   check('o saldo de fechamento é o saldo real da conta', fechamento, DB.get('accounts', cM).balance);
   check('e é ele que aparece na tela', comConc.includes(fmt(fechamento)), true);
-  // O valor aparece na linha do próprio ajuste; o que importa é o card "Saiu",
-  // que deve contar só o gasto real do mês (300), não os 300 + 250
-  const cardSaiu = (comConc.match(/<small>Saiu<\/small><b[^>]*>([^<]*)</) || [])[1];
-  check('a conciliação não entra no total que saiu', cardSaiu, fmt(300));
+  // O valor aparece na linha do próprio ajuste; o que importa é o total que saiu
+  // no resumo, que deve contar só o gasto real do mês (300), não os 300 + 250
+  const totalSaiu = (comConc.match(/pt pt-dn"><\/i>([^<]*)<small>/) || [])[1];
+  check('a conciliação não entra no total que saiu', (totalSaiu || '').trim(), fmt(300));
   check('mas é explicada por extenso', comConc.includes('de conciliação'), true);
   // O erro que existia: derivar o fechamento da soma dava 250 a mais
   check('o fechamento não é anterior + entrou − saiu',
@@ -1517,18 +1627,18 @@ try {
   check('lançamento a pagar não muda o saldo anterior', DB.saldoNaData([cM], DB.inicioISO(mesAtual)), 1000);
 
   // Sem filtro de conta, soma a família inteira
-  state.filtros = { ...FILTROS_VAZIOS };
+  state.filtros = filtrosVazios();
   const geral = DB.saldoNaData(null, DB.inicioISO(mesAtual));
   const somaContas = DB.all('accounts').reduce((s, a) => s + (Number(a.balance) || 0), 0);
   check('a visão geral também tem saldo anterior', typeof geral, 'number');
   check('e o geral inclui esta conta', geral !== 0 || somaContas === 0, true);
   const telaGeral = renderExtrato(mesAtual);
-  check('a visão geral mostra o saldo anterior', telaGeral.includes('>Saldo anterior<'), true);
+  check('a visão geral mostra o saldo anterior', telaGeral.includes('ext-resumo-antes'), true);
   check('e explica o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(telaGeral), true);
 
   for (const t of DB.all('transactions').filter(t => /passado$|atual$|futuro$/.test(t.description))) DB.remove('transactions', t.id);
   DB.remove('accounts', cM);
-  state.filtros = { ...FILTROS_VAZIOS };
+  state.filtros = filtrosVazios();
 } catch (e) { console.log(` FALHA | saldo entre meses: ${e.message}`); fail++; }
 
 console.log('\n=== Extrato por conta bate com o do banco ===');
@@ -1550,24 +1660,24 @@ try {
     .find(l => l.includes(fmtDay(d))) || '');
 
   // Sem filtro de conta: a família não perdeu os 700, só mudaram de lugar
-  state.filtros = { ...FILTROS_VAZIOS, busca: 'conf' };
+  state.filtros = { ...filtrosVazios(), busca: 'conf' };
   let saida = renderExtrato(pC);
   check('no todo, transferência não soma no dia', linhaDia(saida).includes(fmtShort(100)), true);
   check('e não aparece como 800', linhaDia(saida).includes(fmtShort(800)), false);
   check('no todo, a transferência não tem sinal', /transfer">\s*\d/.test(saida.replace(/&nbsp;/g, ' ')) || saida.includes('transfer">R$'), true);
 
   // Filtrando pela conta de origem: o banco mostraria −100 e −700
-  state.filtros = { ...FILTROS_VAZIOS, contas: [cA] };
+  state.filtros = { ...filtrosVazios(), contas: [cA] };
   saida = renderExtrato(pC);
   check('na conta, a saída inclui a transferência', linhaDia(saida).includes(fmtShort(800)), true);
-  check('o topo mostra o que saiu da conta', saida.includes('>Saiu<'), true);
+  check('o topo mostra o que saiu da conta', saida.includes('<small>saiu</small>'), true);
   check('e o saldo atual dela', saida.includes(fmtShort(DB.get('accounts', cA).balance)), true);
   check('a linha ganha sinal de saída', /transfer">− /.test(saida), true);
   check('dizendo para onde foi', saida.includes('para Conta Conf B'), true);
   check('e explica o saldo anterior', saida.includes('o que veio do mês passado'), true);
 
   // Filtrando pela conta de destino: o banco mostraria +700
-  state.filtros = { ...FILTROS_VAZIOS, contas: [cB] };
+  state.filtros = { ...filtrosVazios(), contas: [cB] };
   saida = renderExtrato(pC);
   check('na conta de destino, a transferência entra', linhaDia(saida).includes(fmtShort(700)), true);
   check('com sinal de entrada', /transfer">\+ /.test(saida), true);
@@ -1580,7 +1690,7 @@ try {
     3000 - movimentoA, DB.get('accounts', cA).balance);
   check('e o da conta de destino', 500 + 700, DB.get('accounts', cB).balance);
 
-  state.filtros = { ...FILTROS_VAZIOS };
+  state.filtros = filtrosVazios();
   for (const t of DB.all('transactions').filter(t => / conf$/.test(t.description))) DB.remove('transactions', t.id);
   DB.remove('accounts', cA); DB.remove('accounts', cB);
 } catch (e) { console.log(` FALHA | conciliação por conta: ${e.message}`); fail++; }
@@ -1614,7 +1724,7 @@ try {
     .find(l => l.includes(fmtDay(dd))) || '');
 
   // X e Y juntas: sai 500 (para Z) + 40 (gasto), entra 200 (de Z). A interna some.
-  state.filtros = { ...FILTROS_VAZIOS, contas: [x, y] };
+  state.filtros = { ...filtrosVazios(), contas: [x, y] };
   let saida = renderExtrato(pXY);
   check('saída do conjunto soma só o que saiu de verdade', linhaDoDia(saida).includes(fmtShort(540)), true);
   check('entrada soma só o que veio de fora', linhaDoDia(saida).includes(fmtShort(200)), true);
@@ -1624,13 +1734,13 @@ try {
   check('e explica por que a interna não conta', saida.includes('o dinheiro não saiu daqui'), true);
 
   // Só X: agora a interna É uma saída
-  state.filtros = { ...FILTROS_VAZIOS, contas: [x] };
+  state.filtros = { ...filtrosVazios(), contas: [x] };
   saida = renderExtrato(pXY);
   check('só a origem: a interna vira saída', linhaDoDia(saida).includes(fmtShort(840)), true);
   check('e some o que não passou por X', saida.includes('ZY entrada'), false);
 
   // Só Y: a interna É uma entrada
-  state.filtros = { ...FILTROS_VAZIOS, contas: [y] };
+  state.filtros = { ...filtrosVazios(), contas: [y] };
   saida = renderExtrato(pXY);
   check('só o destino: a interna vira entrada', linhaDoDia(saida).includes(fmtShort(500)), true);
 
@@ -1640,7 +1750,7 @@ try {
   check('o conjunto X+Y fecha com saiu e entrou', 4000 + 2000 - 540 + 200,
     DB.get('accounts', x).balance + DB.get('accounts', y).balance);
 
-  state.filtros = { ...FILTROS_VAZIOS };
+  state.filtros = filtrosVazios();
   for (const t of DB.all('transactions').filter(t => /^(XY|XZ|ZY|XW) /.test(t.description))) DB.remove('transactions', t.id);
   for (const id of [x, y, z]) DB.remove('accounts', id);
 } catch (e) { console.log(` FALHA | duas contas: ${e.message}`); fail++; }

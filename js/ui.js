@@ -233,6 +233,64 @@ const UI = {
     if (!busca) painel.tabIndex = -1, setTimeout(() => painel.focus(), 20);
   },
 
+  /* ---------------- Popover ancorado ----------------
+     Painel preso ao elemento que o abriu, com o mesmo visual do dropdown. Serve
+     às pílulas de filtro do extrato: cobrir a lista para escolher o que a lista
+     mostra tira a referência do que se está filtrando — por isso não é folha nem
+     modal. Reaproveita posicionar() e o fechamento por clique fora já existentes. */
+  /* Vai para o <body> com position:fixed, não para dentro da âncora.
+
+     Motivo concreto: a fileira de pílulas rola na horizontal, e overflow-x:auto
+     CORTA qualquer filho que passe da caixa — o painel sairia decapitado. Preso
+     ao body ele escapa de qualquer recorte de ancestral, ao custo de posicionar
+     na mão a partir do retângulo da âncora. */
+  popover(ancora, html, aoFechar) {
+    this.fechar();
+    if (!ancora) return null;
+    ancora.classList.add('tem-pop');
+    const painel = document.createElement('div');
+    painel.className = 'ui-panel ui-pop';
+    painel.innerHTML = html;
+    document.body.appendChild(painel);
+    this.aberto = {
+      painel, box: ancora,
+      aoFechar: () => { ancora.classList.remove('tem-pop'); if (aoFechar) aoFechar(); },
+    };
+    this.posicionarFixo(painel, ancora);
+    const busca = painel.querySelector('.ui-search input');
+    if (busca) setTimeout(() => busca.focus(), 30);
+    return painel;
+  },
+
+  // Coloca um painel fixo logo abaixo da âncora, dentro da área visível
+  posicionarFixo(painel, ancora) {
+    if (typeof ancora.getBoundingClientRect !== 'function') return;
+    const margem = 8;
+    const r = ancora.getBoundingClientRect();
+    const vv = typeof window !== 'undefined' && window.visualViewport;
+    const larguraTela = (vv && vv.width) || window.innerWidth || 0;
+    const alturaTela = (vv && vv.height) || window.innerHeight || 0;
+    const topoTela = (vv && vv.offsetTop) || 0;
+    if (!larguraTela || !alturaTela) return;
+
+    const cx = painel.getBoundingClientRect();
+    const largura = cx.width || 240;
+    let left = r.left;
+    if (left + largura > larguraTela - margem) left = larguraTela - margem - largura;
+    if (left < margem) left = margem;
+    painel.style.left = Math.round(left) + 'px';
+
+    const abaixo = (topoTela + alturaTela) - r.bottom - margem;
+    const acima = r.top - topoTela - margem;
+    const paraCima = abaixo < 190 && acima > abaixo;
+    painel.classList.toggle('acima', paraCima);
+    if (paraCima) painel.style.top = Math.round(r.top - margem - Math.min(cx.height || 0, acima)) + 'px';
+    else painel.style.top = Math.round(r.bottom + 6) + 'px';
+
+    const lista = painel.querySelector && painel.querySelector('.ui-list');
+    if (lista) lista.style.maxHeight = Math.round(Math.min(260, Math.max(120, (paraCima ? acima : abaixo) - 60))) + 'px';
+  },
+
   /* ---------------- Datepicker ---------------- */
   enhanceDate(inp) {
     if (inp.dataset.ui === '1') return;
@@ -391,8 +449,10 @@ const UI = {
 
   fechar() {
     if (!this.aberto) return;
-    this.aberto.painel.remove();
+    const { painel, aoFechar } = this.aberto;
+    painel.remove();
     this.aberto = null;
+    if (aoFechar) aoFechar();
   },
 
   norm(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); },
@@ -458,7 +518,9 @@ const UI = {
       // Nó já retirado do DOM não é "clique fora": é um redesenho do próprio
       // painel, e fechar aí tiraria a lista debaixo de quem acabou de tocar nela.
       if (alvo && alvo.isConnected === false) return;
-      if (!this.aberto.box.contains(alvo)) this.fechar();
+      // O popover vive no <body>, fora da âncora: sem testar o painel também, o
+      // primeiro toque dentro dele contaria como "clique fora" e fecharia tudo
+      if (!this.aberto.box.contains(alvo) && !this.aberto.painel.contains(alvo)) this.fechar();
     });
     document.addEventListener('keydown', e => { if (e.key === 'Escape') this.fechar(); });
     this.vigiarTeclado();

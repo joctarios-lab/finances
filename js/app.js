@@ -7,7 +7,11 @@ const METHODS = ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto'];
 const MEMBRO_COMUM = 'Comum / Família';   // usado sempre que o âmbito é Família
 const PALETTE = ['#009ef7', '#50cd89', '#7239ea', '#f1416c', '#ffc700', '#43ced7', '#fd7e14', '#8950fc', '#1bc5bd', '#6c7293'];
 
-let state = { tab: 'inicio', monthOffset: 0, repOffset: 0, filtros: null };
+/* resumoAberto fica FORA do que zera ao trocar de tela. Mês e filtros zeram por
+   correção — um mês antigo esquecido faz ler o saldo errado. Recolher o resumo
+   não engana ninguém: é preferência de quem já sabe o próprio saldo e quer a
+   lista mais alta. */
+let state = { tab: 'inicio', monthOffset: 0, repOffset: 0, filtros: null, resumoAberto: true };
 
 /* Filtros do extrato. Os dois primeiros ficam na tela (são os que se usa toda
    hora); o resto vive no painel, para a tela não virar um formulário. Tudo o que
@@ -772,7 +776,10 @@ function filtrosAtivos() {
   return rotulos;
 }
 
-function txsFiltradas(period) {
+/* `ignorarJanela` serve à régua: as marcas de movimento precisam mostrar o mês
+   inteiro, senão o trilho ficaria vazio fora do trecho já escolhido — e aí não
+   haveria como ver para onde valeria a pena arrastar. */
+function txsFiltradas(period, ignorarJanela) {
   const f = state.filtros || filtrosVazios();
   const busca = DB._semAcento(f.busca);
   // Lista vazia é "todos": o filtro só restringe depois que alguém escolhe algo
@@ -794,8 +801,10 @@ function txsFiltradas(period) {
     if (!algum(f.metodos, t.method)) return false;
     if (f.contas && f.contas.length &&
         !f.contas.some(id => t.account_id === id || t.card_id === id || t.to_account === id)) return false;
-    if (f.de && t.date < f.de) return false;
-    if (f.ate && t.date > f.ate) return false;
+    if (!ignorarJanela) {
+      if (f.de && t.date < f.de) return false;
+      if (f.ate && t.date > f.ate) return false;
+    }
     if (f.valorMin && Number(t.amount) < Number(f.valorMin)) return false;
     if (f.valorMax && Number(t.amount) > Number(f.valorMax)) return false;
     if (f.recorrente && !t.recurring) return false;
@@ -810,25 +819,133 @@ function txsFiltradas(period) {
   }).sort((a, b) => b.date.localeCompare(a.date));
 }
 
-/* Recortes de dias oferecidos dentro do mês. Um toque cobre quase todo caso; o
-   resto vai no "Personalizado", que não pode escapar do mês em análise. */
-function janelasDoMes(period) {
-  const ini = DB.inicioISO(period);
+// Todos os dias do período, em ordem. É o eixo da régua.
+function diasDoPeriodo(period) {
   const fim = somarDias(DB.fimISO(period), -1);      // period.end é exclusivo
-  const meio = somarDias(ini, 14);
-  const janelas = [
-    { rot: 'Mês todo', de: '', ate: '' },
-    { rot: '1ª quinzena', de: ini, ate: meio },
-    { rot: '2ª quinzena', de: somarDias(meio, 1), ate: fim },
-  ];
-  // "Últimos 7 dias" só existe quando hoje cai dentro do mês em análise: em mês
-  // encerrado seria um intervalo que não toca nada do que está na tela
-  const hoje = todayISO();
-  if (hoje >= ini && hoje <= fim) {
-    const de = somarDias(hoje, -6);
-    janelas.push({ rot: 'Últimos 7 dias', de: de < ini ? ini : de, ate: hoje });
+  const dias = [];
+  for (let d = DB.inicioISO(period); d <= fim; d = somarDias(d, 1)) dias.push(d);
+  return dias;
+}
+
+/* A régua do mês.
+
+   É o seletor de intervalo e, ao mesmo tempo, o mapa de onde o dinheiro se
+   mexeu: cada dia vira uma marca com altura proporcional ao movimento dele. Sem
+   as marcas, escolher um intervalo seria adivinhar — com elas, dá para ver o
+   aglomerado do dia 5 e arrastar até ali. Por isso as marcas ignoram o próprio
+   intervalo escolhido: um trilho que só mostra o que já está selecionado não
+   ajuda a mudar a seleção.
+
+   Dois <input type="range"> sobrepostos em vez de arrastar por conta própria:
+   assim o teclado funciona (setas movem o polegar), o leitor de tela anuncia o
+   valor, e não há código de toque para manter. */
+function reguaDoMes(period, movimentoPorDia) {
+  const dias = diasDoPeriodo(period);
+  const n = dias.length;
+  const f = state.filtros || filtrosVazios();
+  const achar = (iso, padrao) => { const i = dias.indexOf(iso); return i < 0 ? padrao : i; };
+  const iDe = f.de ? achar(f.de, 0) : 0;
+  const iAte = f.ate ? achar(f.ate, n - 1) : n - 1;
+
+  const maior = Math.max(1, ...Object.values(movimentoPorDia || {}));
+  const marcas = dias.map((d, i) => {
+    const v = (movimentoPorDia || {})[d] || 0;
+    // Piso de 18%: um dia com um lançamento só precisa aparecer, e uma marca de
+    // 2% é indistinguível de dia vazio
+    const alt = v ? 18 + Math.round((v / maior) * 82) : 0;
+    return `<span class="regua-marca${i >= iDe && i <= iAte ? ' dentro' : ''}" style="height:${alt}%"></span>`;
+  }).join('');
+
+  const pct = i => (n <= 1 ? 0 : (i / (n - 1)) * 100);
+  const dia = iso => new Date(iso + 'T12:00:00').getDate();
+  const inteiro = iDe === 0 && iAte === n - 1;
+
+  return `
+    <div class="regua" id="regua" data-dias="${n}">
+      <div class="regua-trilho">
+        <div class="regua-marcas">${marcas}</div>
+        <div class="regua-faixa" style="left:${pct(iDe)}%;right:${100 - pct(iAte)}%"></div>
+      </div>
+      <input type="range" class="regua-thumb" id="regua-de" min="0" max="${n - 1}" value="${iDe}"
+        aria-label="Primeiro dia do intervalo">
+      <input type="range" class="regua-thumb" id="regua-ate" min="0" max="${n - 1}" value="${iAte}"
+        aria-label="Último dia do intervalo">
+      <div class="regua-pes">
+        <span>${dia(dias[0])}</span>
+        <b id="regua-rotulo">${inteiro ? 'Mês todo' : `${dia(dias[iDe])} a ${dia(dias[iAte])}`}</b>
+        <span>${dia(dias[n - 1])}</span>
+      </div>
+    </div>`;
+}
+
+/* Os filtros como pílulas na própria tela, cada uma abrindo um painel ancorado
+   nela. Não é folha nem modal: cobrir a lista para escolher o que a lista mostra
+   é justamente o que atrapalha — some a referência do que se está filtrando.
+
+   A pílula também É o estado. Com ela mostrando o próprio valor, a fileira de
+   etiquetas ativas deixou de ter função e saiu: era a mesma informação repetida
+   um bloco abaixo. */
+function pilulasDeFiltro() {
+  const membros = [MEMBRO_COMUM, ...DB.settings().members];
+  const contas = DB.all('accounts').filter(a => a.active !== false);
+  const cartoes = DB.all('cards').filter(c => c.active !== false);
+  return [
+    { chave: 'tipo', rot: 'Tipo', ops: ['Despesa', 'Receita', 'Transferência'].map(v => ({ v, l: v })) },
+    { chave: 'situacao', rot: 'Situação', ops: ['Pago', 'A Pagar'].map(v => ({ v, l: v })) },
+    { chave: 'categorias', rot: 'Categoria', ops: opcoesCategoriaPilula() },
+    { chave: 'contas', rot: 'Onde', ops: [...contas, ...cartoes].map(o => ({ v: o.id, l: o.name })) },
+    { chave: 'membro', rot: 'Quem', ops: membros.map(m => ({ v: m, l: m === MEMBRO_COMUM ? 'Comum' : m })) },
+    { chave: 'scope', rot: 'Âmbito', ops: ['Família', 'Pessoal'].map(v => ({ v, l: v })) },
+    { chave: 'tags', rot: 'Etiqueta', ops: DB.allTags().map(t => ({ v: t, l: '#' + t })) },
+    { chave: 'metodos', rot: 'Pagamento', ops: ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto', 'Transferência'].map(v => ({ v, l: v })) },
+  ].filter(p => p.ops.length);
+}
+
+// Envelope e subcategorias na mesma lista, com o envelope primeiro e recuo nas
+// filhas: é a hierarquia que o filtro usa para casar, então tem de aparecer
+function opcoesCategoriaPilula() {
+  const ops = [];
+  for (const raiz of DB.rootCategories().sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))) {
+    const filhas = DB.subcategoriesOf(raiz.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+    ops.push({ v: raiz.id, l: `${raiz.icon} ${raiz.name}`, grupo: true });
+    for (const fi of filhas) ops.push({ v: fi.id, l: fi.name, filha: true });
   }
-  return janelas;
+  return ops;
+}
+
+function rotuloPilula(p) {
+  const sel = (state.filtros[p.chave] || []);
+  if (!sel.length) return p.rot;
+  // Um valor mostra o próprio nome; vários mostram a contagem, porque três nomes
+  // numa pílula viram uma linha que ninguém lê
+  if (sel.length === 1) {
+    const achado = p.ops.find(o => o.v === sel[0]);
+    return achado ? achado.l : p.rot;
+  }
+  return `${p.rot} · ${sel.length}`;
+}
+
+/* O resumo do período. Quatro cartões iguais faziam nada ser importante: o olho
+   media os quatro para descobrir qual responder. Aqui só o saldo do fim do
+   recorte é grande — é a pergunta que traz alguém ao extrato. Entrou, saiu e o
+   saldo anterior viram uma linha de apoio, e a explicação por extenso fica atrás
+   do toque, porque ela se lê uma vez e depois só ocupa espaço. */
+function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSaiu, nota }) {
+  const aberto = state.resumoAberto !== false;
+  return `
+    <div class="card ext-resumo${aberto ? '' : ' fechado'}" id="ext-resumo">
+      <button class="ext-resumo-topo" id="ext-resumo-toggle" aria-expanded="${aberto}">
+        <span class="ext-resumo-rot">${esc(titulo)}</span>
+        <span class="ext-resumo-val ${saldo >= 0 ? '' : 'txt-red'}">${fmt(saldo)}</span>
+        <span class="ext-resumo-seta" data-ico="chev"></span>
+      </button>
+      <div class="ext-resumo-linha">
+        <span><i class="pt pt-up"></i>${fmt(entrou)} <small>${rotEntrou}</small></span>
+        <span><i class="pt pt-dn"></i>${fmt(saiu)} <small>${rotSaiu}</small></span>
+        <span class="ext-resumo-antes">antes ${fmt(anterior)}</span>
+      </div>
+      <p class="muted ext-resumo-nota">${nota}</p>
+    </div>`;
 }
 
 function renderExtrato(period) {
@@ -939,29 +1056,40 @@ function renderExtrato(period) {
           <button class="btn" data-novo="Despesa" style="margin-top:12px">Lançar o primeiro gasto</button></div>`;
   }
 
-  const st = DB.statsFor(period);
   const isCurrent = state.monthOffset === 0;
+
+  /* Movimento por dia para as marcas da régua: conta os lançamentos do mês
+     inteiro sob os DEMAIS filtros, ignorando o recorte de dias. */
+  const movimentoPorDia = {};
+  for (const t of txsFiltradas(period, true)) movimentoPorDia[t.date] = (movimentoPorDia[t.date] || 0) + 1;
+
+  const pilulas = pilulasDeFiltro();
+  const temFiltro = pilulas.some(p => (state.filtros[p.chave] || []).length)
+    || state.filtros.busca || state.filtros.valorMin || state.filtros.valorMax || state.filtros.recorrente;
+
   return `
-    <div class="card month-nav">
-      <button id="mn-prev" aria-label="Mês anterior" data-ico="chevL"></button>
-      <b>${period.label} · ${fmtShort(total)}</b>
-      <button id="mn-next" aria-label="Próximo mês" data-ico="chevR"></button>
-    </div>
-    <!-- Recorte de dias dentro do mês. Vale para a lista e para os saldos do topo;
-         o orçamento dos envelopes segue mensal de propósito — meia dose de gasto
-         contra um orçamento inteiro seria leitura errada. -->
-    <div class="chips janela-chips" id="janela-chips">
-      ${(() => {
-        const janelas = janelasDoMes(period);
-        const casa = j => (state.filtros.de || '') === j.de && (state.filtros.ate || '') === j.ate;
-        const personalizado = !janelas.some(casa);
-        return janelas.map(j =>
-          `<button class="chip ${casa(j) ? 'active' : ''}" data-de="${j.de}" data-ate="${j.ate}">${j.rot}</button>`).join('')
-          + `<button class="chip ${personalizado ? 'active' : ''}" id="janela-custom">${
-            personalizado
-              ? `${fmtDate(new Date(bordaDe + 'T12:00:00'))} a ${fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`
-              : 'Personalizado'}</button>`;
-      })()}
+    <!-- Barra presa no topo: mês, régua e filtros continuam ao alcance enquanto a
+         lista rola. Usa o fundo da página, não o dos cartões — ela não flutua
+         sobre o conteúdo, ela É o topo da página, preso. -->
+    <div class="ext-topo">
+      <div class="ext-mes">
+        <button id="mn-prev" aria-label="Mês anterior" data-ico="chevL"></button>
+        <b>${esc(period.label)}</b>
+        <button id="mn-next" aria-label="Próximo mês" data-ico="chevR"></button>
+      </div>
+      ${reguaDoMes(period, movimentoPorDia)}
+      <div class="ext-pilulas" id="ext-pilulas">
+        <button class="pilula pilula-busca${state.filtros.busca ? ' on' : ''}" data-pilula="busca">
+          <span data-ico="search"></span>${state.filtros.busca ? esc(state.filtros.busca) : 'Buscar'}
+        </button>
+        ${pilulas.map(p => {
+          const n = (state.filtros[p.chave] || []).length;
+          return `<button class="pilula${n ? ' on' : ''}" data-pilula="${p.chave}">${esc(rotuloPilula(p))}${
+            n ? '<i class="pilula-x" data-limpa-pilula="' + p.chave + '">×</i>' : '<span class="pilula-seta"></span>'}</button>`;
+        }).join('')}
+        <button class="pilula${state.filtros.valorMin || state.filtros.valorMax || state.filtros.recorrente ? ' on' : ''}" data-pilula="mais">Mais<span class="pilula-seta"></span></button>
+        ${temFiltro ? '<button class="pilula pilula-limpar" id="limpar-filtros">Limpar</button>' : ''}
+      </div>
     </div>
     ${contaFiltrada ? (() => {
       // Conferindo contas: os números viram os DELAS, para bater com o extrato do
@@ -982,17 +1110,15 @@ function renderExtrato(period) {
       const anterior = DB.saldoNaData(contasFiltradas, bordaDe);
       const finalMes = DB.saldoNaData(contasFiltradas, bordaAte);
       const conciliado = finalMes - (anterior + entrouNaConta - saiuNaConta);
-      return `
-    <div class="stat-2x2">
-      <div class="card"><small>Saldo anterior</small><b class="${anterior >= 0 ? '' : 'txt-red'}">${fmt(anterior)}</b></div>
-      <div class="card"><small>${varias ? 'Saldo somado' : 'Saldo em'} ${esc(period.label.split(' de ')[0])}</small><b class="${finalMes >= 0 ? 'txt-green' : 'txt-red'}">${fmt(finalMes)}</b></div>
-      <div class="card"><small>Entrou</small><b class="txt-green">${fmt(entrouNaConta)}</b></div>
-      <div class="card"><small>Saiu</small><b class="txt-red">${fmt(saiuNaConta)}</b></div>
-    </div>
-    <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc(nomes.join(' + '))}</b> — o saldo anterior é o que ${
-      recortado ? `havia em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}` : 'veio do mês passado'}.${
-      Math.abs(conciliado) > 0.005 ? ` Há <b>${fmt(Math.abs(conciliado))}</b> de conciliação no período, que mexe no saldo mas não é gasto nem entrada.` : ''}${varias
-      ? ' Transferência entre estas contas não conta, porque o dinheiro não saiu daqui.' : ''}</p>`;
+      return resumoExtrato({
+        titulo: `${varias ? 'Saldo somado' : 'Saldo'} em ${fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
+        saldo: finalMes, anterior, entrou: entrouNaConta, saiu: saiuNaConta,
+        rotEntrou: 'entrou', rotSaiu: 'saiu',
+        nota: `Extrato de <b>${esc(nomes.join(' + '))}</b> — o saldo anterior é o que ${
+          recortado ? `havia em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}` : 'veio do mês passado'}.${
+          Math.abs(conciliado) > 0.005 ? ` Há <b>${fmt(Math.abs(conciliado))}</b> de conciliação no período, que mexe no saldo mas não é gasto nem entrada.` : ''}${varias
+          ? ' Transferência entre estas contas não conta, porque o dinheiro não saiu daqui.' : ''}`,
+      });
     })()
     : (() => {
       /* Sem filtro de conta, o extrato é o de todo o dinheiro da família — e aí
@@ -1004,48 +1130,20 @@ function renderExtrato(period) {
       const finalMes = DB.saldoNaData(null, bordaAte);
       const resultado = receitas - total;
       const conciliado = finalMes - (anterior + resultado);
-      return `
-    <div class="stat-2x2">
-      <div class="card"><small>Saldo anterior</small><b class="${anterior >= 0 ? '' : 'txt-red'}">${fmt(anterior)}</b></div>
-      <div class="card"><small>Saldo em ${esc(period.label.split(' de ')[0])}</small><b class="${finalMes >= 0 ? 'txt-green' : 'txt-red'}">${fmt(finalMes)}</b></div>
-      <div class="card"><small>Receitas</small><b class="txt-green">${fmt(receitas)}</b></div>
-      <div class="card"><small>Despesas</small><b class="txt-red">${fmt(total)}</b></div>
-    </div>
-    <p class="muted" style="margin:-4px 0 2px">${(() => {
       const onde = recortado ? 'neste intervalo' : 'neste mês';
       const vindo = recortado
         ? `que havia em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}`
         : 'que vieram do anterior';
-      return resultado >= 0
-        ? `Sobrou <b class="txt-green">${fmt(resultado)}</b> ${onde}, somados aos ${fmt(anterior)} ${vindo}.`
-        : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> ${onde}, tirados dos ${fmt(anterior)} ${vindo}.`;
-    })()}${
-      Math.abs(conciliado) > 0.005 ? ` Há ainda <b>${fmt(Math.abs(conciliado))}</b> de conciliação, que mexe no saldo sem ser gasto nem entrada.` : ''}</p>`;
+      return resumoExtrato({
+        titulo: `Saldo em ${fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
+        saldo: finalMes, anterior, entrou: receitas, saiu: total,
+        rotEntrou: 'receitas', rotSaiu: 'despesas',
+        nota: `${resultado >= 0
+          ? `Sobrou <b class="txt-green">${fmt(resultado)}</b> ${onde}, somados aos ${fmt(anterior)} ${vindo}.`
+          : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> ${onde}, tirados dos ${fmt(anterior)} ${vindo}.`}${
+          Math.abs(conciliado) > 0.005 ? ` Há ainda <b>${fmt(Math.abs(conciliado))}</b> de conciliação, que mexe no saldo sem ser gasto nem entrada.` : ''}`,
+      });
     })()}
-    <!-- Lançar é o botão flutuante, e só ele: a fileira Despesa/Receita/Transferir
-         que ficava aqui empurrava a lista para baixo da primeira dobra, e os três
-         botões só pré-marcavam o tipo — que a própria folha já deixa escolher.
-
-         Na tela ficam a busca e o atalho de âmbito, que são o filtro do dia a dia.
-         O resto abre no painel, para o extrato continuar sendo uma lista. -->
-    <div class="busca-row">
-      <input id="tx-search" type="search" placeholder="Buscar descrição, categoria, etiqueta…" autocomplete="off" value="${esc(state.filtros.busca)}">
-      <button class="btn-filtros ${ativos.length ? 'tem' : ''}" id="btn-filtros">
-        <span data-ico="filter"></span>Filtros${ativos.length ? `<span class="filtros-num">${ativos.length}</span>` : ''}
-      </button>
-    </div>
-    <div class="filter-row">
-      <!-- "Todos" é o chip que zera a lista; os outros somam entre si -->
-      <div class="chips" id="scope-chips">
-        <button class="chip ${!state.filtros.scope.length ? 'active' : ''}" data-f="">Todos</button>
-        ${['Família', 'Pessoal'].map(f => `<button class="chip ${state.filtros.scope.includes(f) ? 'active' : ''}" data-f="${f}">${f}</button>`).join('')}
-      </div>
-    </div>
-    ${ativos.length ? `<div class="ativos">
-      ${ativos.map(a => `<button class="tag-ativa" data-limpa="${a.chave}"${
-        a.valor === null ? '' : ` data-valor="${esc(a.valor)}"`}>${esc(a.texto)}<span>×</span></button>`).join('')}
-      <button class="tag-limpar" id="limpar-filtros">Limpar tudo</button>
-    </div>` : ''}
     ${isCurrent ? '<button class="btn ghost" id="btn-recur" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="sync"></span>Lançar custos fixos deste mês</button>' : ''}
     ${txs.length ? `<button class="btn ghost" id="btn-massa" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="edit"></span>Editar ${txs.length} lançamento${txs.length === 1 ? '' : 's'} em massa</button>` : ''}
     <div id="tx-list">${list}</div>
@@ -1393,13 +1491,16 @@ function bindView() {
   const zerarJanela = () => { if (state.filtros) { state.filtros.de = ''; state.filtros.ate = ''; } };
   if (prev) prev.onclick = () => { state.monthOffset--; zerarJanela(); render(); };
   if (next) next.onclick = () => { if (state.monthOffset < 0) { state.monthOffset++; zerarJanela(); render(); } };
-  v.querySelectorAll('#janela-chips .chip[data-de]').forEach(ch => ch.onclick = () => {
-    state.filtros.de = ch.dataset.de;
-    state.filtros.ate = ch.dataset.ate;
-    render();
-  });
-  const janelaCustom = $('#janela-custom');
-  if (janelaCustom) janelaCustom.onclick = () => openJanelaSheet(DB.monthPeriod(new Date(), state.monthOffset));
+  ligarRegua(DB.monthPeriod(new Date(), state.monthOffset));
+  ligarPilulas();
+  const resumoToggle = $('#ext-resumo-toggle');
+  if (resumoToggle) resumoToggle.onclick = () => {
+    state.resumoAberto = state.resumoAberto === false;
+    const card = $('#ext-resumo');
+    // Alterna sem redesenhar: recolher o resumo não deve remontar a lista inteira
+    if (card) card.classList.toggle('fechado', !state.resumoAberto);
+    resumoToggle.setAttribute('aria-expanded', String(state.resumoAberto));
+  };
   const btnMassa = $('#btn-massa');
   if (btnMassa) btnMassa.onclick = () => openMassaModal(DB.monthPeriod(new Date(), state.monthOffset));
   const rprev = $('#rep-prev'), rnext = $('#rep-next');
@@ -1411,40 +1512,11 @@ function bindView() {
   if (goCards) goCards.onclick = () => openConfigSection('cards');
   v.querySelectorAll('[data-setup]').forEach(b => b.onclick = () => openConfigSection(b.dataset.setup));
 
-  // Busca instantânea no extrato (filtra sem re-renderizar, mantendo o foco)
-  // Busca entra no mesmo pipeline dos outros filtros, então o total do topo
-  // acompanha. Espera curta para não redesenhar a cada tecla.
-  const search = $('#tx-search');
-  if (search) {
-    search.oninput = () => {
-      clearTimeout(search._t);
-      search._t = setTimeout(() => {
-        const foco = document.activeElement === search;
-        state.filtros.busca = search.value.trim();
-        render();
-        if (foco) { const novo = $('#tx-search'); if (novo) { novo.focus(); novo.setSelectionRange(novo.value.length, novo.value.length); } }
-      }, 260);
-    };
-  }
-  const btnFiltros = $('#btn-filtros');
-  if (btnFiltros) btnFiltros.onclick = openFiltrosSheet;
   const limpar = () => { state.filtros = filtrosVazios(); render(); };
   const btnLimpar = $('#limpar-filtros');
   if (btnLimpar) btnLimpar.onclick = limpar;
   const btnLimparVazio = $('#limpar-vazio');
   if (btnLimparVazio) btnLimparVazio.onclick = limpar;
-  // Cada etiqueta remove só o VALOR dela. Tirar "Transporte" de uma seleção de
-  // três categorias tem de deixar as outras duas de pé.
-  v.querySelectorAll('[data-limpa]').forEach(el => el.onclick = () => {
-    const chave = el.dataset.limpa;
-    const atual = state.filtros[chave];
-    if (Array.isArray(atual) && el.dataset.valor !== undefined) {
-      state.filtros[chave] = atual.filter(x => x !== el.dataset.valor);
-    } else {
-      state.filtros[chave] = Array.isArray(atual) ? [] : FILTROS_VAZIOS[chave];
-    }
-    render();
-  });
   // Tocar numa etiqueta do lançamento soma ela ao filtro, em vez de trocar: com
   // vários valores possíveis, substituir seria descartar o que já estava escolhido
   v.querySelectorAll('[data-tag]').forEach(el => el.onclick = e => {
@@ -1508,14 +1580,6 @@ function bindView() {
     a.click();
     toast('CSV exportado ✓');
   };
-  v.querySelectorAll('#scope-chips .chip').forEach(ch => ch.onclick = () => {
-    const val = ch.dataset.f;
-    const atual = state.filtros.scope || [];
-    state.filtros.scope = !val ? []                                  // "Todos" zera
-      : atual.includes(val) ? atual.filter(x => x !== val)
-      : [...atual, val];
-    render();
-  });
   v.querySelectorAll('[data-novo]').forEach(b => b.onclick = () => openTxSheet({
     type: b.dataset.novo, date: todayISO(), description: '', amount: '',
     status: 'Pago', method: b.dataset.novo === 'Transferência' ? 'Transferência' : 'PIX',
@@ -1582,115 +1646,167 @@ function bindView() {
    controles: na tela, empurrariam a lista para fora da primeira dobra — e o
    extrato existe para mostrar a lista. Aplicar fecha e a tela mostra o que
    está ativo em etiquetas, então nada fica escondido depois de escolhido. */
-/* Intervalo personalizado. Os dois campos são limitados ao mês em análise: o
-   recorte é DENTRO do mês, e deixar escapar criaria um extrato que não bate com
-   o mês escrito logo acima dele. */
-function openJanelaSheet(period) {
-  const ini = DB.inicioISO(period);
-  const fim = somarDias(DB.fimISO(period), -1);
-  const f = state.filtros || filtrosVazios();
-  openSheet(`
-    <div class="sheet-title">Intervalo de datas<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin-bottom:12px">Dentro de <b>${esc(period.label)}</b>. A lista e os saldos do topo passam a valer só para o intervalo; o orçamento dos envelopes continua mensal.</p>
-    <div class="row2">
-      <div class="field"><label>De</label><input id="jn-de" type="date" min="${ini}" max="${fim}" value="${f.de || ini}"></div>
-      <div class="field"><label>Até</label><input id="jn-ate" type="date" min="${ini}" max="${fim}" value="${f.ate || fim}"></div>
-    </div>
-    <button class="btn" id="sh-save">Aplicar intervalo</button>
-    <div class="btn-row"><button class="btn ghost" id="jn-mes">Ver o mês todo</button></div>
-  `);
-  $('#sh-close').onclick = closeSheet;
-  $('#jn-mes').onclick = () => {
-    state.filtros.de = ''; state.filtros.ate = '';
-    closeSheet(); render();
+/* A régua: arrastar move a faixa e o rótulo ao vivo, mas o extrato só é
+   redesenhado ao SOLTAR. Redesenhar a cada pixel de arrasto refaria a lista
+   inteira dezenas de vezes por segundo — o polegar engasgaria justamente no
+   gesto que precisa ser fluido. */
+function ligarRegua(period) {
+  const caixa = $('#regua');
+  if (!caixa) return;
+  const de = $('#regua-de'), ate = $('#regua-ate');
+  if (!de || !ate) return;
+  const dias = diasDoPeriodo(period);
+  const n = dias.length;
+  const faixa = caixa.querySelector('.regua-faixa');
+  const rotulo = $('#regua-rotulo');
+  const marcas = caixa.querySelectorAll('.regua-marca');
+
+  const limites = () => {
+    let a = Number(de.value), b = Number(ate.value);
+    return a <= b ? [a, b] : [b, a];      // polegares cruzados: vale o menor primeiro
   };
-  $('#sh-save').onclick = () => {
-    const dentro = v => (!v ? '' : v < ini ? ini : v > fim ? fim : v);
-    let de = dentro($('#jn-de').value), ate = dentro($('#jn-ate').value);
-    // Datas invertidas são engano de digitação, não pedido de lista vazia
-    if (de && ate && de > ate) [de, ate] = [ate, de];
-    state.filtros.de = de === ini && ate === fim ? '' : de;   // o mês inteiro é "mês todo"
-    state.filtros.ate = de === ini && ate === fim ? '' : ate;
-    closeSheet(); render();
+  const pintar = () => {
+    const [a, b] = limites();
+    const pct = i => (n <= 1 ? 0 : (i / (n - 1)) * 100);
+    if (faixa) { faixa.style.left = pct(a) + '%'; faixa.style.right = (100 - pct(b)) + '%'; }
+    marcas.forEach((m, i) => m.classList.toggle('dentro', i >= a && i <= b));
+    if (rotulo) {
+      const dia = iso => new Date(iso + 'T12:00:00').getDate();
+      rotulo.textContent = (a === 0 && b === n - 1) ? 'Mês todo' : `${dia(dias[a])} a ${dia(dias[b])}`;
+    }
+  };
+  const aplicar = () => {
+    const [a, b] = limites();
+    const inteiro = a === 0 && b === n - 1;   // o mês todo é "sem recorte"
+    state.filtros.de = inteiro ? '' : dias[a];
+    state.filtros.ate = inteiro ? '' : dias[b];
+    render();
+  };
+  for (const el of [de, ate]) {
+    el.oninput = pintar;
+    el.onchange = aplicar;                 // dispara ao soltar o polegar
+  }
+}
+
+/* Cada pílula abre o próprio painel, ancorado nela. O × na pílula ativa limpa só
+   aquele filtro sem abrir nada — é o gesto mais frequente depois de filtrar. */
+function ligarPilulas() {
+  const barra = $('#ext-pilulas');
+  if (!barra) return;
+  const defs = pilulasDeFiltro();
+  barra.querySelectorAll('[data-limpa-pilula]').forEach(x => x.onclick = e => {
+    e.stopPropagation();
+    state.filtros[x.dataset.limpaPilula] = [];
+    render();
+  });
+  barra.querySelectorAll('[data-pilula]').forEach(b => b.onclick = e => {
+    if (e.target.dataset && e.target.dataset.limpaPilula) return;   // o × já tratou
+    const chave = b.dataset.pilula;
+    if (chave === 'busca') return abrirPopBusca(b);
+    if (chave === 'mais') return abrirPopMais(b);
+    const def = defs.find(d => d.chave === chave);
+    if (def) abrirPopLista(b, def);
+  });
+}
+
+function abrirPopLista(ancora, def) {
+  const sel = () => state.filtros[def.chave] || [];
+  const comBusca = def.ops.length > 8;
+  const linha = o => `<div class="ui-opt${sel().includes(o.v) ? ' is-sel' : ''}${o.filha ? ' e-filha' : ''}${
+    o.grupo ? ' e-grupo' : ''}" data-v="${esc(o.v)}">${esc(o.l)}${sel().includes(o.v) ? '<span class="ui-check">✓</span>' : ''}</div>`;
+
+  const painel = UI.popover(ancora, `
+    ${comBusca ? '<div class="ui-search"><input type="text" placeholder="Buscar…" autocomplete="off"></div>' : ''}
+    <div class="ui-list" role="listbox">${def.ops.map(linha).join('')}</div>
+    <div class="ui-pop-pe"><button type="button" data-pop-limpar>Limpar</button><span>${sel().length || 'nenhum'} escolhido(s)</span></div>
+  `, aplicarPilulaSePreciso);
+  if (!painel) return;
+  const lista = painel.querySelector('.ui-list');
+  const pe = painel.querySelector('.ui-pop-pe span');
+
+  const redesenhar = filtro => {
+    const f = UI.norm(filtro || '');
+    const vis = def.ops.filter(o => !f || UI.norm(o.l).includes(f));
+    lista.innerHTML = vis.length ? vis.map(linha).join('') : '<div class="ui-empty">Nada encontrado</div>';
+    if (pe) pe.textContent = `${sel().length || 'nenhum'} escolhido(s)`;
+    ligar();
+  };
+  const ligar = () => lista.querySelectorAll('[data-v]').forEach(el => el.onclick = ev => {
+    ev.stopPropagation();
+    const v = el.dataset.v;
+    const atual = sel();
+    state.filtros[def.chave] = atual.includes(v) ? atual.filter(x => x !== v) : [...atual, v];
+    /* Só a lista se redesenha; o extrato espera o painel fechar. Refazer a tela a
+       cada toque arrancaria o painel de baixo do dedo no meio da escolha. */
+    redesenhar(painel.querySelector('.ui-search input') ? painel.querySelector('.ui-search input').value : '');
+    marcarPilulaSuja();
+  });
+  ligar();
+  const busca = painel.querySelector('.ui-search input');
+  if (busca) busca.oninput = () => redesenhar(busca.value);
+  const limparBtn = painel.querySelector('[data-pop-limpar]');
+  if (limparBtn) limparBtn.onclick = ev => {
+    ev.stopPropagation();
+    state.filtros[def.chave] = [];
+    redesenhar(busca ? busca.value : '');
+    marcarPilulaSuja();
   };
 }
 
-function openFiltrosSheet() {
-  const f = state.filtros || filtrosVazios();
-  const membros = [MEMBRO_COMUM, ...DB.settings().members];
-  const contas = DB.all('accounts').filter(a => a.active !== false);
-  const cartoes = DB.all('cards').filter(c => c.active !== false);
-  const tags = DB.allTags();
-  const metodos = ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto', 'Transferência'];
+/* Fechar o painel é o que aplica: enquanto ele está aberto a lista atrás segue
+   intacta, servindo de referência para o que se está escolhendo. */
+let pilulaSuja = false;
+function marcarPilulaSuja() { pilulaSuja = true; }
+function aplicarPilulaSePreciso() {
+  if (!pilulaSuja) return;
+  pilulaSuja = false;
+  render();
+}
 
-  openSheet(`
-    <div class="sheet-title">Filtrar extrato<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin:-4px 0 12px">Dá para escolher mais de um em cada filtro. Valores do mesmo filtro <b>somam</b>; filtros diferentes <b>restringem</b>. Nada marcado quer dizer todos.</p>
-
-    <div class="field"><label>Tipo</label>${chipGroupMulti('fl-tipo', ['Despesa', 'Receita', 'Transferência'].map(v => ({ value: v, label: v })), f.tipo)}</div>
-    <div class="field"><label>Situação</label>${chipGroupMulti('fl-sit', ['Pago', 'A Pagar'].map(v => ({ value: v, label: v })), f.situacao)}</div>
-    <div class="field"><label>Âmbito</label>${chipGroupMulti('fl-scope', ['Família', 'Pessoal'].map(v => ({ value: v, label: v })), f.scope)}</div>
-
-    <div class="field"><label>De quem</label>
-      <select id="fl-membro" multiple data-vazio="Todos">${membros.map(m => `<option value="${esc(m)}"${f.membro.includes(m) ? ' selected' : ''}>${m === MEMBRO_COMUM ? 'Comum / Família' : esc(m)}</option>`).join('')}</select>
-    </div>
-    <div class="field"><label>Categoria</label>
-      <select id="fl-cat" multiple data-vazio="Todas">${optionsCategorias(f.categorias, undefined, true)}</select>
-      <p class="muted" style="margin-top:6px">“Tudo de Alimentação” traz o envelope inteiro; escolher só “Mercado” traz só o mercado.</p>
-    </div>
-    ${tags.length ? `<div class="field"><label>Etiqueta</label>
-      <select id="fl-tag" multiple data-vazio="Todas">${tags.map(t => `<option value="${esc(t)}"${f.tags.includes(t) ? ' selected' : ''}>#${esc(t)} (${DB.tagCount(t)})</option>`).join('')}</select>
-    </div>` : ''}
-    <div class="field"><label>Forma de pagamento</label>
-      <select id="fl-metodo" multiple data-vazio="Todas">${metodos.map(m => `<option value="${esc(m)}"${f.metodos.includes(m) ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>
-    </div>
-    <div class="field"><label>Conta ou cartão</label>
-      <!-- Chips em vez de select: escolher várias contas é o que permite conferir
-           duas contas juntas, e aí transferência entre elas deixa de contar. -->
-      <div class="chips" id="fl-contas">
-        ${[...contas, ...cartoes].map(o =>
-          `<button type="button" class="chip ${(f.contas || []).includes(o.id) ? 'active' : ''}" data-v="${o.id}">${esc(o.name)}</button>`).join('')}
-      </div>
-      <p class="muted" style="margin-top:6px">Escolhendo mais de uma, transferência entre elas não conta como saída nem entrada — o dinheiro não saiu do conjunto.</p>
-    </div>
-    <div class="row2">
-      <div class="field"><label>Valor a partir de</label><input id="fl-min" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
-      <div class="field"><label>Valor até</label><input id="fl-max" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
-    </div>
-    <div class="field"><label>Só custos fixos (recorrentes)</label>
-      <select id="fl-rec"><option value=""${f.recorrente ? '' : ' selected'}>Não</option><option value="1"${f.recorrente ? ' selected' : ''}>Sim</option></select>
-    </div>
-
-    <button class="btn" id="sh-save">Aplicar filtros</button>
-    <div class="btn-row"><button class="btn ghost" id="fl-limpar">Limpar tudo</button></div>
+function abrirPopBusca(ancora) {
+  const painel = UI.popover(ancora, `
+    <div class="ui-search"><input type="search" id="pop-busca" placeholder="Descrição, categoria, etiqueta…"
+      autocomplete="off" value="${esc(state.filtros.busca)}"></div>
+    <div class="ui-pop-pe"><button type="button" data-pop-limpar>Limpar</button><span>Enter para aplicar</span></div>
   `);
-  initMoney('#fl-min', f.valorMin || 0);
-  initMoney('#fl-max', f.valorMax || 0);
-  $('#sh-close').onclick = closeSheet;
-  bindChipsMulti('fl-tipo'); bindChipsMulti('fl-sit'); bindChipsMulti('fl-scope');
-  bindChipsMulti('fl-contas');
-
-  $('#fl-limpar').onclick = () => {
-    state.filtros = filtrosVazios();
-    closeSheet(); render();
+  if (!painel) return;
+  const inp = painel.querySelector('#pop-busca');
+  const aplicar = () => { state.filtros.busca = inp.value.trim(); UI.fechar(); render(); };
+  inp.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); aplicar(); } };
+  inp.onblur = aplicar;
+  painel.querySelector('[data-pop-limpar]').onclick = e => {
+    e.stopPropagation(); inp.value = ''; aplicar();
   };
-  $('#sh-save').onclick = () => {
-    const val = id => moneyVal(id) || '';
-    state.filtros = {
-      ...state.filtros,
-      tipo: chipValues('fl-tipo'),
-      situacao: chipValues('fl-sit'),
-      scope: chipValues('fl-scope'),
-      membro: selectValues('#fl-membro'),
-      categorias: selectValues('#fl-cat'),
-      tags: selectValues('#fl-tag'),
-      metodos: selectValues('#fl-metodo'),
-      contas: chipValues('fl-contas'),
-      valorMin: val('#fl-min'),
-      valorMax: val('#fl-max'),
-      recorrente: !!$('#fl-rec').value,
-    };
-    closeSheet(); render();
+}
+
+// O que sobra: valor e custos fixos. Ficam atrás de "Mais" porque quase nunca
+// são o filtro que se usa, e ocupariam duas pílulas na fileira principal
+function abrirPopMais(ancora) {
+  const f = state.filtros;
+  const painel = UI.popover(ancora, `
+    <div class="ui-pop-form">
+      <div class="row2">
+        <div class="field"><label>Valor de</label><input id="pop-min" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
+        <div class="field"><label>até</label><input id="pop-max" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
+      </div>
+      <label class="pop-check"><input type="checkbox" id="pop-rec" ${f.recorrente ? 'checked' : ''}><span>Só custos fixos</span></label>
+    </div>
+    <div class="ui-pop-pe"><button type="button" data-pop-limpar>Limpar</button><button type="button" data-pop-ok>Aplicar</button></div>
+  `);
+  if (!painel) return;
+  initMoney('#pop-min', f.valorMin || 0);
+  initMoney('#pop-max', f.valorMax || 0);
+  painel.querySelector('[data-pop-ok]').onclick = e => {
+    e.stopPropagation();
+    state.filtros.valorMin = moneyVal('#pop-min') || '';
+    state.filtros.valorMax = moneyVal('#pop-max') || '';
+    state.filtros.recorrente = !!painel.querySelector('#pop-rec').checked;
+    UI.fechar(); render();
+  };
+  painel.querySelector('[data-pop-limpar]').onclick = e => {
+    e.stopPropagation();
+    state.filtros.valorMin = ''; state.filtros.valorMax = ''; state.filtros.recorrente = false;
+    UI.fechar(); render();
   };
 }
 
@@ -2102,25 +2218,6 @@ function selectChip(id, value) {
   document.querySelectorAll(`#${id} .chip`).forEach(ch => ch.classList.toggle('active', ch.dataset.v === value));
 }
 
-/* Grupo de chips com escolha múltipla, para os filtros. Nenhum marcado significa
-   "todos" — e é por isso que não existe um chip "Todos" aqui: ele seria um quarto
-   estado dizendo a mesma coisa que os outros três desmarcados. */
-function chipGroupMulti(id, options, selecionados = []) {
-  return `<div class="chips" id="${id}">
-    ${options.map(o => `<button type="button" class="chip ${selecionados.includes(o.value) ? 'active' : ''}" data-v="${esc(o.value)}">${esc(o.label)}</button>`).join('')}
-  </div>`;
-}
-function chipValues(id) {
-  return [...document.querySelectorAll(`#${id} .chip.active`)].map(c => c.dataset.v);
-}
-function bindChipsMulti(id) {
-  document.querySelectorAll(`#${id} .chip`).forEach(ch => ch.onclick = () => ch.classList.toggle('active'));
-}
-// Valores escolhidos num <select multiple>
-function selectValues(sel) {
-  const el = typeof sel === 'string' ? $(sel) : sel;
-  return el ? [...el.options].filter(o => o.selected && o.value).map(o => o.value) : [];
-}
 
 /* Categorias mais usadas primeiro (as 3 viram botões; o resto fica no dropdown).
    Só folhas entram: com subcategorias, oferecer o envelope como atalho faria o
@@ -3277,13 +3374,11 @@ function openConfigSection(sec) {
    cabeçalho de grupo. Melhor que repetir "Alimentação › " em cada linha: o nome
    do envelope aparece uma vez, e a busca do painel também procura por ele.
    Folha sem envelope (categoria simples) fica solta no fim, sem cabeçalho. */
-/* `selecionado` aceita um id ou uma lista deles (filtro com escolha múltipla).
-
-   `incluirRaizes` põe o próprio envelope como opção, no topo do grupo dele. Só o
-   filtro usa: lá "tudo de Alimentação" é uma pergunta legítima. No formulário de
-   lançamento continua fora, senão o gasto pararia no envelope e a subcategoria
-   nunca aconteceria — que é o motivo de só folhas entrarem por padrão. */
-function optionsCategorias(selecionado, tipo, incluirRaizes) {
+/* Só folhas entram: oferecer o envelope como opção faria o gasto parar no nível
+   de cima e a subcategoria nunca acontecer. O filtro é outro caso — lá "tudo de
+   Alimentação" é pergunta legítima — e por isso ele monta a própria lista, em
+   opcoesCategoriaPilula. */
+function optionsCategorias(selecionado, tipo) {
   const marcados = Array.isArray(selecionado) ? selecionado : [selecionado];
   const opcao = (c, rotulo) =>
     `<option value="${c.id}"${marcados.includes(c.id) ? ' selected' : ''}>${esc(rotulo)}</option>`;
@@ -3292,7 +3387,6 @@ function optionsCategorias(selecionado, tipo, incluirRaizes) {
     const filhas = DB.subcategoriesOf(raiz.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
     if (!filhas.length) { soltas.push(raiz); continue; }   // envelope sem detalhe é ele mesmo a folha
     grupos.push(`<optgroup label="${esc(raiz.icon)} ${esc(raiz.name)}">${
-      (incluirRaizes ? opcao(raiz, `Tudo de ${raiz.name}`) : '') +
       filhas.map(f => opcao(f, f.name)).join('')}</optgroup>`);
   }
   const semGrupo = soltas.length

@@ -34,6 +34,8 @@ const I = {
   trash: _svg('<path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/>'),
   filter: _svg('<path d="M3 5h18"/><path d="M6 12h12"/><path d="M10 19h4"/>'),
   tag: _svg('<path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0l-7.2-7.2A2 2 0 0 1 3 12V5a2 2 0 0 1 2-2h7a2 2 0 0 1 1.4.6l7.2 7.2a2 2 0 0 1 0 2.6"/><circle cx="7.5" cy="7.5" r="1.5"/>'),
+  search: _svg('<circle cx="11" cy="11" r="7"/><line x1="16.2" y1="16.2" x2="21" y2="21"/>'),
+  edit: _svg('<path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z"/><line x1="13.5" y1="6.5" x2="17.5" y2="10.5"/>'),
 };
 
 /* Injeta os SVGs em qualquer elemento com data-ico (roda de novo para conteúdo dinâmico). */

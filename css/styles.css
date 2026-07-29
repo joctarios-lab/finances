@@ -298,14 +298,6 @@ svg:hover .ch-bar-on { fill: #005a92; }
 /* Duas colunas: o par de cima é o que se compara (entrou x saiu, receita x
    despesa), e o de baixo são leituras de apoio. Em três colunas o valor com
    centavos não cabia na largura do celular. */
-.stat-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.stat-2x2 .card { padding: 12px 14px; min-width: 0; }
-.stat-2x2 small {
-  display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
-  color: var(--paper-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.stat-2x2 b { display: block; font-size: 16px; font-weight: 800; margin-top: 2px; white-space: nowrap; }
-@media (max-width: 380px) { .stat-2x2 b { font-size: 14.5px; } }
 
 .mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .mini-stats .card { padding: 12px 14px; text-align: center; min-width: 0; }
@@ -503,12 +495,6 @@ svg:hover .ch-bar-on { fill: #005a92; }
 /* Recorte de dias dentro do mês: rola na horizontal em vez de quebrar linha, para
    não empurrar a lista para baixo da dobra logo depois de a fileira de atalhos ter
    saído justamente por isso. */
-.janela-chips {
-  flex-wrap: nowrap; overflow-x: auto; margin: -4px 0 2px;
-  padding-bottom: 2px; scrollbar-width: none;
-}
-.janela-chips::-webkit-scrollbar { display: none; }
-.janela-chips .chip { flex: none; }
 
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip {
@@ -544,6 +530,177 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .sheet[data-tipo="Transferência"]::before { background: var(--blue); }
 .chip-num { opacity: .7; font-weight: 500; margin-left: 4px; font-size: 11.5px; }
 
+/* ---------- Topo do extrato ----------
+   Barra presa no topo enquanto a lista rola. Usa o fundo da PÁGINA, não o dos
+   cartões: ela não flutua sobre o conteúdo, ela é o topo da página preso. Um
+   cartão branco aqui leria como algo que veio de fora e pousou.
+
+   Sem sombra, só borda. Sombra competiria com a lista que passa por baixo, e a
+   lista é o que a tela existe para mostrar. */
+.ext-topo {
+  position: sticky; top: 0; z-index: 20;
+  background: var(--ink);
+  margin: 0 -16px; padding: 6px 16px 8px;
+  border-bottom: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 8px;
+}
+/* Fora da animação de entrada da tela: transform num elemento preso o desloca
+   justamente enquanto ele deveria estar ancorado */
+.view > .ext-topo { animation: none; }
+.ext-mes { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.ext-mes b { font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+.ext-mes button {
+  width: 30px; height: 30px; border-radius: 8px; flex: none;
+  background: var(--ink-2); border: 1px solid var(--line); color: var(--paper-dim); cursor: pointer;
+}
+.ext-mes button:hover { color: var(--gold); border-color: #d8e3ea; }
+.ext-mes svg { width: 15px; height: 15px; }
+
+/* ---------- A régua do mês ----------
+   Seletor de intervalo E mapa de movimento: as marcas mostram onde o dinheiro se
+   mexeu, então dá para ver o aglomerado antes de arrastar até ele. Dois
+   <input type="range"> sobrepostos — o trilho desenhado fica embaixo, e só os
+   polegares recebem o toque. */
+.regua { position: relative; padding: 2px 0 0; }
+.regua-trilho {
+  position: relative; height: 26px; border-radius: 7px;
+  background: var(--ink-2); border: 1px solid var(--line); overflow: hidden;
+}
+.regua-marcas { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 1px; padding: 0 1px; }
+.regua-marca {
+  flex: 1; min-width: 0; border-radius: 1.5px 1.5px 0 0;
+  background: rgba(107, 111, 133, .22);
+  transition: background .15s ease;
+}
+.regua-marca.dentro { background: rgba(0, 158, 247, .55); }
+/* A faixa escolhida tinge, não cobre: as marcas precisam continuar legíveis
+   dentro dela, senão o mapa some justamente onde se está olhando */
+.regua-faixa {
+  position: absolute; top: 0; bottom: 0;
+  background: rgba(0, 158, 247, .1);
+  border-left: 2px solid var(--gold); border-right: 2px solid var(--gold);
+  pointer-events: none;
+}
+.regua-thumb {
+  position: absolute; left: 0; right: 0; top: 2px; width: 100%; height: 28px;
+  margin: 0; background: none; pointer-events: none;
+  -webkit-appearance: none; appearance: none;
+}
+.regua-thumb:focus-visible { outline: none; }
+/* O Firefox desenha trilho próprio; aqui o trilho já é a caixa de baixo */
+.regua-thumb::-moz-range-track { background: none; border: none; height: 28px; }
+.regua-thumb::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; pointer-events: auto;
+  width: 22px; height: 26px; border-radius: 6px; cursor: grab;
+  background: var(--gold); border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(24, 28, 50, .3);
+}
+.regua-thumb::-moz-range-thumb {
+  pointer-events: auto;
+  width: 18px; height: 22px; border-radius: 6px; cursor: grab;
+  background: var(--gold); border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(24, 28, 50, .3);
+}
+.regua-thumb:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(0, 158, 247, .4); }
+.regua-thumb:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px rgba(0, 158, 247, .4); }
+.regua-pes {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 4px; font-size: 11px; color: var(--paper-dim); font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.regua-pes b { color: var(--paper); font-size: 11.5px; font-weight: 700; }
+
+/* ---------- Pílulas de filtro ----------
+   Cada pílula mostra o próprio valor, então ela É o estado do filtro — foi o que
+   permitiu tirar da tela a fileira de etiquetas ativas, que repetia a mesma
+   informação um bloco abaixo. */
+.ext-pilulas {
+  display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none;
+  margin: 0 -16px; padding: 0 16px 2px;
+}
+.ext-pilulas::-webkit-scrollbar { display: none; }
+.pilula {
+  position: relative; flex: none; display: inline-flex; align-items: center; gap: 5px;
+  max-width: 46vw; padding: 6px 10px; border-radius: 999px;
+  background: var(--ink-2); border: 1px solid var(--line); color: var(--paper-dim);
+  font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+  transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.pilula:hover { border-color: #d8e3ea; color: var(--paper); }
+.pilula svg { width: 14px; height: 14px; flex: none; }
+.pilula.on { background: rgba(0, 158, 247, .08); border-color: rgba(0, 158, 247, .45); color: #0072b8; }
+.pilula.tem-pop { border-color: var(--gold); color: #0072b8; }
+.pilula-seta {
+  width: 0; height: 0; flex: none; margin-left: 1px;
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+  border-top: 5px solid currentColor; opacity: .55;
+}
+.pilula-x {
+  font-style: normal; font-size: 15px; line-height: 1; opacity: .7;
+  padding: 0 1px 2px; flex: none;
+}
+.pilula-x:hover { opacity: 1; }
+.pilula-limpar { color: var(--red); border-color: rgba(241, 65, 108, .3); background: rgba(241, 65, 108, .06); }
+
+/* Painel ancorado na pílula: mesmo visual do dropdown, sem cobrir a lista.
+   Fica no <body> com position:fixed — dentro da fileira de pílulas o
+   overflow-x:auto dela cortaria o painel. */
+.ui-pop {
+  position: fixed; min-width: 210px; max-width: min(88vw, 320px);
+  z-index: 40; margin: 0;
+}
+.ui-pop .ui-opt.e-grupo { font-weight: 700; }
+.ui-pop .ui-opt.e-filha { padding-left: 26px; font-size: 13px; }
+.ui-pop-pe {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 10px; border-top: 1px solid var(--line);
+  font-size: 11.5px; color: var(--paper-dim);
+}
+.ui-pop-pe button {
+  background: none; border: none; color: var(--gold); cursor: pointer;
+  font-family: var(--font-body); font-size: 12px; font-weight: 700; padding: 4px 2px;
+}
+.ui-pop-pe button[data-pop-ok] { color: #fff; background: var(--gold); border-radius: 7px; padding: 6px 12px; }
+.ui-pop-form { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+.pop-check { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.pop-check input { width: 18px; height: 18px; accent-color: var(--gold); }
+
+/* ---------- Resumo do período ----------
+   Um número grande, não quatro iguais: o saldo do fim do recorte é a pergunta
+   que traz alguém ao extrato. O resto é apoio, e a explicação por extenso fica
+   atrás do toque porque se lê uma vez e depois só ocupa espaço. */
+.ext-resumo { padding: 0; overflow: hidden; }
+.ext-resumo-topo {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; background: none; border: none; cursor: pointer;
+  font-family: var(--font-body); text-align: left; color: var(--paper);
+}
+.ext-resumo-rot { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--paper-dim); }
+.ext-resumo-val { font-size: 19px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.ext-resumo-seta { flex: none; color: var(--paper-dim); transition: transform .2s ease; }
+.ext-resumo-seta svg { width: 14px; height: 14px; }
+.ext-resumo.fechado .ext-resumo-seta { transform: rotate(-90deg); }
+.ext-resumo-linha {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px;
+  padding: 0 14px 12px; font-size: 13px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.ext-resumo-linha small { color: var(--paper-dim); font-size: 11.5px; font-weight: 500; margin-left: 3px; }
+.ext-resumo-antes { color: var(--paper-dim); font-weight: 500; font-size: 12.5px; }
+/* Seta em vez de bolinha colorida: a direção do dinheiro fica dita pela forma,
+   não só pela cor */
+.pt { width: 0; height: 0; display: inline-block; margin-right: 5px;
+  border-left: 4px solid transparent; border-right: 4px solid transparent; }
+.pt-up { border-bottom: 6px solid var(--green); }
+.pt-dn { border-top: 6px solid var(--red); }
+.ext-resumo-nota {
+  margin: 0; padding: 10px 14px 12px;
+  font-size: 12px; border-top: 1px solid var(--line);
+}
+.ext-resumo.fechado .ext-resumo-linha,
+.ext-resumo.fechado .ext-resumo-nota { display: none; }
+
 /* Linha de filtro rotulada (extrato) */
 /* Barra de busca + botão de filtros. Só estes dois ficam sempre na tela; os
    outros dez controles moram no painel, senão a lista sairia da primeira dobra. */
@@ -559,28 +716,9 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .btn-filtros:hover { border-color: #d8e3ea; color: var(--paper); }
 .btn-filtros svg { width: 15px; height: 15px; }
 .btn-filtros.tem { border-color: var(--gold); color: var(--gold); background: rgba(0, 158, 247, .06); }
-.filtros-num {
-  background: var(--gold); color: #fff; border-radius: 9px; min-width: 18px;
-  height: 18px; display: grid; place-items: center; font-size: 11px; padding: 0 5px;
-}
 
 /* Filtros aplicados, sempre à vista: painel fechado esconde os controles, não o
    que está filtrando — senão a lista fica curta sem explicação. */
-.ativos { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.tag-ativa {
-  display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-  background: rgba(0, 158, 247, .1); color: var(--gold); border: 1px solid transparent;
-  border-radius: 20px; padding: 5px 10px; font-size: 12px; font-weight: 600;
-  font-family: var(--font-body); max-width: 100%; overflow-wrap: anywhere;
-}
-.tag-ativa span { font-size: 14px; line-height: 1; opacity: .7; }
-.tag-ativa:hover { background: rgba(0, 158, 247, .18); }
-.tag-limpar {
-  background: none; border: none; cursor: pointer; font-family: var(--font-body);
-  font-size: 12px; font-weight: 600; color: var(--paper-dim); text-decoration: underline;
-  padding: 5px 4px;
-}
-.tag-limpar:hover { color: var(--red); }
 
 /* Etiquetas do lançamento, na própria linha do extrato */
 .tx-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
@@ -598,21 +736,11 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .rank-clicavel { cursor: pointer; }
 .rank-clicavel:hover .rank-name { color: var(--gold); }
 
-.filter-row { display: flex; align-items: center; gap: 10px; max-width: 100%; }
 .filter-lbl {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
   color: var(--paper-dim); width: 46px; flex: none;
 }
 /* min-width:0 é o que permite o item flex encolher e rolar em vez de estourar a tela */
-.filter-row .chips {
-  flex: 1 1 auto; min-width: 0; overflow-x: auto; flex-wrap: nowrap;
-  padding-bottom: 4px; scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
-  scroll-snap-type: x proximity;
-}
-.filter-row .chips::-webkit-scrollbar { height: 4px; }
-.filter-row .chips::-webkit-scrollbar-thumb { background: #d8e3ea; border-radius: 2px; }
-.filter-row .chip { white-space: nowrap; flex: none; scroll-snap-align: start; }
 
 /* Nenhuma tela pode empurrar o corpo para os lados */
 body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
