@@ -72,7 +72,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, ligarGrafico, caminhoSuave,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  Rel, passaNosFiltros, temFiltroAtivo, barraDePilulas, clarear, svgComposicao, deltaCelula, pesoCelula, fatiaEm, ligarComposicao,
+  Rel, passaNosFiltros, temFiltroAtivo, barraDePilulas, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, fatiaEm, ligarComposicao,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -4083,8 +4083,15 @@ console.log('\n=== Tabela por categoria: peso e variação ===');
   /* Abaixo de 0,5% arredondaria para 0% e pareceria zero, sendo que houve gasto —
      dizer "0%" sobre dinheiro que saiu é falso. */
   check('gasto pequeno não vira 0%', pesoCelula(2, 1000).includes('<1%'), true);
-  check('sem gasto não inventa peso', pesoCelula(0, 1000).includes('—'), true);
-  check('e sem total também não', pesoCelula(100, 0).includes('—'), true);
+  check('sem gasto não inventa peso', pesoCelula(0, 1000), '');
+  check('e sem total também não', pesoCelula(100, 0), '');
+  /* O peso vive dentro da célula do valor, não em coluna própria: em colunas
+     separadas seriam cinco, e a tabela passaria a rolar na horizontal no
+     celular. Cada número vem com o que o qualifica logo abaixo. */
+  const cel = valorCelula(300, 1000);
+  check('a célula traz o valor', cel.includes(fmtShort(300)), true);
+  check('e o peso logo abaixo dele', cel.includes('<i>30%</i>'), true);
+  check('valor sem peso não deixa a linha vazia', valorCelula(100, 0), `<span class="val-rel">${fmtShort(100)}</span>`);
 
   // A variação traz o valor E o percentual
   const grande = deltaCelula(150, 200, false);
@@ -4107,18 +4114,27 @@ console.log('\n=== Tabela por categoria: peso e variação ===');
   // Duas linhas na célula: lado a lado a coluna dobraria e empurraria a tabela
   // para fora da tela no celular
   check('valor e percentual empilham na célula',
-    /\.delta \{[^}]*flex-direction: column/.test(cssT), true);
-  check('e o peso tem largura mínima para alinhar a coluna',
-    /\.peso \{[^}]*min-width: 38px/.test(cssT), true);
+    /\.val-rel, \.delta \{[^}]*flex-direction: column/.test(cssT), true);
+  // O peso é contexto, não a resposta: fica um degrau abaixo na hierarquia
+  check('o peso não compete com o valor',
+    /\.val-rel i \{[^}]*color: var\(--paper-dim\)/.test(cssT), true);
 
-  // A tabela na tela, com as colunas novas
+  // A tabela na tela
   state.repOffset = 0; state.filtros = filtrosVazios();
   const relT = renderRelatorios();
-  check('a tabela tem a coluna de peso', relT.includes('<th class="num">Peso</th>'), true);
-  check('e a de variação', relT.includes('<th>Variação</th>'), true);
+  // Fatia até o fim DESTA tabela: sem o limite, a contagem pega os cabeçalhos
+  // das tabelas seguintes e o teste mede outra coisa
+  const daTabela = (() => {
+    const ini = relT.indexOf('Detalhe por categoria');
+    return relT.slice(ini, relT.indexOf('</table>', ini));
+  })();
+  // `<th[^>]*>` casaria também com `<thead>` — o lookahead exige que o nome da
+  // tag termine ali
+  check('a tabela ficou em quatro colunas', (daTabela.match(/<th(?=[\s>])/g) || []).length, 4);
+  check('sem coluna própria de peso', relT.includes('>Peso</th>'), false);
+  check('e com a de variação', relT.includes('<th>Variação</th>'), true);
   check('o título deixou de ser repetitivo', relT.includes('Categoria por categoria'), false);
   check('e diz o que a tabela responde', relT.includes('Detalhe por categoria'), true);
-  check('o vazio cobre as cinco colunas', relT.includes('colspan="4"'), false);
 }
 
 /* ---- Tooltip da composição ----

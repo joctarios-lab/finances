@@ -504,19 +504,18 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .rep-table .num { text-align: right; white-space: nowrap; }
 .rep-table th:nth-child(n+2) { text-align: right; }
 
-/* Peso da linha no total. Fundo tingido em vez de texto solto: a coluna é lida em
-   varredura vertical, e um bloquinho por linha dá o perfil da distribuição sem
-   precisar comparar número a número. */
-.peso {
-  display: inline-block; min-width: 38px; padding: 2px 6px; border-radius: 5px;
-  background: rgba(0, 158, 247, .09); color: #0072b8;
-  font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+/* Duas linhas na mesma célula: o número em cima, a leitura relativa embaixo.
+   Em colunas próprias seriam seis colunas, e a tabela passaria a rolar na
+   horizontal no celular. Assim cada número vem com o que o qualifica ao lado —
+   quanto foi e quanto pesou, quanto mudou e quanto isso representa. */
+.val-rel, .delta {
+  display: inline-flex; flex-direction: column; align-items: flex-end;
+  line-height: 1.25; white-space: nowrap;
 }
-.rep-sub .peso { background: rgba(107, 111, 133, .1); color: var(--paper-dim); }
-/* Valor e percentual em duas linhas: lado a lado, a coluna dobraria de largura e
-   empurraria a tabela para fora da tela no celular. */
-.delta { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.25; white-space: nowrap; }
-.delta i { font-style: normal; font-size: 10.5px; font-weight: 700; opacity: .72; }
+.val-rel i, .delta i { font-style: normal; font-size: 10.5px; font-weight: 700; }
+/* O peso é contexto, não a resposta: fica um degrau abaixo na hierarquia */
+.val-rel i { color: var(--paper-dim); font-weight: 600; }
+.delta i { opacity: .72; }
 .rep-table td:last-child { text-align: right; }
 
 /* Duas colunas: o par de cima é o que se compara (entrou x saiu, receita x

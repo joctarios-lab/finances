@@ -2008,7 +2008,7 @@ function relCategorias({ period, byCat, total }) {
       <div class="card-head"><div><b>Detalhe por categoria</b>
         <small>quanto pesou e como se compara com o costume — toque num envelope para abrir as subcategorias</small></div></div>
       <div class="table-wrap"><table class="rep-table">
-        <thead><tr><th>Categoria</th><th class="num">Neste mês</th><th class="num">Peso</th><th class="num">De costume</th><th>Variação</th></tr></thead>
+        <thead><tr><th>Categoria</th><th class="num">Neste mês</th><th class="num">De costume</th><th>Variação</th></tr></thead>
         <tbody>${porGasto.length ? porGasto.map(l => {
           const subs = l.agora > 0 ? Rel.porSubcategoria(period, l.cid) : {};
           const linhasSub = Object.entries(subs).sort((a, b) => b[1] - a[1]);
@@ -2024,8 +2024,7 @@ function relCategorias({ period, byCat, total }) {
           const temSub = linhasSub.length > 1 || (linhasSub.length === 1 && linhasSub[0][0] !== '_direto');
           return `<tr class="rep-raiz${temSub ? ' abre' : ''}" ${temSub ? `data-abre-cat="${l.cid}"` : ''}>
             <td>${temSub ? '<span class="rep-seta" data-ico="chev"></span>' : ''}${esc(catLabel(l.cid === '_sem' ? null : l.cid))}</td>
-            <td class="num">${fmtShort(l.agora)}</td>
-            <td class="num">${pesoCelula(l.agora, total)}</td>
+            <td class="num">${valorCelula(l.agora, total)}</td>
             <td class="num muted">${l.med > 0 ? fmtShort(l.med) : '—'}</td>
             <td>${deltaCelula(l.delta, l.med, l.novo)}</td>
           </tr>` + (temSub ? linhasSub.map(([sid, v]) => {
@@ -2033,13 +2032,12 @@ function relCategorias({ period, byCat, total }) {
             const d = v - m;
             return `<tr class="rep-sub" data-sub-de="${l.cid}" hidden>
               <td>${sid === '_direto' ? '<i>sem subcategoria</i>' : esc((catOf(sid) || {}).name || '—')}</td>
-              <td class="num">${fmtShort(v)}</td>
-              <td class="num">${pesoCelula(v, total)}</td>
+              <td class="num">${valorCelula(v, total)}</td>
               <td class="num muted">${m > 0 ? fmtShort(m) : '—'}</td>
               <td>${deltaCelula(d, m, !(medSub[sid] || []).length && v > 0)}</td>
             </tr>`;
           }).join('') : '');
-        }).join('') : '<tr><td colspan="5" class="empty">Sem dados.</td></tr>'}</tbody>
+        }).join('') : '<tr><td colspan="4" class="empty">Sem dados.</td></tr>'}</tbody>
       </table></div>
       <p class="muted" style="margin-top:8px">“=” quer dizer variação pequena demais para ser notícia — abaixo de 15% ou R$ 20.</p>
     </div>`;
@@ -2052,10 +2050,21 @@ function relCategorias({ period, byCat, total }) {
    envelope. Fosse "% do envelope" nas filhas, a mesma coluna diria duas coisas
    diferentes e a conferência de cabeça deixaria de fechar. */
 function pesoCelula(valor, total) {
-  if (!(total > 0) || !(valor > 0)) return '<span class="muted">—</span>';
+  if (!(total > 0) || !(valor > 0)) return '';
   const pct = valor / total * 100;
   // Abaixo de 0,5% arredondaria para 0% e pareceria zero, sendo que houve gasto
-  return `<span class="peso">${pct < 0.5 ? '<1' : Math.round(pct)}%</span>`;
+  return `${pct < 0.5 ? '<1' : Math.round(pct)}%`;
+}
+
+/* O valor com o peso embaixo, no mesmo formato da variação.
+
+   Numa coluna própria o peso pedia uma quinta coluna, e a tabela passava a rolar
+   na horizontal no celular. Embaixo do valor ele também fica mais perto do que
+   qualifica: cada número passa a vir com a própria leitura relativa — quanto foi
+   e quanto pesou, quanto mudou e quanto isso representa. */
+function valorCelula(valor, total) {
+  const peso = pesoCelula(valor, total);
+  return `<span class="val-rel">${fmtShort(valor)}${peso ? `<i>${peso}</i>` : ''}</span>`;
 }
 
 /* A célula de variação, nos dois níveis da tabela. O piso de relevância é o mesmo
