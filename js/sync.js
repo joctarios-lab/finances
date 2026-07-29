@@ -6,10 +6,13 @@ const SYNC_TABLES = {
   accounts: ['name', 'type', 'institution', 'balance', 'active', 'is_reserve'],
   cards: ['name', 'brand', 'limit_amount', 'closing_day', 'due_day', 'account_id', 'active'],
   categories: ['name', 'icon', 'scope', 'monthly_budget', 'kind', 'parent_id', 'type'],
-  transactions: ['description', 'amount', 'date', 'scope', 'member', 'method', 'status', 'recurring', 'category_id', 'account_id', 'card_id', 'invoice_key', 'notes', 'type', 'fitid', 'group_id', 'installment', 'adjustment', 'tags', 'to_account', 'pays_invoice'],
+  transactions: ['description', 'amount', 'date', 'scope', 'member', 'method', 'status', 'recurring', 'category_id', 'account_id', 'card_id', 'invoice_key', 'notes', 'type', 'fitid', 'group_id', 'installment', 'adjustment', 'tags', 'to_account', 'pays_invoice', 'recurrence_id'],
   goals: ['name', 'icon', 'target_amount', 'target_date', 'done', 'kind'],
   goal_entries: ['goal_id', 'description', 'amount', 'date', 'from_account', 'to_account'],
   invoice_status: ['invoice_key', 'paid'],
+  recurrences: ['description', 'amount', 'valor_tipo', 'type', 'scope', 'member', 'method',
+    'category_id', 'account_id', 'card_id', 'tags', 'notes',
+    'periodicidade', 'dia', 'inicio', 'fim_tipo', 'fim_data', 'fim_vezes', 'geradas', 'status', 'ultima_geracao'],
   family_settings: ['members', 'month_start_day', 'monthly_income', 'family_name'],
 };
 
@@ -33,11 +36,13 @@ const COLUNAS = {
   id: 'uuid!', family_id: 'uuid!', updated_at: 'ts#',
   goal_id: 'uuid!',
   category_id: 'uuid', account_id: 'uuid', card_id: 'uuid', to_account: 'uuid',
-  from_account: 'uuid', group_id: 'uuid', parent_id: 'uuid',
+  from_account: 'uuid', group_id: 'uuid', parent_id: 'uuid', recurrence_id: 'uuid',
   amount: 'num!',
   balance: 'num#', monthly_budget: 'num#', limit_amount: 'num#',
   target_amount: 'num#', monthly_income: 'num#',
   closing_day: 'int#', due_day: 'int#', month_start_day: 'int#',
+  dia: 'int#', fim_vezes: 'int', geradas: 'int#',
+  inicio: 'date!', fim_data: 'date', ultima_geracao: 'date',
   date: 'date!', target_date: 'date',
   deleted: 'bool', active: 'bool', is_reserve: 'bool', recurring: 'bool',
   adjustment: 'bool', paid: 'bool', done: 'bool',
@@ -321,6 +326,13 @@ const Sync = {
 
       // PUSH: registros dirty
       for (const [table, cols] of Object.entries(SYNC_TABLES)) {
+        /* Cria a lista se o aparelho ainda não conhece a tabela.
+
+           Acontece de verdade: uma versão nova traz uma tabela que a base local
+           não tem, e o aparelho que abrir antes de recarregar o app quebraria a
+           sincronização INTEIRA por causa de uma chave ausente. Perder o sync de
+           tudo por causa de uma tabela vazia é a pior troca possível. */
+        if (!DB.data[table]) DB.data[table] = [];
         const dirty = DB.data[table].filter(r => r.dirty);
         if (!dirty.length) continue;
 
@@ -388,6 +400,7 @@ const Sync = {
             `${table}?family_id=eq.${fid}&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc&limit=2000`,
             { method: 'GET' });
         } catch (e) { falhas.push(e.message); continue; }
+        if (!DB.data[table]) DB.data[table] = [];      // mesma proteção do push
         for (const remote of rows || []) {
           const i = DB.data[table].findIndex(r => r.id === remote.id);
           const local = i >= 0 ? DB.data[table][i] : null;

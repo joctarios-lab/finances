@@ -110,6 +110,47 @@ create table if not exists transactions (
 alter table transactions add column if not exists pays_invoice text default '';
 create index if not exists idx_tx_pays_invoice on transactions(pays_invoice);
 
+/* Recorrência: o CONTRATO de uma transação que se repete.
+
+   Separada das transações de propósito. O modelo antigo copiava o último
+   lançamento com recurring=true, casando por descrição — sem prazo, sem
+   periodicidade e perdendo o dia do vencimento. "Aluguel até eu cancelar",
+   "financiamento em 48x" e "assinatura" não cabiam ali.
+
+   As transações são GERADAS a partir daqui, e carregam recurrence_id para o app
+   saber o que já nasceu e não duplicar. */
+create table if not exists recurrences (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  description text not null,
+  -- Sem default, igual a transactions.amount: o app sempre informa o valor, e um
+  -- default silencioso deixaria passar recorrência de R$ 0 sem ninguém notar
+  amount numeric not null,
+  valor_tipo text not null default 'fixo',   -- 'fixo' | 'media' (luz, água)
+  type text not null default 'Despesa',      -- serve para receita também (salário)
+  scope text not null default 'Família',
+  member text default '',
+  method text default 'Boleto',
+  category_id uuid,
+  account_id uuid,
+  card_id uuid,                              -- recorrência no cartão cai na fatura
+  tags jsonb not null default '[]'::jsonb,
+  notes text default '',
+  periodicidade text not null default 'mensal',  -- mensal | semanal | quinzenal | anual
+  dia int not null default 1,                -- dia do mês (1-31) ou da semana (0-6)
+  inicio date not null,
+  fim_tipo text not null default 'sem_prazo',    -- sem_prazo | vezes | data
+  fim_data date,
+  fim_vezes int,
+  geradas int not null default 0,            -- quantas já nasceram (para o fim por vezes)
+  status text not null default 'ativa',      -- ativa | pausada | cancelada
+  ultima_geracao date,                       -- até onde já foi gerado, evita duplicar
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+alter table transactions add column if not exists recurrence_id uuid;
+create index if not exists idx_tx_recurrence on transactions(recurrence_id);
+
 create table if not exists goals (
   id uuid primary key,
   family_id uuid not null references families(id) on delete cascade,
@@ -205,6 +246,7 @@ alter table transactions enable row level security;
 alter table goals enable row level security;
 alter table goal_entries enable row level security;
 alter table invoice_status enable row level security;
+alter table recurrences enable row level security;
 alter table family_settings enable row level security;
 alter table push_subscriptions enable row level security;
 alter table notification_log enable row level security;   -- sem policies: só a Edge Function (service_role) acessa
@@ -227,7 +269,7 @@ create policy fm_select on family_members for select to authenticated using (use
 do $$
 declare t text;
 begin
-  foreach t in array array['accounts','cards','categories','transactions','goals','goal_entries','invoice_status','family_settings']
+  foreach t in array array['accounts','cards','categories','transactions','goals','goal_entries','invoice_status','recurrences','family_settings']
   loop
     execute format('drop policy if exists %I_rw on %I', t, t);
     execute format(

@@ -72,7 +72,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, ligarGrafico, caminhoSuave,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  Rel, passaNosFiltros, temFiltroAtivo, barraDePilulas, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, fatiaEm, ligarComposicao,
+  Rel, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, fatiaEm, ligarComposicao,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -4313,7 +4313,7 @@ try {
      gasto pago, marcar um "A Pagar" como pago, e pagar a fatura. Faltar um deles
      deixaria uma porta por onde a reserva some sem aviso. */
   check('salvar um gasto pago avisa',
-    /applyTxEffect\(rec, \+1\);[\s\S]{0,400}avisarSeUsouGuardado\(rec\)/.test(apG), true);
+    /applyTxEffect\(rec, \+1\);[\s\S]{0,900}avisarSeUsouGuardado\(rec\)/.test(apG), true);
   check('marcar como pago avisa',
     /Marcado como pago[\s\S]{0,200}avisarSeUsouGuardado\(atualizado\)/.test(apG), true);
   check('e pagar a fatura também', /Fatura quitada[\s\S]{0,200}avisarSeUsouGuardado\(pgto\)/.test(apG), true);
@@ -4331,3 +4331,194 @@ try {
   check('o resgate do gasto não move saldo de conta',
     corpoG.includes('from_account: null, to_account: null'), true);
 } catch (e) { console.log(` FALHA | gatilho: ${e.message}`); fail++; }
+
+/* ---- Fase 2: recorrência como contrato ----
+   Os três cenários trazidos (10 meses, até cancelar, assinatura) mais os que
+   apareceram avaliando: dia 31, retroativo, receita, pausa, valor variável. */
+console.log('\n=== Recorrências ===');
+try {
+  const cR = DB.upsert('accounts', { name: 'Conta Recorrencia', type: 'Conta Corrente', balance: 50000 });
+  const anoAtual = new Date().getFullYear();
+  const isoDe = (a, m, d) => `${a}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  const novaRec = extra => DB.upsert('recurrences', {
+    description: 'Teste rec', amount: 100, valor_tipo: 'fixo', type: 'Despesa',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto',
+    category_id: null, account_id: cR, card_id: null, tags: [], notes: '',
+    periodicidade: 'mensal', dia: 10, inicio: isoDe(anoAtual, 1, 10),
+    fim_tipo: 'sem_prazo', fim_data: null, fim_vezes: null,
+    geradas: 0, status: 'ativa', ultima_geracao: null, ...extra,
+  });
+
+  /* CENÁRIO: dia 31 em fevereiro. new Date(ano, mes, 31) transborda para 3 de
+     março silenciosamente — o aluguel apareceria no mês errado. */
+  const r31 = DB.get('recurrences', novaRec({ dia: 31, inicio: isoDe(2026, 1, 31) }));
+  check('dia 31 em janeiro é dia 31', DB.dataDaOcorrencia(r31, 0), '2026-01-31');
+  check('em fevereiro cai no último dia', DB.dataDaOcorrencia(r31, 1), '2026-02-28');
+  check('e não transborda para março', DB.dataDaOcorrencia(r31, 1).startsWith('2026-03'), false);
+  check('em abril, que tem 30, cai no 30', DB.dataDaOcorrencia(r31, 3), '2026-04-30');
+  check('e volta ao 31 em maio', DB.dataDaOcorrencia(r31, 4), '2026-05-31');
+  const r29 = DB.get('recurrences', novaRec({ dia: 31, inicio: isoDe(2028, 1, 31) }));
+  check('fevereiro bissexto vai até 29', DB.dataDaOcorrencia(r29, 1), '2028-02-29');
+
+  // Periodicidades
+  const rSem = DB.get('recurrences', novaRec({ periodicidade: 'semanal', inicio: isoDe(2026, 3, 2) }));
+  check('semanal anda 7 dias', DB.dataDaOcorrencia(rSem, 1), '2026-03-09');
+  const rQui = DB.get('recurrences', novaRec({ periodicidade: 'quinzenal', inicio: isoDe(2026, 3, 2) }));
+  check('quinzenal anda 14 dias', DB.dataDaOcorrencia(rQui, 1), '2026-03-16');
+  const rAno = DB.get('recurrences', novaRec({ periodicidade: 'anual', dia: 15, inicio: isoDe(2026, 3, 15) }));
+  check('anual anda 12 meses', DB.dataDaOcorrencia(rAno, 1), '2027-03-15');
+
+  /* CENÁRIO: os três fins — até cancelar, N vezes, até uma data. */
+  const rSemPrazo = DB.get('recurrences', novaRec({ fim_tipo: 'sem_prazo' }));
+  check('sem prazo nunca encerra sozinho', DB.recorrenciaEncerrada(rSemPrazo, '2099-12-31', 900), false);
+  const rVezes = DB.get('recurrences', novaRec({ fim_tipo: 'vezes', fim_vezes: 10 }));
+  check('na décima ainda não encerrou', DB.recorrenciaEncerrada(rVezes, '2026-10-10', 9), false);
+  check('depois da décima encerra', DB.recorrenciaEncerrada(rVezes, '2026-11-10', 10), true);
+  const rData = DB.get('recurrences', novaRec({ fim_tipo: 'data', fim_data: '2026-06-30' }));
+  check('antes da data final segue', DB.recorrenciaEncerrada(rData, '2026-06-10', 5), false);
+  check('depois dela para', DB.recorrenciaEncerrada(rData, '2026-07-10', 6), true);
+  check('cancelada não gera mais',
+    DB.recorrenciaEncerrada({ ...rSemPrazo, status: 'cancelada' }, '2026-01-01', 0), true);
+
+  DB.data.recurrences = DB.data.recurrences.filter(r => r.description !== 'Teste rec');
+
+  /* CENÁRIO CRÍTICO: nunca gerar retroativo. Cadastrar hoje o aluguel que se paga
+     há dois anos não pode despejar 24 lançamentos no passado. */
+  const fimCiclo = DB.fimISO(DB.monthPeriod(new Date()));
+  const antigo = novaRec({ description: 'Aluguel antigo', inicio: somarDias(fimCiclo, -700), dia: 10 });
+  DB.gerarRecorrencias();
+  const doAntigo = DB.all('transactions').filter(t => t.recurrence_id === antigo);
+  check('recorrência antiga não despeja o passado inteiro', doAntigo.length < 30, true);
+  check('e nenhuma nasce depois do fim do ciclo', doAntigo.every(t => String(t.date) < fimCiclo), true);
+
+  /* Rodar duas vezes não pode duplicar: a geração acontece a cada abertura do
+     app, então ser idempotente é requisito, não elegância. */
+  const antesDaSegunda = DB.all('transactions').filter(t => t.recurrence_id === antigo).length;
+  DB.gerarRecorrencias();
+  check('gerar de novo não duplica',
+    DB.all('transactions').filter(t => t.recurrence_id === antigo).length, antesDaSegunda);
+
+  check('o gerado nasce a pagar', doAntigo.every(t => t.status === 'A Pagar'), true);
+  check('e aponta para a recorrência que o criou', doAntigo.every(t => t.recurrence_id === antigo), true);
+
+  // Pausada não gera
+  DB.upsert('recurrences', { ...DB.get('recurrences', antigo), status: 'pausada' });
+  const paradas = DB.all('transactions').filter(t => t.recurrence_id === antigo).length;
+  DB.gerarRecorrencias();
+  check('pausada não gera nada', DB.all('transactions').filter(t => t.recurrence_id === antigo).length, paradas);
+
+  /* CENÁRIO: receita. Salário é a recorrência mais previsível que existe, e um
+     modelo que só serve para despesa está pela metade. */
+  const rSal = novaRec({ description: 'Salario rec', type: 'Receita', amount: 6200, inicio: somarDias(fimCiclo, -20), dia: 5 });
+  DB.gerarRecorrencias();
+  const doSal = DB.all('transactions').filter(t => t.recurrence_id === rSal);
+  check('receita também se repete', doSal.length > 0, true);
+  check('e nasce a pagar, não como dinheiro em conta', doSal.every(t => t.status === 'A Pagar'), true);
+
+  /* CENÁRIO: valor variável. Mediana e não média — um mês de conserto distorce a
+     média e o previsto passa a mentir para cima. */
+  const rLuz = novaRec({ description: 'Luz rec', valor_tipo: 'media', amount: 180 });
+  check('sem histórico usa o valor informado', DB.valorDaRecorrencia(DB.get('recurrences', rLuz)), 180);
+  for (const v of [150, 160, 170, 900]) {
+    DB.upsert('transactions', { description: 'Luz rec paga', amount: v, date: dia(8), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cR, recurrence_id: rLuz });
+  }
+  const previsto = DB.valorDaRecorrencia(DB.get('recurrences', rLuz));
+  check('com histórico usa a mediana', previsto, 165);
+  check('e o mês fora da curva não puxa o previsto', previsto < 300, true);
+
+  /* CASAMENTO COM O OFX: o app lançou "A Pagar" e o extrato traz o mesmo débito.
+     Sem casar, o mês fica com duas linhas do mesmo aluguel e o comprometido nunca
+     zera — e é a duplicação mais provável, porque a geração CRIA o par. */
+  const dPrev = dia(10);
+  const aguardando = DB.upsert('transactions', { description: 'Aluguel casamento', amount: 1800, date: dPrev, type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cR });
+  const achado = DB.aPagarQueCasa({ date: somarDias(dPrev, 2), amount: -1800, memo: 'ALUGUEL CASAMENTO' }, cR);
+  check('o extrato reconhece a conta que estava esperando', achado && achado.id, aguardando);
+  check('mesmo com dois dias de diferença', !!achado, true);
+  // A janela existe porque a data do boleto raramente é a do débito
+  check('mas oito dias já é longe demais',
+    !!DB.aPagarQueCasa({ date: somarDias(dPrev, 8), amount: -1800, memo: 'ALUGUEL CASAMENTO' }, cR), false);
+  check('valor diferente não casa',
+    !!DB.aPagarQueCasa({ date: dPrev, amount: -1799, memo: 'ALUGUEL CASAMENTO' }, cR), false);
+  check('conta diferente não casa', !!DB.aPagarQueCasa({ date: dPrev, amount: -1800, memo: 'ALUGUEL CASAMENTO' }, 'outra'), false);
+  // Já pago não pode casar de novo
+  DB.upsert('transactions', { ...DB.get('transactions', aguardando), status: 'Pago' });
+  check('conta já paga não casa de novo',
+    !!DB.aPagarQueCasa({ date: dPrev, amount: -1800, memo: 'ALUGUEL CASAMENTO' }, cR), false);
+
+  /* Ambiguidade: dois "A Pagar" do mesmo valor e sem parecença de nome. Devolver
+     o errado seria pior que não casar. */
+  DB.upsert('transactions', { description: 'Conta A', amount: 500, date: dPrev, type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cR });
+  DB.upsert('transactions', { description: 'Conta B', amount: 500, date: dPrev, type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cR });
+  check('com dois candidatos sem parecença, não adivinha',
+    !!DB.aPagarQueCasa({ date: dPrev, amount: -500, memo: 'DEBITO QUALQUER' }, cR), false);
+  check('mas o nome parecido desempata',
+    (DB.aPagarQueCasa({ date: dPrev, amount: -500, memo: 'Conta A' }, cR) || {}).description, 'Conta A');
+
+  // Limpa
+  DB.data.transactions = DB.data.transactions.filter(t =>
+    !t.recurrence_id && !/Aluguel casamento|Conta A|Conta B|Luz rec paga/.test(t.description || ''));
+  DB.data.recurrences = [];
+  DB.data.accounts = DB.data.accounts.filter(a => a.id !== cR);
+  DB.save();
+} catch (e) { console.log(` FALHA | recorrências: ${e.message}`); fail++; }
+
+/* ---- Contas fixas: a tela que fecha o ciclo ----
+   Sem ela, "até eu cancelar" seria armadilha: a recorrência nasceria sem botão
+   de cancelar. */
+console.log('\n=== Tela de contas fixas ===');
+try {
+  const apRecUI = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const cU = DB.upsert('accounts', { name: 'Conta UI Rec', type: 'Conta Corrente', balance: 9000 });
+  const rid = DB.upsert('recurrences', {
+    description: 'Netflix UI', amount: 45, valor_tipo: 'fixo', type: 'Despesa',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito',
+    category_id: null, account_id: cU, card_id: null, tags: [], notes: '',
+    periodicidade: 'mensal', dia: 15, inicio: dia(15),
+    fim_tipo: 'sem_prazo', fim_data: null, fim_vezes: null,
+    geradas: 0, status: 'ativa', ultima_geracao: null,
+  });
+  openRecorrencias();
+  const tela = els['#modal'].innerHTML;
+  check('a tela lista a conta fixa', tela.includes('Netflix UI'), true);
+  check('dizendo quando se repete', tela.includes('todo mês, dia 15'), true);
+  check('e que não tem prazo', tela.includes('sem prazo'), true);
+  check('com botão de pausar', tela.includes(`data-rec-pausa="${rid}"`), true);
+  check('e de cancelar', tela.includes(`data-rec-cancela="${rid}"`), true);
+  check('e de mexer no valor', tela.includes(`data-rec-val="${rid}"`), true);
+
+  // Financiamento: a tela precisa dizer quanto falta, não só "ativa"
+  const rFin = DB.upsert('recurrences', {
+    description: 'Financiamento UI', amount: 890, valor_tipo: 'fixo', type: 'Despesa',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto',
+    category_id: null, account_id: cU, card_id: null, tags: [], notes: '',
+    periodicidade: 'mensal', dia: 5, inicio: dia(5),
+    fim_tipo: 'vezes', fim_data: null, fim_vezes: 48,
+    geradas: 26, status: 'ativa', ultima_geracao: null,
+  });
+  check('conta o que falta de um parcelamento', DB.restamDaRecorrencia(DB.get('recurrences', rFin)), 22);
+  check('e sem prazo não conta nada', DB.restamDaRecorrencia(DB.get('recurrences', rid)), null);
+  openRecorrencias();
+  check('a tela mostra quantas faltam', els['#modal'].innerHTML.includes('faltam 22'), true);
+
+  /* Cancelar NÃO apaga: o histórico do que já foi lançado continua valendo, e
+     apagar o contrato deixaria as transações órfãs de explicação. */
+  const apU = apRecUI;
+  const corpoU = apU.slice(apU.indexOf('function openRecorrencias'), apU.indexOf('function openConfigSection'));
+  check('cancelar só muda o status', corpoU.includes("{ status: 'cancelada' }"), true);
+  check('e avisa que o extrato continua', corpoU.includes('continua no extrato'), true);
+  check('pausada pode ser reativada', corpoU.includes("{ status: 'ativa' }"), true);
+  /* Reajuste vale da PRÓXIMA em diante: o aluguel de janeiro não passa a custar
+     o preço de fevereiro. */
+  check('mudar o valor não reescreve o passado', corpoU.includes('Vale das próximas em diante'), true);
+
+  // A entrada existe nas Configurações
+  check('as contas fixas têm entrada nas configurações', apU.includes('data-go="recorrencias"'), true);
+  check('e o roteamento leva até a tela', apU.includes("if (sec === 'recorrencias') return openRecorrencias();"), true);
+} catch (e) { console.log(` FALHA | tela de contas fixas: ${e.message}`); fail++; }
+/* A limpeza fica FORA do try: registro dirty deixado para trás faz os testes
+   async de sincronização girarem por sujeira, e o erro apareceria longe da
+   causa — foi o que aconteceu antes. */
+DB.data.recurrences = [];
+DB.data.transactions = DB.data.transactions.filter(t => !/UI Rec|Netflix UI|Financiamento UI/.test(t.description || ''));
+DB.data.accounts = DB.data.accounts.filter(a => a.name !== 'Conta UI Rec');
+DB.save();

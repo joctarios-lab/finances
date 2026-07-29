@@ -29,6 +29,7 @@ truncate table
   goal_entries,
   goals,
   invoice_status,
+  recurrences,
   categories,
   cards,
   accounts,
@@ -63,6 +64,7 @@ union all select 'transactions',        count(*) from transactions
 union all select 'goals',               count(*) from goals
 union all select 'goal_entries',        count(*) from goal_entries
 union all select 'invoice_status',      count(*) from invoice_status
+union all select 'recurrences',      count(*) from recurrences
 union all select 'family_settings',     count(*) from family_settings
 union all select 'push_subscriptions',  count(*) from push_subscriptions
 union all select 'notification_log',    count(*) from notification_log

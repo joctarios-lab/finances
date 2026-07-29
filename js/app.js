@@ -3629,6 +3629,42 @@ function openTxSheet(tx, asNew) {
         : 'Use ao lançar vários gastos do mesmo assunto — uma viagem, uma reforma.'}</p>`}
     </div>`;
     })()}
+    <!-- A repetição fica no PRÓPRIO lançamento, como no Google Calendar: nada de
+         tela nova para aprender, e a pergunta chega quando ela é natural. Editar
+         um lançamento já existente não mexe na recorrência — para isso existe a
+         tela de contas fixas, senão mudar um mês mudaria todos sem avisar. -->
+    ${isEdit ? '' : `
+    <div class="field"><label>Se repete?</label>
+      ${chipGroup('f-rep', [
+        { value: '', label: 'Não' },
+        { value: 'mensal', label: 'Todo mês' },
+        { value: 'semanal', label: 'Toda semana' },
+        { value: 'quinzenal', label: 'A cada 15 dias' },
+        { value: 'anual', label: 'Todo ano' },
+      ], '')}
+    </div>
+    <div id="rep-detalhe" hidden>
+      <div class="row2">
+        <div class="field"><label id="lbl-rep-dia">Todo dia</label>
+          <input id="f-rep-dia" type="number" min="1" max="31" value="${new Date(tx.date || todayISO()).getDate() || 1}"></div>
+        <div class="field"><label>Até quando</label>
+          <select id="f-rep-fim">
+            <option value="sem_prazo">Sem prazo — até eu cancelar</option>
+            <option value="vezes">Por um número de vezes</option>
+            <option value="data">Até uma data</option>
+          </select></div>
+      </div>
+      <div class="field" id="rep-vezes" hidden><label>Quantas vezes</label>
+        <input id="f-rep-vezes" type="number" min="2" max="480" value="12"></div>
+      <div class="field" id="rep-data" hidden><label>Última cobrança</label>
+        <input id="f-rep-data" type="date"></div>
+      <div class="field"><label>O valor muda todo mês? <span class="muted">— luz, água, gás</span></label>
+        <select id="f-rep-valor">
+          <option value="fixo">Não, é sempre o mesmo</option>
+          <option value="media">Sim — usar a mediana do que já foi pago</option>
+        </select></div>
+      <p class="muted" id="rep-resumo" style="margin-bottom:10px"></p>
+    </div>`}
     <div class="field"><label id="lbl-rec">Custo fixo mensal (recorrente)?</label><select id="f-rec"><option value="">Não</option><option value="1" ${tx.recurring ? 'selected' : ''}>Sim — entra nos custos fixos e no lançamento em 1 clique</option></select></div>
     <button class="btn" id="sh-save">${isEdit ? 'Salvar alterações' : 'Lançar'}</button>
     ${isEdit ? '<div class="btn-row"><button class="btn ghost" id="sh-dup">Repetir</button><button class="btn danger" id="sh-del">Excluir</button></div>' : ''}
@@ -3810,6 +3846,42 @@ function openTxSheet(tx, asNew) {
   // A folha inteira veste a cor do tipo escolhido (faixa, valor e botão salvar)
   const pintarTipo = v => { $('#sheet').dataset.tipo = v || 'Despesa'; };
   bindChips('g-type', v => { pintarTipo(v); applyType(v); applyMethod(chipValue('g-method')); });
+
+  /* Controles da repetição. Só aparecem depois de escolher que repete — quem
+     lança um gasto avulso, que é a maioria, não vê nada disso. */
+  if ($('#f-rep')) {
+    const rotuloDia = { semanal: 'Todo dia da semana (1 = seg)', quinzenal: 'A cada 15 dias a partir de', anual: 'Todo dia' };
+    const resumoRep = () => {
+      const per = chipValue('f-rep');
+      if (!per) return '';
+      const dia = Number($('#f-rep-dia').value) || 1;
+      const fim = $('#f-rep-fim').value;
+      const quando = per === 'semanal' ? 'toda semana' : per === 'quinzenal' ? 'a cada 15 dias'
+        : per === 'anual' ? `todo ano no dia ${dia}` : `todo mês no dia ${dia}`;
+      const ate = fim === 'vezes' ? `, ${Number($('#f-rep-vezes').value) || 0} vezes`
+        : fim === 'data' && $('#f-rep-data').value ? `, até ${fmtDate(new Date($('#f-rep-data').value + 'T12:00:00'))}`
+        : ', até você cancelar';
+      const media = $('#f-rep-valor').value === 'media' ? ' O valor de cada mês vem da mediana do que já foi pago.' : '';
+      // Dia 29, 30 e 31 não existem em todo mês: dizer antes evita a surpresa
+      const aviso = per === 'mensal' && dia > 28
+        ? ' Nos meses mais curtos cai no último dia.' : '';
+      return `Vai lançar <b>${quando}${ate}</b>.${aviso}${media}`;
+    };
+    const pintarRep = () => {
+      const per = chipValue('f-rep');
+      $('#rep-detalhe').hidden = !per;
+      if (!per) return;
+      $('#lbl-rep-dia').textContent = rotuloDia[per] || 'Todo dia';
+      const fim = $('#f-rep-fim').value;
+      $('#rep-vezes').hidden = fim !== 'vezes';
+      $('#rep-data').hidden = fim !== 'data';
+      $('#rep-resumo').innerHTML = resumoRep();
+    };
+    bindChips('f-rep', pintarRep);
+    ['#f-rep-fim', '#f-rep-dia', '#f-rep-vezes', '#f-rep-data', '#f-rep-valor']
+      .forEach(sel => { const el = $(sel); if (el) el.onchange = pintarRep; });
+    pintarRep();
+  }
   pintarTipo(tx.type || 'Despesa');
   bindChips('g-scope', applyScope);
   bindChips('g-method', v => { methodManual = true; applyMethod(v); });
@@ -3966,7 +4038,15 @@ function openTxSheet(tx, asNew) {
     applyTxEffect(rec, +1);              // aplica efeito novo
     aplicarFixacao();
     closeSheet(); render(); Sync.autoSync();
-    toast(isEdit ? 'Lançamento atualizado ✓' : (isReceita ? 'Receita lançada ✓' : 'Gasto lançado ✓'));
+    /* Cria o contrato da repetição a partir do que acabou de ser lançado.
+
+       O lançamento de hoje NÃO vira gerado: ele já existe e já está pago. A
+       recorrência começa na próxima ocorrência, senão o mês atual ficaria com
+       duas linhas iguais — uma paga e outra "A Pagar". */
+    const criada = criarRecorrenciaDoLancamento(rec);
+    toast(isEdit ? 'Lançamento atualizado ✓'
+      : criada ? `${isReceita ? 'Receita lançada' : 'Gasto lançado'} e repetição criada ✓`
+      : (isReceita ? 'Receita lançada ✓' : 'Gasto lançado ✓'));
     // Depois de gravar: se o gasto entrou no que estava guardado, resolve agora
     avisarSeUsouGuardado(rec);
   };
@@ -4246,6 +4326,46 @@ function openEntrySheet(entryId, goalId) {
   };
 }
 
+/* Cria o contrato da repetição a partir do lançamento recém-salvo.
+
+   O início é a PRÓXIMA ocorrência, não a de hoje: o lançamento que a pessoa
+   acabou de fazer já existe e já está pago. Começar hoje deixaria o mês com duas
+   linhas iguais — uma paga e outra "A Pagar" — e essa duplicidade é justamente a
+   que mais irrita, porque parece erro do app. */
+function criarRecorrenciaDoLancamento(tx) {
+  const per = chipValue('f-rep');
+  if (!per || !tx) return null;
+  const dia = Math.min(31, Math.max(1, Number($('#f-rep-dia').value) || 1));
+  const fimTipo = $('#f-rep-fim').value || 'sem_prazo';
+  const base = new Date((tx.date || todayISO()) + 'T12:00:00');
+  // Salta uma ocorrência: a de hoje é o próprio lançamento
+  const proximo = new Date(base);
+  if (per === 'semanal') proximo.setDate(base.getDate() + 7);
+  else if (per === 'quinzenal') proximo.setDate(base.getDate() + 14);
+  else if (per === 'anual') proximo.setFullYear(base.getFullYear() + 1);
+  else proximo.setMonth(base.getMonth() + 1);
+
+  const r = {
+    description: tx.description, amount: tx.amount,
+    valor_tipo: $('#f-rep-valor').value === 'media' ? 'media' : 'fixo',
+    type: tx.type || 'Despesa', scope: tx.scope, member: tx.member || '',
+    method: tx.method, category_id: tx.category_id || null,
+    account_id: tx.account_id || null, card_id: tx.card_id || null,
+    tags: DB.tagsOf(tx), notes: tx.notes || '',
+    periodicidade: per, dia,
+    inicio: DB.paraISO(proximo),
+    fim_tipo: fimTipo,
+    fim_data: fimTipo === 'data' ? ($('#f-rep-data').value || null) : null,
+    /* O "N vezes" conta o lançamento de hoje: quem escolhe 12x quer doze
+       cobranças no total, não doze além da que acabou de fazer. */
+    fim_vezes: fimTipo === 'vezes' ? Math.max(1, (Number($('#f-rep-vezes').value) || 12) - 1) : null,
+    geradas: 0, status: 'ativa', ultima_geracao: null,
+  };
+  const id = DB.upsert('recurrences', r);
+  DB.gerarRecorrencias();          // já traz o que couber no ciclo atual
+  return id;
+}
+
 /* O gasto entrou no que estava guardado — resolve na hora.
 
    Sem isto, usar a reserva derruba o saldo e deixa a meta intacta: o app passa a
@@ -4424,6 +4544,11 @@ function openConfig() {
     <div class="settings-item" data-go="accounts"><span class="cfg-left"><span class="cfg-ico" data-ico="wallet"></span><span>Contas<br><small>${DB.all('accounts').length} cadastrada(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="cards"><span class="cfg-left"><span class="cfg-ico" data-ico="card"></span><span>Cartões de crédito<br><small>${DB.all('cards').length} cadastrado(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="categories"><span class="cfg-left"><span class="cfg-ico" data-ico="pie"></span><span>Categorias &amp; orçamentos<br><small>${DB.all('categories').length} categoria(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="recorrencias"><span class="cfg-left"><span class="cfg-ico" data-ico="sync"></span><span>Contas fixas<br><small>${(() => {
+      const rs = DB.all('recurrences');
+      const ativas = rs.filter(r => r.status === 'ativa').length;
+      return ativas ? `${ativas} ativa(s)${rs.length > ativas ? ` · ${rs.length - ativas} parada(s)` : ''}` : 'nada se repete ainda';
+    })()}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Família &amp; ciclo do mês<br><small>${esc(DB.familyLabel())}${Sync.hasFamily() ? ' · código para convidar' : ' · início no dia ' + DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="sync"><span class="cfg-left"><span class="cfg-ico" data-ico="cloud"></span><span>Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="ofx"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Importar extrato OFX<br><small>traga os lançamentos do banco ou cartão de uma vez</small></span></span><span class="chev" data-ico="chev"></span></div>
@@ -4450,7 +4575,98 @@ function crudList(store, title, renderRow, openEditor) {
   document.querySelectorAll('[data-edit]').forEach(el => el.onclick = () => openEditor(DB.get(store, el.dataset.edit)));
 }
 
+/* As contas fixas: onde se pausa, cancela e reajusta.
+
+   Sem esta tela, "até eu cancelar" seria uma armadilha — a recorrência nasceria
+   sem botão de cancelar. Editar o valor aqui vale da PRÓXIMA em diante: o que já
+   foi lançado é histórico, e reajuste de aluguel não reescreve o passado. */
+function openRecorrencias() {
+  const rs = DB.all('recurrences').sort((a, b) =>
+    (a.status === b.status ? 0 : a.status === 'ativa' ? -1 : 1) || Number(a.dia) - Number(b.dia));
+  const rotuloPeriodo = { mensal: 'todo mês', semanal: 'toda semana', quinzenal: 'a cada 15 dias', anual: 'todo ano' };
+  const linha = r => {
+    const restam = DB.restamDaRecorrencia(r);
+    const quando = `${rotuloPeriodo[r.periodicidade] || 'todo mês'}${r.periodicidade === 'semanal' ? '' : `, dia ${r.dia}`}`;
+    const prazo = r.fim_tipo === 'vezes' ? (restam > 0 ? `faltam ${restam}` : 'terminou')
+      : r.fim_tipo === 'data' && r.fim_data ? `até ${fmtDate(new Date(r.fim_data + 'T12:00:00'))}`
+      : 'sem prazo';
+    return `<div class="rec-item ${r.status !== 'ativa' ? 'off' : ''}">
+      <div class="rec-topo">
+        <b>${esc(r.description)}</b>
+        <span class="num">${r.valor_tipo === 'media' ? '~ ' : ''}${fmt(DB.valorDaRecorrencia(r))}</span>
+      </div>
+      <small class="muted">${r.type === 'Receita' ? '💰 entrada · ' : ''}${quando} · ${prazo}${
+        r.status === 'pausada' ? ' · <b>pausada</b>' : r.status === 'cancelada' ? ' · <b>cancelada</b>' : ''}</small>
+      <div class="rec-acoes">
+        <button class="sec-btn" data-rec-val="${r.id}">Valor</button>
+        ${r.status === 'ativa'
+          ? `<button class="sec-btn" data-rec-pausa="${r.id}">Pausar</button>
+             <button class="sec-btn t-danger" data-rec-cancela="${r.id}">Cancelar</button>`
+          : `<button class="sec-btn" data-rec-ativa="${r.id}">Reativar</button>
+             <button class="sec-btn t-danger" data-rec-apaga="${r.id}">Apagar</button>`}
+      </div>
+    </div>`;
+  };
+
+  openModal(`
+    <div class="modal-title">Contas fixas<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+    <p class="muted" style="margin-bottom:12px">O que se repete todo mês. Elas são lançadas sozinhas como “A Pagar” na data certa — você só confirma quando pagar.</p>
+    ${rs.length ? rs.map(linha).join('') : '<div class="empty"><b>Nada se repete ainda</b>Ao lançar um gasto, marque “se repete” para ele virar conta fixa.</div>'}
+  `);
+  $('#md-back').onclick = () => openConfig();
+
+  const mexer = (id, mudanca) => {
+    const r = DB.get('recurrences', id);
+    if (!r) return;
+    DB.upsert('recurrences', { ...r, ...mudanca });
+    Sync.autoSync(); openRecorrencias();
+  };
+  document.querySelectorAll('[data-rec-pausa]').forEach(b => b.onclick = () => mexer(b.dataset.recPausa, { status: 'pausada' }));
+  document.querySelectorAll('[data-rec-ativa]').forEach(b => b.onclick = () => {
+    mexer(b.dataset.recAtiva, { status: 'ativa' });
+    DB.gerarRecorrencias();          // retoma de onde parou
+  });
+  /* Cancelar não apaga: o histórico do que já foi lançado continua valendo, e
+     apagar o contrato deixaria as transações órfãs de explicação. */
+  document.querySelectorAll('[data-rec-cancela]').forEach(b => b.onclick = () => {
+    if (!confirm('Cancelar esta conta fixa?\n\nAs próximas deixam de ser lançadas. O que já foi lançado continua no extrato.')) return;
+    mexer(b.dataset.recCancela, { status: 'cancelada' });
+  });
+  document.querySelectorAll('[data-rec-apaga]').forEach(b => b.onclick = () => {
+    if (!confirm('Apagar de vez?\n\nOs lançamentos que ela já criou continuam no extrato.')) return;
+    DB.remove('recurrences', b.dataset.recApaga);
+    Sync.autoSync(); openRecorrencias();
+  });
+  /* Reajuste: vale da PRÓXIMA em diante. O que já foi lançado é histórico — o
+     aluguel de janeiro não passa a custar o preço de fevereiro. */
+  document.querySelectorAll('[data-rec-val]').forEach(b => b.onclick = () => {
+    const r = DB.get('recurrences', b.dataset.recVal);
+    if (!r) return;
+    openSheet(`
+      <div class="sheet-title">Valor — ${esc(r.description)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+      <p class="muted" style="margin:-4px 0 12px">Vale das próximas em diante. O que já foi lançado continua como está.</p>
+      <div class="field"><input class="amount-input" id="rv-amount" type="text" inputmode="numeric" autocomplete="off"></div>
+      <div class="field"><label>O valor muda todo mês?</label>
+        <select id="rv-tipo">
+          <option value="fixo"${r.valor_tipo !== 'media' ? ' selected' : ''}>Não, é sempre o mesmo</option>
+          <option value="media"${r.valor_tipo === 'media' ? ' selected' : ''}>Sim — usar a mediana do que já foi pago</option>
+        </select></div>
+      <button class="btn" id="sh-save">Salvar</button>
+    `);
+    initMoney('#rv-amount', r.amount);
+    $('#sh-close').onclick = closeSheet;
+    $('#sh-save').onclick = () => {
+      const v = moneyVal('#rv-amount');
+      if (!v) return toast('Informe o valor');
+      DB.upsert('recurrences', { ...r, amount: v, valor_tipo: $('#rv-tipo').value });
+      closeSheet(); Sync.autoSync(); openRecorrencias();
+      toast('Valor atualizado — vale das próximas ✓');
+    };
+  });
+}
+
 function openConfigSection(sec) {
+  if (sec === 'recorrencias') return openRecorrencias();
   if (sec === 'accounts') {
     crudList('accounts', 'Contas',
       a => `${esc(a.name)}<br><small>${esc(a.type)} · ${fmt(a.balance)}</small>`,
@@ -5308,6 +5524,7 @@ function contasTransferencia(contaAtual, ehSaida) {
 function renderOfxPreview(parsed, accounts, cards, situacao) {
   const cats = DB.all('categories');   // com os pais: a adivinhação depende deles
   let parEncontrado = {};              // linha -> transferência que já cobre este valor
+  let aPagarCasado = {};               // linha -> "A Pagar" que o extrato veio confirmar
   let novos = parsed.txs, dups = 0;
   /* Só o PRIMEIRO de cada grupo vem marcado. Marcando todos, o navegador fica com
      o ÚLTIMO — enquanto o código assumia o primeiro. As duas pontas discordavam, e
@@ -5333,6 +5550,7 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
     const usados = new Set();
     // Guardado para a importação: linha que casou não pode virar lançamento novo
     parEncontrado = {};
+    aPagarCasado = {};
 
     /* O que já foi importado depende de EM QUAL CONTA se está lançando: o mesmo
        FITID em contas diferentes é lançamento diferente. Por isso o descarte é
@@ -5342,8 +5560,13 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
 
     return novos.map((t, i) => {
       const isExp = t.amount < 0;
+      /* A conta que já estava esperando: o app lançou "A Pagar" pela recorrência
+         e o extrato agora traz o débito. Sem casar, o mês fica com duas linhas do
+         mesmo aluguel e o comprometido nunca zera. */
+      const aguardando = (kind === 'acc' && isExp) ? DB.aPagarQueCasa(t, contaAtual) : null;
+      if (aguardando) aPagarCasado[i] = aguardando;
       // Só conta corrente tem transferência; fatura de cartão não é conta bancária
-      const par = kind === 'acc'
+      const par = (kind === 'acc' && !aguardando)
         ? DB.acharPernaDeTransferencia(contaAtual, t.date, t.amount, !isExp, usados)
         : null;
       // Só o mesmo dia autoriza desmarcar sozinho; na dúvida, quem decide é quem importa
@@ -5362,12 +5585,14 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
          discorda do palpite e marca a linha precisa poder classificá-la — e a
          marcação é a palavra final: o que estiver marcado é importado, e nada
          mais decide por fora. */
-      const aviso = certeza
+      const aviso = aguardando
+        ? `<span class="ofx-aviso ok">✓ É a conta que já estava lançada (${fmtDay(aguardando.date)}). Vai ser marcada como paga, sem duplicar — escolha uma categoria abaixo se não for ela.</span>`
+        : certeza
         ? `<span class="ofx-aviso">⇄ Já lançado como transferência${nomeOutra}, no mesmo dia. Marque só se for outra movimentação.</span>`
         : par
           ? `<span class="ofx-aviso duvida">⚠ Parecido com uma transferência${nomeOutra} de ${fmtDay(par.date)}. Se for a mesma, desmarque.</span>`
           : '';
-      return `<div class="ofx-row ${certeza ? 'ofx-par' : ''}${par && !certeza ? ' ofx-duvida' : ''}">
+      return `<div class="ofx-row ${certeza ? 'ofx-par' : ''}${par && !certeza ? ' ofx-duvida' : ''}${aguardando ? ' ofx-casado' : ''}">
       <input type="checkbox" data-i="${i}" ${certeza ? '' : 'checked'}>
       <span class="ofx-main"><b>${esc(t.memo)}</b><small>${fmtDay(t.date)} · ${isExp ? 'saída' : 'entrada'}</small></span>
       <span class="ofx-val ${isExp ? '' : 'txt-green'}">${isExp ? '' : '+'}${fmtShort(Math.abs(t.amount))}</span>
@@ -5521,7 +5746,7 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
     const account = kind === 'acc' ? DB.get('accounts', id) : null;
     if (!card && !account) return toast('Escolha onde lançar');
 
-    let n = 0, transferidos = 0, descartadas = 0;
+    let n = 0, transferidos = 0, descartadas = 0, confirmados = 0;
     boxes().forEach(box => {
       /* A marcação é a palavra final. O app desmarca o que julga já lançado, mas
          se quem importa discorda e marca, a linha entra — antes ela era pulada
@@ -5533,6 +5758,29 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
       const catSel = document.querySelector(`#ofx-result [data-cat="${idx}"]`);
       const escolha = (catSel && catSel.value) || '';
       const tags = tagsDe(idx);
+
+      /* A conta que já estava esperando: confirma o lançamento existente em vez
+         de criar outro. Criar duplicaria a linha e deixaria o comprometido com um
+         valor que nunca zera — e como a geração automática CRIA esse par de
+         propósito, seria a duplicação mais frequente do app.
+
+         A data passa a ser a do EXTRATO, que é quando o dinheiro saiu de verdade;
+         a do boleto era só a previsão. */
+      /* Escolher uma categoria DESFAZ o casamento: é como quem importa diz "não
+         é essa conta, lance como novo". Sem essa saída, um casamento errado não
+         teria conserto — desmarcar a linha só a descartaria, perdendo o
+         lançamento de verdade que o extrato trouxe. */
+      const casado = escolha ? null : aPagarCasado[idx];
+      if (casado) {
+        const atual = DB.get('transactions', casado.id);
+        if (atual && atual.status === 'A Pagar') {
+          const pago = { ...atual, status: 'Pago', date: t.date, fitid: t.fitid || atual.fitid || '' };
+          DB.upsert('transactions', pago);
+          applyTxEffect(pago, +1);        // agora sim o saldo se move
+          confirmados++;
+        }
+        return;
+      }
 
       /* Transferência: um lançamento só, tocando as duas contas. Lançar dois
          (saída aqui, entrada lá) faria a mesma movimentação aparecer duas vezes
@@ -5598,6 +5846,7 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
     // com a marcação valendo, o palpite pode ter sido revertido por quem importa
     const pulados = [...boxes()].filter(b => !b.checked).length;
     const partes = [`${n} lançamento(s) importado(s)`];
+    if (confirmados) partes.push(`${confirmados} conta(s) que já estavam lançadas, agora marcadas como pagas`);
     if (transferidos) partes.push(`${transferidos} como transferência`);
     if (descartadas) partes.push(`${descartadas} sem destino válido, ignorada(s)`);
     if (pulados) partes.push(`${pulados} já estavam lançados`);
@@ -5832,6 +6081,11 @@ UI.init();
 Voltar.init();
 restoreUI();
 Auth.init(() => {
+  /* Gera o que se repete ANTES de desenhar: senão o painel abriria mostrando um
+     comprometido que ainda não conhece o aluguel deste mês, e o número mudaria
+     sozinho um segundo depois. Como decidimos não estimar custo fixo, é esta
+     geração que mantém o comprometido fiel. */
+  try { DB.gerarRecorrencias(); } catch (_) {}
   setTab(state.tab);          // restaura a aba e marca o menu corretamente
   Sync.startAuto();           // mantém o aparelho em dia sempre que houver conexão
   setTimeout(() => Notif.check(), 800);

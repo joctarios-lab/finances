@@ -28,6 +28,7 @@ select json_build_object(
   'goals',          (select coalesce(json_agg(t), '[]'::json) from (select * from goals           where deleted = false) t),
   'goal_entries',   (select coalesce(json_agg(t), '[]'::json) from (select * from goal_entries    where deleted = false) t),
   'invoice_status', (select coalesce(json_agg(t), '[]'::json) from (select * from invoice_status  where deleted = false) t),
+  'recurrences',    (select coalesce(json_agg(t), '[]'::json) from (select * from recurrences     where deleted = false) t),
   'family_settings',(select coalesce(json_agg(t), '[]'::json) from (select * from family_settings where deleted = false) t),
   -- Apagados entram à parte: às vezes o erro está justamente no que sumiu
   'apagados', json_build_object(
@@ -83,6 +84,7 @@ select json_build_object(
       'from_account', e.from_account, 'to_account', e.to_account)), '[]'::json)
     from goal_entries e where e.deleted = false),
   'invoice_status', (select coalesce(json_agg(t), '[]'::json) from (select * from invoice_status where deleted = false) t),
+  'recurrences',    (select coalesce(json_agg(t), '[]'::json) from (select * from recurrences    where deleted = false) t),
   'family_settings', (select coalesce(json_agg(json_build_object(
       'month_start_day', s.month_start_day, 'monthly_income', s.monthly_income,
       'qtd_membros', json_array_length(s.members))), '[]'::json)

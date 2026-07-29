@@ -3,7 +3,7 @@
 'use strict';
 
 const DB_KEY = 'financas.v1';
-const STORES = ['accounts', 'cards', 'categories', 'transactions', 'goals', 'goal_entries', 'invoice_status', 'family_settings'];
+const STORES = ['accounts', 'cards', 'categories', 'transactions', 'goals', 'goal_entries', 'invoice_status', 'recurrences', 'family_settings'];
 
 /* Criptografia local: AES-256-GCM com chave derivada do PIN (PBKDF2, 150 mil iterações). */
 const KCrypto = {
@@ -375,6 +375,42 @@ const DB = {
       t.date === linha.date &&
       Math.abs(Math.abs(Number(t.amount) || 0) - valor) < 0.005 &&
       this._semAcento(t.description) === desc);
+  },
+
+  /* ---------- A conta que já estava esperando ----------
+     O app lança "A Pagar" sozinho quando a recorrência manda. Dias depois o
+     extrato chega trazendo o mesmo aluguel, agora debitado de verdade.
+
+     Sem casar os dois, o mês fica com duas linhas do mesmo aluguel — uma a pagar
+     e outra paga — e o comprometido nunca zera. É a duplicação mais provável do
+     app inteiro, porque a geração automática CRIA o par de propósito.
+
+     A janela de 5 dias existe porque a data do boleto raramente é a do débito:
+     vence sábado, o banco processa segunda. O valor é a âncora — casar só por
+     data pegaria a conta errada num dia com vários débitos. */
+  aPagarQueCasa(linha, contaId) {
+    if (!contaId) return null;
+    const valor = Math.abs(Number(linha.amount) || 0);
+    if (!(valor > 0)) return null;
+    const desc = this._semAcento(linha.memo);
+    const candidatos = this.all('transactions').filter(t =>
+      t.status === 'A Pagar' && t.account_id === contaId && !t.card_id &&
+      this.isExpense(t) && !this.isNeutral(t) &&
+      Math.abs(Math.abs(Number(t.amount) || 0) - valor) < 0.005 &&
+      Math.abs(Date.parse(String(t.date) + 'T12:00:00') - Date.parse(linha.date + 'T12:00:00')) <= 5 * 86400000);
+    if (!candidatos.length) return null;
+    /* Com mais de um candidato, prefere o que veio de recorrência e cuja
+       descrição se parece — é o caso do aluguel. Sem parecença, o mais próximo
+       na data. Devolver o errado seria pior que não casar. */
+    const parecido = candidatos.filter(t => {
+      const a = this._semAcento(t.description);
+      return a === desc || a.includes(desc) || desc.includes(a);
+    });
+    const pool = parecido.length ? parecido : candidatos;
+    if (pool.length > 1 && !parecido.length) return null;   // ambíguo: melhor não adivinhar
+    return pool.sort((a, b) =>
+      Math.abs(Date.parse(a.date) - Date.parse(linha.date))
+      - Math.abs(Date.parse(b.date) - Date.parse(linha.date)))[0];
   },
 
   /* ---------- A outra perna de uma transferência ----------
@@ -796,6 +832,121 @@ const DB = {
 
     this.data = null; this.key = null; this._encBlob = null; this.locked = false;
     return true;
+  },
+
+  /* ---------- Recorrências ----------
+     O contrato de uma transação que se repete. As transações são GERADAS a
+     partir dele e carregam recurrence_id, que é como o app sabe o que já nasceu
+     e não duplica. */
+
+  /* Data da n-ésima ocorrência, contando de 0.
+
+     O caso que quebra ingênuo: "todo dia 31" em fevereiro. `new Date(ano, mes,
+     31)` transborda para 3 de março silenciosamente — o aluguel apareceria no
+     mês errado. Aqui o dia é limitado ao último dia real do mês, que é o que
+     bancos e boletos fazem. */
+  dataDaOcorrencia(r, n) {
+    const base = new Date(String(r.inicio) + 'T12:00:00');
+    if (r.periodicidade === 'semanal') { base.setDate(base.getDate() + n * 7); return this.paraISO(base); }
+    if (r.periodicidade === 'quinzenal') { base.setDate(base.getDate() + n * 14); return this.paraISO(base); }
+    const passo = r.periodicidade === 'anual' ? 12 : 1;
+    const ano = base.getFullYear();
+    const mes = base.getMonth() + n * passo;
+    const ultimoDia = new Date(ano, mes + 1, 0).getDate();
+    const dia = Math.min(Math.max(1, Number(r.dia) || base.getDate()), ultimoDia);
+    return this.paraISO(new Date(ano, mes, dia));
+  },
+
+  // A recorrência já acabou? (por data, por contagem ou por cancelamento)
+  recorrenciaEncerrada(r, dataISO, nOcorrencia) {
+    if (r.status === 'cancelada') return true;
+    if (r.fim_tipo === 'data' && r.fim_data && dataISO > String(r.fim_data)) return true;
+    if (r.fim_tipo === 'vezes' && Number(r.fim_vezes) > 0 && nOcorrencia >= Number(r.fim_vezes)) return true;
+    return false;
+  },
+
+  /* Valor a lançar. Para conta de consumo (luz, água) usa a mediana do que já foi
+     pago — mediana e não média porque um mês de conserto ou de viagem distorce a
+     média e o valor previsto passa a mentir para cima. */
+  valorDaRecorrencia(r) {
+    if (r.valor_tipo !== 'media') return Number(r.amount) || 0;
+    const pagas = this.all('transactions')
+      .filter(t => t.recurrence_id === r.id && t.status === 'Pago')
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))
+      .slice(0, 6)
+      .map(t => Number(t.amount) || 0);
+    if (!pagas.length) return Number(r.amount) || 0;   // sem histórico, o valor informado
+    return Math.round(this.mediana(pagas) * 100) / 100;
+  },
+
+  /* Gera o que falta até `ateISO`.
+
+     Três proteções que valem mais que o resto do código:
+
+     1. NUNCA GERA RETROATIVO antes do início. Cadastrar hoje o aluguel que se
+        paga há dois anos não pode despejar 24 lançamentos no passado — foi por
+        isso que o início existe como campo, e não é a data de criação.
+     2. NÃO DUPLICA: antes de criar, confere se já existe lançamento daquela
+        recorrência naquela data. Rodar a geração duas vezes é inofensivo.
+     3. PARA NO FIM: por data, por contagem ou por cancelamento.
+
+     O limite de 400 ocorrências é rede contra recorrência mal formada (início em
+     1990, semanal) travar o app num laço. */
+  gerarRecorrencias(ateISO) {
+    const limite = ateISO || this.fimISO(this.monthPeriod(new Date()));
+    const criadas = [];
+    for (const r of this.all('recurrences')) {
+      if (r.status !== 'ativa') continue;          // pausada e cancelada não geram
+      const jaExistem = new Set(this.all('transactions')
+        .filter(t => t.recurrence_id === r.id).map(t => String(t.date)));
+      let n = 0;
+      while (n < 400) {
+        const data = this.dataDaOcorrencia(r, n);
+        if (data >= limite) break;
+        if (this.recorrenciaEncerrada(r, data, n)) break;
+        if (!jaExistem.has(data)) criadas.push(this.criarDaRecorrencia(r, data));
+        n++;
+      }
+    }
+    if (criadas.length) this.save();
+    return criadas;
+  },
+
+  criarDaRecorrencia(r, dataISO) {
+    const tx = {
+      description: r.description,
+      amount: this.valorDaRecorrencia(r),
+      date: dataISO,
+      type: r.type || 'Despesa',
+      /* Nasce "A Pagar" mesmo sendo receita: nada é dado como acontecido antes de
+         acontecer. Salário que não caiu tem de aparecer como pendência, não como
+         dinheiro em conta. */
+      status: 'A Pagar',
+      scope: r.scope || 'Família',
+      member: r.member || '',
+      method: r.method || 'Boleto',
+      category_id: r.category_id || null,
+      account_id: r.account_id || null,
+      card_id: r.card_id || null,
+      tags: Array.isArray(r.tags) ? r.tags : [],
+      notes: r.notes || '',
+      recurrence_id: r.id,
+    };
+    // Recorrência no cartão cai na FATURA do período, não na conta
+    if (tx.card_id) {
+      const card = this.get('cards', tx.card_id);
+      if (card) tx.invoice_key = this.invoiceKeyFor(card, dataISO);
+    }
+    this.upsert('transactions', tx);
+    this.upsert('recurrences', { ...r, geradas: (Number(r.geradas) || 0) + 1, ultima_geracao: dataISO });
+    return tx;
+  },
+
+  // Quantas ocorrências ainda faltam, quando há prazo — para a tela dizer
+  // "faltam 22 de 48" em vez de só "ativa"
+  restamDaRecorrencia(r) {
+    if (r.fim_tipo !== 'vezes' || !(Number(r.fim_vezes) > 0)) return null;
+    return Math.max(0, Number(r.fim_vezes) - (Number(r.geradas) || 0));
   },
 
   /* ---------- Estatística dos relatórios ----------
