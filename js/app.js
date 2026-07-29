@@ -118,6 +118,11 @@ function restoreUI() {
 const $ = sel => document.querySelector(sel);
 const fmt = v => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtShort = v => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
+/* Valor sem "R$", para a faixa de quatro colunas do extrato. O símbolo repetido
+   quatro vezes rouba justamente a largura de que os centavos precisam — e
+   centavos ali não são detalhe: são o que faz o número bater com o extrato do
+   banco na conferência. A coluna rotulada já diz que é dinheiro. */
+const fmtSemMoeda = v => (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const todayISO = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -932,18 +937,18 @@ function rotuloPilula(p) {
    do toque, porque ela se lê uma vez e depois só ocupa espaço. */
 function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSaiu, nota }) {
   const aberto = state.resumoAberto !== false;
+  const col = (rot, valor, classe, seta) =>
+    `<span class="ext-num${classe ? ' ' + classe : ''}"><small>${esc(rot)}</small><b>${
+      seta ? `<i class="pt pt-${seta}"></i>` : ''}${fmtSemMoeda(valor)}</b></span>`;
   return `
-    <div class="card ext-resumo${aberto ? '' : ' fechado'}" id="ext-resumo">
-      <button class="ext-resumo-topo" id="ext-resumo-toggle" aria-expanded="${aberto}">
-        <span class="ext-resumo-rot">${esc(titulo)}</span>
-        <span class="ext-resumo-val ${saldo >= 0 ? '' : 'txt-red'}">${fmt(saldo)}</span>
-        <span class="ext-resumo-seta" data-ico="chev"></span>
+    <div class="ext-numeros${aberto ? '' : ' fechado'}" id="ext-resumo">
+      <button class="ext-num-faixa" id="ext-resumo-toggle" aria-expanded="${aberto}"
+        title="${esc(titulo)} — toque para ver a explicação">
+        ${col('antes', anterior, 'ext-num-antes')}
+        ${col(rotEntrou, entrou, 'txt-green', 'up')}
+        ${col(rotSaiu, saiu, 'txt-red', 'dn')}
+        ${col('saldo', saldo, 'destaque' + (saldo >= 0 ? '' : ' txt-red'))}
       </button>
-      <div class="ext-resumo-linha">
-        <span><i class="pt pt-up"></i>${fmt(entrou)} <small>${rotEntrou}</small></span>
-        <span><i class="pt pt-dn"></i>${fmt(saiu)} <small>${rotSaiu}</small></span>
-        <span class="ext-resumo-antes">antes ${fmt(anterior)}</span>
-      </div>
       <p class="muted ext-resumo-nota">${nota}</p>
     </div>`;
 }
@@ -1079,15 +1084,18 @@ function renderExtrato(period) {
       </div>
       ${reguaDoMes(period, movimentoPorDia)}
       <div class="ext-pilulas" id="ext-pilulas">
+        <!-- O rótulo vai num <span> próprio: text-overflow não funciona em
+             contêiner flex, e sem ele o texto longo era cortado no seco, sem
+             reticências — a pílula aparecia pela metade. -->
         <button class="pilula pilula-busca${state.filtros.busca ? ' on' : ''}" data-pilula="busca">
-          <span data-ico="search"></span>${state.filtros.busca ? esc(state.filtros.busca) : 'Buscar'}
+          <span data-ico="search"></span><span class="pilula-rot">${state.filtros.busca ? esc(state.filtros.busca) : 'Buscar'}</span>
         </button>
         ${pilulas.map(p => {
           const n = (state.filtros[p.chave] || []).length;
-          return `<button class="pilula${n ? ' on' : ''}" data-pilula="${p.chave}">${esc(rotuloPilula(p))}${
+          return `<button class="pilula${n ? ' on' : ''}" data-pilula="${p.chave}"><span class="pilula-rot">${esc(rotuloPilula(p))}</span>${
             n ? '<i class="pilula-x" data-limpa-pilula="' + p.chave + '">×</i>' : '<span class="pilula-seta"></span>'}</button>`;
         }).join('')}
-        <button class="pilula${state.filtros.valorMin || state.filtros.valorMax || state.filtros.recorrente ? ' on' : ''}" data-pilula="mais">Mais<span class="pilula-seta"></span></button>
+        <button class="pilula${state.filtros.valorMin || state.filtros.valorMax || state.filtros.recorrente ? ' on' : ''}" data-pilula="mais"><span class="pilula-rot">Mais</span><span class="pilula-seta"></span></button>
         ${temFiltro ? '<button class="pilula pilula-limpar" id="limpar-filtros">Limpar</button>' : ''}
       </div>
     </div>

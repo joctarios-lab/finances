@@ -65,7 +65,7 @@ eval(fs.readFileSync(BASE + 'js/ofx.js', 'utf8') + '; global.OFX = OFX;');
 const appSrc = fs.readFileSync(BASE + 'js/app.js', 'utf8').split('/* ---------- Boot ---------- */')[0];
 eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
-  state, fmt, fmtShort, fmtDay, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
+  state, fmt, fmtShort, fmtSemMoeda, fmtDay, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
@@ -1364,10 +1364,10 @@ try {
   const extMes = renderExtrato(p2);
   state.filtros.de = dias[meio + 1]; state.filtros.ate = dias[dias.length - 1];
   const extMetade = renderExtrato(p2);
-  const antes = html => (html.match(/ext-resumo-antes">antes ([^<]+)/) || [])[1];
+  const antes = html => (html.match(/ext-num-antes"><small>antes<\/small><b>([^<]+)/) || [])[1];
   check('o saldo anterior muda com o recorte', antes(extMes) !== antes(extMetade), true);
   check('e é o saldo real na data de início do recorte',
-    antes(extMetade), fmt(DB.saldoNaData(null, dias[meio + 1])));
+    antes(extMetade), fmtSemMoeda(DB.saldoNaData(null, dias[meio + 1])));
   check('o texto explica de quando é o saldo anterior', extMetade.includes('que havia em'), true);
   check('sem recorte, volta a falar do mês anterior', extMes.includes('vieram do anterior'), true);
 
@@ -1421,6 +1421,17 @@ try {
   check('sem sombra competindo com a lista', /\.ext-topo \{[^}]*box-shadow/.test(cssPil), false);
   check('a barra sai da animação de entrada', cssPil.includes('.view > .ext-topo { animation: none; }'), true);
   check('a fileira de pílulas rola na horizontal', /\.ext-pilulas \{[^}]*overflow-x: auto/.test(cssPil), true);
+  /* text-overflow não alcança texto solto dentro de contêiner flex: sem um span
+     próprio, o rótulo era cortado no seco e a pílula aparecia pela metade. */
+  check('o rótulo tem elemento próprio para as reticências',
+    /\.pilula-rot \{[^}]*text-overflow: ellipsis/.test(cssPil), true);
+  check('e a pílula não corta mais o conteúdo dela',
+    /\.pilula \{[^}]*text-overflow/.test(cssPil), false);
+  check('a pílula para inteira na borda ao rolar',
+    /\.ext-pilulas \{[^}]*scroll-snap-type/.test(cssPil) && /\.pilula \{[^}]*scroll-snap-align/.test(cssPil), true);
+  check('todo rótulo de pílula sai embrulhado',
+    (renderExtrato(p2).match(/data-pilula="/g) || []).length,
+    (renderExtrato(p2).match(/class="pilula-rot"/g) || []).length);
   check('o polegar da régua recebe o toque de volta',
     /::-webkit-slider-thumb \{[^}]*pointer-events: auto/.test(cssPil), true);
   /* O painel da pílula vive no <body>: dentro da fileira, o overflow-x:auto dela
@@ -1454,13 +1465,15 @@ try {
   check('o envelope vem antes das filhas dele',
     defCat.ops.findIndex(o => o.grupo) < defCat.ops.findIndex(o => o.filha), true);
 
-  // Resumo recolhível
+  /* A faixa fica sempre à vista; o que recolhe é a explicação por extenso, que
+     se lê uma vez e depois só ocupa a altura que a lista quer. */
   zerar();
   state.resumoAberto = true;
-  check('o resumo abre expandido', renderExtrato(p2).includes('class="card ext-resumo"'), true);
+  check('a explicação começa visível', /ext-resumo-nota">.+?\S/.test(renderExtrato(p2)), true);
   state.resumoAberto = false;
-  check('e recolhido esconde o apoio', renderExtrato(p2).includes('ext-resumo fechado'), true);
-  check('mas o saldo continua à vista', renderExtrato(p2).includes('ext-resumo-val'), true);
+  const recolhido = renderExtrato(p2);
+  check('recolher esconde só a explicação', recolhido.includes('ext-numeros fechado'), true);
+  check('os quatro números continuam à vista', (recolhido.match(/class="ext-num[ "]/g) || []).length, 4);
   state.resumoAberto = true;
   zerar();
   state.monthOffset = 0;
@@ -1526,20 +1539,26 @@ try {
 
   /* Totalizadores com centavos: arredondar escondia diferença de centavos
      justamente na conferência contra o extrato do banco. */
-  /* O resumo tem UM número grande, não quatro iguais. Quatro cartões do mesmo
-     tamanho obrigavam a medir os quatro para descobrir qual responder. */
+  /* Os quatro números numa faixa horizontal, sem cartão: um cartão branco aqui
+     separaria os controles do resultado deles justamente onde os dois precisam
+     se ler juntos. */
   const cabecalho = renderExtrato(pD);
-  check('o resumo é um cartão só', cabecalho.includes('class="card ext-resumo'), true);
-  check('e não voltou o grid de quatro', cabecalho.includes('stat-2x2'), false);
-  check('o saldo do período é o número em destaque', cabecalho.includes('ext-resumo-val'), true);
-  check('entrou e saiu ficam na linha de apoio', cabecalho.includes('ext-resumo-linha'), true);
+  check('os números vêm em faixa, não em cartão', cabecalho.includes('class="ext-numeros'), true);
+  check('e não sobrou cartão em volta deles', cabecalho.includes('card ext-resumo'), false);
+  check('nem voltou o grid de quatro cartões', cabecalho.includes('stat-2x2'), false);
+  check('a faixa tem as quatro colunas', (cabecalho.match(/class="ext-num[ "]/g) || []).length, 4);
+  check('o saldo é a coluna em destaque', cabecalho.includes('ext-num destaque'), true);
   check('a direção vem pela forma, não só pela cor',
     cabecalho.includes('pt pt-up') && cabecalho.includes('pt pt-dn'), true);
   check('e diz o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(cabecalho), true);
-  check('o resumo abre expandido', cabecalho.includes('class="card ext-resumo"'), true);
   const apF = fs.readFileSync(BASE + 'js/app.js', 'utf8');
-  check('os totais do resumo usam centavos',
-    /entrou: receitas, saiu: total/.test(apF) && /\$\{fmt\(entrou\)\}/.test(apF), true);
+  /* Centavos continuam: arredondar escondia diferença justamente na conferência
+     contra o extrato do banco. O que saiu foi o "R$", porque repetido quatro
+     vezes roubava a largura de que os centavos precisam em tela estreita. */
+  check('os números da faixa mantêm centavos',
+    /minimumFractionDigits: 2, maximumFractionDigits: 2/.test(apF), true);
+  check('e dispensam o R$ repetido', /<b>\$\{[\s\S]{0,60}fmtSemMoeda\(valor\)\}/.test(apF), true);
+  check('a faixa não mostra R$ em coluna nenhuma', /ext-num[^<]*<small>[^<]*<\/small><b>R\$/.test(cabecalho), false);
   check('KPIs do painel também', !/kpi-value[^"]*">\$\{fmtShort\(/.test(apF), true);
   check('e o hero do painel', /<small>Em contas<\/small><b>\$\{fmt\(/.test(apF), true);
 
@@ -1594,9 +1613,9 @@ try {
   // Na tela
   state.filtros = { ...filtrosVazios(), contas: [cM] };
   const tela = renderExtrato(mesAtual);
-  check('o extrato mostra o saldo anterior', tela.includes('ext-resumo-antes'), true);
-  check('com o valor que veio do mês passado', tela.includes(fmt(1000)), true);
-  check('e o saldo do mês fechando', tela.includes(fmt(700)), true);
+  check('o extrato mostra o saldo anterior', tela.includes('ext-num-antes'), true);
+  check('com o valor que veio do mês passado', tela.includes(fmtSemMoeda(1000)), true);
+  check('e o saldo do mês fechando', tela.includes(fmtSemMoeda(700)), true);
 
   /* Com conciliação no meio do mês, "anterior + entrou − saiu" NÃO dá o saldo:
      a conciliação mexe no saldo mas fica fora de entrou/saiu, porque não é gasto
@@ -1610,15 +1629,15 @@ try {
   const comConc = renderExtrato(mesAtual);
   const fechamento = DB.saldoNaData([cM], DB.fimISO(mesAtual));
   check('o saldo de fechamento é o saldo real da conta', fechamento, DB.get('accounts', cM).balance);
-  check('e é ele que aparece na tela', comConc.includes(fmt(fechamento)), true);
+  check('e é ele que aparece na tela', comConc.includes(fmtSemMoeda(fechamento)), true);
   // O valor aparece na linha do próprio ajuste; o que importa é o total que saiu
   // no resumo, que deve contar só o gasto real do mês (300), não os 300 + 250
-  const totalSaiu = (comConc.match(/pt pt-dn"><\/i>([^<]*)<small>/) || [])[1];
-  check('a conciliação não entra no total que saiu', (totalSaiu || '').trim(), fmt(300));
+  const totalSaiu = (comConc.match(/pt pt-dn"><\/i>([^<]*)</) || [])[1];
+  check('a conciliação não entra no total que saiu', (totalSaiu || '').trim(), fmtSemMoeda(300));
   check('mas é explicada por extenso', comConc.includes('de conciliação'), true);
   // O erro que existia: derivar o fechamento da soma dava 250 a mais
   check('o fechamento não é anterior + entrou − saiu',
-    comConc.includes(fmt(fechamento + 250)), false);
+    comConc.includes(fmtSemMoeda(fechamento + 250)), false);
   DB.remove('transactions', DB.all('transactions').find(t => t.adjustment && t.account_id === cM).id);
   applyTxEffect(conc, -1);
 
@@ -1633,7 +1652,7 @@ try {
   check('a visão geral também tem saldo anterior', typeof geral, 'number');
   check('e o geral inclui esta conta', geral !== 0 || somaContas === 0, true);
   const telaGeral = renderExtrato(mesAtual);
-  check('a visão geral mostra o saldo anterior', telaGeral.includes('ext-resumo-antes'), true);
+  check('a visão geral mostra o saldo anterior', telaGeral.includes('ext-num-antes'), true);
   check('e explica o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(telaGeral), true);
 
   for (const t of DB.all('transactions').filter(t => /passado$|atual$|futuro$/.test(t.description))) DB.remove('transactions', t.id);
@@ -1671,7 +1690,7 @@ try {
   saida = renderExtrato(pC);
   check('na conta, a saída inclui a transferência', linhaDia(saida).includes(fmtShort(800)), true);
   check('o topo mostra o que saiu da conta', saida.includes('<small>saiu</small>'), true);
-  check('e o saldo atual dela', saida.includes(fmtShort(DB.get('accounts', cA).balance)), true);
+  check('e o saldo atual dela', saida.includes(fmtSemMoeda(DB.get('accounts', cA).balance)), true);
   check('a linha ganha sinal de saída', /transfer">− /.test(saida), true);
   check('dizendo para onde foi', saida.includes('para Conta Conf B'), true);
   check('e explica o saldo anterior', saida.includes('o que veio do mês passado'), true);
