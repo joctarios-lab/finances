@@ -1283,8 +1283,21 @@ function renderExtrato(period) {
           Math.abs(conciliado) > 0.005 ? ` Há ainda <b>${fmt(Math.abs(conciliado))}</b> de conciliação, que mexe no saldo sem ser gasto nem entrada.` : ''}`,
       });
     })()}
-    ${isCurrent ? '<button class="btn ghost" id="btn-recur" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="sync"></span>Lançar custos fixos deste mês</button>' : ''}
-    ${txs.length ? `<button class="btn ghost" id="btn-massa" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="edit"></span>Editar ${txs.length} lançamento${txs.length === 1 ? '' : 's'} em massa</button>` : ''}
+    <!-- Cabeçalho da seção com as ações à direita, no lugar de dois botões de
+         largura inteira empilhados entre o resumo e a lista. Ali eles cortavam a
+         leitura do resumo para a lista e pesavam mais que o conteúdo; aqui
+         nomeiam a seção e ficam ao alcance sem disputar atenção. -->
+    <div class="sec-cab">
+      <div class="sec-tit">
+        <b>Extrato detalhado</b>
+        <small>${txs.length ? `${txs.length} lançamento${txs.length === 1 ? '' : 's'}${
+          ativos.length ? ` de ${DB.txOfPeriod(period).length} no período` : ''}` : 'nada no período'}</small>
+      </div>
+      <div class="sec-acoes">
+        ${isCurrent ? '<button class="sec-btn" id="btn-recur" title="Lançar os custos fixos que ainda faltam neste mês"><span data-ico="sync"></span>Custos fixos</button>' : ''}
+        ${txs.length ? '<button class="sec-btn" id="btn-massa"><span data-ico="edit"></span>Editar</button>' : ''}
+      </div>
+    </div>
     <div id="tx-list">${list}</div>
   `;
 }

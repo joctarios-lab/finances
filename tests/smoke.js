@@ -2562,11 +2562,26 @@ try {
   check('desfazer traz o lançamento de volta', !!DB.get('transactions', t3), true);
   check('e o saldo volta com ele', somaSaldos(), saldoPreExclusao);
 
-  // O lote é o filtro; o botão só aparece quando há o que editar
+  /* ---- Cabeçalho da seção da lista ----
+     As ações moraram um tempo como dois botões de largura inteira empilhados
+     entre o resumo e a lista: cortavam a leitura e pesavam mais que o conteúdo.
+     Agora nomeiam a seção e ancoram à direita dela. */
   state.filtros = filtrosVazios();
-  check('o extrato oferece editar em massa', renderExtrato(pM).includes('id="btn-massa"'), true);
+  const comSec = renderExtrato(pM);
+  check('a lista tem título de seção', comSec.includes('Extrato detalhado'), true);
+  check('e o título diz quantos lançamentos', /sec-tit[\s\S]*?\d+ lançamento/.test(comSec), true);
+  check('as ações ficam no cabeçalho da seção',
+    comSec.indexOf('sec-acoes') > comSec.indexOf('sec-tit')
+    && comSec.indexOf('sec-acoes') < comSec.indexOf('id="tx-list"'), true);
+  check('editar virou botão da seção', /sec-btn" id="btn-massa"/.test(comSec), true);
+  check('custos fixos também', /sec-btn" id="btn-recur"/.test(comSec), true);
+  check('e não sobrou botão de largura inteira',
+    /btn ghost" id="btn-(massa|recur)"/.test(comSec), false);
+  // O lote é o filtro; editar só aparece quando há o que editar
   state.filtros.busca = 'zzzznada';
-  check('sem lançamento, não oferece', renderExtrato(pM).includes('id="btn-massa"'), false);
+  const semNada = renderExtrato(pM);
+  check('sem lançamento, não oferece editar', semNada.includes('id="btn-massa"'), false);
+  check('mas a seção continua nomeada', semNada.includes('Extrato detalhado'), true);
   state.filtros = filtrosVazios();
 
   /* As telas precisam montar de verdade: a lógica acima passaria mesmo com um
