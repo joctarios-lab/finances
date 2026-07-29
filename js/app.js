@@ -459,14 +459,17 @@ function svgComposicao(grupos, opts = {}) {
          claro cai justamente no segmento mais estreito, que é o que menos pesa. */
       const tom = clarear(base, Math.min(0.45, j * 0.12));
       const pctNoGrupo = g.total > 0 ? (p.valor / g.total) * 100 : 0;
-      return `<i style="width:${pctNoGrupo.toFixed(2)}%;background:${tom}"
-        title="${esc(p.rot)} — ${fmtShort(p.valor)}"></i>`;
+      // Sem `title`: o tooltip nativo demora a aparecer, não existe no toque e
+      // mostraria um item isolado — e um segmento sozinho não diz composição
+      return `<i style="width:${pctNoGrupo.toFixed(2)}%;background:${tom}"></i>`;
     }).join('');
     // Rótulo só na maior parte, e só quando ela domina: nome em cada segmento
     // vira ruído numa barra de 8px de altura
     const dona = g.partes[0];
     const fatiaDona = g.total > 0 && dona ? dona.valor / g.total : 0;
-    return `<div class="comp-linha" data-comp="${esc(g.id || '')}">
+    return `<div class="comp-linha" data-comp="${esc(g.id || '')}"
+      data-cor="${base}" data-rot="${esc(g.rot)}"
+      data-partes="${esc(JSON.stringify(g.partes.map(p => [p.rot, p.valor])))}">
       <div class="comp-cab">
         <span class="comp-rot">${esc(g.rot)}</span>
         <span class="comp-val">${fmtShort(g.total)}</span>
@@ -2002,10 +2005,10 @@ function relCategorias({ period, byCat, total }) {
     </div>
 
     <div class="card">
-      <div class="card-head"><div><b>Categoria por categoria</b>
-        <small>contra o costume de cada uma — toque num envelope para abrir as subcategorias</small></div></div>
+      <div class="card-head"><div><b>Detalhe por categoria</b>
+        <small>quanto pesou e como se compara com o costume — toque num envelope para abrir as subcategorias</small></div></div>
       <div class="table-wrap"><table class="rep-table">
-        <thead><tr><th>Categoria</th><th class="num">Neste mês</th><th class="num">De costume</th><th>Δ</th></tr></thead>
+        <thead><tr><th>Categoria</th><th class="num">Neste mês</th><th class="num">Peso</th><th class="num">De costume</th><th>Variação</th></tr></thead>
         <tbody>${porGasto.length ? porGasto.map(l => {
           const subs = l.agora > 0 ? Rel.porSubcategoria(period, l.cid) : {};
           const linhasSub = Object.entries(subs).sort((a, b) => b[1] - a[1]);
@@ -2022,6 +2025,7 @@ function relCategorias({ period, byCat, total }) {
           return `<tr class="rep-raiz${temSub ? ' abre' : ''}" ${temSub ? `data-abre-cat="${l.cid}"` : ''}>
             <td>${temSub ? '<span class="rep-seta" data-ico="chev"></span>' : ''}${esc(catLabel(l.cid === '_sem' ? null : l.cid))}</td>
             <td class="num">${fmtShort(l.agora)}</td>
+            <td class="num">${pesoCelula(l.agora, total)}</td>
             <td class="num muted">${l.med > 0 ? fmtShort(l.med) : '—'}</td>
             <td>${deltaCelula(l.delta, l.med, l.novo)}</td>
           </tr>` + (temSub ? linhasSub.map(([sid, v]) => {
@@ -2030,22 +2034,45 @@ function relCategorias({ period, byCat, total }) {
             return `<tr class="rep-sub" data-sub-de="${l.cid}" hidden>
               <td>${sid === '_direto' ? '<i>sem subcategoria</i>' : esc((catOf(sid) || {}).name || '—')}</td>
               <td class="num">${fmtShort(v)}</td>
+              <td class="num">${pesoCelula(v, total)}</td>
               <td class="num muted">${m > 0 ? fmtShort(m) : '—'}</td>
               <td>${deltaCelula(d, m, !(medSub[sid] || []).length && v > 0)}</td>
             </tr>`;
           }).join('') : '');
-        }).join('') : '<tr><td colspan="4" class="empty">Sem dados.</td></tr>'}</tbody>
+        }).join('') : '<tr><td colspan="5" class="empty">Sem dados.</td></tr>'}</tbody>
       </table></div>
       <p class="muted" style="margin-top:8px">“=” quer dizer variação pequena demais para ser notícia — abaixo de 15% ou R$ 20.</p>
     </div>`;
 }
 
-/* A célula de variação, usada nos dois níveis da tabela. O piso de relevância é o
-   mesmo do resto da tela: abaixo de 15% ou R$ 20 é oscilação, não notícia. */
+/* Quanto a linha pesa no gasto do período.
+
+   Medido sempre contra o TOTAL da família, inclusive nas subcategorias — assim a
+   coluna tem um sentido só, e os pesos das filhas somam exatamente o peso do
+   envelope. Fosse "% do envelope" nas filhas, a mesma coluna diria duas coisas
+   diferentes e a conferência de cabeça deixaria de fechar. */
+function pesoCelula(valor, total) {
+  if (!(total > 0) || !(valor > 0)) return '<span class="muted">—</span>';
+  const pct = valor / total * 100;
+  // Abaixo de 0,5% arredondaria para 0% e pareceria zero, sendo que houve gasto
+  return `<span class="peso">${pct < 0.5 ? '<1' : Math.round(pct)}%</span>`;
+}
+
+/* A célula de variação, nos dois níveis da tabela. O piso de relevância é o mesmo
+   do resto da tela: abaixo de 15% ou R$ 20 é oscilação, não notícia.
+
+   Mostra os dois lados da mesma variação porque um sem o outro engana: R$ 150 é
+   enorme sobre um costume de R$ 200 e irrelevante sobre R$ 5.000, e "+75%" não
+   diz se mexeu no bolso. O percentual é a interpretação, o valor é o tamanho. */
 function deltaCelula(delta, mediana, novo) {
   if (novo) return '<span class="muted">novo</span>';
   if (Math.abs(delta) < Math.max(20, mediana * 0.15)) return '<span class="muted">=</span>';
-  return `<span class="${delta > 0 ? 'txt-red' : 'txt-green'}">${delta > 0 ? '▲' : '▼'} ${fmtShort(Math.abs(delta))}</span>`;
+  const pct = mediana > 0 ? Math.round(Math.abs(delta) / mediana * 100) : null;
+  // Acima de 10× o percentual vira número sem significado ("1400%"); o múltiplo
+  // é mais fácil de dimensionar
+  const rel = pct === null ? '' : pct >= 1000 ? '10×+' : `${pct}%`;
+  return `<span class="delta ${delta > 0 ? 'txt-red' : 'txt-green'}">${delta > 0 ? '▲' : '▼'} ${fmtShort(Math.abs(delta))}${
+    rel ? `<i>${rel}</i>` : ''}</span>`;
 }
 
 /* Cortes transversais: os mesmos gastos vistos por outros eixos. Categoria
@@ -2189,6 +2216,7 @@ function bindView() {
     resumoToggle.setAttribute('aria-expanded', String(state.resumoAberto));
   };
   ligarGrafico();
+  ligarComposicao();
   const btnMassa = $('#btn-massa');
   if (btnMassa) btnMassa.onclick = () => openMassaModal(DB.monthPeriod(new Date(), state.monthOffset));
   /* Abre as subcategorias de um envelope sem redesenhar a tela: refazer o
@@ -2428,6 +2456,102 @@ function ligarGrafico() {
   caixa.onpointerup = soltar;
   caixa.onpointercancel = soltar;
   caixa.onpointerleave = soltar;
+}
+
+/* Tooltip da composição: mostra o envelope INTEIRO, com a parte apontada em
+   destaque.
+
+   Um segmento sozinho não responde nada — "delivery: R$ 400" só quer dizer algo
+   ao lado de "mercado: R$ 900". Por isso a lista vem completa e o realce diz onde
+   o dedo está, em vez de esconder o resto.
+
+   A área de toque é a barra inteira, não o segmento: com 9px de altura e fatias
+   de 2% da largura, acertar um segmento seria impossível no celular. O índice sai
+   da posição do ponteiro sobre as larguras acumuladas. */
+/* Qual fatia cai numa fração da largura da barra.
+
+   Função à parte porque é onde mora o bug: erro de arredondamento na soma faz o
+   acumulado fechar em 0,9999 e o último toque cair fora, e ponteiro na borda
+   exata precisa pertencer a uma fatia só. Fora de um handler, dá para testar. */
+function fatiaEm(valores, frac) {
+  const soma = valores.reduce((s, v) => s + v, 0);
+  if (!(soma > 0)) return 0;
+  const f = Math.min(1, Math.max(0, frac));
+  let acc = 0;
+  for (let i = 0; i < valores.length; i++) {
+    acc += valores[i] / soma;
+    if (f <= acc) return i;
+  }
+  return valores.length - 1;      // resíduo de arredondamento cai na última
+}
+
+function ligarComposicao() {
+  const lista = document.querySelector('.comp');
+  let tip = document.getElementById('comp-tip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.id = 'comp-tip';
+    tip.className = 'comp-tip';
+    document.body.appendChild(tip);
+  }
+  tip.hidden = true;
+  if (!lista) return;
+
+  const esconder = () => { tip.hidden = true; };
+
+  const mostrar = (linha, e) => {
+    let partes;
+    try { partes = JSON.parse(linha.dataset.partes || '[]'); } catch (_) { return; }
+    if (!partes.length) return;
+    const barra = linha.querySelector('.comp-barra');
+    const r = barra.getBoundingClientRect();
+    if (!r.width) return;
+    const soma = partes.reduce((s, p) => s + p[1], 0) || 1;
+
+    const frac = (e.clientX - r.left) / r.width;
+    const alvo = fatiaEm(partes.map(p => p[1]), frac);
+
+    const base = linha.dataset.cor || '#009ef7';
+    tip.innerHTML = `<div class="comp-tip-cab">${esc(linha.dataset.rot || '')}<b>${fmtShort(soma)}</b></div>`
+      + partes.map((p, i) => `<div class="comp-tip-l${i === alvo ? ' on' : ''}">
+          <i style="background:${clarear(base, Math.min(0.45, i * 0.12))}"></i>
+          <span>${esc(p[0])}</span>
+          <em>${Math.round(p[1] / soma * 100)}%</em>
+          <b>${fmtShort(p[1])}</b>
+        </div>`).join('');
+    tip.hidden = false;
+
+    // Preso ao viewport e dentro dele; acima da barra quando não couber embaixo
+    const cx = tip.offsetWidth, cy = tip.offsetHeight;
+    const larguraTela = window.innerWidth || 0;
+    let left = e.clientX - cx / 2;
+    left = Math.max(8, Math.min(larguraTela - cx - 8, left));
+    const cabeEmbaixo = r.bottom + cy + 12 < (window.innerHeight || 0);
+    tip.style.left = `${Math.round(left)}px`;
+    tip.style.top = `${Math.round(cabeEmbaixo ? r.bottom + 10 : r.top - cy - 10)}px`;
+  };
+
+  lista.querySelectorAll('.comp-linha').forEach(linha => {
+    const barra = linha.querySelector('.comp-barra');
+    if (!barra) return;
+    barra.onpointerdown = e => {
+      barra.setPointerCapture && barra.setPointerCapture(e.pointerId);
+      mostrar(linha, e);
+    };
+    barra.onpointermove = e => { if (e.buttons || e.pointerType !== 'touch') mostrar(linha, e); };
+    /* No toque o tooltip PERMANECE depois de soltar: é uma lista para ler, e
+       sumir ao levantar o dedo daria meio segundo de leitura. Some ao tocar
+       fora, tratado no clique do documento. */
+    barra.onpointerup = e => { if (e.pointerType !== 'touch') esconder(); };
+    barra.onpointerleave = e => { if (e.pointerType !== 'touch') esconder(); };
+  });
+
+  if (!ligarComposicao._doc) {
+    ligarComposicao._doc = true;
+    document.addEventListener('pointerdown', e => {
+      if (!e.target.closest || !e.target.closest('.comp-barra')) esconder();
+    }, true);
+  }
 }
 
 /* Cada pílula abre o próprio painel, ancorado nela. O × na pílula ativa limpa só

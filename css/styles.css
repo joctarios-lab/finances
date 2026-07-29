@@ -215,6 +215,41 @@ body {
   gap: 2px;
 }
 .comp-barra i { display: block; min-width: 2px; }
+/* Área de toque maior que a marca: a barra tem 9px, e um segmento pode ter 2% da
+   largura — acertar a marca no celular seria impossível. O padding invisível dá
+   folga vertical sem mudar o desenho. */
+.comp-barra { position: relative; cursor: pointer; touch-action: pan-y; }
+.comp-barra::after { content: ''; position: absolute; left: 0; right: 0; top: -9px; bottom: -9px; }
+
+/* Tooltip da composição: o envelope inteiro, com a parte apontada em destaque.
+   Um segmento sozinho não responde nada — "delivery R$ 400" só quer dizer algo
+   ao lado de "mercado R$ 900". */
+.comp-tip {
+  position: fixed; z-index: 70; pointer-events: none;
+  min-width: 208px; max-width: min(90vw, 300px);
+  padding: 9px 11px; border-radius: 10px;
+  background: var(--paper); color: #fff;
+  box-shadow: 0 10px 30px rgba(24, 28, 50, .28);
+  font-size: 12px; line-height: 1.5;
+}
+.comp-tip-cab {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding-bottom: 6px; margin-bottom: 5px;
+  border-bottom: 1px solid rgba(255, 255, 255, .16);
+  font-weight: 700;
+}
+.comp-tip-l {
+  display: grid; grid-template-columns: 9px 1fr auto auto; align-items: center; gap: 8px;
+  padding: 3px 5px; margin: 0 -5px; border-radius: 5px;
+  /* Sem destaque, o item recua: é o contraste que diz onde o dedo está, sem
+     esconder o resto da composição */
+  opacity: .58;
+}
+.comp-tip-l.on { opacity: 1; background: rgba(255, 255, 255, .13); }
+.comp-tip-l i { width: 9px; height: 9px; border-radius: 3px; }
+.comp-tip-l span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comp-tip-l em { font-style: normal; font-size: 11px; opacity: .75; font-variant-numeric: tabular-nums; }
+.comp-tip-l b { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .comp-pe { margin-top: 5px; font-size: 11px; color: var(--paper-dim); }
 .comp-pe b { color: var(--paper); font-weight: 700; }
 
@@ -468,6 +503,21 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .rep-table tr:last-child td { border-bottom: 0; }
 .rep-table .num { text-align: right; white-space: nowrap; }
 .rep-table th:nth-child(n+2) { text-align: right; }
+
+/* Peso da linha no total. Fundo tingido em vez de texto solto: a coluna é lida em
+   varredura vertical, e um bloquinho por linha dá o perfil da distribuição sem
+   precisar comparar número a número. */
+.peso {
+  display: inline-block; min-width: 38px; padding: 2px 6px; border-radius: 5px;
+  background: rgba(0, 158, 247, .09); color: #0072b8;
+  font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.rep-sub .peso { background: rgba(107, 111, 133, .1); color: var(--paper-dim); }
+/* Valor e percentual em duas linhas: lado a lado, a coluna dobraria de largura e
+   empurraria a tabela para fora da tela no celular. */
+.delta { display: inline-flex; flex-direction: column; align-items: flex-end; line-height: 1.25; white-space: nowrap; }
+.delta i { font-style: normal; font-size: 10.5px; font-weight: 700; opacity: .72; }
+.rep-table td:last-child { text-align: right; }
 
 /* Duas colunas: o par de cima é o que se compara (entrou x saiu, receita x
    despesa), e o de baixo são leituras de apoio. Em três colunas o valor com
