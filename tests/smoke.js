@@ -72,7 +72,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, ligarGrafico, caminhoSuave,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  Rel, passaNosFiltros, temFiltroAtivo, barraDePilulas,
+  Rel, passaNosFiltros, temFiltroAtivo, barraDePilulas, clarear, svgComposicao, deltaCelula,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -3904,3 +3904,165 @@ try {
   }
   DB.save();
 } catch (e) { console.log(` FALHA | relatórios com filtro: ${e.message}`); fail++; }
+
+/* ---- Subcategorias nas visões por categoria ----
+   "Alimentação: R$ 1.500" não é acionável; "mercado 900, delivery 600" é. As duas
+   pedem decisões diferentes, e o total do envelope esconde as duas. */
+console.log('\n=== Subcategorias nos relatórios ===');
+try {
+  state.repOffset = 0;
+  state.filtros = filtrosVazios();
+  const contaS = DB.upsert('accounts', { name: 'Conta Sub', type: 'Conta Corrente', balance: 99999 });
+  const envS = DB.upsert('categories', { name: 'Envelope Sub', icon: '📦', scope: 'Família', type: 'Despesa', kind: 'Essencial' });
+  const subA = DB.upsert('categories', { name: 'Filha A', scope: 'Família', type: 'Despesa', parent_id: envS });
+  const subB = DB.upsert('categories', { name: 'Filha B', scope: 'Família', type: 'Despesa', parent_id: envS });
+  const pS = DB.monthPeriod(new Date());
+  const dS = dia(9);
+  const novo = (desc, valor, cat) => DB.upsert('transactions', { description: desc, amount: valor, date: dS, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaS, category_id: cat });
+  novo('Sub A um', 900, subA);
+  novo('Sub B um', 600, subB);
+  novo('Sub direto', 100, envS);          // lançado no envelope, sem descer
+
+  const subs = Rel.porSubcategoria(pS, envS);
+  check('a subcategoria é apurada separadamente', subs[subA], 900);
+  check('e a outra também', subs[subB], 600);
+  /* O que foi lançado no envelope sem subcategoria precisa aparecer: se ficar de
+     fora, a soma das partes não fecha com o total e o gráfico mente por omissão. */
+  check('o lançado direto no envelope não se perde', subs._direto, 100);
+  check('a soma das partes fecha com o total do envelope',
+    Object.values(subs).reduce((a, b) => a + b, 0), Rel.porCategoria(pS)[envS]);
+
+  const relS = renderRelatorios();
+  check('o relatório mostra o envelope por dentro', relS.includes('Envelope por dentro'), true);
+  check('com uma barra segmentada', relS.includes('class="comp-barra"'), true);
+  check('e nomeia as subcategorias no título dos segmentos',
+    relS.includes('Filha A —') && relS.includes('Filha B —'), true);
+  check('dizendo qual é a maior parte', /maior parte <b>Filha A<\/b>/.test(relS), true);
+
+  /* Cor hierárquica: o matiz identifica o envelope, o tom identifica a
+     subcategoria. 75 folhas não caberiam em matizes distintos — acima de ~8 eles
+     ficam indistinguíveis até para quem vê bem. */
+  check('clarear caminha para o branco', clarear('#009ef7', 1), '#ffffff');
+  check('e a fração zero devolve a cor original', clarear('#009ef7', 0), '#009ef7');
+  const comp = svgComposicao([{ id: 'x', rot: 'Env', total: 100, partes: [
+    { rot: 'p1', valor: 60 }, { rot: 'p2', valor: 40 }] }]);
+  const tons = [...comp.matchAll(/background:(#[0-9a-f]{6})/g)].map(m => m[1]);
+  check('duas subcategorias, dois tons', new Set(tons).size, 2);
+  /* Compara luminosidade canal a canal, não o hex como inteiro: 0x50cd89 é maior
+     que 0x009ef7 sem ser mais claro, e foi assim que uma sabotagem trocando os
+     tons por matizes distintos passou sem reprovar nada. */
+  const canais = h => [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16));
+  const [c0, c1] = tons.map(canais);
+  check('o segundo tom é mais claro em todos os canais',
+    c1.every((v, i) => v >= c0[i]) && c1.some((v, i) => v > c0[i]), true);
+  /* E é o MESMO matiz clareado, não outra cor: a hierarquia depende disso — matiz
+     identifica o envelope, tom identifica a subcategoria dentro dele. */
+  check('e é o mesmo matiz do envelope, clareado', tons[1], clarear(tons[0], 0.12));
+
+  // A tabela abre as subcategorias, cada uma contra a mediana DELA
+  check('a tabela deixa abrir o envelope', relS.includes(`data-abre-cat="${envS}"`), true);
+  check('e traz as linhas filhas escondidas', relS.includes(`data-sub-de="${envS}"`), true);
+  const subEscondida = new RegExp(`data-sub-de="${envS}" hidden`).test(relS);
+  check('as filhas começam recolhidas', subEscondida, true);
+  const apS = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  /* Cada subcategoria contra a própria mediana: se o mercado subiu e o delivery
+     caiu na mesma medida, o envelope não se mexe e nada apareceria — mas são duas
+     mudanças reais, com decisões diferentes por trás. */
+  check('a subcategoria é comparada com a mediana dela',
+    apS.includes('const m = DB.mediana(medSub[sid] || []);'), true);
+  check('abrir não redesenha a tela inteira',
+    /data-abre-cat\]'\)\.forEach\(tr => tr\.onclick[\s\S]{0,300}sub\.hidden = !aberto/.test(apS), true);
+  check('e o mesmo critério de "=" vale nos dois níveis',
+    (apS.match(/deltaCelula\(/g) || []).length >= 3, true);
+
+  // Os três primeiros gráficos em linha no desktop
+  check('os três gráficos ficam num grid próprio', relS.includes('class="grid-3"'), true);
+  const cssS = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('que vira três colunas no desktop',
+    /\.grid-3 \{ grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/.test(cssS), true);
+  check('e uma só em tela estreita', /\.grid-3 \{ display: grid; grid-template-columns: 1fr/.test(cssS), true);
+
+  // Limpa: registro dirty faria os testes async de sync girarem por sujeira
+  for (const store of ['transactions', 'categories', 'accounts']) {
+    DB.data[store] = DB.data[store].filter(r =>
+      !/^Sub (A um|B um|direto)$/.test(r.description || '')
+      && ![contaS, envS, subA, subB].includes(r.id));
+  }
+  DB.save();
+} catch (e) { console.log(` FALHA | subcategorias: ${e.message}`); fail++; }
+
+/* ---- Popover das pílulas com a página rolada ----
+   Defeito relatado: rolando a página, as pílulas apareciam e o dropdown não.
+   Causa: `.ui-panel` vem DEPOIS de `.ui-pop` no CSS, então com uma classe só
+   vencia o empate de especificidade e reimpunha position:absolute — e com
+   absolute num filho do <body>, o `top` calculado em coordenadas de viewport
+   passa a valer como coordenada de DOCUMENTO. Página rolada, painel no topo do
+   documento, fora da tela. */
+console.log('\n=== Dropdown do filtro com a página rolada ===');
+{
+  const cssP2 = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  const iPanel = cssP2.indexOf('.ui-panel {');
+  const iPop = cssP2.indexOf('.ui-panel.ui-pop {');
+  check('o popover é fixo', /\.ui-panel\.ui-pop \{[^}]*position: fixed/.test(cssP2), true);
+  /* Duas classes no seletor: é o que vence independentemente da ordem no arquivo.
+     Com `.ui-pop` sozinho, quem viesse depois ganharia — e foi o que aconteceu. */
+  check('e vence .ui-panel pela especificidade, não pela ordem',
+    iPop >= 0 && /\.ui-panel\.ui-pop/.test(cssP2), true);
+  check('o seletor tem duas classes', (cssP2.match(/\.ui-panel\.ui-pop \{/g) || []).length, 1);
+  check('e o JS manda na posição, não o CSS',
+    /\.ui-panel\.ui-pop \{[^}]*top: auto; left: auto/.test(cssP2), true);
+  // Fica acima do topo grudado, senão some atrás dele
+  const zPop = Number((cssP2.match(/\.ui-panel\.ui-pop \{[^}]*z-index: (\d+)/) || [])[1]);
+  const zTopo = Number((cssP2.match(/\.ext-topo \{[^}]*z-index: (\d+)/) || [])[1]);
+  check('o painel fica acima da barra grudada', zPop > zTopo, true);
+  // A posição vem de getBoundingClientRect, que já é relativa ao viewport
+  const uiSrc = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
+  check('a posição é medida no viewport', uiSrc.includes('ancora.getBoundingClientRect()'), true);
+  check('e nada soma scrollY, que sujaria a conta com fixed',
+    /posicionarFixo[\s\S]{0,900}scrollY/.test(uiSrc), false);
+  void iPanel;
+}
+
+/* ---- Nitidez dos gráficos ----
+   Medido: viewBox de 720 num cartão de 307px dá escala 0,43 — rótulo de 11px saía
+   a 4,7px na tela, hairline de 1px a 0,43px, e o mesmo gráfico mudava de tamanho
+   conforme a largura do cartão (15,9px num card cheio de desktop). */
+console.log('\n=== Gráficos: texto fora do SVG escalado ===');
+{
+  const cssG = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  const cascata = svgCascata([
+    { rot: 'Entrou', valor: 1000, tipo: 'entra' },
+    { rot: 'Saiu', valor: 400, tipo: 'sai' },
+    { rot: 'Sobrou', valor: 0, tipo: 'total' },
+  ]);
+  /* Nenhum <text> dentro do SVG: é a regra que garante a nitidez, porque texto em
+     unidade de viewBox encolhe junto com a escala. */
+  check('a cascata não tem texto dentro do SVG', /<svg[\s\S]*?<text/.test(cascata), false);
+  check('e traz o texto em overlay HTML', cascata.includes('class="g-textos"'), true);
+  check('posicionado em % para casar com a geometria', /class="g-t g-t-val" style="left:[\d.]+%/.test(cascata), true);
+
+  const faixa = svgLinhaFaixa([
+    { rot: 'jan', valor: 100 }, { rot: 'fev', valor: 200 }, { rot: 'mar', valor: 150 },
+  ]);
+  check('a faixa também não tem texto no SVG', /<svg[\s\S]*?<text/.test(faixa), false);
+  /* Ponto como div, não <circle>: o SVG é esticado sem preservar proporção para o
+     overlay casar, e círculo esticado vira elipse. */
+  check('e o ponto é div, não circle', faixa.includes('class="g-bola'), true);
+  check('sem <circle> esticável', faixa.includes('<circle'), false);
+  check('o div fica redondo por border-radius',
+    /\.g-bola \{[^}]*border-radius: 50%/.test(cssG), true);
+
+  // Traço com espessura real, não escalada
+  check('a linha usa espessura não escalável',
+    /\.g-linha \{[^}]*vector-effect: non-scaling-stroke/.test(cssG), true);
+  check('o burnup também', fs.readFileSync(BASE + 'js/app.js', 'utf8')
+    .includes('vector-effect="non-scaling-stroke"'), true);
+
+  /* Altura fixa em px, não aspect-ratio: com o texto fora do SVG, o contêiner
+     manda na altura e o desenho preenche. É o que dá o mesmo tamanho de fonte em
+     qualquer largura de cartão. */
+  check('o contêiner define a altura', /\.g-wrap \{[^}]*height: 200px/.test(cssG), true);
+  check('e encolhe em tela estreita', /max-width: 560px\)[^}]*\.g-wrap \{ height: 175px/.test(cssG), true);
+  // O overlay não pode roubar o toque do que está embaixo
+  check('o overlay não intercepta toque', /\.g-textos \{[^}]*pointer-events: none/.test(cssG), true);
+}

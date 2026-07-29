@@ -390,7 +390,7 @@ function svgCascata(passos, opts = {}) {
     grade += `<line x1="${padL}" y1="${gy.toFixed(1)}" x2="${W - padR}" y2="${gy.toFixed(1)}" class="g-grid"/>`;
   }
 
-  let marcas = '';
+  let marcas = '', textos = '';
   barras.forEach((b, i) => {
     const cx = padL + banda * i + banda / 2;
     const topo = Math.min(y(b.de), y(b.ate));
@@ -403,15 +403,81 @@ function svgCascata(passos, opts = {}) {
       marcas += `<line x1="${(cx + larg / 2).toFixed(1)}" y1="${y(b.ate).toFixed(1)}" x2="${(px - larg / 2).toFixed(1)}" y2="${y(b.ate).toFixed(1)}" class="g-liga"/>`;
     }
     marcas += `<rect x="${(cx - larg / 2).toFixed(1)}" y="${topo.toFixed(1)}" width="${larg.toFixed(1)}" height="${alt.toFixed(1)}" rx="4" class="${cls}"/>`;
-    // Valor sobre a barra e rótulo embaixo: com 4 ou 5 blocos, cabe em todos
-    marcas += `<text x="${cx.toFixed(1)}" y="${(topo - 8).toFixed(1)}" class="g-val">${fmtShort(b.valor)}</text>`;
-    marcas += `<text x="${cx.toFixed(1)}" y="${(H - padB + 18).toFixed(1)}" class="g-rot">${esc(b.rot)}</text>`;
+    /* Texto em HTML sobreposto, NÃO dentro do SVG.
+
+       Medido: com viewBox de 720 num cartão de 307px, a escala é 0,43 — um rótulo
+       de 11px saía a 4,7px na tela, ilegível, e o mesmo gráfico mudava de tamanho
+       conforme a largura do cartão. Em HTML o texto renderiza sempre no tamanho
+       real do dispositivo, igual em qualquer contexto. */
+    textos += `<span class="g-t g-t-val" style="left:${(cx / W * 100).toFixed(2)}%;top:${((topo - 4) / H * 100).toFixed(2)}%">${fmtShort(b.valor)}</span>`
+      + `<span class="g-t g-t-rot" style="left:${(cx / W * 100).toFixed(2)}%">${esc(b.rot)}</span>`;
   });
 
-  return `<svg class="g-cascata" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"
-    role="img" aria-label="${esc(opts.alt || 'Caminho do dinheiro no período')}">
-    ${grade}${marcas}
-  </svg>`;
+  return `<div class="g-wrap" style="--g-ar:${(H / W * 100).toFixed(2)}%">
+    <svg class="g-cascata" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+      role="img" aria-label="${esc(opts.alt || 'Caminho do dinheiro no período')}">
+      ${grade}${marcas}
+    </svg>
+    <div class="g-textos">${textos}</div>
+  </div>`;
+}
+
+/* Clareia um hex em direção ao branco. Serve para dar às subcategorias tons do
+   matiz do próprio envelope — 75 folhas não caberiam em matizes distintos, e
+   acima de ~8 matizes eles ficam indistinguíveis mesmo para quem vê bem. */
+function clarear(hex, fracao) {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  const mistura = c => Math.round(c + (255 - c) * fracao);
+  const r = mistura((n >> 16) & 255), g = mistura((n >> 8) & 255), b = mistura(n & 255);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
+/* ---------- Composição: envelope por dentro ----------
+   Uma barra por envelope, dividida nas subcategorias dele. Responde "onde DENTRO
+   de Alimentação?" para todos os envelopes de uma vez, sem precisar tocar em
+   nada — que é a pergunta acionável: mercado e delivery pedem decisões
+   diferentes, e o total do envelope esconde as duas.
+
+   A hierarquia vem no encadeamento das cores: o matiz identifica o envelope, o
+   tom identifica a subcategoria dentro dele. Assim a leitura funciona nos dois
+   níveis sem inventar 75 cores.
+
+   grupos = [{ rot, total, partes: [{ rot, valor }] }] */
+function svgComposicao(grupos, opts = {}) {
+  if (!grupos.length) return '<div class="empty">Sem gastos no período.</div>';
+  const maior = Math.max(...grupos.map(g => g.total), 1);
+  return `<div class="comp">${grupos.map((g, i) => {
+    const base = PALETTE[i % PALETTE.length];
+    const larguraDoGrupo = (g.total / maior) * 100;
+    /* Gap de 2px na cor da superfície entre segmentos: é o que separa dois tons
+       vizinhos sem desenhar borda em volta deles — borda adiciona tinta que não
+       é dado. */
+    const segs = g.partes.map((p, j) => {
+      /* Clareia no máximo 45%, medido: até 62% o último segmento chegava a 1,12
+         de contraste contra o fundo do cartão — presente no HTML e invisível na
+         tela. As partes vêm ordenadas da maior para a menor, então o tom mais
+         claro cai justamente no segmento mais estreito, que é o que menos pesa. */
+      const tom = clarear(base, Math.min(0.45, j * 0.12));
+      const pctNoGrupo = g.total > 0 ? (p.valor / g.total) * 100 : 0;
+      return `<i style="width:${pctNoGrupo.toFixed(2)}%;background:${tom}"
+        title="${esc(p.rot)} — ${fmtShort(p.valor)}"></i>`;
+    }).join('');
+    // Rótulo só na maior parte, e só quando ela domina: nome em cada segmento
+    // vira ruído numa barra de 8px de altura
+    const dona = g.partes[0];
+    const fatiaDona = g.total > 0 && dona ? dona.valor / g.total : 0;
+    return `<div class="comp-linha" data-comp="${esc(g.id || '')}">
+      <div class="comp-cab">
+        <span class="comp-rot">${esc(g.rot)}</span>
+        <span class="comp-val">${fmtShort(g.total)}</span>
+      </div>
+      <div class="comp-barra" style="width:${Math.max(4, larguraDoGrupo).toFixed(1)}%">${segs}</div>
+      <div class="comp-pe">${dona && g.partes.length > 1
+        ? `maior parte <b>${esc(dona.rot)}</b> · ${Math.round(fatiaDona * 100)}%${
+            g.partes.length > 2 ? ` · e ${g.partes.length - 1} outras` : ''}`
+        : dona ? esc(dona.rot) : ''}</div>
+    </div>`;
+  }).join('')}</div>`;
 }
 
 /* ---------- Linha com faixa de normalidade ----------
@@ -440,19 +506,28 @@ function svgLinhaFaixa(serie, opts = {}) {
   const linha = caminhoSuave(pts);
   const area = positivos.length ? `<path d="${linha} L${x(serie.length - 1).toFixed(1)} ${H - padB} L${padL} ${H - padB} Z" class="g-area"/>` : '';
 
-  // Só as pontas e o extremo recebem marcador: um ponto em cada mês vira ruído
+  /* Só as pontas e o extremo recebem marcador: um ponto em cada mês vira ruído.
+
+     Em HTML, não como <circle>: o SVG é esticado sem preservar proporção para o
+     overlay de texto casar, e círculo esticado vira elipse. Um div com
+     border-radius fica redondo em qualquer largura. */
   const iMax = vals.indexOf(Math.max(...vals));
   const destaque = [0, serie.length - 1, iMax];
   const bolas = pts.map(([px, py], i) => (destaque.includes(i)
-    ? `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="4" class="g-ponto${i === serie.length - 1 ? ' agora' : ''}"/>` : '')).join('');
+    ? `<span class="g-bola${i === serie.length - 1 ? ' agora' : ''}"
+        style="left:${(px / W * 100).toFixed(2)}%;top:${(py / H * 100).toFixed(2)}%"></span>` : '')).join('');
 
+  // Rótulos em HTML sobreposto: dentro do SVG escalado eles saíam a ~5px
   const rotulos = serie.map((s, i) => (i % Math.ceil(serie.length / 6) === 0 || i === serie.length - 1
-    ? `<text x="${x(i).toFixed(1)}" y="${(H - padB + 18).toFixed(1)}" class="g-rot">${esc(s.rot)}</text>` : '')).join('');
+    ? `<span class="g-t g-t-rot" style="left:${(x(i) / W * 100).toFixed(2)}%">${esc(s.rot)}</span>` : '')).join('');
 
-  return `<svg class="g-faixa-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
-    role="img" aria-label="${esc(opts.alt || 'Evolução mensal com faixa de normalidade')}">
-    ${faixa}${area}<path d="${linha}" class="g-linha"/>${bolas}${rotulos}
-  </svg>`;
+  return `<div class="g-wrap g-wrap-linha">
+    <svg class="g-faixa-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+      role="img" aria-label="${esc(opts.alt || 'Evolução mensal com faixa de normalidade')}">
+      ${faixa}${area}<path d="${linha}" class="g-linha"/>
+    </svg>
+    <div class="g-textos">${bolas}${rotulos}</div>
+  </div>`;
 }
 
 function niceCeil(v) {
@@ -538,18 +613,24 @@ function svgBurnup(period, refLimit) {
 
   const dx = X(Math.max(0, decorridos - 1)), dy = Y(gastoHoje);
   const estourou = refLimit > 0 && gastoHoje > refLimit * (decorridos / totalDias);
-  return '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img">' +
+  const pct = (v, ref) => (v / ref * 100).toFixed(2);
+  // Texto e ponto em HTML sobreposto, pelo mesmo motivo dos outros: dentro do
+  // viewBox escalado eles saíam a ~5px e mudavam de tamanho conforme o cartão
+  return '<div class="g-wrap g-wrap-linha">' +
+    '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Gasto acumulado dia a dia no mês">' +
     '<defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1">' +
     '<stop offset="0%" stop-color="#009ef7" stop-opacity=".28"/>' +
     '<stop offset="100%" stop-color="#009ef7" stop-opacity="0"/></linearGradient></defs>' +
     grid + ideal +
     (area ? '<path d="' + area + '" fill="url(#gArea)"/>' : '') +
-    '<path d="' + linha + '" fill="none" stroke="' + (estourou ? '#f1416c' : '#009ef7') + '" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>' +
-    '<circle cx="' + dx.toFixed(1) + '" cy="' + dy.toFixed(1) + '" r="6" fill="#fff" stroke="' + (estourou ? '#f1416c' : '#009ef7') + '" stroke-width="3"/>' +
-    '<text x="' + Math.min(W - padR, dx + 12).toFixed(1) + '" y="' + Math.max(16, dy - 12).toFixed(1) + '" class="ch-val" text-anchor="' + (dx > W - 120 ? 'end' : 'start') + '">' + fmtShort(gastoHoje).replace('R$', '').trim() + '</text>' +
-    '<text x="' + padL + '" y="' + (H - 8) + '" class="ch-lbl">dia 1</text>' +
-    '<text x="' + (W - padR) + '" y="' + (H - 8) + '" text-anchor="end" class="ch-lbl">dia ' + totalDias + '</text>' +
-    '</svg>';
+    '<path d="' + linha + '" fill="none" stroke="' + (estourou ? '#f1416c' : '#009ef7') + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
+    '</svg>' +
+    '<div class="g-textos">' +
+      '<span class="g-bola' + (estourou ? ' ruim' : ' agora') + '" style="left:' + pct(dx, W) + '%;top:' + pct(dy, H) + '%"></span>' +
+      '<span class="g-t g-t-val" style="left:' + pct(dx, W) + '%;top:' + pct(dy - 10, H) + '%">' + fmtShort(gastoHoje) + '</span>' +
+      '<span class="g-t g-t-rot" style="left:0;transform:none">dia 1</span>' +
+      '<span class="g-t g-t-rot" style="right:0;left:auto;transform:none">dia ' + totalDias + '</span>' +
+    '</div></div>';
 }
 
 /* ---------- Situação financeira (conceitos: disponível real, run-rate, 50/30/20, reserva) ---------- */
@@ -1631,6 +1712,18 @@ const Rel = {
     }
     return out;
   },
+  /* Subcategorias de um envelope, sob o mesmo recorte. A chave '_direto' guarda o
+     que foi lançado no envelope sem descer para uma subcategoria — some se ficar
+     de fora, e a soma das partes não fecharia com o total do envelope. */
+  porSubcategoria(period, raizId) {
+    const out = {};
+    for (const t of this.despesas(period)) {
+      if ((DB.categoryRootId(t.category_id) || '_sem') !== raizId) continue;
+      const chave = t.category_id && t.category_id !== raizId ? t.category_id : '_direto';
+      out[chave] = (out[chave] || 0) + (Number(t.amount) || 0);
+    }
+    return out;
+  },
   porTipo(period) {
     const out = { Essencial: 0, Estilo: 0 };
     for (const t of this.despesas(period)) {
@@ -1692,9 +1785,15 @@ function renderRelatorios() {
       O recorte vale para os 12 meses do histórico, então as comparações continuam justas.</p>` : ''}
 
     ${relFrase({ period, atual, total, receitas, resultado, juizo, vsMediana, st, kinds, filtrado })}
-    ${filtrado ? '' : relEntradas(period, receitas)}
-    ${filtrado ? '' : relCascata({ receitas, kinds, resultado, total })}
-    ${relNormal({ evo, fechados, juizo, total, atual, fmtPct, vsMediana, filtrado })}
+    <!-- Os três primeiros gráficos são a resposta em três tempos — de onde veio,
+         para onde foi, se é normal. Em tela larga eles ficam lado a lado, porque
+         a comparação entre os três É a leitura; empilhados, exigem rolar e o
+         raciocínio se perde no caminho. -->
+    <div class="grid-3">
+      ${filtrado ? '' : relEntradas(period, receitas)}
+      ${filtrado ? '' : relCascata({ receitas, kinds, resultado, total })}
+      ${relNormal({ evo, fechados, juizo, total, atual, fmtPct, vsMediana, filtrado })}
+    </div>
     ${relCategorias({ period, byCat, total })}
     ${relCortes(period, txs, total)}
     ${relProjecao({ period, st, atual, total, receitas, juizo, filtrado })}
@@ -1890,21 +1989,63 @@ function relCategorias({ period, byCat, total }) {
           : '<div class="empty">Sem gastos no período.</div>'}
       </div>
       <div class="card">
-        <div class="card-head"><div><b>Categoria por categoria</b><small>contra o costume de cada uma</small></div></div>
-        <div class="table-wrap"><table class="rep-table">
-          <thead><tr><th>Categoria</th><th class="num">Neste mês</th><th class="num">De costume</th><th>Δ</th></tr></thead>
-          <tbody>${porGasto.length ? porGasto.map(l => `<tr>
-            <td>${esc(catLabel(l.cid === '_sem' ? null : l.cid))}</td>
+        <div class="card-head"><div><b>Envelope por dentro</b>
+          <small>cada barra dividida nas subcategorias — o tom é a subcategoria, o matiz é o envelope</small></div></div>
+        ${svgComposicao(porGasto.slice(0, 8).filter(l => l.agora > 0).map(l => {
+          const subs = Rel.porSubcategoria(period, l.cid);
+          const partes = Object.entries(subs)
+            .map(([sid, v]) => ({ rot: sid === '_direto' ? 'sem subcategoria' : ((catOf(sid) || {}).name || '—'), valor: v }))
+            .sort((a, b) => b.valor - a.valor);
+          return { id: l.cid, rot: catLabel(l.cid === '_sem' ? null : l.cid), total: l.agora, partes };
+        }))}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><b>Categoria por categoria</b>
+        <small>contra o costume de cada uma — toque num envelope para abrir as subcategorias</small></div></div>
+      <div class="table-wrap"><table class="rep-table">
+        <thead><tr><th>Categoria</th><th class="num">Neste mês</th><th class="num">De costume</th><th>Δ</th></tr></thead>
+        <tbody>${porGasto.length ? porGasto.map(l => {
+          const subs = l.agora > 0 ? Rel.porSubcategoria(period, l.cid) : {};
+          const linhasSub = Object.entries(subs).sort((a, b) => b[1] - a[1]);
+          /* A subcategoria também é comparada com a mediana DELA, não com uma
+             fatia da mediana do envelope: se o mercado subiu e o delivery caiu na
+             mesma medida, o envelope não se mexe e nada apareceria — mas são duas
+             mudanças reais, com decisões diferentes por trás. */
+          const medSub = {};
+          for (let i = 1; i <= 6; i++) {
+            const hist = Rel.porSubcategoria(DB.monthPeriod(new Date(), (state.repOffset || 0) - i), l.cid);
+            for (const [sid, v] of Object.entries(hist)) (medSub[sid] = medSub[sid] || []).push(v);
+          }
+          const temSub = linhasSub.length > 1 || (linhasSub.length === 1 && linhasSub[0][0] !== '_direto');
+          return `<tr class="rep-raiz${temSub ? ' abre' : ''}" ${temSub ? `data-abre-cat="${l.cid}"` : ''}>
+            <td>${temSub ? '<span class="rep-seta" data-ico="chev"></span>' : ''}${esc(catLabel(l.cid === '_sem' ? null : l.cid))}</td>
             <td class="num">${fmtShort(l.agora)}</td>
             <td class="num muted">${l.med > 0 ? fmtShort(l.med) : '—'}</td>
-            <td>${l.novo ? '<span class="muted">novo</span>'
-              : Math.abs(l.delta) < Math.max(20, l.med * 0.15) ? '<span class="muted">=</span>'
-              : `<span class="${l.delta > 0 ? 'txt-red' : 'txt-green'}">${l.delta > 0 ? '▲' : '▼'} ${fmtShort(Math.abs(l.delta))}</span>`}</td>
-          </tr>`).join('') : '<tr><td colspan="4" class="empty">Sem dados.</td></tr>'}</tbody>
-        </table></div>
-        <p class="muted" style="margin-top:8px">“=” quer dizer variação pequena demais para ser notícia — abaixo de 15% ou R$ 20.</p>
-      </div>
+            <td>${deltaCelula(l.delta, l.med, l.novo)}</td>
+          </tr>` + (temSub ? linhasSub.map(([sid, v]) => {
+            const m = DB.mediana(medSub[sid] || []);
+            const d = v - m;
+            return `<tr class="rep-sub" data-sub-de="${l.cid}" hidden>
+              <td>${sid === '_direto' ? '<i>sem subcategoria</i>' : esc((catOf(sid) || {}).name || '—')}</td>
+              <td class="num">${fmtShort(v)}</td>
+              <td class="num muted">${m > 0 ? fmtShort(m) : '—'}</td>
+              <td>${deltaCelula(d, m, !(medSub[sid] || []).length && v > 0)}</td>
+            </tr>`;
+          }).join('') : '');
+        }).join('') : '<tr><td colspan="4" class="empty">Sem dados.</td></tr>'}</tbody>
+      </table></div>
+      <p class="muted" style="margin-top:8px">“=” quer dizer variação pequena demais para ser notícia — abaixo de 15% ou R$ 20.</p>
     </div>`;
+}
+
+/* A célula de variação, usada nos dois níveis da tabela. O piso de relevância é o
+   mesmo do resto da tela: abaixo de 15% ou R$ 20 é oscilação, não notícia. */
+function deltaCelula(delta, mediana, novo) {
+  if (novo) return '<span class="muted">novo</span>';
+  if (Math.abs(delta) < Math.max(20, mediana * 0.15)) return '<span class="muted">=</span>';
+  return `<span class="${delta > 0 ? 'txt-red' : 'txt-green'}">${delta > 0 ? '▲' : '▼'} ${fmtShort(Math.abs(delta))}</span>`;
 }
 
 /* Cortes transversais: os mesmos gastos vistos por outros eixos. Categoria
@@ -2050,6 +2191,14 @@ function bindView() {
   ligarGrafico();
   const btnMassa = $('#btn-massa');
   if (btnMassa) btnMassa.onclick = () => openMassaModal(DB.monthPeriod(new Date(), state.monthOffset));
+  /* Abre as subcategorias de um envelope sem redesenhar a tela: refazer o
+     relatório inteiro recalcularia 12 meses de histórico e perderia a rolagem,
+     num toque que só precisa mostrar quatro linhas. */
+  v.querySelectorAll('[data-abre-cat]').forEach(tr => tr.onclick = () => {
+    const cid = tr.dataset.abreCat;
+    const aberto = tr.classList.toggle('aberto');
+    v.querySelectorAll(`[data-sub-de="${cid}"]`).forEach(sub => { sub.hidden = !aberto; });
+  });
   const rprev = $('#rep-prev'), rnext = $('#rep-next');
   if (rprev) rprev.onclick = () => { state.repOffset = (state.repOffset || 0) - 1; render(); };
   if (rnext) rnext.onclick = () => { state.repOffset = (state.repOffset || 0) + 1; render(); };

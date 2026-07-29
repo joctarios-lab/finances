@@ -194,8 +194,84 @@ body {
 .mover.desce .mover-delta { color: #1f9d61; }
 .mover small { grid-column: 1 / -1; font-size: 11px; color: var(--paper-dim); }
 
+/* ---------- Composição: envelope por dentro ----------
+   A hierarquia vem no encadeamento das cores: o matiz identifica o envelope, o
+   tom identifica a subcategoria dentro dele. 75 folhas não caberiam em matizes
+   distintos — acima de ~8 eles ficam indistinguíveis mesmo para quem vê bem. */
+.comp { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+.comp-cab { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.comp-rot { font-size: 12.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comp-val { font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+/* A barra do envelope é proporcional ao MAIOR envelope, então a largura compara
+   entre grupos; os segmentos dentro dela comparam dentro do grupo */
+.comp-barra {
+  display: flex; height: 9px; border-radius: 5px; overflow: hidden;
+  margin-top: 5px;
+  /* O vão de 2px é o que separa dois tons vizinhos — borda em volta de cada
+     segmento adicionaria tinta que não é dado. Como tons vizinhos ficam a ~1,15
+     de contraste entre si, o vão precisa ser mais escuro que a superfície do
+     cartão, senão desaparece justamente nos segmentos claros. */
+  background: #dde3e9;
+  gap: 2px;
+}
+.comp-barra i { display: block; min-width: 2px; }
+.comp-pe { margin-top: 5px; font-size: 11px; color: var(--paper-dim); }
+.comp-pe b { color: var(--paper); font-weight: 700; }
+
+/* Linhas de subcategoria na tabela */
+.rep-raiz.abre { cursor: pointer; }
+.rep-raiz.abre:hover td { background: rgba(0, 158, 247, .04); }
+.rep-seta {
+  display: inline-flex; margin-right: 6px; color: var(--paper-dim);
+  transition: transform .18s ease;
+}
+.rep-seta svg { width: 11px; height: 11px; }
+.rep-raiz.aberto .rep-seta { transform: rotate(90deg); }
+.rep-raiz.aberto > td { font-weight: 700; }
+/* Recuo e barra à esquerda: a subcategoria pertence à linha acima dela, e é isso
+   que a barra diz sem precisar repetir o nome do envelope */
+.rep-sub > td:first-child { padding-left: 26px; position: relative; font-size: 12.5px; }
+.rep-sub > td:first-child::before {
+  content: ''; position: absolute; left: 13px; top: 0; bottom: 0;
+  width: 2px; background: var(--line);
+}
+.rep-sub > td { background: rgba(245, 248, 250, .55); }
+.rep-sub i { font-style: italic; color: var(--paper-dim); }
+
+/* ---------- Gráfico com texto fora do SVG ----------
+   Medido: viewBox de 720 num cartão de 307px dá escala 0,43 — um rótulo de 11px
+   saía a 4,7px na tela, e hairline de 1px a 0,43px. Pior: o mesmo gráfico mudava
+   de tamanho conforme a largura do cartão (15,9px num card cheio de desktop).
+
+   Por isso o SVG guarda só a GEOMETRIA, esticada para preencher o contêiner, e
+   texto e pontos vêm num overlay HTML posicionado em %. Assim o texto renderiza
+   sempre no tamanho real do dispositivo, idêntico em qualquer contexto, e círculo
+   continua redondo mesmo com o SVG esticado. */
+.g-wrap { position: relative; margin-top: 6px; height: 200px; }
+.g-wrap-linha { height: 170px; }
+@media (max-width: 560px) { .g-wrap { height: 175px; } .g-wrap-linha { height: 150px; } }
+.g-wrap > svg { display: block; width: 100%; height: 100%; }
+/* O overlay não intercepta toque: quem manda no clique é o que está embaixo */
+.g-textos { position: absolute; inset: 0; pointer-events: none; }
+.g-t {
+  position: absolute; transform: translateX(-50%);
+  white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.g-t-val { font-size: 11.5px; font-weight: 700; color: var(--paper); transform: translate(-50%, -100%); }
+.g-t-rot { bottom: 0; font-size: 11px; color: var(--paper-dim); }
+/* Div com border-radius em vez de <circle>: o SVG é esticado sem preservar
+   proporção para o overlay casar, e círculo esticado vira elipse */
+.g-bola {
+  position: absolute; width: 9px; height: 9px; border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: #fff; border: 2px solid var(--gold); box-sizing: border-box;
+}
+.g-bola.agora { background: var(--gold); }
+.g-bola.ruim { background: var(--red); border-color: var(--red); }
+/* Rótulo do valor perto da borda: encolhe o deslocamento para não vazar */
+.g-wrap .g-t-val { max-width: 46%; overflow: hidden; text-overflow: ellipsis; }
+
 /* ---------- Cascata ---------- */
-.g-cascata, .g-faixa-svg { display: block; width: 100%; height: auto; margin-top: 6px; }
 .g-cascata .c-entra { fill: var(--green); }
 .g-cascata .c-sai { fill: var(--red); opacity: .85; }
 .g-cascata .c-saldo { fill: var(--gold); }
@@ -205,8 +281,6 @@ body {
 .g-grid { stroke: var(--line); stroke-width: 1; }
 /* O conector é o que faz a leitura fluir de um bloco ao seguinte */
 .g-liga { stroke: #c4cad4; stroke-width: 1; stroke-dasharray: 3 3; }
-.g-val { font-size: 12px; font-weight: 700; fill: var(--paper); text-anchor: middle; }
-.g-rot { font-size: 11px; font-weight: 600; fill: var(--paper-dim); text-anchor: middle; }
 
 /* ---------- Faixa de normalidade ----------
    A faixa é o que "normal" significa PARA ESTA FAMÍLIA. Sem ela toda subida
@@ -215,9 +289,6 @@ body {
 .g-mediana { stroke: var(--gold); stroke-width: 1; stroke-dasharray: 4 4; opacity: .6; vector-effect: non-scaling-stroke; }
 .g-area { fill: rgba(0, 158, 247, .07); }
 .g-linha { fill: none; stroke: var(--gold); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-/* Anel na cor da superfície para o ponto seguir legível onde cruza a linha */
-.g-ponto { fill: #fff; stroke: var(--gold); stroke-width: 2; vector-effect: non-scaling-stroke; }
-.g-ponto.agora { fill: var(--gold); }
 
 /* Cabeçalho de seção com ações à direita (padrão card-header + card-toolbar do
    Metronic). Nomeia a seção e ancora as ações dela, no lugar de botões de
@@ -252,6 +323,16 @@ body {
 .grid-2 > .card { display: flex; flex-direction: column; }
 .grid-2 > .card > .chart-foot { margin-top: auto; }
 .grid-2 > .card > .donut-wrap { flex: 1; }
+
+/* Três em linha no desktop: os gráficos de "de onde veio / para onde foi / é
+   normal" são uma resposta em três tempos, e a comparação entre eles É a
+   leitura. Empilhados, exigem rolar e o raciocínio se perde no caminho.
+   O rodapé cola embaixo para os três terminarem alinhados. */
+.grid-3 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: stretch; }
+.grid-3 > .card { display: flex; flex-direction: column; min-width: 0; }
+.grid-3 > .card > .chart-foot { margin-top: auto; }
+/* Card vazio (uma seção que saiu sob recorte) não pode virar coluna fantasma */
+.grid-3:empty { display: none; }
 
 /* Cabeçalho de card (padrão Metronic: título + subtítulo + toolbar) */
 .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
@@ -746,10 +827,20 @@ svg:hover .ch-bar-on { fill: #005a92; }
 /* Painel ancorado na pílula: mesmo visual do dropdown, sem cobrir a lista.
    Fica no <body> com position:fixed — dentro da fileira de pílulas o
    overflow-x:auto dela cortaria o painel. */
-.ui-pop {
+/* `.ui-panel.ui-pop` com duas classes de propósito, não por estilo: `.ui-panel`
+   aparece DEPOIS neste arquivo, então com uma classe só ele venceria o empate de
+   especificidade e reimporia `position: absolute`.
+
+   E isso não era detalhe: com `absolute` num filho do <body>, o `top` que o JS
+   calcula em coordenadas de viewport passa a valer como coordenada de DOCUMENTO.
+   Com a página rolada, o painel ia para o topo do documento — fora da tela. As
+   pílulas apareciam e o dropdown não. */
+.ui-panel.ui-pop {
   position: fixed; min-width: 210px; max-width: min(88vw, 320px);
-  z-index: 40; margin: 0;
+  z-index: 45; margin: 0;
+  top: auto; left: auto; right: auto; bottom: auto;   /* quem manda é o JS */
 }
+.ui-panel.ui-pop.acima { bottom: auto; }
 .ui-pop .ui-opt.e-grupo { font-weight: 700; }
 .ui-pop .ui-opt.e-filha { padding-left: 26px; font-size: 13px; }
 .ui-pop-pe {
@@ -1542,6 +1633,9 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
   .topbar-month { font-size: 24px; }
   .kpi-grid { grid-template-columns: repeat(4, 1fr); }
   .grid-2 { grid-template-columns: 5fr 7fr; }
+  .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  /* Sob recorte sobra um card só no grid: ele não deve ficar com 1/3 da largura */
+  .grid-3:has(> .card:only-child) { grid-template-columns: minmax(0, 1fr); }
   .modal { display: flex; align-items: flex-start; justify-content: center; padding-top: 6vh; background: rgba(24, 28, 50, .4); }
   .modal-inner { background: var(--ink); border-radius: 14px; padding: 24px; width: 100%; box-shadow: 0 20px 60px rgba(24, 28, 50, .25); }
   .sheet { bottom: auto; top: 6vh; border-radius: 16px; }
