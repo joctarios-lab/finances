@@ -71,6 +71,7 @@ eval(appSrc + `; Object.assign(global, {
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, ligarGrafico, caminhoSuave,
+  openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -2658,6 +2659,119 @@ try {
    "Transferir" e "Gerenciar" ficavam empilhados em largura inteira DENTRO do
    cartão, depois da lista de contas: fechavam a lista com dois blocos que
    pesavam mais que as próprias contas e ficavam longe do título. */
+/* ---- Pagar fatura ----
+   Antes o pagamento era um adjustBalance silencioso: o dinheiro sumia da conta e
+   nada no extrato explicava. Agora e um lancamento de verdade. */
+console.log('\n=== Pagamento de fatura ===');
+try {
+  const contaF = DB.upsert('accounts', { name: 'Conta Fatura', type: 'Conta Corrente', balance: 5000 });
+  const cartaoF = DB.upsert('cards', { name: 'Cartao Fatura', closing_day: 20, due_day: 28, account_id: contaF, active: true });
+  const cartao = DB.get('cards', cartaoF);
+  const chave = DB.invoiceKeyFor(cartao, dia(10));
+  DB.upsert('transactions', { description: 'Compra A', amount: 400, date: dia(10), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito', card_id: cartaoF, invoice_key: chave });
+  DB.upsert('transactions', { description: 'Compra B', amount: 600, date: dia(11), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito', card_id: cartaoF, invoice_key: chave });
+
+  const fat = () => DB.invoicesOf(DB.get('cards', cartaoF)).find(i => i.key === chave);
+  check('a fatura soma as compras', fat().total, 1000);
+  check('e nasce sem pagamento', fat().pago, 0);
+  const comprometidoAntes = DB.committed();
+
+  /* Mede o "saiu" do consolidado da família ANTES de qualquer pagamento. Medir a
+     família contra uma conta seria comparar escopos diferentes; o que prova a
+     regra é a MESMA medida antes e depois. */
+  const pF0 = DB.monthPeriod(new Date());
+  const saiuDaFamilia = () => {
+    state.filtros = filtrosVazios();
+    // O <small> depois do valor é o que separa a linha de fluxo do selo de
+    // variação — os dois usam pt-dn, e o selo vem primeiro no HTML
+    const m = renderExtrato(pF0).match(/pt pt-dn"><\/i>([\d.]+),(\d+) <small>/);
+    return m ? Number(m[1].replace(/\./g, '')) + Number(m[2]) / 100 : 0;
+  };
+  const familiaAntes = saiuDaFamilia();
+
+  // Pagamento parcial: um lançamento de verdade, na conta escolhida
+  const pagar = (valor, quando) => {
+    const p = { description: `Fatura ${cartao.name}`, amount: valor, date: quando, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Fatura', account_id: contaF, category_id: null, pays_invoice: chave };
+    DB.upsert('transactions', p); applyTxEffect(p, +1);
+    return p;
+  };
+  pagar(300, dia(25));
+  check('pagamento parcial entra como lançamento',
+    DB.pagamentosDaFatura(chave).length, 1);
+  check('e debita a conta escolhida', DB.get('accounts', contaF).balance, 4700);
+  check('a fatura fica Parcial', fat().status, 'Parcial');
+  check('dizendo quanto falta', fat().falta, 700);
+  /* O comprometido passa a ser o que FALTA, não a fatura inteira: com pagamento
+     parcial, contar os R$ 1.000 de novo tiraria do disponível dinheiro que já saiu. */
+  check('o comprometido cai só o que foi pago', DB.committed(), comprometidoAntes - 300);
+
+  /* Neutro nas análises: as compras do cartão JÁ contaram como despesa quando
+     aconteceram. Contar o pagamento somaria o mesmo dinheiro duas vezes. */
+  const pF = DB.monthPeriod(new Date());
+  const pgtoTx = DB.all('transactions').find(t => t.pays_invoice === chave);
+  check('o pagamento é neutro', DB.isNeutral(pgtoTx), true);
+  check('e fica fora das despesas do período',
+    DB.expensesOf(pF).some(t => t.pays_invoice === chave), false);
+
+  // Quitar o resto
+  pagar(700, dia(26));
+  check('quitado, a fatura fica Paga', fat().status, 'Paga');
+  check('sem faltar nada', fat().falta, 0);
+  check('e a conta foi debitada o total', DB.get('accounts', contaF).balance, 4000);
+  check('o comprometido volta ao que era sem esta fatura', DB.committed(), comprometidoAntes - 1000);
+
+  /* O pedido central: o débito aparece no extrato da conta que pagou. Conferindo
+     UMA conta ele conta como saída (tem de bater com o extrato do banco);
+     olhando a família inteira, não — seria o mesmo dinheiro duas vezes. */
+  state.filtros = { ...filtrosVazios(), contas: [contaF] };
+  const naConta = renderExtrato(pF);
+  check('o pagamento aparece no extrato da conta', naConta.includes('Fatura Cartao Fatura'), true);
+  const saiuNaConta = Number((naConta.match(/pt pt-dn"><\/i>([\d.]+),\d+ <small>/) || [])[1].replace(/\./g, ''));
+  check('e conta como saída dela', saiuNaConta >= 1000, true);
+  check('mas não vira saída nova no consolidado da família', saiuDaFamilia(), familiaAntes);
+  state.filtros = filtrosVazios();
+
+  // Desfazer devolve o saldo e apaga os lançamentos
+  desfazerPagamentosDaFatura(chave);
+  check('desfazer devolve o saldo', DB.get('accounts', contaF).balance, 5000);
+  check('e some com os lançamentos', DB.pagamentosDaFatura(chave).length, 0);
+  check('a fatura volta a não estar paga', fat().status !== 'Paga', true);
+
+  /* Achado ao construir isto, e maior que o pedido: o total de despesas da
+     família filtrava por !adjustment, que NÃO exclui transferência. Uma
+     transferência entre contas próprias tem type 'Transferência' e passa por
+     isExpense, então entrava no total como gasto novo — dinheiro que só mudou de
+     lugar era contado como gasto da família. */
+  const contaT1 = DB.upsert('accounts', { name: 'Neutro A', type: 'Conta Corrente', balance: 1000 });
+  const contaT2 = DB.upsert('accounts', { name: 'Neutro B', type: 'Conta Corrente', balance: 0 });
+  const gastoFamilia = () => {
+    state.filtros = filtrosVazios();
+    const m = renderExtrato(pF0).match(/pt pt-dn"><\/i>([\d.]+),(\d+) <small>/);
+    return m ? Number(m[1].replace(/\./g, '')) + Number(m[2]) / 100 : 0;
+  };
+  const antesDaTransf = gastoFamilia();
+  const trNeutra = { description: 'Movi de lugar', amount: 250, date: dia(12), type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: contaT1, to_account: contaT2 };
+  DB.upsert('transactions', trNeutra); applyTxEffect(trNeutra, +1);
+  check('transferência não entra no gasto da família', gastoFamilia(), antesDaTransf);
+  check('mas move os saldos', DB.get('accounts', contaT2).balance, 250);
+  for (const t of DB.all('transactions').filter(t => t.description === 'Movi de lugar')) DB.remove('transactions', t.id);
+  DB.remove('accounts', contaT1); DB.remove('accounts', contaT2);
+  state.filtros = filtrosVazios();
+
+  // A coluna nova precisa existir nos dois lados da sincronização
+  const esquema = fs.readFileSync(BASE + 'supabase/schema.sql', 'utf8');
+  const syncSrc = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
+  check('pays_invoice está no schema', /pays_invoice text/.test(esquema), true);
+  check('e na lista que sobe para a nuvem', syncSrc.includes("'pays_invoice'"), true);
+  /* pays_invoice diz qual fatura o lançamento PAGA; invoice_key diz de qual
+     fatura a compra FAZ PARTE. Trocar os dois somaria o pagamento dentro da
+     própria fatura que ele quita. */
+  check('o pagamento não entra na fatura que quita', fat().total, 1000);
+
+  for (const t of DB.all('transactions').filter(t => t.card_id === cartaoF || t.pays_invoice === chave)) DB.remove('transactions', t.id);
+  DB.remove('cards', cartaoF); DB.remove('accounts', contaF);
+} catch (e) { console.log(` FALHA | pagamento de fatura: ${e.message}`); fail++; }
+
 console.log('\n=== Ações de contas e cartões ===');
 try {
   const tela = renderCartoes();

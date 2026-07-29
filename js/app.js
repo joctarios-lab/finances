@@ -1073,8 +1073,13 @@ function renderExtrato(period) {
   if (!state.filtros) state.filtros = filtrosVazios();
   const ativos = filtrosAtivos();
   const txs = txsFiltradas(period);
-  const total = txs.filter(t => DB.isExpense(t) && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
-  const receitas = txs.filter(t => !DB.isExpense(t) && !t.card_id && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
+  /* isNeutral, não apenas !adjustment: transferência entre contas próprias e
+     pagamento de fatura têm type 'Despesa'/'Transferência' e passariam por
+     isExpense, entrando no total da família como gasto novo. Transferência não é
+     gasto — o dinheiro só mudou de lugar; e a compra do cartão já contou como
+     despesa quando aconteceu, então a quitação contaria o mesmo dinheiro de novo. */
+  const total = txs.filter(t => DB.isExpense(t) && !DB.isNeutral(t)).reduce((s, t) => s + Number(t.amount || 0), 0);
+  const receitas = txs.filter(t => !DB.isExpense(t) && !t.card_id && !DB.isNeutral(t)).reduce((s, t) => s + Number(t.amount || 0), 0);
 
   /* Com contas filtradas, o extrato vira o extrato DELAS — e aí transferência
      deixa de ser neutra por padrão: ela tira ou põe dinheiro no conjunto,
@@ -1111,6 +1116,14 @@ function renderExtrato(period) {
       continue;
     }
     if (t.adjustment) continue;              // conciliação não é gasto nem entrada
+    /* Pagamento de fatura segue a regra da transferência: conferindo UMA conta,
+       o dinheiro saiu dela de verdade e tem de bater com o extrato do banco;
+       olhando a família inteira, ele não é saída nova — as compras do cartão já
+       contaram como despesa quando aconteceram. */
+    if (t.pays_invoice) {
+      if (contasFiltradas.length) d.saiu += v;
+      continue;
+    }
     if (DB.isExpense(t)) d.saiu += v;
     else if (!t.card_id) d.entrou += v;      // estorno de cartão abate a fatura, não entra na conta
   }
@@ -1368,12 +1381,13 @@ function renderCartoes() {
     for (const inv of invoices.slice(-6).reverse()) {
       invList += `<div class="invoice-row">
         <span class="badge ${inv.status.toLowerCase()}">${inv.status}</span>
-        <span class="muted">fecha ${fmtDate(inv.closing)} · vence ${fmtDate(inv.due)}</span>
+        <span class="muted">fecha ${fmtDate(inv.closing)} · vence ${fmtDate(inv.due)}${
+          inv.status === 'Parcial' ? ` · faltam ${fmtShort(inv.falta)}` : ''}</span>
         <span style="flex:1"></span>
         <button class="link-btn" data-inv-detail="${inv.key}">${inv.count} itens</button>
         <span class="num">${fmtShort(inv.total)}</span>
         ${inv.status !== 'Paga'
-          ? `<button class="link-btn" data-pay="${inv.key}">marcar paga</button>`
+          ? `<button class="link-btn" data-pay="${inv.key}">pagar</button>`
           : `<button class="link-btn" data-unpay="${inv.key}">↺</button>`}
       </div>`;
     }
@@ -1792,23 +1806,12 @@ function bindView() {
     toast('Reserva criada — agora é só ir guardando 🛡️');
     openAporteSheet(id);
   };
-  const invAdjust = (key, sign) => {
-    const card = DB.get('cards', key.split(':')[0]);
-    if (!card || !card.account_id) return false;
-    const inv = DB.invoicesOf(card).find(i => i.key === key);
-    if (inv) adjustBalance(card.account_id, sign * inv.total);
-    return true;
-  };
-  v.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => {
-    const debited = invAdjust(b.dataset.pay, -1);
-    DB.setInvoicePaid(b.dataset.pay, true);
-    Sync.autoSync(); render();
-    toast(debited ? 'Fatura paga — saldo da conta debitado ✓' : 'Fatura paga (vincule uma conta ao cartão para debitar o saldo)');
-  });
+  v.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => openPagarFaturaSheet(b.dataset.pay));
   v.querySelectorAll('[data-unpay]').forEach(b => b.onclick = () => {
-    invAdjust(b.dataset.unpay, +1);
-    DB.setInvoicePaid(b.dataset.unpay, false);
+    if (!confirm('Desfazer o pagamento desta fatura?\n\nOs lançamentos somem e o saldo da conta é devolvido.')) return;
+    desfazerPagamentosDaFatura(b.dataset.unpay);
     Sync.autoSync(); render();
+    toast('Pagamento desfeito');
   });
   const ng = $('#btn-new-goal');
   if (ng) ng.onclick = () => openGoalSheet(null);
@@ -2042,6 +2045,102 @@ function abrirPopMais(ancora) {
     state.filtros.valorMin = ''; state.filtros.valorMax = ''; state.filtros.recorrente = false;
     UI.fechar(); render();
   };
+}
+
+/* ---------- Pagar fatura ----------
+   Antes isto era um `adjustBalance` silencioso: o dinheiro sumia da conta e nada
+   no extrato explicava por quê. Agora o pagamento é um lançamento de verdade —
+   tem data, valor, conta, aparece na lista e move o saldo como qualquer outro.
+
+   Ele nasce neutro nas análises (ver DB.isNeutral): as compras do cartão já
+   contaram como despesa quando aconteceram, e contar de novo na quitação somaria
+   o mesmo dinheiro duas vezes. */
+function openPagarFaturaSheet(key) {
+  const [cardId] = String(key).split(':');
+  const card = DB.get('cards', cardId);
+  if (!card) return toast('Cartão não encontrado');
+  const inv = DB.invoicesOf(card).find(i => i.key === key);
+  if (!inv) return toast('Fatura não encontrada');
+  const contas = DB.all('accounts').filter(a => a.active !== false);
+  if (!contas.length) return toast('Cadastre uma conta antes de pagar a fatura');
+  const falta = Math.max(0, inv.falta);
+  const jaPago = inv.pago > 0.005;
+  const contaPadrao = card.account_id && DB.get('accounts', card.account_id) ? card.account_id : contas[0].id;
+
+  openSheet(`
+    <div class="sheet-title">Pagar fatura — ${esc(card.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin:-4px 0 12px">Fatura de <b>${fmt(inv.total)}</b>${
+      jaPago ? ` · já pago <b>${fmt(inv.pago)}</b> · falta <b>${fmt(falta)}</b>` : ''} · vence ${fmtDate(inv.due)}</p>
+
+    <div class="field"><label>Quanto está pagando</label>
+      ${chipGroup('pf-tipo', [
+        { value: 'total', label: jaPago ? 'O que falta' : 'Total' },
+        { value: 'parcial', label: 'Parcial' },
+      ], 'total')}
+    </div>
+    <div class="field" id="pf-valor-campo" hidden><label>Valor pago</label>
+      <input class="amount-input" id="pf-valor" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00">
+    </div>
+    <div class="field"><label>Data do pagamento</label><input id="pf-data" type="date" value="${todayISO()}"></div>
+    <div class="field"><label>Conta que pagou</label>
+      <select id="pf-conta">${contas.map(a =>
+        `<option value="${a.id}"${a.id === contaPadrao ? ' selected' : ''}>${esc(a.name)} — ${fmt(a.balance)}</option>`).join('')}</select>
+    </div>
+    <p class="muted" style="margin-bottom:10px">O débito entra no extrato da conta escolhida. Não conta como gasto novo: as compras do cartão já entraram quando aconteceram.</p>
+    <button class="btn" id="sh-save">Registrar pagamento</button>
+    ${jaPago ? '<div class="btn-row"><button class="btn ghost t-danger" id="pf-desfazer">Desfazer pagamentos desta fatura</button></div>' : ''}
+  `);
+  initMoney('#pf-valor', falta);
+  $('#sh-close').onclick = closeSheet;
+  // O campo de valor só existe no parcial: no total ele seria uma pergunta cuja
+  // resposta o app já sabe
+  bindChips('pf-tipo', v => { $('#pf-valor-campo').hidden = v !== 'parcial'; });
+
+  $('#sh-save').onclick = () => {
+    const parcial = chipValue('pf-tipo') === 'parcial';
+    const valor = parcial ? moneyVal('#pf-valor') : falta;
+    if (!(valor > 0)) return toast('Informe o valor pago');
+    if (valor - falta > 0.005) return toast(`O valor passa do que falta (${fmt(falta)})`);
+    const pgto = {
+      description: `Fatura ${card.name} — ${rotuloDaFatura(key)}`,
+      amount: valor, date: $('#pf-data').value || todayISO(),
+      type: 'Despesa', status: 'Pago',
+      scope: 'Família', member: MEMBRO_COMUM, method: 'Fatura',
+      account_id: $('#pf-conta').value, card_id: null, category_id: null,
+      pays_invoice: key,
+    };
+    DB.upsert('transactions', pgto);
+    applyTxEffect(pgto, +1);
+    closeSheet(); Sync.autoSync(); render();
+    const restante = falta - valor;
+    toast(restante > 0.005 ? `Pago ${fmt(valor)} — faltam ${fmt(restante)}` : 'Fatura quitada ✓');
+  };
+  const desfazer = $('#pf-desfazer');
+  if (desfazer) desfazer.onclick = () => {
+    if (!confirm('Desfazer os pagamentos desta fatura?\n\nOs lançamentos somem e o saldo da conta é devolvido.')) return;
+    desfazerPagamentosDaFatura(key);
+    closeSheet(); Sync.autoSync(); render();
+    toast('Pagamentos desfeitos');
+  };
+}
+
+// "<id>:2026-07" vira "julho de 2026" — a fatura é conhecida pelo mês, não pela chave
+function rotuloDaFatura(key) {
+  const mes = String(key).split(':')[1] || '';
+  const [ano, m] = mes.split('-');
+  if (!ano || !m) return mes;
+  return new Date(Number(ano), Number(m) - 1, 1)
+    .toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+}
+
+function desfazerPagamentosDaFatura(key) {
+  DB.emLote(() => {
+    for (const t of DB.pagamentosDaFatura(key)) {
+      applyTxEffect(t, -1);                 // devolve o saldo à conta
+      DB.remove('transactions', t.id);
+    }
+    DB.setInvoicePaid(key, false);          // limpa também a marcação manual antiga
+  });
 }
 
 /* ---------- Edição em massa ----------

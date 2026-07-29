@@ -883,6 +883,9 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 .badge.aberta { background: rgba(0, 158, 247, .1); color: var(--gold); }
 .badge.fechada { background: rgba(246, 166, 9, .12); color: #d18b00; }
 .badge.paga { background: rgba(80, 205, 137, .12); color: #47be7d; }
+/* Parcial fica no roxo de "informação", não no verde de resolvido nem no âmbar
+   de atrasado: a fatura anda, mas não acabou */
+.badge.parcial { background: rgba(114, 57, 234, .1); color: var(--blue); }
 /* Alvo confortável: são "marcar paga" e "↺" na linha da fatura, botões colados
    que antes tinham a altura só do texto (~16px). */
 .link-btn {

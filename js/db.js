@@ -292,12 +292,28 @@ const DB = {
     const today = new Date();
     return Object.values(map).map(inv => {
       const { closing, due } = this.invoiceDates(card, inv.key);
-      const paidRec = this.all('invoice_status').find(s => s.invoice_key === inv.key);
+      const pago = this.pagoDaFatura(inv.key);
+      const falta = inv.total - pago;
+      /* O status vem do que foi PAGO, não de um sim/não guardado à parte: com
+         pagamento parcial permitido, um booleano não consegue dizer "faltam
+         R$ 300". A marcação manual antiga continua valendo como atalho para
+         quem quitou sem registrar o lançamento. */
+      const marcada = this.all('invoice_status').find(s => s.invoice_key === inv.key);
       let status = 'Aberta';
-      if (paidRec && paidRec.paid) status = 'Paga';
+      if ((marcada && marcada.paid) || (inv.total > 0 && falta <= 0.005)) status = 'Paga';
+      else if (pago > 0.005) status = 'Parcial';
       else if (today > closing) status = 'Fechada';
-      return { ...inv, card, closing, due, status };
+      return { ...inv, card, closing, due, status, pago, falta: Math.max(0, falta) };
     }).sort((a, b) => a.due - b.due);
+  },
+
+  // Lançamentos que PAGAM esta fatura. Não confundir com invoice_key, que diz de
+  // qual fatura a compra faz parte — somar os dois inflaria a própria fatura.
+  pagamentosDaFatura(key) {
+    return this.all('transactions').filter(t => t.pays_invoice === key && t.status === 'Pago');
+  },
+  pagoDaFatura(key) {
+    return this.pagamentosDaFatura(key).reduce((s, t) => s + (Number(t.amount) || 0), 0);
   },
 
   setInvoicePaid(key, paid) {
@@ -316,7 +332,12 @@ const DB = {
   isTransfer(t) { return !!t && t.type === 'Transferência'; },
   // Transferências entre contas próprias e ajustes de saldo aparecem no extrato
   // (para auditoria), mas não são gasto nem renda — ficam fora de toda análise.
-  isNeutral(t) { return !!t && (!!t.adjustment || this.isTransfer(t)); },
+  /* Pagamento de fatura é neutro nas análises pelo mesmo motivo que transferência
+     é: as compras do cartão JÁ entraram como despesa quando aconteceram. Contar
+     também o pagamento somaria o mesmo dinheiro duas vezes — o gasto e a quitação
+     da dívida dele. Ele mexe no saldo da conta e aparece no extrato; só não é
+     gasto novo. */
+  isNeutral(t) { return !!t && (!!t.adjustment || !!t.pays_invoice || this.isTransfer(t)); },
   expensesOf(period) { return this.txOfPeriod(period).filter(t => this.isExpense(t) && !this.isNeutral(t)); },
   incomesOf(period) { return this.txOfPeriod(period).filter(t => !this.isExpense(t) && !this.isNeutral(t)); },
   // Renda que realmente entrou na família. Estorno de cartão é receita no modelo
@@ -594,9 +615,10 @@ const DB = {
   // Comprometido = faturas não pagas + lançamentos "A Pagar" fora de cartão (sem contar duas vezes).
   committed() {
     let total = 0;
+    // Com pagamento parcial, o comprometido é o que FALTA — não a fatura inteira
     for (const card of this.all('cards').filter(c => c.active !== false))
       for (const inv of this.invoicesOf(card))
-        if (inv.status !== 'Paga') total += inv.total;
+        if (inv.status !== 'Paga') total += Math.max(0, inv.falta);
     for (const t of this.all('transactions'))
       if (t.status === 'A Pagar' && !t.card_id && this.isExpense(t) && !this.isNeutral(t)) total += Number(t.amount) || 0;
     return total;

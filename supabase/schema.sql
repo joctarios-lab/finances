@@ -99,9 +99,16 @@ create table if not exists transactions (
   installment text default '',            -- ex: '3/12'
   adjustment boolean not null default false,  -- conciliação de saldo: fica fora das análises
   tags jsonb not null default '[]'::jsonb,    -- etiquetas livres, para filtrar por assunto
+  -- Fatura que este lançamento PAGA (chave "<card_id>:YYYY-MM"). Diferente de
+  -- invoice_key, que diz de qual fatura a compra FAZ PARTE. Confundir os dois
+  -- somaria o pagamento dentro da própria fatura que ele quita.
+  pays_invoice text default '',
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
+-- Para bases que já existem antes desta coluna
+alter table transactions add column if not exists pays_invoice text default '';
+create index if not exists idx_tx_pays_invoice on transactions(pays_invoice);
 
 create table if not exists goals (
   id uuid primary key,
