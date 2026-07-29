@@ -704,10 +704,22 @@ const DB = {
      disponível — disponível é dinheiro que existe. */
   available() { return this.accountsTotal() - this.committed() - this.guardado(); },
 
-  // Quanto falta para cobrir um gasto sem tocar no que está guardado. Positivo
-  // significa que o gasto entra na reserva ou nas metas.
+  /* O CAIXA livre: o que existe no banco agora, menos o que tem dono.
+
+     Diferente de available() de propósito, e a diferença importa. available()
+     desconta o comprometido porque é número de PLANEJAMENTO — "quanto posso
+     assumir de novo até o fim do mês". Aqui é REALIDADE de caixa: o comprometido
+     ainda está na conta, a fatura só sai quando for paga.
+
+     É este número que decide se um gasto encostou na reserva. Usar available()
+     mandaria resgatar por causa de uma conta que ainda nem venceu — antecipando
+     um débito que não aconteceu. */
+  caixaLivre() { return this.accountsTotal() - this.guardado(); },
+
+  // Quanto de um gasto entra no que está guardado. Zero significa que o dinheiro
+  // saiu do que era livre de verdade.
   faltaParaGastar(valor) {
-    return Math.max(0, (Number(valor) || 0) - this.available());
+    return Math.max(0, (Number(valor) || 0) - this.caixaLivre());
   },
 
   // A reserva é uma CAIXINHA: dinheiro que a família separou, não uma conta.

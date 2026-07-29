@@ -2342,6 +2342,8 @@ function bindView() {
     adjustBalance(atualizado.account_id, txEffect(atualizado));
     Sync.autoSync(); render();
     toast(DB.isExpense(t) ? 'Marcado como pago ✓' : 'Marcado como recebido ✓');
+    // É AQUI que o dinheiro sai: enquanto era "A Pagar" o saldo estava intacto
+    avisarSeUsouGuardado(atualizado);
   });
 
   // Contas: tocar para atualizar o saldo (conciliação rápida)
@@ -2764,6 +2766,8 @@ function openPagarFaturaSheet(key) {
     closeSheet(); Sync.autoSync(); render();
     const restante = falta - valor;
     toast(restante > 0.005 ? `Pago ${fmt(valor)} — faltam ${fmt(restante)}` : 'Fatura quitada ✓');
+    // O pagamento da fatura é o débito de verdade da compra feita no cartão
+    avisarSeUsouGuardado(pgto);
   };
   const desfazer = $('#pf-desfazer');
   if (desfazer) desfazer.onclick = () => {
@@ -4251,9 +4255,18 @@ function openEntrySheet(entryId, goalId) {
    Perguntar no momento do gasto é o único instante em que a pessoa sabe a
    resposta. Uma semana depois, ninguém lembra de qual meta saiu. */
 function avisarSeUsouGuardado(tx) {
+  /* Só dispara quando o dinheiro SAIU de verdade.
+
+     Lançamento "A Pagar" não move saldo nenhum — é compromisso, não débito. Ele
+     entra aqui depois, no instante em que for marcado como pago, porque é aí que
+     a conta é debitada. Vale igual para o pagamento de fatura, que hoje é um
+     lançamento de verdade e passa por este mesmo caminho. */
   if (!tx || !DB.isExpense(tx) || DB.isNeutral(tx) || tx.status !== 'Pago') return;
-  const falta = DB.faltaParaGastar(0);        // disponível já reflete o gasto gravado
-  if (falta <= 0.005) return;                  // ainda há dinheiro livre: nada a resolver
+  /* Mede o CAIXA, não o planejamento: o comprometido continua na conta até ser
+     pago, e descontá-lo aqui mandaria resgatar da reserva por causa de uma conta
+     que ainda nem venceu. */
+  const falta = DB.faltaParaGastar(0);        // o caixa já reflete o gasto gravado
+  if (falta <= 0.005) return;                  // o dinheiro saiu do que era livre
 
   const metas = DB.all('goals')
     .filter(g => !g.done && DB.goalTotal(g.id) > 0.005)

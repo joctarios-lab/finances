@@ -4248,10 +4248,28 @@ try {
   check('sem mexer no total em contas', DB.accountsTotal(), contasAntes);
   check('o histórico guarda aporte e resgate', DB.all('goal_entries').filter(e => e.goal_id === mR).length, 2);
 
-  // Quanto falta para um gasto não tocar no guardado
-  const livre = DB.available();
-  check('gasto dentro do livre não falta nada', DB.faltaParaGastar(livre - 100), 0);
-  check('gasto acima diz quanto entra no guardado', DB.faltaParaGastar(livre + 500), 500);
+  /* DOIS números com propósitos diferentes, e a diferença importa.
+
+     available() é PLANEJAMENTO: desconta o comprometido para responder "quanto
+     posso assumir de novo até o fim do mês".
+
+     caixaLivre() é REALIDADE: o comprometido continua na conta — a fatura só sai
+     quando for paga. É este que decide se um gasto encostou na reserva; usar o
+     outro mandaria resgatar por causa de uma conta que ainda nem venceu. */
+  const caixa = DB.caixaLivre();
+  check('o caixa livre é contas menos guardado', caixa, DB.accountsTotal() - DB.guardado());
+  check('e ignora o comprometido, que ainda está na conta', caixa > DB.available(), true);
+  check('gasto dentro do caixa não toca no guardado', DB.faltaParaGastar(caixa - 100), 0);
+  check('gasto acima diz quanto entra no guardado', DB.faltaParaGastar(caixa + 500), 500);
+
+  /* Compromisso não debita: enquanto está "A Pagar" o dinheiro segue na conta, e
+     o gatilho do resgate não pode disparar por ele. */
+  const caixaAntesDoCompromisso = DB.caixaLivre();
+  DB.upsert('transactions', { description: 'Compromisso futuro G', amount: 99999, date: todayISO(), type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cG });
+  check('lançamento a pagar não mexe no caixa', DB.caixaLivre(), caixaAntesDoCompromisso);
+  check('mas derruba o disponível de planejamento', DB.available() < 0, true);
+  check('e mesmo assim não acusa uso do guardado', DB.faltaParaGastar(0), 0);
+  DB.remove('transactions', DB.all('transactions').find(t => t.description === 'Compromisso futuro G').id);
 
   /* Horizonte: conta de setembro não pesa igual à de amanhã. Mas FATURA conta
      sempre — as compras já aconteceram, só o débito é que ficou para depois. */
@@ -4276,3 +4294,40 @@ try {
   DB.data.accounts = DB.data.accounts.filter(a => ![cG, cCx].includes(a.id));
   DB.save();
 } catch (e) { console.log(` FALHA | disponível honesto: ${e.message}`); fail++; }
+
+/* ---- Quando o gatilho do resgate dispara ----
+   Só quando o dinheiro SAI de verdade. Compromisso não debita; o débito acontece
+   ao marcar como pago ou ao pagar a fatura — e é aí que a pergunta cabe. */
+console.log('\n=== Gatilho do resgate ===');
+try {
+  const apG = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const corpoG = apG.slice(apG.indexOf('function avisarSeUsouGuardado'), apG.indexOf('/* Guardar e resgatar'));
+  // Mede o caixa, não o planejamento
+  check('o gatilho mede o caixa, não o disponível', corpoG.includes('DB.faltaParaGastar(0)'), true);
+  check('e a falta vem do caixa livre',
+    /faltaParaGastar\(valor\) \{[\s\S]{0,140}this\.caixaLivre\(\)/.test(fs.readFileSync(BASE + 'js/db.js', 'utf8')), true);
+  // "A Pagar" não pode disparar: o saldo ainda está intacto
+  check('lançamento não pago é ignorado', corpoG.includes("tx.status !== 'Pago'"), true);
+
+  /* Os três caminhos que movem dinheiro de verdade chamam o gatilho: salvar um
+     gasto pago, marcar um "A Pagar" como pago, e pagar a fatura. Faltar um deles
+     deixaria uma porta por onde a reserva some sem aviso. */
+  check('salvar um gasto pago avisa',
+    /applyTxEffect\(rec, \+1\);[\s\S]{0,400}avisarSeUsouGuardado\(rec\)/.test(apG), true);
+  check('marcar como pago avisa',
+    /Marcado como pago[\s\S]{0,200}avisarSeUsouGuardado\(atualizado\)/.test(apG), true);
+  check('e pagar a fatura também', /Fatura quitada[\s\S]{0,200}avisarSeUsouGuardado\(pgto\)/.test(apG), true);
+
+  /* A insistência é intencional: enquanto o caixa estiver abaixo do guardado,
+     todo lançamento volta a perguntar de onde sai. Adiar não silencia — é o que
+     obriga a decidir em vez de deixar o número apodrecer. */
+  check('não há trava que silencie depois de adiar', /jaAvisou|_silenciar|naoPerguntarMais/.test(corpoG), false);
+  check('e a saída de "resolver depois" só fecha a folha',
+    /ug-depois'\)\.onclick = closeSheet/.test(corpoG), true);
+
+  // Sem meta com saldo, não há o que resgatar: a pergunta não aparece
+  check('sem nada guardado, não pergunta', corpoG.includes('if (!metas.length) return;'), true);
+  // O resgate ali não mexe em conta: o dinheiro já saiu no próprio gasto
+  check('o resgate do gasto não move saldo de conta',
+    corpoG.includes('from_account: null, to_account: null'), true);
+} catch (e) { console.log(` FALHA | gatilho: ${e.message}`); fail++; }
