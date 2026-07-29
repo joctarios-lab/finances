@@ -935,21 +935,122 @@ function rotuloPilula(p) {
    recorte é grande — é a pergunta que traz alguém ao extrato. Entrou, saiu e o
    saldo anterior viram uma linha de apoio, e a explicação por extenso fica atrás
    do toque, porque ela se lê uma vez e depois só ocupa espaço. */
-function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSaiu, nota }) {
+/* Saldo dia a dia dentro do recorte.
+
+   Um passe só sobre os lançamentos: chamar saldoNaData uma vez por dia varreria
+   a base inteira 31 vezes. As regras são exatamente as de saldoNaData — só
+   "Pago", conciliação conta, transferência interna ao conjunto se anula —,
+   porque a ponta final da série tem de bater com o saldo escrito no cartão. Um
+   gráfico que termina num número diferente do número ao lado dele é pior que
+   gráfico nenhum. */
+function serieDeSaldo(contas, dias, anterior) {
+  const alvo = (contas && contas.length) ? contas : DB.all('accounts').map(a => a.id);
+  const dentro = id => alvo.includes(id);
+  const delta = {};
+  for (const t of DB.all('transactions')) {
+    if (t.status !== 'Pago') continue;
+    const v = Number(t.amount) || 0;
+    let e = 0;
+    if (DB.isTransfer(t)) {
+      if (dentro(t.account_id)) e -= v;
+      if (dentro(t.to_account)) e += v;
+    } else if (dentro(t.account_id)) {
+      e = DB.isExpense(t) ? -v : v;
+    }
+    if (e) delta[t.date] = (delta[t.date] || 0) + e;
+  }
+  let acumulado = Number(anterior) || 0;
+  return dias.map(d => { acumulado += (delta[d] || 0); return acumulado; });
+}
+
+/* Área do saldo. Escala pelo intervalo dos dados, não a partir do zero: com
+   saldo de R$ 14 mil, ancorar no zero achataria a linha inteira num traço reto e
+   a variação — que é o que o gráfico existe para mostrar — sumiria. As duas
+   pontas vêm escritas por extenso logo acima e abaixo, então a forma nunca é a
+   única fonte do número. Quando a série cruza o zero, o zero aparece como régua. */
+function sparkArea(vals) {
+  const n = vals.length;
+  if (n < 2) return '';
+  const W = 300, H = 46, padT = 5, padB = 5;
+  const max = Math.max(...vals), min = Math.min(...vals);
+  const amplitude = (max - min) || Math.abs(max) || 1;
+  const y = v => padT + (1 - (v - min) / amplitude) * (H - padT - padB);
+  const x = i => (i / (n - 1)) * W;
+  const linha = vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+  const zero = (min < 0 && max > 0)
+    ? `<line x1="0" y1="${y(0).toFixed(1)}" x2="${W}" y2="${y(0).toFixed(1)}" class="spark-zero"/>` : '';
+  return `<svg class="spark-area" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+    role="img" aria-label="Evolução do saldo dia a dia no período">
+    <path d="${linha} L${W} ${H} L0 ${H} Z" class="spark-fill"/>
+    ${zero}
+    <path d="${linha}" class="spark-linha"/>
+    <line class="spark-cursor" x1="0" y1="0" x2="0" y2="${H}" hidden/>
+  </svg>`;
+}
+
+/* Colunas do que entrou e do que saiu. Barra parte do zero — aqui a leitura é
+   magnitude, e barra que não nasce no zero mente sobre a proporção. */
+function sparkCols(vals, classe) {
+  const n = vals.length;
+  if (!n) return '';
+  const H = 22, W = Math.max(n * 5, 40);
+  const max = Math.max(...vals) || 1;
+  const banda = W / n;
+  const larg = Math.min(4, Math.max(1.6, banda - 1.2));
+  const cols = vals.map((v, i) => {
+    if (!v) return '';
+    const h = Math.max(1.5, (v / max) * H);
+    return `<rect x="${(i * banda + (banda - larg) / 2).toFixed(1)}" y="${(H - h).toFixed(1)}"
+      width="${larg.toFixed(1)}" height="${h.toFixed(1)}" rx="1.2"/>`;
+  }).join('');
+  return `<svg class="spark-cols ${classe}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${cols}</svg>`;
+}
+
+function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSaiu, nota, dias, serie, porDia }) {
   const aberto = state.resumoAberto !== false;
-  const col = (rot, valor, classe, seta) =>
-    `<span class="ext-num${classe ? ' ' + classe : ''}"><small>${esc(rot)}</small><b>${
-      seta ? `<i class="pt pt-${seta}"></i>` : ''}${fmtSemMoeda(valor)}</b></span>`;
+  const variacao = saldo - anterior;
+  const dia = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
+  const entrouDia = dias.map(d => (porDia[d] || {}).entrou || 0);
+  const saiuDia = dias.map(d => (porDia[d] || {}).saiu || 0);
+
   return `
-    <div class="ext-numeros${aberto ? '' : ' fechado'}" id="ext-resumo">
-      <button class="ext-num-faixa" id="ext-resumo-toggle" aria-expanded="${aberto}"
-        title="${esc(titulo)} — toque para ver a explicação">
-        ${col('antes', anterior, 'ext-num-antes')}
-        ${col(rotEntrou, entrou, 'txt-green', 'up')}
-        ${col(rotSaiu, saiu, 'txt-red', 'dn')}
-        ${col('saldo', saldo, 'destaque' + (saldo >= 0 ? '' : ' txt-red'))}
+    <div class="card res${aberto ? '' : ' fechado'}" id="ext-resumo">
+      <!-- O cabeçalho inteiro é o botão que abre a explicação. Um botão próprio
+           embaixo custava mais 36px de altura para dizer o que uma seta já diz —
+           e altura aqui é lista a menos. -->
+      <button class="res-topo" id="ext-resumo-toggle" aria-expanded="${aberto}">
+        <span class="res-rot">
+          <small>${esc(titulo)}</small>
+          <b class="${saldo >= 0 ? '' : 'txt-red'}">${fmt(saldo)}</b>
+        </span>
+        <!-- Selo de variação no padrão Metronic (badge-light-*): fundo tingido,
+             texto na cor forte. A seta diz a direção junto com a cor. -->
+        <span class="res-selo ${variacao >= 0 ? 'ok' : 'ruim'}"><i class="pt pt-${variacao >= 0 ? 'up' : 'dn'}"></i>${fmtSemMoeda(Math.abs(variacao))}</span>
+        <span class="res-seta" data-ico="chev"></span>
       </button>
-      <p class="muted ext-resumo-nota">${nota}</p>
+      <div class="res-graf" id="res-graf" data-dias="${esc(dias.join(','))}" data-vals="${esc(serie.join(','))}">
+        ${sparkArea(serie)}
+      </div>
+      <!-- As duas pontas escritas: a forma mostra o caminho, os números dizem de
+           onde para onde. Ao arrastar o dedo sobre a área, esta linha vira o dia
+           tocado — o gráfico deixa de ser só silhueta. -->
+      <div class="res-pe" id="res-pe">
+        <span>${dias.length ? dia(dias[0]) : ''} · de <b>${fmtSemMoeda(anterior)}</b></span>
+        <span>${dias.length ? dia(dias[dias.length - 1]) : ''}</span>
+      </div>
+      <div class="res-meia">
+        <div class="res-meia-c">
+          <small>${esc(rotEntrou)}</small>
+          <b class="txt-green">${fmtSemMoeda(entrou)}</b>
+          ${sparkCols(entrouDia, 'c-ok')}
+        </div>
+        <div class="res-meia-c">
+          <small>${esc(rotSaiu)}</small>
+          <b class="txt-red">${fmtSemMoeda(saiu)}</b>
+          ${sparkCols(saiuDia, 'c-ruim')}
+        </div>
+      </div>
+      <p class="muted res-nota">${nota}</p>
     </div>`;
 }
 
@@ -974,6 +1075,9 @@ function renderExtrato(period) {
   const bordaDe = state.filtros.de || DB.inicioISO(period);
   const bordaAte = state.filtros.ate ? somarDias(state.filtros.ate, 1) : DB.fimISO(period);
   const recortado = !!(state.filtros.de || state.filtros.ate);
+  // Dias do recorte, que são o eixo dos mini-gráficos do resumo
+  const diasDoRecorte = [];
+  for (let d = bordaDe; d < bordaAte; d = somarDias(d, 1)) diasDoRecorte.push(d);
 
   const contasFiltradas = (state.filtros.contas || []).filter(id => DB.get('accounts', id));
   const efeitoNaConta = t => efeitoDaTransferencia(t, contasFiltradas);
@@ -1130,6 +1234,8 @@ function renderExtrato(period) {
         titulo: `${varias ? 'Saldo somado' : 'Saldo'} em ${fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
         saldo: finalMes, anterior, entrou: entrouNaConta, saiu: saiuNaConta,
         rotEntrou: 'entrou', rotSaiu: 'saiu',
+        dias: diasDoRecorte, porDia,
+        serie: serieDeSaldo(contasFiltradas, diasDoRecorte, anterior),
         nota: `Extrato de <b>${esc(nomes.join(' + '))}</b> — o saldo anterior é o que ${
           recortado ? `havia em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}` : 'veio do mês passado'}.${
           Math.abs(conciliado) > 0.005 ? ` Há <b>${fmt(Math.abs(conciliado))}</b> de conciliação no período, que mexe no saldo mas não é gasto nem entrada.` : ''}${varias
@@ -1154,6 +1260,8 @@ function renderExtrato(period) {
         titulo: `Saldo em ${fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
         saldo: finalMes, anterior, entrou: receitas, saiu: total,
         rotEntrou: 'receitas', rotSaiu: 'despesas',
+        dias: diasDoRecorte, porDia,
+        serie: serieDeSaldo(null, diasDoRecorte, anterior),
         nota: `${resultado >= 0
           ? `Sobrou <b class="txt-green">${fmt(resultado)}</b> ${onde}, somados aos ${fmt(anterior)} ${vindo}.`
           : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> ${onde}, tirados dos ${fmt(anterior)} ${vindo}.`}${
@@ -1517,6 +1625,7 @@ function bindView() {
     if (card) card.classList.toggle('fechado', !state.resumoAberto);
     resumoToggle.setAttribute('aria-expanded', String(state.resumoAberto));
   };
+  ligarGrafico();
   const btnMassa = $('#btn-massa');
   if (btnMassa) btnMassa.onclick = () => openMassaModal(DB.monthPeriod(new Date(), state.monthOffset));
   const rprev = $('#rep-prev'), rnext = $('#rep-next');
@@ -1702,6 +1811,49 @@ function ligarRegua(period) {
     el.oninput = pintar;
     el.onchange = aplicar;                 // dispara ao soltar o polegar
   }
+}
+
+/* Arrastar o dedo sobre a área diz o saldo daquele dia.
+
+   Sem isso o gráfico é só silhueta: dá para ver que subiu, não dá para saber
+   quanto tinha no dia 12 — que é exatamente a pergunta de quem está conferindo
+   contra o extrato do banco. O valor aparece no pé, no lugar das datas, em vez
+   de numa bolha flutuante: no celular a bolha nasce debaixo do próprio dedo.
+
+   Nada fica refém do toque: as duas pontas continuam escritas, e a lista abaixo
+   traz o total de cada dia. */
+function ligarGrafico() {
+  const caixa = $('#res-graf');
+  const pe = $('#res-pe');
+  if (!caixa || !pe) return;
+  const dias = (caixa.dataset.dias || '').split(',').filter(Boolean);
+  const vals = (caixa.dataset.vals || '').split(',').filter(x => x !== '').map(Number);
+  if (dias.length < 2 || vals.length !== dias.length) return;
+  const svg = caixa.querySelector('svg');
+  const cursor = caixa.querySelector('.spark-cursor');
+  const original = pe.innerHTML;
+
+  const mostrar = e => {
+    const r = caixa.getBoundingClientRect();
+    if (!r.width) return;
+    const px = ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) / r.width;
+    const i = Math.max(0, Math.min(dias.length - 1, Math.round(px * (dias.length - 1))));
+    const d = new Date(dias[i] + 'T12:00:00');
+    pe.innerHTML = `<span><b>${d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}</b></span>`
+      + `<span>saldo <b>${fmtSemMoeda(vals[i])}</b></span>`;
+    if (cursor && svg) {
+      const x = (i / (dias.length - 1)) * 300;
+      cursor.setAttribute('x1', x); cursor.setAttribute('x2', x);
+      cursor.hidden = false;
+    }
+  };
+  const soltar = () => { pe.innerHTML = original; if (cursor) cursor.hidden = true; };
+
+  caixa.onpointerdown = e => { caixa.setPointerCapture && caixa.setPointerCapture(e.pointerId); mostrar(e); };
+  caixa.onpointermove = e => { if (e.buttons || e.pointerType === 'touch') mostrar(e); };
+  caixa.onpointerup = soltar;
+  caixa.onpointercancel = soltar;
+  caixa.onpointerleave = soltar;
 }
 
 /* Cada pílula abre o próprio painel, ancorado nela. O × na pílula ativa limpa só

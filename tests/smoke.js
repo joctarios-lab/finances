@@ -70,6 +70,7 @@ eval(appSrc + `; Object.assign(global, {
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
+  serieDeSaldo, sparkArea, sparkCols, ligarGrafico,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -1364,7 +1365,8 @@ try {
   const extMes = renderExtrato(p2);
   state.filtros.de = dias[meio + 1]; state.filtros.ate = dias[dias.length - 1];
   const extMetade = renderExtrato(p2);
-  const antes = html => (html.match(/ext-num-antes"><small>antes<\/small><b>([^<]+)/) || [])[1];
+  // O saldo anterior agora é o ponto de partida da linha, escrito no pé dela
+  const antes = html => (html.match(/res-pe[\s\S]*?de <b>([^<]+)</) || [])[1];
   check('o saldo anterior muda com o recorte', antes(extMes) !== antes(extMetade), true);
   check('e é o saldo real na data de início do recorte',
     antes(extMetade), fmtSemMoeda(DB.saldoNaData(null, dias[meio + 1])));
@@ -1475,11 +1477,17 @@ try {
      se lê uma vez e depois só ocupa a altura que a lista quer. */
   zerar();
   state.resumoAberto = true;
-  check('a explicação começa visível', /ext-resumo-nota">.+?\S/.test(renderExtrato(p2)), true);
+  check('a explicação começa visível', /res-nota">.+?\S/.test(renderExtrato(p2)), true);
   state.resumoAberto = false;
   const recolhido = renderExtrato(p2);
-  check('recolher esconde só a explicação', recolhido.includes('ext-numeros fechado'), true);
-  check('os quatro números continuam à vista', (recolhido.match(/class="ext-num[ "]/g) || []).length, 4);
+  check('recolher esconde só a explicação', recolhido.includes('card res fechado'), true);
+  check('o saldo e o gráfico continuam à vista',
+    recolhido.includes('spark-area') && recolhido.includes('res-rot'), true);
+  /* O cabeçalho inteiro é o botão. Um botão próprio embaixo custava 36px de
+     altura para dizer o que a seta já diz — e altura aqui é lista a menos. */
+  check('o cabeçalho é o que abre a explicação',
+    /<button class="res-topo" id="ext-resumo-toggle"/.test(recolhido), true);
+  check('e não há um segundo botão só para isso', recolhido.includes('res-mais'), false);
   state.resumoAberto = true;
   zerar();
   state.monthOffset = 0;
@@ -1545,26 +1553,61 @@ try {
 
   /* Totalizadores com centavos: arredondar escondia diferença de centavos
      justamente na conferência contra o extrato do banco. */
-  /* Os quatro números numa faixa horizontal, sem cartão: um cartão branco aqui
-     separaria os controles do resultado deles justamente onde os dois precisam
-     se ler juntos. */
+  /* ---- Resumo com evolução diária ----
+     Formas diferentes para perguntas diferentes: área para o caminho do saldo,
+     colunas a partir do zero para o volume de cada dia. */
   const cabecalho = renderExtrato(pD);
-  check('os números vêm em faixa, não em cartão', cabecalho.includes('class="ext-numeros'), true);
-  check('e não sobrou cartão em volta deles', cabecalho.includes('card ext-resumo'), false);
+  check('o resumo virou cartão com gráfico', cabecalho.includes('class="card res'), true);
   check('nem voltou o grid de quatro cartões', cabecalho.includes('stat-2x2'), false);
-  check('a faixa tem as quatro colunas', (cabecalho.match(/class="ext-num[ "]/g) || []).length, 4);
-  check('o saldo é a coluna em destaque', cabecalho.includes('ext-num destaque'), true);
-  check('a direção vem pela forma, não só pela cor',
-    cabecalho.includes('pt pt-up') && cabecalho.includes('pt pt-dn'), true);
+  check('o saldo tem área de evolução', cabecalho.includes('class="spark-area"'), true);
+  check('entrou e saiu têm colunas', (cabecalho.match(/class="spark-cols /g) || []).length, 2);
+  /* Saldo anterior NÃO virou gráfico: é uma constante, e sparkline em constante
+     é decoração. Ele é o ponto de partida da linha, e aparece escrito no pé. */
+  check('o saldo anterior aparece como ponto de partida', /res-pe[\s\S]*?de <b>/.test(cabecalho), true);
+  check('e não ganhou gráfico próprio', (cabecalho.match(/spark-area/g) || []).length, 1);
+  check('a variação vem com seta além da cor', /res-selo (ok|ruim)"><i class="pt pt-(up|dn)/.test(cabecalho), true);
   check('e diz o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(cabecalho), true);
+
   const apF = fs.readFileSync(BASE + 'js/app.js', 'utf8');
-  /* Centavos continuam: arredondar escondia diferença justamente na conferência
-     contra o extrato do banco. O que saiu foi o "R$", porque repetido quatro
-     vezes roubava a largura de que os centavos precisam em tela estreita. */
-  check('os números da faixa mantêm centavos',
+  const cssF = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('os valores mantêm centavos',
     /minimumFractionDigits: 2, maximumFractionDigits: 2/.test(apF), true);
-  check('e dispensam o R$ repetido', /<b>\$\{[\s\S]{0,60}fmtSemMoeda\(valor\)\}/.test(apF), true);
-  check('a faixa não mostra R$ em coluna nenhuma', /ext-num[^<]*<small>[^<]*<\/small><b>R\$/.test(cabecalho), false);
+  /* Figuras proporcionais no número grande: dígitos de largura igual deixam um
+     valor frouxo em corpo grande. Tabular só onde há colunas a alinhar. */
+  check('o número grande não usa tabular-nums',
+    /\.res-rot b \{[^}]*tabular-nums/.test(cssF), false);
+  // Traço de 2px que não engorda quando o SVG é esticado na largura
+  check('a linha não engorda ao esticar',
+    /\.spark-linha \{[^}]*vector-effect: non-scaling-stroke/.test(cssF), true);
+  // Lavagem, nunca bloco saturado
+  check('a área é lavagem, não bloco', /\.spark-fill \{ fill: rgba\(0, 158, 247, \.1\)/.test(cssF), true);
+  check('as colunas partem do zero', /const h = Math\.max\(1\.5, \(v \/ max\) \* H\)/.test(apF), true);
+
+  /* O INVARIANTE do gráfico: a ponta da série tem de bater com o saldo escrito
+     ao lado dela. Um gráfico que termina num número diferente do número que o
+     acompanha é pior que gráfico nenhum. */
+  const pSerie = DB.monthPeriod(new Date());
+  const diasS = diasDoPeriodo(pSerie);
+  const anteriorS = DB.saldoNaData(null, DB.inicioISO(pSerie));
+  const serieS = serieDeSaldo(null, diasS, anteriorS);
+  check('a série cobre todos os dias do período', serieS.length, diasS.length);
+  check('e termina no mesmo saldo que o cartão mostra',
+    Math.round(serieS[serieS.length - 1] * 100) / 100,
+    Math.round(DB.saldoNaData(null, DB.fimISO(pSerie)) * 100) / 100);
+  /* Um passe só sobre os lançamentos, não uma varredura por dia: com 31 dias,
+     chamar saldoNaData por dia percorreria a base inteira 31 vezes. */
+  const corpoSerie = apF.slice(apF.indexOf('function serieDeSaldo'), apF.indexOf('function sparkArea'));
+  check('a série não chama saldoNaData por dia', corpoSerie.includes('saldoNaData'), false);
+  // Conciliação conta no saldo, como em saldoNaData — senão as pontas divergem
+  check('a série segue as mesmas regras do saldo', corpoSerie.includes("t.status !== 'Pago'"), true);
+
+  // Um único dia de recorte não pode gerar SVG quebrado
+  check('série de um dia não desenha área', sparkArea([500]), '');
+  check('duas medidas já desenham', sparkArea([500, 600]).includes('spark-linha'), true);
+  // Régua do zero só quando a série realmente cruza o zero
+  check('série toda positiva não desenha o zero', sparkArea([100, 200]).includes('spark-zero'), false);
+  check('série que cruza o zero ganha a régua', sparkArea([-100, 200]).includes('spark-zero'), true);
+  check('colunas sem movimento nenhum não quebram', sparkCols([0, 0, 0], 'c-ok').includes('<svg'), true);
   check('KPIs do painel também', !/kpi-value[^"]*">\$\{fmtShort\(/.test(apF), true);
   check('e o hero do painel', /<small>Em contas<\/small><b>\$\{fmt\(/.test(apF), true);
 
@@ -1619,7 +1662,7 @@ try {
   // Na tela
   state.filtros = { ...filtrosVazios(), contas: [cM] };
   const tela = renderExtrato(mesAtual);
-  check('o extrato mostra o saldo anterior', tela.includes('ext-num-antes'), true);
+  check('o extrato mostra o saldo anterior', /res-pe[\s\S]*?de <b>/.test(tela), true);
   check('com o valor que veio do mês passado', tela.includes(fmtSemMoeda(1000)), true);
   check('e o saldo do mês fechando', tela.includes(fmtSemMoeda(700)), true);
 
@@ -1638,7 +1681,8 @@ try {
   check('e é ele que aparece na tela', comConc.includes(fmtSemMoeda(fechamento)), true);
   // O valor aparece na linha do próprio ajuste; o que importa é o total que saiu
   // no resumo, que deve contar só o gasto real do mês (300), não os 300 + 250
-  const totalSaiu = (comConc.match(/pt pt-dn"><\/i>([^<]*)</) || [])[1];
+  // Pega a coluna "saiu" do resumo, não o selo de variação — os dois trazem seta
+  const totalSaiu = (comConc.match(/<small>(?:saiu|despesas)<\/small>\s*<b class="txt-red">([^<]*)</) || [])[1];
   check('a conciliação não entra no total que saiu', (totalSaiu || '').trim(), fmtSemMoeda(300));
   check('mas é explicada por extenso', comConc.includes('de conciliação'), true);
   // O erro que existia: derivar o fechamento da soma dava 250 a mais
@@ -1658,7 +1702,7 @@ try {
   check('a visão geral também tem saldo anterior', typeof geral, 'number');
   check('e o geral inclui esta conta', geral !== 0 || somaContas === 0, true);
   const telaGeral = renderExtrato(mesAtual);
-  check('a visão geral mostra o saldo anterior', telaGeral.includes('ext-num-antes'), true);
+  check('a visão geral mostra o saldo anterior', /res-pe[\s\S]*?de <b>/.test(telaGeral), true);
   check('e explica o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(telaGeral), true);
 
   for (const t of DB.all('transactions').filter(t => /passado$|atual$|futuro$/.test(t.description))) DB.remove('transactions', t.id);
