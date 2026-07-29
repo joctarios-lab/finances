@@ -218,11 +218,22 @@ requisições.
 - desfazer restaura todos os campos afetados
 - lote de 200 gera uma chamada de sync, não 200
 
-## A decidir antes de começar
+## Decidido e implementado
 
-- [ ] O FAB fica como entrada única de lançamento? (proposta: sim)
-- [ ] Excluir em massa entra já na primeira versão, ou só editar?
-- [ ] Etiqueta em massa: os três modos, ou só "adicionar" na primeira versão?
-- [ ] Mudar conta em massa entra agora? É o campo mais perigoso — foi o que
-      exigiu `scripts/mover-lote.js` com simulação antes de aplicar
-- [ ] Teto de linhas na tela de massa, ou renderiza o filtro inteiro?
+As quatro fases estão no app (versão 54). As pendências foram resolvidas assim:
+
+- **FAB como entrada única** — sim. Os três atalhos saíram.
+- **Excluir em massa** — entrou, com confirmação que diz o número e desfazer.
+- **Etiquetas** — os três modos (adicionar / remover / substituir). "Adicionar" é
+  o caso comum, mas tirar uma etiqueta errada de 40 linhas de uma vez é
+  justamente o conserto que traz alguém a esta tela.
+- **Mudar conta em massa** — entrou. É o campo mais perigoso, então tem aviso
+  próprio no formulário, contagem na confirmação e um teste que exige a soma dos
+  saldos inalterada ao mover dinheiro entre contas.
+- **Teto de linhas** — sem teto. A lista rola dentro da tela e a barra de ação
+  fica fixa no rodapé, então o lote continua acionável em qualquer tamanho.
+
+Uma coisa não prevista apareceu no caminho: `DB.save()` serializa — e, com PIN,
+cifra — o banco inteiro a cada gravação. Um lote de 200 lançamentos seriam 200
+serializações completas, segundos de tela travada no celular. Daí `DB.emLote()`,
+que suspende a gravação até o fim do lote e grava uma vez só.

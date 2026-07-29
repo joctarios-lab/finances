@@ -142,6 +142,22 @@ function toast(msg, tipo) {
   t._t = setTimeout(() => { t.hidden = true; }, 2600);
 }
 
+/* Aviso com uma ação junto. Fica mais tempo na tela que o toast comum: 2,6s dá
+   para ler, não dá para decidir — e a decisão aqui é desfazer uma mudança que
+   pegou dezenas de lançamentos de uma vez. */
+function toastAcao(msg, rotulo, fn, ms = 12000) {
+  const t = $('#toast');
+  t.className = 'toast t-ok tem-acao';
+  t.innerHTML = `<span>${esc(msg)}</span><button type="button" id="toast-acao">${esc(rotulo)}</button>`;
+  t.hidden = false;
+  t.style.animation = 'none'; void t.offsetWidth; t.style.animation = '';
+  const fechar = () => { t.hidden = true; t.innerHTML = ''; t.classList.remove('tem-acao'); };
+  const botao = $('#toast-acao');
+  if (botao) botao.onclick = () => { fechar(); fn(); };
+  clearTimeout(t._t);
+  t._t = setTimeout(fechar, ms);
+}
+
 function barClass(pct) { return pct >= 90 ? 'bar-red' : pct >= 70 ? 'bar-amber' : 'bar-green'; }
 
 /* ---------- Máscara monetária em tempo real (padrão bancário BR: dígitos entram como centavos) ---------- */
@@ -1031,6 +1047,7 @@ function renderExtrato(period) {
       <button class="tag-limpar" id="limpar-filtros">Limpar tudo</button>
     </div>` : ''}
     ${isCurrent ? '<button class="btn ghost" id="btn-recur" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="sync"></span>Lançar custos fixos deste mês</button>' : ''}
+    ${txs.length ? `<button class="btn ghost" id="btn-massa" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="edit"></span>Editar ${txs.length} lançamento${txs.length === 1 ? '' : 's'} em massa</button>` : ''}
     <div id="tx-list">${list}</div>
   `;
 }
@@ -1383,6 +1400,8 @@ function bindView() {
   });
   const janelaCustom = $('#janela-custom');
   if (janelaCustom) janelaCustom.onclick = () => openJanelaSheet(DB.monthPeriod(new Date(), state.monthOffset));
+  const btnMassa = $('#btn-massa');
+  if (btnMassa) btnMassa.onclick = () => openMassaModal(DB.monthPeriod(new Date(), state.monthOffset));
   const rprev = $('#rep-prev'), rnext = $('#rep-next');
   if (rprev) rprev.onclick = () => { state.repOffset = (state.repOffset || 0) - 1; render(); };
   if (rnext) rnext.onclick = () => { state.repOffset = (state.repOffset || 0) + 1; render(); };
@@ -1673,6 +1692,345 @@ function openFiltrosSheet() {
     };
     closeSheet(); render();
   };
+}
+
+/* ---------- Edição em massa ----------
+   O lote é o que está filtrado: o filtro já é a linguagem de seleção do extrato,
+   e inventar uma segunda só para cá seria fazer a pessoa dizer duas vezes a
+   mesma coisa.
+
+   A regra que organiza a tela toda: cada campo tem um interruptor, e campo
+   desligado não é tocado. Quando 34 lançamentos têm categorias diferentes, o
+   formulário não tem o que preencher — e qualquer valor pré-carregado viraria
+   uma sobrescrita que ninguém pediu. */
+const Massa = {
+  ids: [],              // fotografia do filtro no momento de abrir
+  marcados: new Set(),
+  desfazer: null,       // { antes, deltas } do último lote aplicado
+};
+
+/* Quanto um lançamento pesa em cada conta. Espelha applyTxEffect, mas devolvendo
+   os números em vez de gravar: em lote, mexer no saldo por lançamento seriam 2N
+   escritas, e parar no meio deixaria saldo corrompido. Aqui os deltas somam
+   primeiro e vão para o banco uma vez por conta. */
+function efeitoNasContas(t) {
+  const fora = {};
+  if (!t || t.status !== 'Pago') return fora;
+  const v = Number(t.amount) || 0;
+  const por = (id, d) => { if (id) fora[id] = (fora[id] || 0) + d; };
+  if (DB.isTransfer(t)) { por(t.account_id, -v); por(t.to_account, v); return fora; }
+  if (!t.account_id || t.card_id) return fora;   // cartão mexe na fatura, não na conta
+  por(t.account_id, DB.isExpense(t) ? -v : v);
+  return fora;
+}
+
+/* Quem aceita o quê. Transferência não tem categoria e tem duas pontas, então
+   trocar "a conta" dela seria ambíguo; conciliação não é gasto nem entrada.
+   Elas continuam selecionáveis — mudar observação ou etiqueta faz sentido — e o
+   que não se aplica é dito por extenso antes de gravar, nunca em silêncio. */
+const MASSA_ACEITA = {
+  category_id: t => !DB.isTransfer(t) && !t.adjustment,
+  account_id: t => !DB.isTransfer(t),
+  status: t => !DB.isTransfer(t) && !t.adjustment,
+};
+const massaAceita = (campo, t) => (MASSA_ACEITA[campo] ? MASSA_ACEITA[campo](t) : true);
+
+function massaAlvos() {
+  return [...Massa.marcados].map(id => DB.get('transactions', id)).filter(Boolean);
+}
+
+/* Etiqueta é conjunto, não valor: "definir" apagaria o que já estava lá. Daí os
+   três modos — somar é o caso comum, mas tirar uma etiqueta errada de 40 linhas
+   de uma vez é justamente o tipo de conserto que traz alguém até aqui. */
+function aplicarTags(atuais, modo, valores) {
+  const set = new Set(atuais);
+  if (modo === 'substituir') return [...valores];
+  if (modo === 'remover') { valores.forEach(v => set.delete(v)); return [...set]; }
+  valores.forEach(v => set.add(v));
+  return [...set];
+}
+
+function openMassaModal(period) {
+  Massa.ids = txsFiltradas(period).map(t => t.id);
+  Massa.marcados = new Set(Massa.ids);      // abre com tudo marcado: o filtro já escolheu
+  renderMassa();
+}
+
+function renderMassa() {
+  const txs = Massa.ids.map(id => DB.get('transactions', id)).filter(Boolean);
+  const n = Massa.marcados.size;
+  const soma = txs.filter(t => Massa.marcados.has(t.id) && !DB.isNeutral(t))
+    .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
+  openModal(`
+    <div class="modal-title">Editar em massa<button class="close-x" id="md-close"><span data-ico="x"></span></button></div>
+    <div class="massa-head">
+      <div><b>${n} de ${txs.length}</b> <span class="muted">selecionados · ${fmt(soma)}</span></div>
+      <div class="btn-row" style="margin:0">
+        <button class="btn ghost" id="massa-todos">Marcar todos</button>
+        <button class="btn ghost" id="massa-nenhum">Desmarcar</button>
+      </div>
+    </div>
+    <div class="massa-lista">
+      ${txs.map(t => {
+        const marcado = Massa.marcados.has(t.id);
+        const isTr = DB.isTransfer(t);
+        return `<label class="massa-linha ${marcado ? 'is-on' : ''}" data-massa="${t.id}">
+          <input type="checkbox" ${marcado ? 'checked' : ''}>
+          <span class="massa-info">
+            <span class="tx-name">${esc(t.description)}</span>
+            <span class="tx-meta">${fmtDay(t.date)} · ${isTr ? '⇄ Transferência'
+              : t.adjustment ? '⚖️ Conciliação'
+              : esc(DB.categoryPath(t.category_id) || 'Sem categoria')}</span>
+          </span>
+          <span class="tx-amount ${isTr ? 'transfer' : DB.isExpense(t) ? '' : 'income'}">${fmt(t.amount)}</span>
+        </label>`;
+      }).join('') || '<div class="empty">Nada no filtro atual.</div>'}
+    </div>
+    <div class="massa-barra">
+      <span>${n} selecionado${n === 1 ? '' : 's'}</span>
+      <span class="btn-row" style="margin:0">
+        <button class="btn ghost t-danger" id="massa-excluir" ${n ? '' : 'disabled'}>Excluir</button>
+        <button class="btn" id="massa-editar" ${n ? '' : 'disabled'}>Editar</button>
+      </span>
+    </div>`);
+
+  const modal = $('#modal');
+  const liga = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+  liga('#md-close', closeModal);
+  liga('#massa-todos', () => { Massa.marcados = new Set(Massa.ids); renderMassa(); });
+  liga('#massa-nenhum', () => { Massa.marcados = new Set(); renderMassa(); });
+  liga('#massa-editar', () => openMassaEditSheet());
+  liga('#massa-excluir', () => excluirMassa());
+  modal.querySelectorAll('[data-massa]').forEach(el => {
+    const box = el.querySelector('input');
+    if (!box) return;
+    box.onchange = ev => {
+      const id = el.dataset.massa;
+      if (ev.target.checked) Massa.marcados.add(id); else Massa.marcados.delete(id);
+      /* Atualiza só o que mudou: com centenas de linhas, refazer a lista inteira
+         a cada toque trava o celular e joga a rolagem de volta para o topo. */
+      el.classList.toggle('is-on', ev.target.checked);
+      atualizarBarraMassa();
+    };
+  });
+}
+
+function atualizarBarraMassa() {
+  const barra = document.querySelector('.massa-barra');
+  if (!barra) return;
+  const n = Massa.marcados.size;
+  barra.querySelector('span').textContent = `${n} selecionado${n === 1 ? '' : 's'}`;
+  barra.querySelectorAll('button').forEach(b => { b.disabled = !n; });
+  const cab = document.querySelector('.massa-head b');
+  if (cab) cab.textContent = `${n} de ${Massa.ids.length}`;
+}
+
+function openMassaEditSheet() {
+  const alvos = massaAlvos();
+  if (!alvos.length) return toast('Escolha ao menos um lançamento');
+  const membros = [MEMBRO_COMUM, ...DB.settings().members];
+  const contas = DB.all('accounts').filter(a => a.active !== false);
+  const metodos = ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto'];
+  const tags = DB.allTags();
+
+  // Um campo = um interruptor + o controle que ele revela
+  const campo = (chave, rotulo, controle, aviso) => `
+    <div class="massa-campo">
+      <label class="massa-liga"><input type="checkbox" data-liga="${chave}"><span>${rotulo}</span></label>
+      <div class="massa-ctrl" data-ctrl="${chave}" hidden>${controle}
+        ${aviso ? `<p class="muted" style="margin-top:6px">${aviso}</p>` : ''}</div>
+    </div>`;
+  const foraDe = chave => alvos.filter(t => !massaAceita(chave, t)).length;
+  const nota = chave => {
+    const fora = foraDe(chave);
+    return fora ? `${fora} do lote não recebe esta mudança e fica como está.` : '';
+  };
+
+  openSheet(`
+    <div class="sheet-title">Editar ${alvos.length} lançamento${alvos.length === 1 ? '' : 's'}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin:-4px 0 14px">Ligue só o que quer mudar. O que ficar desligado permanece como está em cada lançamento.</p>
+
+    ${campo('category_id', 'Categoria',
+      `<select id="ma-cat">${optionsCategorias('')}</select>`, nota('category_id'))}
+    ${campo('tags', 'Etiquetas', `
+      ${chipGroup('ma-tagmodo', [
+        { value: 'adicionar', label: 'Adicionar' },
+        { value: 'remover', label: 'Remover' },
+        { value: 'substituir', label: 'Substituir' },
+      ], 'adicionar')}
+      <input id="ma-tags" type="text" placeholder="viagem, presente" autocomplete="off" list="tag-hist-massa" style="margin-top:8px">
+      <datalist id="tag-hist-massa">${tags.map(t => `<option value="${esc(t)}"></option>`).join('')}</datalist>`,
+      'Separe por vírgula. “Adicionar” mantém as que já existem.')}
+    ${campo('status', 'Situação',
+      `<select id="ma-status"><option value="Pago">Pago</option><option value="A Pagar">A Pagar</option></select>`,
+      `Mexe no saldo das contas. ${nota('status')}`)}
+    ${campo('scope', 'Âmbito',
+      `<select id="ma-scope"><option value="Família">Família</option><option value="Pessoal">Pessoal</option></select>`)}
+    ${campo('member', 'De quem',
+      `<select id="ma-membro">${membros.map(m => `<option value="${esc(m)}">${m === MEMBRO_COMUM ? 'Comum / Família' : esc(m)}</option>`).join('')}</select>`)}
+    ${campo('method', 'Forma de pagamento',
+      `<select id="ma-metodo">${metodos.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('')}</select>`)}
+    ${campo('account_id', 'Conta',
+      `<select id="ma-conta">${contas.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>`,
+      `Move dinheiro entre os saldos das duas contas. ${nota('account_id')}`)}
+    ${campo('recurring', 'Custo fixo',
+      `<select id="ma-rec"><option value="1">Sim</option><option value="">Não</option></select>`)}
+    ${campo('notes', 'Observações', `
+      ${chipGroup('ma-notamodo', [
+        { value: 'substituir', label: 'Substituir' },
+        { value: 'acrescentar', label: 'Acrescentar' },
+      ], 'substituir')}
+      <textarea id="ma-notas" rows="2" style="margin-top:8px"></textarea>`)}
+
+    <button class="btn" id="sh-save">Revisar mudanças</button>
+  `);
+  $('#sh-close').onclick = closeSheet;
+  bindChips('ma-tagmodo'); bindChips('ma-notamodo');
+  document.querySelectorAll('[data-liga]').forEach(cb => cb.onchange = () => {
+    const ctrl = document.querySelector(`[data-ctrl="${cb.dataset.liga}"]`);
+    if (ctrl) ctrl.hidden = !cb.checked;
+  });
+  $('#sh-save').onclick = () => {
+    const ligado = c => { const el = document.querySelector(`[data-liga="${c}"]`); return !!(el && el.checked); };
+    const campos = {};
+    if (ligado('category_id')) campos.category_id = $('#ma-cat').value || null;
+    if (ligado('status')) campos.status = $('#ma-status').value;
+    if (ligado('scope')) campos.scope = $('#ma-scope').value;
+    if (ligado('member')) campos.member = $('#ma-membro').value;
+    if (ligado('method')) campos.method = $('#ma-metodo').value;
+    if (ligado('account_id')) campos.account_id = $('#ma-conta').value;
+    if (ligado('recurring')) campos.recurring = !!$('#ma-rec').value;
+    const extras = {};
+    if (ligado('tags')) {
+      extras.tags = {
+        modo: chipValue('ma-tagmodo') || 'adicionar',
+        valores: $('#ma-tags').value.split(',').map(s => DB.normTag(s)).filter(Boolean),
+      };
+    }
+    if (ligado('notes')) {
+      extras.notes = { modo: chipValue('ma-notamodo') || 'substituir', texto: $('#ma-notas').value.trim() };
+    }
+    if (!Object.keys(campos).length && !Object.keys(extras).length) {
+      return toast('Ligue ao menos um campo para mudar');
+    }
+    confirmarMassa(campos, extras);
+  };
+}
+
+/* Confirmação que DIZ O NÚMERO. "Vai alterar 32 lançamentos" é a diferença entre
+   uma ação em massa e uma surpresa em massa — ainda mais porque a sincronização
+   propaga na hora para os outros aparelhos da família. */
+function confirmarMassa(campos, extras) {
+  const alvos = massaAlvos();
+  const linhas = [];
+  const conta = chave => alvos.filter(t => massaAceita(chave, t)).length;
+  if ('category_id' in campos) linhas.push([`Categoria vira <b>${esc(DB.categoryPath(campos.category_id) || 'sem categoria')}</b>`, conta('category_id')]);
+  if (extras.tags) {
+    const rot = { adicionar: 'Acrescenta', remover: 'Remove', substituir: 'Passa a ter só' }[extras.tags.modo];
+    linhas.push([`${rot} <b>${extras.tags.valores.map(v => '#' + esc(v)).join(', ') || '(nenhuma)'}</b>`, alvos.length]);
+  }
+  if ('status' in campos) linhas.push([`Situação vira <b>${esc(campos.status)}</b> — mexe no saldo`, conta('status')]);
+  if ('scope' in campos) linhas.push([`Âmbito vira <b>${esc(campos.scope)}</b>`, alvos.length]);
+  if ('member' in campos) linhas.push([`Passa a ser de <b>${esc(campos.member)}</b>`, alvos.length]);
+  if ('method' in campos) linhas.push([`Forma de pagamento vira <b>${esc(campos.method)}</b>`, alvos.length]);
+  if ('account_id' in campos) linhas.push([`Conta vira <b>${esc((DB.get('accounts', campos.account_id) || {}).name || '?')}</b> — move os saldos`, conta('account_id')]);
+  if ('recurring' in campos) linhas.push([`Custo fixo: <b>${campos.recurring ? 'sim' : 'não'}</b>`, alvos.length]);
+  if (extras.notes) linhas.push([`Observações ${extras.notes.modo === 'substituir' ? 'viram' : 'ganham'} o texto informado`, alvos.length]);
+
+  openSheet(`
+    <div class="sheet-title">Confirmar<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin-bottom:10px">Sobre ${alvos.length} lançamento${alvos.length === 1 ? '' : 's'} selecionado${alvos.length === 1 ? '' : 's'}:</p>
+    ${linhas.map(([txt, n]) => `<div class="proj-row"><span>${txt}</span><b>${n}</b></div>`).join('')}
+    <p class="muted" style="margin-top:10px">Dá para desfazer logo depois, enquanto o aviso estiver na tela.</p>
+    <button class="btn" id="sh-save">Aplicar</button>
+    <div class="btn-row"><button class="btn ghost" id="ma-cancelar">Cancelar</button></div>
+  `);
+  $('#sh-close').onclick = closeSheet;
+  $('#ma-cancelar').onclick = closeSheet;
+  $('#sh-save').onclick = () => aplicarMassa(campos, extras);
+}
+
+function aplicarMassa(campos, extras) {
+  const alvos = massaAlvos();
+  const antes = alvos.map(t => ({ ...t }));      // fotografia para o desfazer
+  const deltas = {};
+  const somar = (obj, sinal) => {
+    for (const [id, v] of Object.entries(obj)) deltas[id] = (deltas[id] || 0) + v * sinal;
+  };
+
+  let mexidos = 0;
+  DB.emLote(() => {
+    for (const t of alvos) {
+      const novo = { ...t };
+      let mudou = false;
+      for (const [chave, valor] of Object.entries(campos)) {
+        if (!massaAceita(chave, t)) continue;
+        novo[chave] = valor;
+        mudou = true;
+      }
+      if (extras.tags) { novo.tags = aplicarTags(DB.tagsOf(t), extras.tags.modo, extras.tags.valores); mudou = true; }
+      if (extras.notes) {
+        novo.notes = extras.notes.modo === 'substituir'
+          ? extras.notes.texto
+          : [t.notes, extras.notes.texto].filter(Boolean).join(' — ');
+        mudou = true;
+      }
+      if (!mudou) continue;
+      somar(efeitoNasContas(t), -1);
+      somar(efeitoNasContas(novo), +1);
+      DB.upsert('transactions', novo);
+      mexidos++;
+    }
+    // Uma escrita por conta, depois de tudo somado
+    for (const [id, d] of Object.entries(deltas)) if (Math.abs(d) > 0.004) adjustBalance(id, d);
+  });
+
+  Massa.desfazer = { antes, deltas };
+  closeSheet();
+  renderMassa();
+  Sync.autoSync();                                // uma vez para o lote inteiro
+  toastAcao(`${mexidos} lançamento(s) alterado(s) ✓`, 'Desfazer', desfazerMassa);
+}
+
+function excluirMassa() {
+  const alvos = massaAlvos();
+  if (!alvos.length) return;
+  if (!confirm(`Excluir ${alvos.length} lançamento(s)?\n\nO saldo das contas é devolvido. Dá para desfazer logo depois.`)) return;
+  const antes = alvos.map(t => ({ ...t }));
+  const deltas = {};
+  DB.emLote(() => {
+    for (const t of alvos) {
+      for (const [id, v] of Object.entries(efeitoNasContas(t))) deltas[id] = (deltas[id] || 0) - v;
+      DB.remove('transactions', t.id);
+    }
+    for (const [id, d] of Object.entries(deltas)) if (Math.abs(d) > 0.004) adjustBalance(id, d);
+  });
+
+  Massa.desfazer = { antes, deltas };
+  Massa.ids = Massa.ids.filter(id => !Massa.marcados.has(id));
+  Massa.marcados = new Set();
+  renderMassa();
+  Sync.autoSync();
+  toastAcao(`${alvos.length} lançamento(s) excluído(s)`, 'Desfazer', desfazerMassa);
+}
+
+/* Desfazer vive em memória e não sobrevive a recarregar a página — limite real,
+   e dito no aviso. O que ele cobre é o engano percebido no segundo seguinte, que
+   é quando quase todo engano de lote é percebido. */
+function desfazerMassa() {
+  const d = Massa.desfazer;
+  if (!d) return toast('Não há o que desfazer');
+  DB.emLote(() => {
+    for (const t of d.antes) DB.upsert('transactions', t);
+    for (const [id, v] of Object.entries(d.deltas)) if (Math.abs(v) > 0.004) adjustBalance(id, -v);
+  });
+  Massa.desfazer = null;
+  Massa.ids = d.antes.map(t => t.id);
+  Massa.marcados = new Set(Massa.ids);
+  renderMassa();
+  Sync.autoSync();
+  toast('Desfeito ✓');
 }
 
 /* Detalhe de um envelope: para onde foi o dinheiro dele dentro do período.

@@ -71,7 +71,28 @@ const DB = {
   setKey(cryptoKey) { this.key = cryptoKey; this.save(); },
   clearKey() { this.key = null; this.save(); },
 
+  _lote: false,
+
+  /* Uma gravação só para o lote inteiro.
+
+     save() serializa o banco COMPLETO e, com PIN, ainda cifra. Numa edição em
+     massa de 200 lançamentos isso seriam 200 serializações e 200 cifragens do
+     banco todo — segundos de tela travada no celular, para um resultado que uma
+     escrita só entrega igual.
+
+     O finally grava mesmo se algo estourar no meio: com metade do lote já
+     alterada em memória, não gravar seria perder o trabalho feito. */
+  emLote(fn) {
+    const jaEstava = this._lote;
+    this._lote = true;
+    try { return fn(); } finally {
+      this._lote = jaEstava;
+      if (!this._lote) this.save();
+    }
+  },
+
   save() {
+    if (this._lote) return;
     if (this.key) {
       // Serializa gravações criptografadas em fila para nunca escrever fora de ordem.
       const json = JSON.stringify(this.data);

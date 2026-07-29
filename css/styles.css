@@ -932,6 +932,43 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 .toast.t-ok { background: #1f9d61; }
 .toast.t-err { background: #d9214e; }
 .toast.t-info { background: #0072b8; }
+/* Aviso com ação junto (desfazer um lote): o botão precisa ser alcançável com o
+   polegar e distinguir-se do texto sem virar outra cor. */
+.toast.tem-acao { display: flex; align-items: center; gap: 14px; text-align: left; padding: 9px 10px 9px 18px; }
+.toast.tem-acao button {
+  flex: none; background: rgba(255, 255, 255, .18); border: 1px solid rgba(255, 255, 255, .4);
+  color: #fff; font-family: var(--font-body); font-size: 13px; font-weight: 700;
+  padding: 8px 14px; border-radius: 8px; cursor: pointer; min-height: 38px;
+}
+.toast.tem-acao button:active { transform: scale(.96); }
+
+/* ---------- Edição em massa ---------- */
+.massa-head {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--line); margin-bottom: 4px;
+}
+.massa-head .btn { padding: 7px 12px; font-size: 12.5px; min-height: 34px; }
+/* A lista rola sozinha para a barra de ação ficar sempre alcançável: com 200
+   linhas, um rodapé que rola junto obrigaria a percorrer tudo para agir. */
+.massa-lista { max-height: calc(100dvh - 320px); overflow-y: auto; overscroll-behavior: contain; margin: 0 -4px; padding: 0 4px; }
+.massa-linha {
+  display: flex; align-items: center; gap: 10px; padding: 9px 8px; border-radius: 9px;
+  border: 1px solid transparent; cursor: pointer;
+}
+.massa-linha + .massa-linha { border-top: 1px solid var(--line); border-top-left-radius: 0; border-top-right-radius: 0; }
+.massa-linha.is-on { background: rgba(0, 158, 247, .07); border-color: rgba(0, 158, 247, .28); }
+.massa-linha input { width: 20px; height: 20px; flex: none; accent-color: var(--blue); }
+.massa-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.massa-barra {
+  position: sticky; bottom: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 12px 0 2px; margin-top: 6px; border-top: 1px solid var(--line);
+  background: var(--ink-2); font-size: 13px; font-weight: 600;
+}
+.massa-barra .btn { padding: 9px 16px; min-height: 40px; }
+.massa-campo { border-bottom: 1px solid var(--line); padding: 10px 0; }
+.massa-liga { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px; font-weight: 600; }
+.massa-liga input { width: 20px; height: 20px; flex: none; accent-color: var(--blue); }
+.massa-ctrl { margin-top: 10px; }
 @keyframes toastIn {
   from { opacity: 0; transform: translate(-50%, 16px) scale(.94); }
   to { opacity: 1; transform: translate(-50%, 0) scale(1); }

@@ -68,7 +68,9 @@ eval(appSrc + `; Object.assign(global, {
   state, fmt, fmtShort, fmtDay, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
-  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, filtrosVazios, janelasDoMes, somarDias, openJanelaSheet, bindView, fmt, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
+  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, filtrosVazios, janelasDoMes, somarDias, openJanelaSheet, bindView, fmt,
+  Massa, openMassaModal, renderMassa, closeModal, openModal, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
+  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -2171,6 +2173,158 @@ console.log('\n=== Botão voltar do aparelho ===');
   check('a saída não repõe a sentinela', /history\.back\(\)/.test(apV) && !/history\.back\(\)[\s\S]{0,80}this\.marcar\(\)/.test(apV), true);
   check('voltar é ligado na abertura', apV.includes('Voltar.init()'), true);
 }
+
+/* ---- Edição em massa ----
+   Um toque mudando dezenas de registros, com a sincronização propagando na hora.
+   O que precisa ser provado aqui não é a tela: é que o dinheiro fecha depois. */
+console.log('\n=== Edição em massa ===');
+try {
+  const pM = DB.monthPeriod(new Date());
+  const contaM = DB.upsert('accounts', { name: 'Conta Massa', type: 'Conta Corrente', balance: 1000 });
+  const contaM2 = DB.upsert('accounts', { name: 'Conta Massa 2', type: 'Conta Corrente', balance: 500 });
+  const catM = DB.upsert('categories', { name: 'Alvo da Massa', icon: '🎯', scope: 'Família', type: 'Despesa' });
+  const somaSaldos = () => DB.all('accounts').reduce((s, a) => s + (Number(a.balance) || 0), 0);
+
+  const novo = (desc, extra) => DB.upsert('transactions', {
+    description: desc, amount: 100, date: dia(10), type: 'Despesa', status: 'Pago',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaM, ...extra,
+  });
+  const t1 = novo('Massa um'), t2 = novo('Massa dois'), t3 = novo('Massa três');
+
+  // Efeito nas contas espelha applyTxEffect — é o que garante o saldo em lote
+  const desp = DB.get('transactions', t1);
+  check('despesa paga pesa negativo na conta', efeitoNasContas(desp)[contaM], -100);
+  check('a pagar não pesa em saldo nenhum',
+    Object.keys(efeitoNasContas({ ...desp, status: 'A Pagar' })).length, 0);
+  const trans = { type: 'Transferência', status: 'Pago', amount: 70, account_id: contaM, to_account: contaM2 };
+  check('transferência tira de um lado', efeitoNasContas(trans)[contaM], -70);
+  check('e põe no outro', efeitoNasContas(trans)[contaM2], 70);
+
+  // Categoria em massa não mexe em dinheiro nenhum
+  Massa.ids = [t1, t2, t3];
+  Massa.marcados = new Set([t1, t2, t3]);
+  const saldoAntes = somaSaldos();
+  aplicarMassa({ category_id: catM }, {});
+  check('categoria em massa chega em todos',
+    [t1, t2, t3].every(id => DB.get('transactions', id).category_id === catM), true);
+  check('e não mexe em saldo', somaSaldos(), saldoAntes);
+
+  /* Situação mexe em dinheiro de verdade. A soma dos saldos tem de andar
+     exatamente o que os lançamentos deixaram de pesar — nem mais, nem menos. */
+  Massa.marcados = new Set([t1, t2, t3]);
+  aplicarMassa({ status: 'A Pagar' }, {});
+  check('marcar A Pagar devolve o dinheiro à conta', somaSaldos(), saldoAntes + 300);
+  check('e desfazer põe tudo de volta no lugar', (desfazerMassa(), somaSaldos()), saldoAntes);
+  check('desfazer também devolve a situação', DB.get('transactions', t1).status, 'Pago');
+
+  // Trocar a conta move o saldo dos dois lados
+  Massa.ids = [t1]; Massa.marcados = new Set([t1]);
+  const c1 = DB.get('accounts', contaM).balance, c2 = DB.get('accounts', contaM2).balance;
+  aplicarMassa({ account_id: contaM2 }, {});
+  check('a conta de origem recebe de volta', DB.get('accounts', contaM).balance, c1 + 100);
+  check('e a de destino é debitada', DB.get('accounts', contaM2).balance, c2 - 100);
+  check('a soma total não muda ao mover de conta', somaSaldos(), saldoAntes);
+  desfazerMassa();
+  check('desfazer devolve a conta original', DB.get('transactions', t1).account_id, contaM);
+
+  /* Transferência e conciliação no lote: continuam selecionáveis, mas não
+     recebem os campos que não fazem sentido nelas — e isso é CONTADO na
+     confirmação, nunca silencioso. */
+  const tTr = DB.upsert('transactions', {
+    description: 'Massa transferência', amount: 50, date: dia(10), type: 'Transferência',
+    status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência',
+    account_id: contaM, to_account: contaM2,
+  });
+  const tAj = DB.upsert('transactions', {
+    description: 'Massa conciliação', amount: 20, date: dia(10), type: 'Despesa', status: 'Pago',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Ajuste', account_id: contaM, adjustment: true,
+  });
+  check('transferência não aceita categoria', massaAceita('category_id', DB.get('transactions', tTr)), false);
+  check('conciliação também não', massaAceita('category_id', DB.get('transactions', tAj)), false);
+  check('transferência não aceita troca de conta', massaAceita('account_id', DB.get('transactions', tTr)), false);
+  check('mas aceita etiqueta', massaAceita('tags', DB.get('transactions', tTr)), true);
+
+  Massa.ids = [t2, tTr, tAj]; Massa.marcados = new Set([t2, tTr, tAj]);
+  const saldoPreMisto = somaSaldos();
+  aplicarMassa({ category_id: catM }, { tags: { modo: 'adicionar', valores: ['lote'] } });
+  check('a transferência do lote fica sem categoria', !DB.get('transactions', tTr).category_id, true);
+  check('a conciliação também', !DB.get('transactions', tAj).category_id, true);
+  check('e o saldo não se mexe com ela no meio', somaSaldos(), saldoPreMisto);
+  check('mas a etiqueta chega até ela', DB.tagsOf(DB.get('transactions', tTr)).includes('lote'), true);
+  check('e chega na despesa também', DB.tagsOf(DB.get('transactions', t2)).includes('lote'), true);
+
+  // A confirmação diz o número, e o número exclui quem não recebe a mudança
+  confirmarMassa({ category_id: catM }, {});
+  const conf = els['#sheet'].innerHTML;
+  check('a confirmação diz quantos recebem a mudança', /Categoria vira[\s\S]*?<b>1<\/b>/.test(conf), true);
+  closeSheet();
+
+  // Etiquetas: os três modos
+  check('adicionar mantém o que já existia', aplicarTags(['a'], 'adicionar', ['b']).sort().join(), 'a,b');
+  check('adicionar não duplica', aplicarTags(['a'], 'adicionar', ['a']).join(), 'a');
+  check('remover tira só a indicada', aplicarTags(['a', 'b'], 'remover', ['a']).join(), 'b');
+  check('substituir troca o conjunto inteiro', aplicarTags(['a', 'b'], 'substituir', ['c']).join(), 'c');
+
+  // Excluir em massa devolve o saldo e é reversível
+  Massa.ids = [t3]; Massa.marcados = new Set([t3]);
+  const saldoPreExclusao = somaSaldos();
+  excluirMassa();                                   // o harness responde sim ao confirm
+  check('excluir devolve o valor ao saldo', somaSaldos(), saldoPreExclusao + 100);
+  check('e o lançamento some da lista', !!DB.get('transactions', t3), false);
+  desfazerMassa();
+  check('desfazer traz o lançamento de volta', !!DB.get('transactions', t3), true);
+  check('e o saldo volta com ele', somaSaldos(), saldoPreExclusao);
+
+  // O lote é o filtro; o botão só aparece quando há o que editar
+  state.filtros = filtrosVazios();
+  check('o extrato oferece editar em massa', renderExtrato(pM).includes('id="btn-massa"'), true);
+  state.filtros.busca = 'zzzznada';
+  check('sem lançamento, não oferece', renderExtrato(pM).includes('id="btn-massa"'), false);
+  state.filtros = filtrosVazios();
+
+  /* As telas precisam montar de verdade: a lógica acima passaria mesmo com um
+     erro de template, e o modal só apareceria quebrado no celular. */
+  state.filtros = filtrosVazios();
+  openMassaModal(pM);
+  const telaM = els['#modal'].innerHTML;
+  check('o modal abre com o lote todo marcado', Massa.marcados.size, Massa.ids.length);
+  check('e lista as linhas com caixa de seleção', telaM.includes('data-massa='), true);
+  check('a barra de ação traz editar e excluir',
+    telaM.includes('id="massa-editar"') && telaM.includes('id="massa-excluir"'), true);
+  check('o cabeçalho conta quantos estão marcados', telaM.includes(`${Massa.ids.length} de ${Massa.ids.length}`), true);
+
+  openMassaEditSheet();
+  const formM = els['#sheet'].innerHTML;
+  check('todo campo do formulário tem interruptor',
+    ['category_id', 'tags', 'status', 'scope', 'member', 'method', 'account_id', 'recurring', 'notes']
+      .every(c => formM.includes(`data-liga="${c}"`)), true);
+  check('e os controles nascem escondidos',
+    (formM.match(/class="massa-ctrl"[^>]*hidden/g) || []).length >= 9, true);
+  check('o formulário avisa que situação mexe no saldo', formM.includes('Mexe no saldo'), true);
+  check('e que trocar de conta move os saldos', formM.includes('move os saldos') || formM.includes('Move dinheiro'), true);
+  check('etiqueta oferece os três modos',
+    formM.includes('>Adicionar<') && formM.includes('>Remover<') && formM.includes('>Substituir<'), true);
+  closeSheet(); closeModal();
+
+  // Uma sincronização para o lote inteiro, não uma por linha
+  const apM = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const corpoAplicar = apM.slice(apM.indexOf('function aplicarMassa'), apM.indexOf('function excluirMassa'));
+  check('sincroniza uma vez só por lote', (corpoAplicar.match(/Sync\.autoSync\(\)/g) || []).length, 1);
+  check('e a chamada fica fora do laço', /for \(const \[id, d\] of Object\.entries\(deltas\)\)[\s\S]*Sync\.autoSync/.test(corpoAplicar), true);
+
+  /* Gravação em lote: save() serializa (e cifra) o banco inteiro, então uma
+     escrita por lançamento travaria a tela por segundos num lote grande. */
+  let gravacoes = 0;
+  const saveReal = DB.save.bind(DB);
+  DB.save = function () { if (!this._lote) gravacoes++; return saveReal(); };
+  Massa.ids = [t1, t2]; Massa.marcados = new Set([t1, t2]);
+  aplicarMassa({ scope: 'Pessoal' }, {});
+  DB.save = saveReal;
+  check('o lote inteiro grava uma vez só', gravacoes, 1);
+  check('e a mudança chegou nos dois', [t1, t2].every(id => DB.get('transactions', id).scope === 'Pessoal'), true);
+  check('o modo lote não fica ligado depois', DB._lote, false);
+  desfazerMassa();
+} catch (e) { console.log(` FALHA | edição em massa: ${e.message}`); fail++; }
 
 console.log('\n=== Puxar para atualizar desligado ===');
 {
