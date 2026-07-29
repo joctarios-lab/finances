@@ -1307,20 +1307,28 @@ function renderCartoes() {
   const cards = DB.all('cards').filter(c => c.active !== false);
   const contas = DB.all('accounts').filter(a => a.active !== false);
   const totalContas = contas.reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  /* As ações saem de dentro do cartão e sobem para o cabeçalho da seção. Empilhadas
+     no rodapé, em largura inteira, elas fechavam a lista com dois blocos que
+     pesavam mais que as próprias contas — e ficavam longe do título que dizia do
+     que se tratava. */
   const contasHtml = `
-    <div class="card">
-      <div class="card-head">
-        <div><b>Contas e saldos</b><small>toque em uma conta para atualizar o saldo</small></div>
-        <span class="num" style="font-size:17px">${fmtShort(totalContas)}</span>
+    <div class="sec-cab">
+      <div class="sec-tit">
+        <b>Contas e saldos</b>
+        <small>${fmtShort(totalContas)} · toque numa conta para conciliar</small>
       </div>
+      <div class="sec-acoes">
+        ${contas.length > 1 ? '<button class="sec-btn" id="btn-transfer"><span data-ico="sync"></span>Transferir</button>' : ''}
+        <button class="sec-btn" data-setup="accounts"><span data-ico="settings"></span>Gerenciar</button>
+      </div>
+    </div>
+    <div class="card">
       ${contas.length ? contas.map(a => `
         <div class="acc-row" data-acc="${a.id}">
           <span class="acc-ico">${a.type === 'Caixinha / Rendimento' ? '🐷' : a.type === 'Investimento' ? '📈' : a.type === 'Carteira Digital' ? '📱' : '🏦'}</span>
           <span class="acc-info"><b>${esc(a.name)}</b><small>${esc(a.type)}${a.institution ? ' · ' + esc(a.institution) : ''}</small></span>
           <span class="num">${fmt(a.balance)}</span>
         </div>`).join('') : '<div class="empty">Nenhuma conta cadastrada. Adicione em Configurações → Contas.</div>'}
-      ${contas.length > 1 ? '<button class="btn ghost" id="btn-transfer" style="margin-top:10px">⇄ Transferir entre contas</button>' : ''}
-      <button class="btn ghost" data-setup="accounts" style="margin-top:8px">Gerenciar contas</button>
     </div>`;
 
   if (!cards.length) {
@@ -1329,11 +1337,27 @@ function renderCartoes() {
   }
 
   const committed = DB.committed();
+  const totalFaturas = cards.reduce((s, c) => {
+    const inv = DB.invoicesOf(c).find(i => i.key === DB.invoiceKeyFor(c, todayISO()));
+    return s + (inv ? inv.total : 0);
+  }, 0);
   let html = contasHtml + (committed > 0 ? `
     <div class="card">
       <div class="card-head" style="margin-bottom:4px"><div><b>Compromissos futuros</b><small>faturas não pagas + contas a pagar — já descontados do seu disponível</small></div>
       <span class="num txt-red" style="font-size:18px">${fmtShort(committed)}</span></div>
-    </div>` : '');
+    </div>` : '')
+    /* Com cartões cadastrados não havia como gerenciá-los daqui: o botão só
+       existia no estado vazio, então quem já tinha um cartão precisava ir às
+       Configurações para mexer em qualquer um. O cabeçalho da seção resolve. */
+    + `<div class="sec-cab">
+      <div class="sec-tit">
+        <b>Cartões de crédito</b>
+        <small>${fmtShort(totalFaturas)} nas faturas abertas</small>
+      </div>
+      <div class="sec-acoes">
+        <button class="sec-btn" data-setup="cards"><span data-ico="settings"></span>Gerenciar</button>
+      </div>
+    </div>`;
   for (const card of cards) {
     const invoices = DB.invoicesOf(card);
     const currentKey = DB.invoiceKeyFor(card, todayISO());

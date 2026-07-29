@@ -2654,6 +2654,31 @@ try {
   desfazerMassa();
 } catch (e) { console.log(` FALHA | edição em massa: ${e.message}`); fail++; }
 
+/* ---- Contas e cartões: ações no cabeçalho da seção ----
+   "Transferir" e "Gerenciar" ficavam empilhados em largura inteira DENTRO do
+   cartão, depois da lista de contas: fechavam a lista com dois blocos que
+   pesavam mais que as próprias contas e ficavam longe do título. */
+console.log('\n=== Ações de contas e cartões ===');
+try {
+  const tela = renderCartoes();
+  check('contas ganham cabeçalho de seção', /sec-tit[\s\S]*?Contas e saldos/.test(tela), true);
+  check('com o total somado nele', /Contas e saldos<\/b>\s*<small>R\$/.test(tela), true);
+  check('transferir virou ação da seção', /sec-btn" id="btn-transfer"/.test(tela), true);
+  check('gerenciar contas também', /sec-btn" data-setup="accounts"/.test(tela), true);
+  check('e saíram de dentro do cartão',
+    /btn ghost" id="btn-transfer"|btn ghost" data-setup="accounts"/.test(tela), false);
+  check('a ação vem antes da lista de contas',
+    tela.indexOf('id="btn-transfer"') < tela.indexOf('class="acc-row"'), true);
+
+  /* Com cartões cadastrados não havia como gerenciá-los daqui — o botão só
+     existia no estado vazio, então quem já tinha cartão precisava ir às
+     Configurações para mexer em qualquer um. */
+  check('cartões ganham cabeçalho próprio', tela.includes('Cartões de crédito'), true);
+  check('e agora dá para gerenciá-los daqui', /sec-btn" data-setup="cards"/.test(tela), true);
+  check('o cabeçalho de cartões vem antes dos cartões',
+    tela.indexOf('Cartões de crédito') < tela.indexOf('class="credit-card"'), true);
+} catch (e) { console.log(` FALHA | contas e cartões: ${e.message}`); fail++; }
+
 console.log('\n=== Puxar para atualizar desligado ===');
 {
   const cssP = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
