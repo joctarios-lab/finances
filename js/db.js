@@ -587,6 +587,11 @@ const DB = {
     return out;
   },
 
+  /* Saldo da meta = aportes menos resgates.
+
+     Resgate é um lançamento de valor NEGATIVO na mesma tabela, não um campo à
+     parte: assim o histórico fica em ordem cronológica e o total é sempre uma
+     soma — não há como o saldo divergir do que está listado. */
   goalTotal(goalId) {
     return this.all('goal_entries').filter(e => e.goal_id === goalId)
       .reduce((s, e) => s + (Number(e.amount) || 0), 0);
@@ -612,16 +617,74 @@ const DB = {
     return { spent, count: txs.length, dailyAvg, projection, totalDays: total, elapsedDays: elapsed, remainingDays: Math.max(0, total - elapsed) };
   },
 
-  // Comprometido = faturas não pagas + lançamentos "A Pagar" fora de cartão (sem contar duas vezes).
-  committed() {
+  /* Comprometido = o que já está lançado e vence ATÉ O FIM DO CICLO ATUAL.
+
+     O horizonte não é detalhe: sem ele, uma conta que vence em setembro pesa
+     igual à que vence amanhã, e o disponível fica menor do que a realidade do
+     mês. Com ele, o disponível responde "quanto posso gastar até o fim do mês",
+     que é a pergunta de quem abre o app.
+
+     Só o que foi LANÇADO entra. Custo fixo que ainda não virou lançamento não é
+     estimado aqui de propósito — a resposta para isso é a geração automática das
+     recorrências, não um palpite. */
+  committed(ateISO) {
+    /* FATURA DE CARTÃO SEMPRE CONTA, venha a vencer quando vier.
+
+       O horizonte existe para separar "conta que vence amanhã" de "IPVA de
+       setembro" — compromissos FUTUROS. Fatura não é compromisso futuro: as
+       compras já aconteceram, o dinheiro já saiu do seu bolso, só o débito é que
+       está marcado para depois. Excluí-la porque vence dia 5 do mês que vem
+       diria que sobra dinheiro que já foi gasto — e o cartão é justamente onde
+       esse engano custa caro. */
     let total = 0;
-    // Com pagamento parcial, o comprometido é o que FALTA — não a fatura inteira
     for (const card of this.all('cards').filter(c => c.active !== false))
       for (const inv of this.invoicesOf(card))
+        // Com pagamento parcial, pesa o que FALTA — não a fatura inteira
         if (inv.status !== 'Paga') total += Math.max(0, inv.falta);
-    for (const t of this.all('transactions'))
-      if (t.status === 'A Pagar' && !t.card_id && this.isExpense(t) && !this.isNeutral(t)) total += Number(t.amount) || 0;
+    for (const t of this.txsAPagar(ateISO)) total += Number(t.amount) || 0;
     return total;
+  },
+
+  /* Lançamentos a pagar (fora de cartão) que vencem dentro do horizonte.
+
+     Sem o corte, uma conta de setembro pesa igual à de amanhã e o disponível
+     fica menor que a realidade do mês. */
+  txsAPagar(ateISO) {
+    const limite = ateISO || this.fimISO(this.monthPeriod(new Date()));
+    return this.all('transactions').filter(t =>
+      t.status === 'A Pagar' && !t.card_id && this.isExpense(t) && !this.isNeutral(t)
+      && String(t.date) < limite);
+  },
+
+  // O que vence DEPOIS do horizonte — sai do comprometido, mas não do mundo:
+  // aparece à parte para ninguém ser pego de surpresa
+  committedDepois(ateISO) {
+    const limite = ateISO || this.fimISO(this.monthPeriod(new Date()));
+    return this.all('transactions')
+      .filter(t => t.status === 'A Pagar' && !t.card_id && this.isExpense(t) && !this.isNeutral(t)
+        && String(t.date) >= limite)
+      .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  },
+
+  paraISO(d) {
+    const x = d instanceof Date ? d : new Date(d);
+    return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  },
+
+  /* Todo o dinheiro que já tem plano: reserva + metas.
+
+     Sai do disponível porque dinheiro com dono não é dinheiro livre — era o
+     defeito central: quem guardou R$ 15.000 de reserva os via como gastáveis.
+
+     Descontar é correto e não conta duas vezes: o aporte é uma transferência
+     real entre contas próprias, então o dinheiro guardado está dentro de
+     accountsTotal, só que comprometido com um objetivo. */
+  guardado() { return this.guardadoReserva() + this.guardadoMetas(); },
+  guardadoReserva() { return this.reserveTotal(); },
+  guardadoMetas() {
+    return this.all('goals')
+      .filter(g => !g.done && !this.isReserveGoal(g))
+      .reduce((s, g) => s + Math.max(0, this.goalTotal(g.id)), 0);
   },
 
   accountsTotal() {
@@ -629,8 +692,23 @@ const DB = {
       .reduce((s, a) => s + (Number(a.balance) || 0), 0);
   },
 
-  // Disponível de verdade: o que está nas contas menos o que já está comprometido.
-  available() { return this.accountsTotal() - this.committed(); },
+  /* Disponível de verdade: o que está nas contas, menos o que já tem destino.
+
+     Três subtrações, e cada uma responde a uma pergunta diferente:
+       contas      — quanto existe
+       comprometido — quanto já é de outra pessoa (vence até o fim do ciclo)
+       guardado    — quanto já tem plano (reserva e metas)
+
+     Receita futura NÃO entra aqui, por decisão: somá-la faria o número dizer
+     "posso gastar o que ainda não recebi". Ela vale na projeção, não no
+     disponível — disponível é dinheiro que existe. */
+  available() { return this.accountsTotal() - this.committed() - this.guardado(); },
+
+  // Quanto falta para cobrir um gasto sem tocar no que está guardado. Positivo
+  // significa que o gasto entra na reserva ou nas metas.
+  faltaParaGastar(valor) {
+    return Math.max(0, (Number(valor) || 0) - this.available());
+  },
 
   // A reserva é uma CAIXINHA: dinheiro que a família separou, não uma conta.
   // Ela pode estar espalhada em qualquer conta — o que vale é o quanto foi guardado.

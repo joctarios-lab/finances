@@ -65,7 +65,7 @@ eval(fs.readFileSync(BASE + 'js/ofx.js', 'utf8') + '; global.OFX = OFX;');
 const appSrc = fs.readFileSync(BASE + 'js/app.js', 'utf8').split('/* ---------- Boot ---------- */')[0];
 eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
-  state, fmt, fmtShort, fmtSemMoeda, fmtDay, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
+  state, fmt, fmtShort, fmtSemMoeda, fmtDay, esc, todayISO, avisarSeUsouGuardado, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
@@ -113,7 +113,17 @@ check('statsFor.spent ignora receitas', DB.statsFor(p).spent, 1550);
 check('fatura do cartão: compra menos estorno', DB.invoicesOf(DB.get('cards', cartao))[0].total, 200);
 check('comprometido = fatura aberta + A Pagar', DB.committed(), 200 + 450);
 check('total em contas', DB.accountsTotal(), 17000);
-check('disponível = contas - comprometido', DB.available(), 17000 - 650);
+/* O disponível desconta também o GUARDADO: dinheiro com plano não é dinheiro
+   livre. Era o defeito central — quem guardou R$ 15.000 de reserva os via como
+   gastáveis. Descontar não conta duas vezes porque o aporte é transferência real
+   entre contas próprias: o dinheiro está em accountsTotal, só que com dono. */
+check('guardado = reserva + metas', DB.guardado(), 2000);
+check('disponível = contas − comprometido − guardado', DB.available(), 17000 - 650 - 2000);
+/* Fatura de cartão conta sempre, venha a vencer quando vier: as compras já
+   aconteceram, só o débito é que está marcado para depois. O horizonte serve
+   para compromissos FUTUROS (o IPVA de setembro), não para dinheiro já gasto. */
+check('a fatura pesa mesmo vencendo no ciclo seguinte', DB.committed() >= 200, true);
+check('e o que vence depois do ciclo fica à parte', DB.committedDepois(), 0);
 check('reserva zerada enquanto não houver caixinha de reserva', DB.reserveTotal(), 0);
 check('gasto por categoria: Alimentação', DB.spentByCategory(p)[cat('Aliment').id], 800);
 check('50/30/20 — necessidades', DB.spentByKind(p).Essencial, 800 + 450);
@@ -147,9 +157,14 @@ for (const [nome, fn] of [['Início', renderInicio], ['Extrato', renderExtrato],
 
 console.log('\n=== Painel mostra os números certos ===');
 const inicio = renderInicio(p);
-for (const [rotulo, valor] of [['disponível', fmt(16350)], ['gasto do mês', fmtShort(1550)], ['comprometido', fmtShort(650)]]) {
+// O disponível passou a descontar o guardado: 17000 − 650 comprometido − 2000 guardado
+for (const [rotulo, valor] of [['disponível', fmt(14350)], ['gasto do mês', fmtShort(1550)], ['comprometido', fmtShort(650)]]) {
   check(`painel exibe ${rotulo} (${valor})`, inicio.includes(valor), true);
 }
+/* A conta vem por extenso, não só o resultado: sem as parcelas visíveis o
+   disponível é um número que se acredita sem poder conferir. */
+check('e mostra a conta que leva até ele', inicio.includes('= Livre para usar'), true);
+check('com o guardado como parcela', inicio.includes('− Guardado'), true);
 
 /* ---- Fluxos reais: aportes, detalhe da meta e da fatura ---- */
 /* ---- Compra parcelada (fluxo real, do clique às parcelas) ----
@@ -646,7 +661,11 @@ try {
 
   // Abrir a folha de aporte a partir do painel não pode quebrar
   openAporteSheet(reservaId);
-  check('folha de aporte da reserva abre', el('#sheet').innerHTML.includes('Registrar aporte'), true);
+  check('folha de aporte da reserva abre', el('#sheet').innerHTML.includes('id="a-amount"'), true);
+  /* Guardar e resgatar na MESMA folha: o resgate precisava existir antes de o
+     guardado sair do disponível — sem caminho de volta, usar a reserva derrubaria
+     o saldo e deixaria a meta intacta, criando um número sem conserto. */
+  check('e oferece guardar e resgatar', el('#sheet').innerHTML.includes('id="a-modo"'), true);
   el('#a-amount').dataset.cents = '100000';
   el('#a-desc').value = 'Guardado do mês';
   el('#a-date').value = dia(11);
@@ -1683,7 +1702,7 @@ try {
   });
   check('a curva amostrada nunca sai da faixa dos dados', estouro <= 0.001, true);
   check('KPIs do painel também', !/kpi-value[^"]*">\$\{fmtShort\(/.test(apF), true);
-  check('e o hero do painel', /<small>Em contas<\/small><b>\$\{fmt\(/.test(apF), true);
+  check('e o hero do painel', /<span>Em contas<\/span><b>\$\{fmt\(saldo\)\}/.test(apF), true);
 
   // Dia só com entrada não mostra saída zerada
   const soEntrada = dia(24);
@@ -4185,3 +4204,75 @@ console.log('\n=== Tooltip do envelope por dentro ===');
   check('e não intercepta o toque', /\.comp-tip \{[^}]*pointer-events: none/.test(cssC), true);
   check('o handler de documento é registrado uma vez só', corpoC.includes('ligarComposicao._doc'), true);
 }
+
+/* ---- Fase 1: o disponível honesto ----
+   O defeito central: quem guardou R$ 15.000 de reserva os via como gastáveis.
+   Descontar é correto porque o aporte é transferência real entre contas próprias
+   — o dinheiro está em accountsTotal, só que com dono. */
+console.log('\n=== Disponível: guardado, resgate e horizonte ===');
+try {
+  const cG = DB.upsert('accounts', { name: 'Conta Guardado', type: 'Conta Corrente', balance: 10000 });
+  const cCx = DB.upsert('accounts', { name: 'Caixinha Guardado', type: 'Caixinha / Rendimento', balance: 0 });
+  const mR = DB.upsert('goals', { name: 'Reserva de Emergência', icon: '🛡️', kind: 'Reserva', target_amount: 30000, done: false });
+  const mV = DB.upsert('goals', { name: 'Viagem Guardado', icon: '🏖️', kind: 'Objetivo', target_amount: 5000, done: false });
+
+  const contasAntes = DB.accountsTotal();
+  const dispAntes = DB.available();
+  // Mede a VARIAÇÃO: o cenário já tem metas de blocos anteriores, e comparar
+  // absolutos faria o teste depender da ordem em que os blocos rodam
+  const guardadoAntes = DB.guardado();
+  const reservaAntes = DB.guardadoReserva();
+  const metasAntes = DB.guardadoMetas();
+
+  /* O aporte é uma transferência real: sai da corrente, entra na caixinha. As
+     duas contas somam em accountsTotal, então o total não muda — o que muda é
+     que o dinheiro passa a ter dono. */
+  const guardar = (meta, valor) => {
+    DB.upsert('goal_entries', { goal_id: meta, amount: valor, description: 'Aporte', date: todayISO(), from_account: cG, to_account: cCx });
+    adjustBalance(cG, -valor); adjustBalance(cCx, valor);
+  };
+  guardar(mR, 6000);
+  guardar(mV, 1000);
+  check('guardar não muda o total em contas', DB.accountsTotal(), contasAntes);
+  check('mas o guardado sobe', DB.guardado() - guardadoAntes, 7000);
+  check('separando reserva de metas', DB.guardadoReserva() - reservaAntes, 6000);
+  check('e as metas à parte', DB.guardadoMetas() - metasAntes, 1000);
+  check('o disponível cai exatamente o que foi guardado', DB.available(), dispAntes - 7000);
+
+  /* Sem resgate, usar a reserva deixaria a meta intacta e o app afirmaria que
+     existe um dinheiro guardado que já foi gasto. */
+  DB.upsert('goal_entries', { goal_id: mR, amount: -2000, description: 'Resgate', date: todayISO(), from_account: cCx, to_account: cG });
+  adjustBalance(cCx, -2000); adjustBalance(cG, 2000);
+  check('resgate reduz a meta', DB.goalTotal(mR), 4000);
+  check('e devolve ao disponível', DB.available(), dispAntes - 5000);
+  check('sem mexer no total em contas', DB.accountsTotal(), contasAntes);
+  check('o histórico guarda aporte e resgate', DB.all('goal_entries').filter(e => e.goal_id === mR).length, 2);
+
+  // Quanto falta para um gasto não tocar no guardado
+  const livre = DB.available();
+  check('gasto dentro do livre não falta nada', DB.faltaParaGastar(livre - 100), 0);
+  check('gasto acima diz quanto entra no guardado', DB.faltaParaGastar(livre + 500), 500);
+
+  /* Horizonte: conta de setembro não pesa igual à de amanhã. Mas FATURA conta
+     sempre — as compras já aconteceram, só o débito é que ficou para depois. */
+  const fimCiclo = DB.fimISO(DB.monthPeriod(new Date()));
+  const compAntes = DB.committed();
+  DB.upsert('transactions', { description: 'IPVA distante', amount: 1200, date: somarDias(fimCiclo, 40), type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cG });
+  check('conta de daqui a meses não entra no comprometido', DB.committed(), compAntes);
+  check('mas aparece à parte, para ninguém ser pego de surpresa', DB.committedDepois() >= 1200, true);
+  DB.upsert('transactions', { description: 'Luz deste mês', amount: 200, date: somarDias(fimCiclo, -3), type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cG });
+  check('conta dentro do ciclo entra', DB.committed(), compAntes + 200);
+
+  /* Receita futura NÃO entra no disponível: somá-la faria o número dizer "posso
+     gastar o que ainda não recebi". */
+  const dispPreSalario = DB.available();
+  DB.upsert('transactions', { description: 'Salário futuro', amount: 6200, date: somarDias(fimCiclo, -2), type: 'Receita', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: cG });
+  check('receita a receber não infla o disponível', DB.available(), dispPreSalario);
+
+  // Limpa
+  for (const t of DB.all('transactions').filter(t => /IPVA distante|Luz deste mês|Salário futuro/.test(t.description || ''))) DB.remove('transactions', t.id);
+  DB.data.goal_entries = DB.data.goal_entries.filter(e => ![mR, mV].includes(e.goal_id));
+  DB.data.goals = DB.data.goals.filter(g => ![mR, mV].includes(g.id));
+  DB.data.accounts = DB.data.accounts.filter(a => ![cG, cCx].includes(a.id));
+  DB.save();
+} catch (e) { console.log(` FALHA | disponível honesto: ${e.message}`); fail++; }

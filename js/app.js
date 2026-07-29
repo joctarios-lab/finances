@@ -655,7 +655,10 @@ function renderInicio(period) {
 
   const stats = DB.statsFor(period);
   const committed = DB.committed();
-  const available = saldo - committed;
+  const guardado = DB.guardado();
+  const guardadoReserva = DB.guardadoReserva();
+  // Mesma conta do DB.available(), com as parcelas à mão para a decomposição
+  const available = saldo - committed - guardado;
   const realized = DB.realizedIncome(period);              // receitas realmente lançadas
   const income = realized > 0 ? realized : (Number(DB.settings().monthly_income) || 0);
   const budgetTotal = DB.budgetTotal();
@@ -876,11 +879,20 @@ function renderInicio(period) {
       </div>
       <div class="hero-value">${fmt(available)}</div>
       <p class="hero-msg">${health.msg}</p>
-      <div class="hero-stats">
-        <div><small>Em contas</small><b>${fmt(saldo)}</b></div>
-        <div><small>Comprometido</small><b>${fmt(committed)}</b></div>
-        <div><small>Gasto previsto</small><b>${fmt(stats.projection)}</b></div>
+      <!-- A conta por extenso, não um número solto. Cada linha responde a uma
+           pergunta diferente: quanto existe, quanto já é de outra pessoa, quanto
+           já tem plano. Sem isso, "disponível" é um número que a pessoa precisa
+           acreditar sem poder conferir. -->
+      <div class="hero-conta">
+        <div class="hc-l"><span>Em contas</span><b>${fmt(saldo)}</b></div>
+        <div class="hc-l"><span>− Comprometido${
+          DB.committedDepois() > 0.005 ? ` <i>até ${fmtDate(new Date(DB.fimISO(DB.monthPeriod(new Date())) + 'T12:00:00'))}</i>` : ''}</span><b>${fmt(committed)}</b></div>
+        ${guardado > 0.005 ? `<div class="hc-l"><span>− Guardado${
+          guardadoReserva > 0.005 ? ` <i>reserva ${fmtShort(guardadoReserva)}</i>` : ''}</span><b>${fmt(guardado)}</b></div>` : ''}
+        <div class="hc-l hc-total"><span>= Livre para usar</span><b>${fmt(available)}</b></div>
       </div>
+      ${DB.committedDepois() > 0.005
+        ? `<p class="hero-depois">Além disso, <b>${fmt(DB.committedDepois())}</b> vencem depois deste mês.</p>` : ''}
     </div>`;
 
   return `
@@ -3951,6 +3963,8 @@ function openTxSheet(tx, asNew) {
     aplicarFixacao();
     closeSheet(); render(); Sync.autoSync();
     toast(isEdit ? 'Lançamento atualizado ✓' : (isReceita ? 'Receita lançada ✓' : 'Gasto lançado ✓'));
+    // Depois de gravar: se o gasto entrou no que estava guardado, resolve agora
+    avisarSeUsouGuardado(rec);
   };
   $('#sh-save').onclick = salvar;
 
@@ -4228,46 +4242,156 @@ function openEntrySheet(entryId, goalId) {
   };
 }
 
-function openAporteSheet(goalId) {
+/* O gasto entrou no que estava guardado — resolve na hora.
+
+   Sem isto, usar a reserva derruba o saldo e deixa a meta intacta: o app passa a
+   afirmar que existe um dinheiro guardado que já foi gasto, e a divergência
+   cresce em silêncio até ninguém confiar no número.
+
+   Perguntar no momento do gasto é o único instante em que a pessoa sabe a
+   resposta. Uma semana depois, ninguém lembra de qual meta saiu. */
+function avisarSeUsouGuardado(tx) {
+  if (!tx || !DB.isExpense(tx) || DB.isNeutral(tx) || tx.status !== 'Pago') return;
+  const falta = DB.faltaParaGastar(0);        // disponível já reflete o gasto gravado
+  if (falta <= 0.005) return;                  // ainda há dinheiro livre: nada a resolver
+
+  const metas = DB.all('goals')
+    .filter(g => !g.done && DB.goalTotal(g.id) > 0.005)
+    .sort((a, b) => Number(DB.isReserveGoal(a)) - Number(DB.isReserveGoal(b)));   // reserva por último
+  if (!metas.length) return;                   // nada guardado: o disponível só ficou negativo
+
+  const sugerido = Math.min(falta, DB.guardado());
+  openSheet(`
+    <div class="sheet-title">Este gasto usou dinheiro guardado<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin:-4px 0 12px">
+      <b>${esc(tx.description)}</b> — ${fmt(tx.amount)}<br>
+      Passou <b>${fmt(falta)}</b> do que estava livre, então entrou no que você já tinha guardado.</p>
+    <div class="field"><label>De qual meta saiu?</label>
+      <div class="chips" id="ug-meta">
+        ${metas.map((g, i) => `<button type="button" class="chip ${i === 0 ? 'active' : ''}" data-v="${g.id}">${
+          esc(g.icon || '🎯')} ${esc(g.name)} · ${fmtShort(DB.goalTotal(g.id))}</button>`).join('')}
+      </div>
+    </div>
+    <div class="field"><label>Quanto tirar</label>
+      <input class="amount-input" id="ug-valor" type="text" inputmode="numeric" autocomplete="off">
+    </div>
+    <button class="btn" id="sh-save">Registrar o resgate</button>
+    <div class="btn-row"><button class="btn ghost" id="ug-depois">Resolver depois</button></div>
+    <p class="muted" style="margin-top:8px">Adiando, o disponível fica negativo até você resgatar ou repor — o número continua honesto, só desconfortável.</p>
+  `);
+  initMoney('#ug-valor', sugerido);
+  bindChips('ug-meta');
+  $('#sh-close').onclick = closeSheet;
+  $('#ug-depois').onclick = closeSheet;
+  $('#sh-save').onclick = () => {
+    const valor = moneyVal('#ug-valor');
+    const metaId = chipValue('ug-meta');
+    if (!valor || !metaId) return toast('Escolha a meta e o valor');
+    const saldo = DB.goalTotal(metaId);
+    if (valor - saldo > 0.005) return toast(`Esta meta só tem ${fmt(saldo)} guardado`);
+    /* Resgate SEM mexer em conta: o dinheiro já saiu no gasto que acabou de ser
+       lançado. Mover saldo aqui debitaria a mesma quantia duas vezes. */
+    DB.upsert('goal_entries', {
+      goal_id: metaId, amount: -valor,
+      description: `Usado em ${tx.description}`.slice(0, 60),
+      date: tx.date || todayISO(),
+      from_account: null, to_account: null,
+    });
+    closeSheet(); render(); Sync.autoSync();
+    toast(`Resgatado ${fmt(valor)} da meta ✓`);
+  };
+}
+
+/* Guardar e resgatar na mesma folha.
+
+   O resgate é um lançamento de valor NEGATIVO na mesma tabela, não um campo à
+   parte: o histórico fica em ordem e o saldo é sempre uma soma, sem como
+   divergir do que está listado.
+
+   Ele precisava existir antes de o guardado sair do disponível — sem caminho de
+   volta, usar a reserva derrubaria o saldo e deixaria a meta intacta, criando um
+   número que só erra para menos e não tem conserto. */
+function openAporteSheet(goalId, opcoes = {}) {
   const g = DB.get('goals', goalId);
   if (!g) return toast('Meta não encontrada — atualize a tela');
-  const ehReserva = g.tipo === 'Reserva de Emergência' || g.type === 'Reserva de Emergência' || /reserva/i.test(g.name);
+  const ehReserva = DB.isReserveGoal(g);
+  const saldoMeta = DB.goalTotal(goalId);
+  const modo = opcoes.modo === 'resgate' ? 'resgate' : 'aporte';
   openSheet(`
-    <div class="sheet-title">Aporte — ${esc(g.icon)} ${esc(g.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="sheet-title">${esc(g.icon)} ${esc(g.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin:-4px 0 12px">Guardado hoje: <b>${fmt(saldoMeta)}</b>${
+      g.target_amount > 0 ? ` de ${fmt(g.target_amount)}` : ''}</p>
+    <div class="field">${chipGroup('a-modo', [
+      { value: 'aporte', label: '＋ Guardar' },
+      { value: 'resgate', label: '− Resgatar' },
+    ], modo)}</div>
     <div class="field"><input class="amount-input" id="a-amount" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
     <div class="row2">
       <div class="field"><label>Descrição</label><input id="a-desc" value="Aporte"></div>
       <div class="field"><label>Data</label><input id="a-date" type="date" value="${todayISO()}"></div>
     </div>
-    <div class="field"><label>Saiu de qual conta? <span class="muted">— opcional, ajusta o saldo</span></label>
+    <div class="field"><label id="a-lbl-de">Saiu de qual conta? <span class="muted">— opcional, ajusta o saldo</span></label>
       <select id="a-account"><option value="">— não movimentar contas —</option>
         ${DB.all('accounts').filter(a => a.active !== false).map(a => `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}
       </select></div>
-    <div class="field"><label>Entrou em qual conta? <span class="muted">— onde o dinheiro ficou guardado</span></label>
+    <div class="field"><label id="a-lbl-para">Entrou em qual conta? <span class="muted">— onde o dinheiro ficou guardado</span></label>
       <select id="a-to"><option value="">— não movimentar contas —</option>
         ${DB.all('accounts').filter(a => a.active !== false).map(a =>
           `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}
       </select></div>
-    ${ehReserva ? '<p class="muted" style="margin-bottom:10px">🛡️ Esta é a sua meta de reserva: guarde o dinheiro numa conta marcada como reserva para a cobertura de meses subir no painel.</p>' : ''}
-    <button class="btn" id="sh-save">Registrar aporte</button>
+    <p class="muted" id="a-aviso" style="margin-bottom:10px">${ehReserva
+      ? '🛡️ Esta é a reserva de emergência: ela existe para não ser gasta. Resgatar aqui é legítimo numa emergência — só lembre de repor depois.'
+      : 'Guardar tira o valor do seu disponível; resgatar devolve.'}</p>
+    <button class="btn" id="sh-save">Guardar</button>
   `);
   initMoney('#a-amount');
   $('#sh-close').onclick = closeSheet;
   setTimeout(() => $('#a-amount').focus(), 80);
+
+  /* Ao resgatar, os rótulos das contas TROCAM de sentido: o dinheiro sai da
+     caixinha e volta para a conta do dia a dia. Sem inverter, quem resgata
+     preencheria os campos ao contrário e o saldo iria para o lado errado. */
+  const pintarModo = v => {
+    const resg = v === 'resgate';
+    $('#a-lbl-de').innerHTML = resg
+      ? 'Saiu de qual conta? <span class="muted">— de onde o dinheiro guardado sai</span>'
+      : 'Saiu de qual conta? <span class="muted">— opcional, ajusta o saldo</span>';
+    $('#a-lbl-para').innerHTML = resg
+      ? 'Voltou para qual conta? <span class="muted">— onde o dinheiro fica disponível</span>'
+      : 'Entrou em qual conta? <span class="muted">— onde o dinheiro ficou guardado</span>';
+    $('#a-desc').value = resg ? 'Resgate' : 'Aporte';
+    $('#sh-save').textContent = resg ? 'Resgatar' : 'Guardar';
+    const aviso = $('#a-aviso');
+    if (aviso && resg && saldoMeta > 0) {
+      aviso.innerHTML = `Resgatar devolve o valor ao seu disponível. Há <b>${fmt(saldoMeta)}</b> guardado aqui.`;
+    }
+  };
+  bindChips('a-modo', pintarModo);
+  pintarModo(modo);
+
   $('#sh-save').onclick = () => {
     const amount = moneyVal('#a-amount');
     if (!amount) return toast('Informe o valor');
+    const resg = chipValue('a-modo') === 'resgate';
+    // Não dá para resgatar mais do que foi guardado: o saldo da meta ficaria
+    // negativo e o disponível passaria a contar dinheiro que não existe
+    if (resg && amount - saldoMeta > 0.005) return toast(`Só há ${fmt(saldoMeta)} guardado nesta meta`);
     const de = $('#a-account').value, para = $('#a-to').value;
     if (de && de === para) return toast('Origem e destino não podem ser a mesma conta');
     DB.upsert('goal_entries', {
-      goal_id: goalId, amount, description: $('#a-desc').value || 'Aporte',
+      goal_id: goalId,
+      amount: resg ? -amount : amount,     // resgate é o mesmo lançamento, com sinal
+      description: $('#a-desc').value || (resg ? 'Resgate' : 'Aporte'),
       date: $('#a-date').value || todayISO(),
       from_account: de || null, to_account: para || null,   // guardado para poder reverter depois
     });
-    if (de) adjustBalance(de, -amount);      // saiu da conta corrente
-    if (para) adjustBalance(para, amount);   // entrou na caixinha/reserva
+    if (de) adjustBalance(de, -amount);      // sai de onde estava
+    if (para) adjustBalance(para, amount);   // entra onde vai ficar
     closeSheet(); render(); Sync.autoSync();
-    toast(de || para ? 'Aporte registrado e saldos ajustados ✓' : 'Aporte registrado ✓');
+    if (opcoes.aoConcluir) opcoes.aoConcluir(amount);
+    toast(resg
+      ? `Resgatado ${fmt(amount)} — voltou para o disponível ✓`
+      : (de || para ? 'Aporte registrado e saldos ajustados ✓' : 'Aporte registrado ✓'));
   };
 }
 
