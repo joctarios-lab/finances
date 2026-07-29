@@ -512,60 +512,81 @@ function svgComposicao(grupos, opts = {}) {
    marcada, barra vazada e linha tracejada. */
 function svgFluxoSaldo(meses, opts = {}) {
   if (meses.length < 2) return '<div class="empty">Sem histórico suficiente.</div>';
-  const W = 720, Hb = 118, Hl = 84;         // painel de barras e painel de linha
-  const padL = 8, padR = 8;
+  const W = 720, H = 210;
+  const padL = 8, padR = 8, padT = 16, padB = 26;
   const plotW = W - padL - padR;
   const banda = plotW / meses.length;
   const iHoje = meses.findIndex(m => m.futuro) - 1;   // último mês realizado
+  const corte = Math.max(0, iHoje);
 
-  /* --- painel de cima: entradas e saídas --- */
+  const saldos = meses.map(m => m.saldo);
   const maxFluxo = niceCeil(Math.max(...meses.flatMap(m => [m.entra, m.sai]), 1));
-  const yb = v => 8 + (Hb - 16) - (v / maxFluxo) * (Hb - 16);
-  const base = yb(0);
-  const larg = Math.min(11, (banda - 6) / 2);          // marca fina: par cabe na faixa
-  let barras = '', gradeB = '';
-  for (let i = 0; i <= 2; i++) {
-    const gy = yb(maxFluxo * i / 2);
-    gradeB += `<line x1="${padL}" x2="${W - padR}" y1="${gy.toFixed(1)}" y2="${gy.toFixed(1)}" class="ch-grid"/>`;
+  const maxSaldo = niceCeil(Math.max(...saldos, 1));
+  const minSaldo = Math.min(...saldos, 0);
+
+  /* DUAS ESCALAS, ANCORADAS NO ZERO E NO TOPO.
+
+     Combinar fluxo mensal (milhares) com saldo acumulado (dezenas de milhares)
+     exige duas escalas — não há como fugir disso. O que dá para eliminar é a
+     parte arbitrária: aqui o ZERO das duas cai na mesma linha e o TOPO das duas é
+     a mesma borda. Assim a única liberdade que sobra é a de unidade, e nenhuma
+     das duas séries pode "parecer" cruzar a outra num ponto que não significa
+     nada. Saldo negativo desce abaixo da mesma linha onde as barras nascem. */
+  const espacoNeg = minSaldo < 0 ? 40 : 0;
+  const base = H - padB - espacoNeg;                  // o zero, comum às duas
+  const alturaPos = base - padT;
+  const yFluxo = v => base - (v / maxFluxo) * alturaPos;
+  const ySaldo = v => (v >= 0
+    ? base - (v / maxSaldo) * alturaPos
+    : base + (Math.abs(v) / Math.abs(minSaldo || 1)) * espacoNeg);
+
+  const xs = i => padL + banda * i + banda / 2;
+
+  // Grade recessiva: hairline sólida, três linhas — mais que isso vira gaiola
+  let grade = '';
+  for (let i = 1; i <= 3; i++) {
+    const gy = yFluxo(maxFluxo * i / 3);
+    grade += `<line x1="${padL}" x2="${W - padR}" y1="${gy.toFixed(1)}" y2="${gy.toFixed(1)}" class="ch-grid"/>`;
   }
-  /* Ponta arredondada, pé reto: o topo é o dado e ganha o arredondamento; a base
-     encosta na linha do zero e arredondá-la faria a barra parecer flutuar. */
+  grade += `<line x1="${padL}" x2="${W - padR}" y1="${base.toFixed(1)}" y2="${base.toFixed(1)}" class="fl-base"/>`;
+
+  /* --- a ÁREA do saldo, ATRÁS das barras ---
+     Ela é o nível, não o movimento: fica como fundo lavado com degradê, e as
+     barras vêm na frente. Se a área tivesse o mesmo peso visual das barras, as
+     duas competiriam e nenhuma seria lida. */
+  const pts = saldos.map((v, i) => [xs(i), ySaldo(v)]);
+  const curvaToda = caminhoSuave(pts);
+  const curvaReal = caminhoSuave(pts.slice(0, corte + 1));
+  const curvaPrev = caminhoSuave(pts.slice(corte));
+  const areaReal = corte > 0
+    ? `${curvaReal} L${xs(corte).toFixed(1)} ${base.toFixed(1)} L${xs(0).toFixed(1)} ${base.toFixed(1)} Z` : '';
+  const areaPrev = `${curvaPrev} L${xs(meses.length - 1).toFixed(1)} ${base.toFixed(1)} L${xs(corte).toFixed(1)} ${base.toFixed(1)} Z`;
+
+  /* --- as BARRAS, na frente ---
+     Ponta arredondada, pé reto: o topo é o dado e ganha o arredondamento; a base
+     encosta no zero, e arredondá-la faria a barra parecer flutuar. */
+  const larg = Math.min(10, Math.max(3, (banda - 7) / 2));
   const barra = (x, topo, cls) => {
     const alt = Math.max(0, base - topo);
-    if (alt < 0.5) return '';
+    if (alt < 0.6) return '';
     const r = Math.min(3, alt, larg / 2);
     return `<path d="M${x.toFixed(1)} ${base.toFixed(1)} V${(topo + r).toFixed(1)}`
       + ` Q${x.toFixed(1)} ${topo.toFixed(1)} ${(x + r).toFixed(1)} ${topo.toFixed(1)}`
       + ` H${(x + larg - r).toFixed(1)} Q${(x + larg).toFixed(1)} ${topo.toFixed(1)} ${(x + larg).toFixed(1)} ${(topo + r).toFixed(1)}`
       + ` V${base.toFixed(1)} Z" class="${cls}"/>`;
   };
+  let barras = '';
   meses.forEach((m, i) => {
-    const cx = padL + banda * i + banda / 2;
-    // Gap de 2px entre o par: separa sem desenhar borda, que somaria tinta que não é dado
-    barras += barra(cx - larg - 1, yb(m.entra), `fl-in${m.futuro ? ' prev' : ''}`);
-    barras += barra(cx + 1, yb(m.sai), `fl-out${m.futuro ? ' prev' : ''}`);
+    const cx = xs(i);
+    // Vão de 2px entre o par: separa sem desenhar borda, que somaria tinta que não é dado
+    barras += barra(cx - larg - 1, yFluxo(m.entra), `fl-in${m.futuro ? ' prev' : ''}`);
+    barras += barra(cx + 1, yFluxo(m.sai), `fl-out${m.futuro ? ' prev' : ''}`);
   });
 
-  /* --- painel de baixo: o saldo --- */
-  const saldos = meses.map(m => m.saldo);
-  const topoS = Math.max(...saldos, 0), pisoS = Math.min(...saldos, 0);
-  const amp = (topoS - pisoS) || Math.abs(topoS) || 1;
-  const yl = v => 10 + (Hl - 22) - ((v - pisoS) / amp) * (Hl - 22);
-  const xs = i => padL + banda * i + banda / 2;
-  const pts = saldos.map((v, i) => [xs(i), yl(v)]);
-  // Duas linhas: a realizada é sólida, a prevista é tracejada — o traço é o que
-  // diz "daqui para frente é estimativa" sem precisar de legenda
-  const corte = Math.max(0, iHoje);
-  const real = caminhoSuave(pts.slice(0, corte + 1));
-  const prev = caminhoSuave(pts.slice(corte));
-  const zeroL = (pisoS < 0 && topoS > 0)
-    ? `<line x1="${padL}" x2="${W - padR}" y1="${yl(0).toFixed(1)}" y2="${yl(0).toFixed(1)}" class="fl-zero"/>` : '';
-
-  /* --- a fronteira de hoje, alinhada nos dois painéis --- */
   const xHoje = padL + banda * (iHoje + 1);
-  const divisor = `<line x1="${xHoje.toFixed(1)}" x2="${xHoje.toFixed(1)}" y1="0" y2="100%" class="fl-hoje"/>`;
-
   const pctX = v => (v / W * 100).toFixed(2);
+  const pctY = v => (v / H * 100).toFixed(2);
+
   const rotulos = meses.map((m, i) => {
     // Um rótulo a cada dois meses: treze nomes lado a lado colidem no celular
     if (i % 2 !== 0 && i !== meses.length - 1) return '';
@@ -573,41 +594,52 @@ function svgFluxoSaldo(meses, opts = {}) {
     return `<span class="g-t g-t-rot${i === iHoje ? ' on' : ''}" style="left:${pctX(xs(i))}%">${esc(nome)}</span>`;
   }).join('');
 
+  const iMenor = saldos.indexOf(Math.min(...saldos));
+  const marcas = [corte, meses.length - 1, iMenor].filter((v, i, a) => a.indexOf(v) === i);
+
   return `
     <div class="fl">
       <div class="fl-topo">
         <span class="fl-leg"><i class="fl-k in"></i>entrou</span>
         <span class="fl-leg"><i class="fl-k out"></i>saiu</span>
-        <span class="fl-leg"><i class="fl-k line"></i>saldo</span>
-        <span class="fl-leg fl-leg-prev"><i class="fl-k prev"></i>previsto</span>
+        <span class="fl-leg"><i class="fl-k area"></i>saldo</span>
+        <span class="fl-leg"><i class="fl-k prev"></i>previsto</span>
       </div>
-      <div class="g-wrap fl-barras">
-        <svg viewBox="0 0 ${W} ${Hb}" preserveAspectRatio="none" role="img"
-          aria-label="${esc(opts.altBarras || 'Entradas e saídas por mês')}">
-          ${gradeB}${barras}${divisor}
+      <div class="g-wrap fl-combo">
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+          aria-label="${esc(opts.alt || 'Entradas, saídas e saldo mês a mês')}">
+          <defs>
+            <linearGradient id="grad-fl" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#009ef7" stop-opacity=".26"/>
+              <stop offset="100%" stop-color="#009ef7" stop-opacity="0"/>
+            </linearGradient>
+            <!-- Hachura para a metade prevista: diz "estimativa" mesmo em
+                 impressão e para quem não distingue as cores -->
+            <pattern id="hach-fl" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+              <line x1="0" y1="0" x2="0" y2="6" class="fl-hach"/>
+            </pattern>
+          </defs>
+          ${grade}
+          ${areaReal ? `<path d="${areaReal}" class="fl-area"/>` : ''}
+          <path d="${areaPrev}" class="fl-area prev"/>
+          <path d="${curvaReal}" class="fl-borda"/>
+          <path d="${curvaPrev}" class="fl-borda prev"/>
+          ${barras}
+          <line x1="${xHoje.toFixed(1)}" x2="${xHoje.toFixed(1)}" y1="${padT - 8}" y2="${H - padB}" class="fl-hoje"/>
         </svg>
         <div class="g-textos">
-          <span class="g-t g-t-eixo" style="left:0;top:6%">${fmtShort(maxFluxo)}</span>
-        </div>
-      </div>
-      <div class="g-wrap fl-linha">
-        <svg viewBox="0 0 ${W} ${Hl}" preserveAspectRatio="none" role="img"
-          aria-label="${esc(opts.altLinha || 'Saldo real e projetado')}">
-          ${zeroL}
-          <path d="${real}" class="fl-saldo"/>
-          <path d="${prev}" class="fl-saldo prev"/>
-          ${divisor}
-        </svg>
-        <div class="g-textos">
-          ${pts.map(([x, y], i) => (i === corte || i === pts.length - 1 || saldos[i] === Math.min(...saldos)
-            ? `<span class="fl-pt${meses[i].futuro ? ' prev' : ''}${saldos[i] < 0 ? ' neg' : ''}"
-                 style="left:${pctX(x)}%;top:${(y / Hl * 100).toFixed(2)}%"></span>` : '')).join('')}
-          <span class="g-t g-t-val" style="left:${pctX(pts[corte][0])}%;top:${(pts[corte][1] / Hl * 100 - 6).toFixed(2)}%">${fmtShort(saldos[corte])}</span>
-          <span class="g-t g-t-val ${saldos[saldos.length - 1] < 0 ? 'ruim' : ''}"
-            style="right:2px;left:auto;transform:translateY(-100%);top:${(pts[pts.length - 1][1] / Hl * 100 - 6).toFixed(2)}%">${fmtShort(saldos[saldos.length - 1])}</span>
+          <span class="g-t g-t-eixo" style="left:0;top:${pctY(yFluxo(maxFluxo))}%">${fmtShort(maxFluxo)}</span>
+          <span class="g-t g-t-eixo dir" style="right:0;top:${pctY(ySaldo(maxSaldo))}%">${fmtShort(maxSaldo)}</span>
+          ${marcas.map(i => `<span class="fl-pt${meses[i].futuro ? ' prev' : ''}${saldos[i] < 0 ? ' neg' : ''}"
+            style="left:${pctX(pts[i][0])}%;top:${pctY(pts[i][1])}%"></span>`).join('')}
+          <span class="g-t g-t-saldo" style="left:${pctX(pts[corte][0])}%;top:${pctY(pts[corte][1] - 6)}%">${fmtShort(saldos[corte])}</span>
+          <span class="g-t g-t-saldo ${saldos[saldos.length - 1] < 0 ? 'ruim' : ''}"
+            style="left:${pctX(pts[pts.length - 1][0])}%;top:${pctY(pts[pts.length - 1][1] - 6)}%">${fmtShort(saldos[saldos.length - 1])}</span>
+          <span class="fl-marca-hoje" style="left:${pctX(xHoje)}%">hoje</span>
           ${rotulos}
         </div>
       </div>
+      <p class="fl-nota">Barras: o que entrou e saiu em cada mês (escala à esquerda). Área: o saldo acumulado (escala à direita). O zero é o mesmo para as duas.</p>
     </div>`;
 }
 

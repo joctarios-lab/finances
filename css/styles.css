@@ -165,34 +165,54 @@ body {
 /* A legenda do previsto usa a mesma marca vazada das barras futuras, para o olho
    casar legenda e gráfico sem precisar de explicação */
 .fl-k.prev { background: repeating-linear-gradient(45deg, #c4cad4 0 2px, transparent 2px 4px); border: 1px solid #c4cad4; }
-.fl-barras { height: 118px; }
-.fl-linha { height: 84px; margin-top: 2px; }
-@media (max-width: 560px) { .fl-barras { height: 104px; } .fl-linha { height: 76px; } }
+.fl-combo { height: 210px; }
+@media (max-width: 560px) { .fl-combo { height: 190px; } }
 
+/* Barras na FRENTE: elas são o movimento, o dado que se compara mês a mês */
 .fl-in { fill: var(--green); }
 .fl-out { fill: var(--red); }
-/* Futuro vazado: é estimativa, e preenchimento cheio o faria pesar igual ao fato */
-.fl-in.prev { fill: rgba(80, 205, 137, .3); }
-.fl-out.prev { fill: rgba(241, 65, 108, .28); }
+/* Futuro esmaecido: é estimativa, e preenchimento cheio o faria pesar igual ao fato */
+.fl-in.prev { fill: rgba(80, 205, 137, .34); }
+.fl-out.prev { fill: rgba(241, 65, 108, .3); }
 
-.fl-saldo {
+/* Área ATRÁS, lavada: ela é o nível, não o movimento. Com o mesmo peso visual das
+   barras, as duas competiriam e nenhuma seria lida. */
+.fl-area { fill: url(#grad-fl); stroke: none; }
+.fl-area.prev { fill: url(#hach-fl); opacity: .5; }
+.fl-hach { stroke: #009ef7; stroke-width: 1.4; opacity: .3; }
+.fl-borda {
   fill: none; stroke: var(--gold); stroke-width: 2;
   stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke;
 }
 /* Tracejado é o que diz "daqui para frente é estimativa" sem precisar de rótulo */
-.fl-saldo.prev { stroke-dasharray: 5 4; opacity: .85; }
-.fl-zero { stroke: #d8e0e8; stroke-width: 1; vector-effect: non-scaling-stroke; }
-/* A fronteira de hoje: a informação mais importante da tela — à esquerda é fato
-   conciliado, à direita é estimativa */
-.fl-hoje { stroke: var(--paper-dim); stroke-width: 1; stroke-dasharray: 2 3; opacity: .45; vector-effect: non-scaling-stroke; }
+.fl-borda.prev { stroke-dasharray: 5 4; opacity: .8; }
+.fl-base { stroke: #c4cad4; stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* A fronteira de hoje: à esquerda é fato conciliado, à direita é estimativa */
+.fl-hoje { stroke: var(--paper-dim); stroke-width: 1; stroke-dasharray: 3 3; opacity: .5; vector-effect: non-scaling-stroke; }
+.fl-marca-hoje {
+  position: absolute; top: 0; transform: translateX(-50%);
+  font-size: 9.5px; font-weight: 700; color: var(--paper-dim);
+  background: var(--ink-2); padding: 0 4px; letter-spacing: .04em; text-transform: uppercase;
+}
 .fl-pt {
   position: absolute; width: 9px; height: 9px; border-radius: 50%;
   transform: translate(-50%, -50%);
-  background: var(--gold); border: 2px solid #fff; box-sizing: border-box;
+  background: var(--gold); border: 2px solid #fff; box-sizing: border-box; z-index: 1;
 }
 .fl-pt.prev { background: #fff; border-color: var(--gold); }
 .fl-pt.neg { background: var(--red); border-color: #fff; }
-.g-t-val.ruim { color: var(--red); }
+/* Fundo próprio no rótulo do saldo: ele pousa sobre as barras, e sem o fundo o
+   número se perderia no meio delas */
+.g-t-saldo {
+  transform: translate(-50%, -100%);
+  font-size: 11px; font-weight: 700; color: #0072b8;
+  background: var(--ink-2); padding: 1px 4px; border-radius: 4px;
+}
+.g-t-saldo.ruim { color: var(--red); }
+.g-t-eixo.dir { padding-left: 3px; padding-right: 0; }
+.fl-nota { margin-top: 8px; font-size: 11px; color: var(--paper-dim); line-height: 1.45; }
+.fl-k.area { background: linear-gradient(to bottom, rgba(0, 158, 247, .45), rgba(0, 158, 247, .05)); border-top: 2px solid var(--gold); }
+.fl-k.prev { background: repeating-linear-gradient(45deg, rgba(0, 158, 247, .35) 0 2px, transparent 2px 4px); }
 
 /* Linha prevista no extrato (fatura que ainda vai vencer): tracejada e recuada,
    para não se confundir com movimento que já aconteceu.

@@ -5140,53 +5140,92 @@ try {
     Math.round((meses[7].saldo + DB.previsaoDoMes(meses[8].period).resultado) * 100) / 100);
 
   const svg = svgFluxoSaldo(meses);
-  /* DOIS painéis, cada um com o próprio viewBox: é o que garante escalas
-     independentes sem alinhamento arbitrário. */
-  check('são dois painéis', (svg.match(/<svg /g) || []).length, 2);
-  check('barras num, saldo no outro',
-    svg.includes('class="g-wrap fl-barras"') && svg.includes('class="g-wrap fl-linha"'), true);
   const cssFl = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
-  check('com alturas próprias, então escalas próprias',
-    /\.fl-barras \{ height: 118px/.test(cssFl) && /\.fl-linha \{ height: 84px/.test(cssFl), true);
+  const apFl = fs.readFileSync(BASE + 'js/app.js', 'utf8');
 
-  // Entradas e saídas lado a lado, não empilhadas: elas não compõem um total
-  check('entrada e saída são barras separadas',
-    svg.includes('class="fl-in"') && svg.includes('class="fl-out"'), true);
-  /* Ponta arredondada, pé reto: o topo é o dado e ganha o arredondamento; a base
-     encosta no zero, e arredondá-la faria a barra parecer flutuar. */
+  // Combinado: um painel só, barras e área juntas
+  check('é um painel só', (svg.match(/<svg /g) || []).length, 1);
+  check('com barras de entrada e saída', svg.includes('class="fl-in"') && svg.includes('class="fl-out"'), true);
+  check('e a área do saldo', svg.includes('class="fl-area"'), true);
+
+  /* A MITIGAÇÃO que torna o eixo duplo defensável: as duas escalas compartilham o
+     ZERO e o TOPO. Sem isso, o ponto em que a área cruza as barras não significa
+     nada — e é isso que faz gráfico combinado mentir. */
+  const corpoFl = apFl.slice(apFl.indexOf('function svgFluxoSaldo'), apFl.indexOf('/* ---------- Linha com faixa'));
+  check('as duas escalas partem do mesmo zero',
+    /const base = H - padB - espacoNeg;/.test(corpoFl)
+    && /yFluxo = v => base -/.test(corpoFl) && /ySaldo = v => \(v >= 0\s*\?\s*base -/.test(corpoFl), true);
+  check('e sobem até a mesma borda',
+    (corpoFl.match(/\* alturaPos/g) || []).length >= 2, true);
+  check('e a nota explica as duas escalas', svg.includes('O zero é o mesmo para as duas'), true);
+
+  /* A área fica ATRÁS das barras: ela é o nível, elas são o movimento. Com o mesmo
+     peso visual, as duas competiriam e nenhuma seria lida. */
+  check('a área vem antes das barras no desenho',
+    svg.indexOf('class="fl-area"') < svg.indexOf('class="fl-in"'), true);
+  check('e é lavada, não chapada', /\.fl-area \{ fill: url\(#grad-fl\)/.test(cssFl), true);
+
+  /* Ponta arredondada, pé reto: o topo é o dado; a base encosta no zero, e
+     arredondá-la faria a barra parecer flutuar. */
   check('a barra tem ponta arredondada', /Q[\d.]+ [\d.]+ [\d.]+ [\d.]+/.test(svg), true);
   check('e fecha reta na base', /V[\d.]+ Z/.test(svg), true);
 
-  /* A FRONTEIRA DE HOJE é a informação mais importante: à esquerda é fato
-     conciliado, à direita é estimativa. Aparece três vezes — divisória, barra
-     vazada e linha tracejada — porque uma só seria fácil de não notar. */
-  check('há divisória marcando hoje', svg.includes('class="fl-hoje"'), true);
-  /* Testa o DESENHO com dados sintéticos: o cenário do teste pode não ter receita
-     futura, e barra de valor zero não é desenhada — o teste passaria ou falharia
-     por causa da fixture, não do código. */
+  /* A FRONTEIRA DE HOJE aparece de quatro formas — divisória, rótulo, barra
+     esmaecida e área hachurada. Confundir previsão com fato é o pior engano
+     possível num app de finanças, e uma marca só é fácil de não notar. */
+  check('há divisória de hoje', svg.includes('class="fl-hoje"'), true);
+  check('com rótulo dizendo hoje', svg.includes('class="fl-marca-hoje"'), true);
   const sinteticos = [0, 1, 2, 3].map(i => ({
     period: DB.monthPeriod(new Date(), i - 2),
     entra: 5000, sai: 3000, saldo: 10000 + i * 1000, futuro: i >= 2,
   }));
   const svgS = svgFluxoSaldo(sinteticos);
-  check('a barra futura é vazada', svgS.includes('fl-in prev') && svgS.includes('fl-out prev'), true);
+  check('a barra futura é esmaecida', svgS.includes('fl-in prev') && svgS.includes('fl-out prev'), true);
   check('e a realizada é cheia', /class="fl-in"/.test(svgS), true);
-  /* Checa que o caminho futuro tem GEOMETRIA, não só a classe: um path vazio com
-     a classe certa passaria pela verificação e deixaria a metade prevista da
-     linha invisível. */
-  const dPrev = (svgS.match(/<path d="([^"]*)" class="fl-saldo prev"/) || [])[1] || '';
-  check('e a linha do saldo é tracejada no futuro', /^M[\d.]+ [\d.]+ C/.test(dPrev), true);
-  const dReal = (svgS.match(/<path d="([^"]*)" class="fl-saldo"/) || [])[1] || '';
-  check('com a parte realizada também desenhada', /^M[\d.]+ [\d.]+ C/.test(dReal), true);
+  check('a área futura é hachurada', svgS.includes('fl-area prev'), true);
+  check('com a hachura definida', /\.fl-area\.prev \{ fill: url\(#hach-fl\)/.test(cssFl), true);
+  /* A borda da área tem geometria nas duas metades — um path vazio com a classe
+     certa passaria pela verificação e deixaria metade da curva invisível. */
+  const dPrev = (svgS.match(/<path d="([^"]*)" class="fl-borda prev"/) || [])[1] || '';
+  const dReal = (svgS.match(/<path d="([^"]*)" class="fl-borda"/) || [])[1] || '';
+  check('a borda prevista é desenhada', /^M[\d.]+ [\d.]+ C/.test(dPrev), true);
+  check('e a realizada também', /^M[\d.]+ [\d.]+ C/.test(dReal), true);
   check('e as duas se encontram no ponto de hoje',
-    dPrev.slice(0, dPrev.indexOf(' C')), 'M' + dReal.split(' C').pop().trim().split(' ').slice(-2).join(' '));
-  check('com o tracejado definido no CSS', /\.fl-saldo\.prev \{[^}]*stroke-dasharray/.test(cssFl), true);
-  check('e são duas linhas, não uma', (svg.match(/class="fl-saldo/g) || []).length, 2);
+    dPrev.slice(0, dPrev.indexOf(' C')),
+    'M' + dReal.split(' C').pop().trim().split(' ').slice(-2).join(' '));
+  check('a borda prevista é tracejada', /\.fl-borda\.prev \{[^}]*stroke-dasharray/.test(cssFl), true);
 
-  // Texto fora do SVG esticado, como em todos os outros
+  /* Saldo negativo desce abaixo da MESMA linha onde as barras nascem — é o que a
+     ancoragem do zero garante, e o que faz o vermelho significar algo. */
+  const comNegativo = [0, 1, 2].map(i => ({
+    period: DB.monthPeriod(new Date(), i - 1),
+    entra: 3000, sai: 5000, saldo: i === 2 ? -2000 : 4000, futuro: i >= 2,
+  }));
+  const svgN = svgFluxoSaldo(comNegativo);
+  check('saldo negativo abre espaço abaixo do zero', /espacoNeg = minSaldo < 0 \? 40 : 0/.test(corpoFl), true);
+  check('e o ponto negativo se marca em vermelho', svgN.includes('fl-pt prev neg') || svgN.includes('fl-pt neg'), true);
+
+  /* MEDE A GEOMETRIA, não só o comentário: a base das barras e a base da área têm
+     de cair na mesma coordenada da linha do zero. É essa coincidência que faz o
+     gráfico combinado parar de ser arbitrário — sem ela, o ponto onde a área
+     cruza as barras não significaria nada. */
+  const zeroComum = svgAlvo => {
+    const mb = svgAlvo.match(/y1="([\d.]+)" y2="[\d.]+" class="fl-base"/);
+    if (!mb) return false;
+    const base = Number(mb[1]);
+    const basesBarra = [...svgAlvo.matchAll(/<path d="M[\d.]+ ([\d.]+) V/g)].map(m => Number(m[1]));
+    const basesArea = [...svgAlvo.matchAll(/L[\d.]+ ([\d.]+) Z" class="fl-area/g)].map(m => Number(m[1]));
+    return basesBarra.length > 0 && basesArea.length > 0
+      && basesBarra.every(v => Math.abs(v - base) < 0.2)
+      && basesArea.every(v => Math.abs(v - base) < 0.2);
+  };
+  check('barras e área partem da mesma linha do zero', zeroComum(svgS), true);
+  check('e continuam partindo dela quando o saldo fica negativo', zeroComum(svgN), true);
+
+  // Texto fora do SVG esticado, como em todos os outros gráficos
   check('sem texto dentro do SVG', /<svg[\s\S]*?<text/.test(svg), false);
   check('e o traço não engorda ao esticar',
-    /\.fl-saldo \{[^}]*vector-effect: non-scaling-stroke/.test(cssFl), true);
+    /\.fl-borda \{[^}]*vector-effect: non-scaling-stroke/.test(cssFl), true);
   // Rótulo a cada dois meses: treze nomes lado a lado colidem no celular
   const rots = (svg.match(/class="g-t g-t-rot/g) || []).length;
   check('os rótulos são espaçados para não colidir', rots > 3 && rots <= 8, true);
