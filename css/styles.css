@@ -150,6 +150,14 @@ body {
 }
 .section-title::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
+/* Aviso de recorte ativo: sem ele, alguém abre a tela com um filtro esquecido e
+   lê os números como se fossem do mês inteiro */
+.rel-recorte {
+  margin: -6px 0 0; padding: 9px 12px; border-radius: 9px;
+  background: rgba(0, 158, 247, .07); border: 1px solid rgba(0, 158, 247, .22);
+  font-size: 12px; color: #0072b8; line-height: 1.45;
+}
+
 /* ---------- Relatórios ----------
    A frase de abertura. Um relatório que começa com doze números obriga o leitor a
    montar a conclusão sozinho — e quem não é do ramo não monta. */

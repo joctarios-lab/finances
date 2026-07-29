@@ -72,6 +72,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, ligarGrafico, caminhoSuave,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
+  Rel, passaNosFiltros, temFiltroAtivo, barraDePilulas,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -3778,3 +3779,128 @@ try {
     /apexcharts|chart\.js|highcharts|d3\.min/i.test(indexHtml), false);
   check('e nada vem de CDN', /src="https?:\/\//.test(indexHtml), false);
 } catch (e) { console.log(` FALHA | relatórios: ${e.message}`); fail++; }
+
+/* ---- Filtros nos relatórios ----
+   O risco aqui não é visual: é a comparação injusta. Se o mês fosse filtrado por
+   "Alimentação" e a mediana viesse do gasto total, o app diria "acima do normal"
+   sem nada estar acima — o pior erro que esta tela poderia cometer. */
+console.log('\n=== Relatórios com filtro ===');
+try {
+  state.repOffset = 0;
+  state.filtros = filtrosVazios();
+  const pR = DB.monthPeriod(new Date());
+  const gastoCheio = Rel.gasto(pR);
+  const relCheio = renderRelatorios();
+  check('sem filtro, a barra de pílulas está lá', relCheio.includes('id="ext-pilulas"'), true);
+  check('e a mesma barra do extrato é reaproveitada',
+    renderExtrato(pR).includes('id="ext-pilulas"') && relCheio.includes('id="ext-pilulas"'), true);
+  check('sem filtro, nenhum aviso de recorte', relCheio.includes('rel-recorte'), false);
+
+  /* Cria histórico REAL de vários meses, numa categoria e fora dela. Sem isso o
+     teste compararia 0 com 0 e passaria de graça — foi exatamente o que
+     aconteceu na primeira versão, e uma sabotagem do histórico não reprovou. */
+  const catRel = DB.upsert('categories', { name: 'Alvo Relatorio', icon: '🎯', scope: 'Família', type: 'Despesa', kind: 'Essencial' });
+  const contaRel = DB.upsert('accounts', { name: 'Conta Relatorio', type: 'Conta Corrente', balance: 99999 });
+  const iso = (offset, d) => {
+    const p = DB.monthPeriod(new Date(), offset);
+    const dt = new Date(p.start.getFullYear(), p.start.getMonth(), d);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  };
+  // 200 na categoria e 800 fora dela, em 5 meses: as duas medianas ficam bem
+  // distantes, então confundir uma com a outra não passa despercebido
+  for (let m = 0; m <= 4; m++) {
+    DB.upsert('transactions', { description: `Alvo m${m}`, amount: 200, date: iso(-m, 5), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaRel, category_id: catRel });
+    DB.upsert('transactions', { description: `Fora m${m}`, amount: 800, date: iso(-m, 6), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaRel });
+  }
+
+  // O filtro precisa CHEGAR nos números, senão a barra é decorativa
+  const alvoCat = DB.get('categories', catRel);
+  {
+    state.filtros.categorias = [alvoCat.id];
+    const gastoRecorte = Rel.gasto(pR);
+    check('o filtro reduz o gasto apurado', gastoRecorte < gastoCheio, true);
+    check('e sobra apenas a categoria escolhida',
+      Rel.despesas(pR).every(t => DB.categoryRootId(t.category_id) === alvoCat.id), true);
+
+    /* O ponto central: o MESMO recorte vale nos 12 meses do histórico. Sem isso a
+       mediana viria do gasto total e a comparação seria categoria contra tudo. */
+    const evoRecorte = DB.serieMensal(12, p => Rel.gasto(p));
+    const evoCheia = (() => {
+      const guardado = state.filtros;
+      state.filtros = filtrosVazios();
+      const r = DB.serieMensal(12, p => Rel.gasto(p));
+      state.filtros = guardado;
+      return r;
+    })();
+    check('o histórico também é recortado',
+      evoRecorte.every((e, i) => e.valor <= evoCheia[i].valor), true);
+    check('e é estritamente menor em algum mês',
+      evoRecorte.some((e, i) => e.valor < evoCheia[i].valor), true);
+
+    const relFiltrado = renderRelatorios();
+    check('a tela avisa que é um recorte', relFiltrado.includes('rel-recorte'), true);
+    check('e nomeia o filtro ativo', relFiltrado.includes(esc(alvoCat.name)), true);
+
+    /* Verifica a TELA, não o helper: o "seu normal" é a mediana do histórico, e
+       ele tem de cair junto com o recorte. Testar só Rel.gasto provaria que o
+       helper filtra, não que renderRelatorios o usa — e foi assim que uma
+       sabotagem do histórico passou sem reprovar nada. */
+    const seuNormal = html => {
+      const m = html.match(/Seu normal <b>([^<]+)</);
+      return m ? Number(m[1].replace(/[^\d,]/g, '').replace(',', '.')) : null;
+    };
+    const normalRecorte = seuNormal(relFiltrado);
+    // Renderiza a versão sem filtro AGORA, depois de o histórico existir: usar a
+    // de antes compararia estados diferentes da base
+    const guardado = state.filtros;
+    state.filtros = filtrosVazios();
+    const normalCheio = seuNormal(renderRelatorios());
+    state.filtros = guardado;
+    check('o "seu normal" do gráfico acompanha o recorte',
+      normalRecorte !== null && normalCheio !== null && normalRecorte < normalCheio, true);
+    check('e a mediana exibida é a do recorte, não a do total',
+      normalRecorte, Math.round(DB.mediana(DB.serieMensal(12, p => Rel.gasto(p)).slice(0, -1)
+        .map(e => e.valor).filter(v => v > 0))));
+
+    /* Seções que exigem a receita inteira saem de cena: a receita da família não
+       pertence a uma categoria, então "Alimentação − receita total" não é
+       resultado de nada, e a cascata mostraria "Faltou" sempre. */
+    check('a cascata sai sob recorte', relFiltrado.includes('g-cascata'), false);
+    check('a origem das entradas também', relFiltrado.includes('De onde vem o dinheiro'), false);
+    check('e a frase deixa de falar de "sobrou"',
+      /Sobrou|Faltou <span/.test(relFiltrado), false);
+    check('passando a falar do recorte', relFiltrado.includes('Este recorte consumiu'), true);
+    // Orçamento é da família: comparar um recorte com ele não responde nada
+    check('o uso do orçamento sai sob recorte', relFiltrado.includes('Uso do orçamento'), false);
+    check('e a taxa de poupança também', relFiltrado.includes('Taxa de poupança'), false);
+    // Reserva e patrimônio são estado de hoje, não do período: seguem inteiros
+    check('mas reserva e patrimônio continuam', relFiltrado.includes('Em contas hoje'), true);
+    check('dizendo que são o total', relFiltrado.includes('sempre o total, não o recorte'), true);
+  }
+  state.filtros = filtrosVazios();
+
+  /* A régua de dias NÃO entra aqui: ela recorta só o mês em análise, e o
+     relatório compara meses fechados entre si. Meio mês contra doze meses
+     cheios não é comparação, é erro de leitura. */
+  const apF2 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const corpoRel = apF2.slice(apF2.indexOf('function renderRelatorios'), apF2.indexOf('function relFrase'));
+  check('os relatórios não trazem a régua de dias', corpoRel.includes('reguaDoMes'), false);
+  check('e as agregações ignoram a janela de dias',
+    /passaNosFiltros\(t, true\)/.test(apF2), true);
+  // Um filtro só, um lugar de manutenção
+  check('a barra de pílulas é uma função compartilhada',
+    (apF2.match(/barraDePilulas\(\)/g) || []).length >= 3, true);
+
+  /* Limpa o que este bloco criou, e apaga de vez em vez de marcar como excluído.
+
+     Motivo: os testes de sincronização são async, então o código síncrono daqui
+     roda ANTES de eles terminarem. Registro deixado com dirty=true faz o sync
+     achar que há coisa para enviar, e a asserção "consulta de rotina não gira o
+     ícone" reprova por sujeira de teste, não por defeito. */
+  for (const store of ['transactions', 'categories', 'accounts']) {
+    DB.data[store] = DB.data[store].filter(r =>
+      !/^(Alvo|Fora) m\d$/.test(r.description || '')
+      && r.id !== catRel && r.id !== contaRel);
+  }
+  DB.save();
+} catch (e) { console.log(` FALHA | relatórios com filtro: ${e.message}`); fail++; }

@@ -881,12 +881,19 @@ function filtrosAtivos() {
 /* `ignorarJanela` serve à régua: as marcas de movimento precisam mostrar o mês
    inteiro, senão o trilho ficaria vazio fora do trecho já escolhido — e aí não
    haveria como ver para onde valeria a pena arrastar. */
-function txsFiltradas(period, ignorarJanela) {
+/* O teste de um lançamento contra os filtros, sem período.
+
+   Extraído para os Relatórios poderem aplicar o MESMO recorte em qualquer janela
+   de tempo — inclusive nos 12 meses de histórico. Se o mês atual fosse filtrado
+   por "Alimentação" e a mediana viesse do gasto total, o app compararia
+   Alimentação contra tudo e diria "acima do normal" sem que nada estivesse
+   acima: o erro estatístico mais grave que esta tela poderia cometer. */
+function passaNosFiltros(t, ignorarJanela) {
   const f = state.filtros || filtrosVazios();
   const busca = DB._semAcento(f.busca);
   // Lista vazia é "todos": o filtro só restringe depois que alguém escolhe algo
   const algum = (lista, valor) => !lista || !lista.length || lista.includes(valor);
-  return DB.txOfPeriod(period).filter(t => {
+  return (t => {
     if (!algum(f.scope, t.scope)) return false;
     if (!algum(f.membro, t.member || MEMBRO_COMUM)) return false;
     if (!algum(f.tipo, DB.isTransfer(t) ? 'Transferência' : DB.isExpense(t) ? 'Despesa' : 'Receita')) return false;
@@ -918,7 +925,21 @@ function txsFiltradas(period, ignorarJanela) {
       if (!alvo.includes(busca)) return false;
     }
     return true;
-  }).sort((a, b) => b.date.localeCompare(a.date));
+  })(t);
+}
+
+function txsFiltradas(period, ignorarJanela) {
+  return DB.txOfPeriod(period)
+    .filter(t => passaNosFiltros(t, ignorarJanela))
+    .sort((a, b) => b.date.localeCompare(a.date));
+}
+
+// Há algum filtro ativo? (a janela de dias não conta: ela é do extrato)
+function temFiltroAtivo() {
+  const f = state.filtros || filtrosVazios();
+  return !!(f.busca || f.valorMin || f.valorMax || f.recorrente
+    || ['scope', 'membro', 'tipo', 'situacao', 'categorias', 'tags', 'metodos', 'contas']
+      .some(k => (f[k] || []).length));
 }
 
 // Todos os dias do período, em ordem. É o eixo da régua.
@@ -1013,6 +1034,27 @@ function opcoesCategoriaPilula() {
     for (const fi of filhas) ops.push({ v: fi.id, l: fi.name, filha: true });
   }
   return ops;
+}
+
+/* A barra de pílulas, compartilhada pelo Extrato e pelos Relatórios. Um filtro
+   só, um lugar só de manutenção — e o mesmo vocabulário nas duas telas: quem
+   aprendeu a filtrar num lugar não reaprende no outro. */
+function barraDePilulas() {
+  const f = state.filtros || filtrosVazios();
+  return `<div class="ext-pilulas" id="ext-pilulas">
+    <!-- O rótulo vai num <span> próprio: text-overflow não funciona em contêiner
+         flex, e sem ele o texto longo era cortado no seco, sem reticências. -->
+    <button class="pilula pilula-busca${f.busca ? ' on' : ''}" data-pilula="busca">
+      <span data-ico="search"></span><span class="pilula-rot">${f.busca ? esc(f.busca) : 'Buscar'}</span>
+    </button>
+    ${pilulasDeFiltro().map(p => {
+      const n = (f[p.chave] || []).length;
+      return `<button class="pilula${n ? ' on' : ''}" data-pilula="${p.chave}"><span class="pilula-rot">${esc(rotuloPilula(p))}</span>${
+        n ? '<i class="pilula-x" data-limpa-pilula="' + p.chave + '">×</i>' : '<span class="pilula-seta"></span>'}</button>`;
+    }).join('')}
+    <button class="pilula${f.valorMin || f.valorMax || f.recorrente ? ' on' : ''}" data-pilula="mais"><span class="pilula-rot">Mais</span><span class="pilula-seta"></span></button>
+    ${temFiltroAtivo() ? '<button class="pilula pilula-limpar" id="limpar-filtros">Limpar</button>' : ''}
+  </div>`;
 }
 
 function rotuloPilula(p) {
@@ -1320,21 +1362,7 @@ function renderExtrato(period) {
         <button id="mn-next" aria-label="Próximo mês" data-ico="chevR" ${isCurrent ? 'disabled style="opacity:.35"' : ''}></button>
       </div>
       ${reguaDoMes(period, movimentoPorDia)}
-      <div class="ext-pilulas" id="ext-pilulas">
-        <!-- O rótulo vai num <span> próprio: text-overflow não funciona em
-             contêiner flex, e sem ele o texto longo era cortado no seco, sem
-             reticências — a pílula aparecia pela metade. -->
-        <button class="pilula pilula-busca${state.filtros.busca ? ' on' : ''}" data-pilula="busca">
-          <span data-ico="search"></span><span class="pilula-rot">${state.filtros.busca ? esc(state.filtros.busca) : 'Buscar'}</span>
-        </button>
-        ${pilulas.map(p => {
-          const n = (state.filtros[p.chave] || []).length;
-          return `<button class="pilula${n ? ' on' : ''}" data-pilula="${p.chave}"><span class="pilula-rot">${esc(rotuloPilula(p))}</span>${
-            n ? '<i class="pilula-x" data-limpa-pilula="' + p.chave + '">×</i>' : '<span class="pilula-seta"></span>'}</button>`;
-        }).join('')}
-        <button class="pilula${state.filtros.valorMin || state.filtros.valorMax || state.filtros.recorrente ? ' on' : ''}" data-pilula="mais"><span class="pilula-rot">Mais</span><span class="pilula-seta"></span></button>
-        ${temFiltro ? '<button class="pilula pilula-limpar" id="limpar-filtros">Limpar</button>' : ''}
-      </div>
+      ${barraDePilulas()}
     </div>
     ${contaFiltrada ? (() => {
       // Conferindo contas: os números viram os DELAS, para bater com o extrato do
@@ -1578,21 +1606,65 @@ function refreshIdentity() {
 
    A ordem não é decorativa: "gastei R$ 4.200 em Alimentação" só quer dizer algo
    depois de "sobrou R$ 300 este mês". Número sem o antes dele é trivia. */
+/* Agregações do relatório, todas sobre o MESMO recorte de filtros.
+
+   Ficam aqui em vez de no DB porque o DB não conhece o estado da tela, e porque
+   o ponto crítico é justamente a consistência: a mesma peneira precisa passar em
+   todas as janelas de tempo que a análise compara. */
+const Rel = {
+  despesas(period) {
+    return DB.expensesOf(period).filter(t => passaNosFiltros(t, true));
+  },
+  gasto(period) {
+    return this.despesas(period).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  },
+  receita(period) {
+    return DB.incomesOf(period)
+      .filter(t => !t.card_id && passaNosFiltros(t, true))
+      .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  },
+  porCategoria(period) {
+    const out = {};
+    for (const t of this.despesas(period)) {
+      const raiz = DB.categoryRootId(t.category_id) || '_sem';
+      out[raiz] = (out[raiz] || 0) + (Number(t.amount) || 0);
+    }
+    return out;
+  },
+  porTipo(period) {
+    const out = { Essencial: 0, Estilo: 0 };
+    for (const t of this.despesas(period)) {
+      const c = DB.categoryRoot(t.category_id);
+      out[(c && c.kind) === 'Estilo' ? 'Estilo' : 'Essencial'] += Number(t.amount) || 0;
+    }
+    return out;
+  },
+};
+
 function renderRelatorios() {
   const period = DB.monthPeriod(new Date(), state.repOffset || 0);
   const atual = (state.repOffset || 0) === 0;
-  const txs = DB.expensesOf(period);
+  const filtrado = temFiltroAtivo();
+  const txs = Rel.despesas(period);
   const total = txs.reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const receitas = DB.realizedIncome(period);
+  const receitas = Rel.receita(period);
   const resultado = receitas - total;
-  const byCat = DB.spentByCategory(period);
-  const kinds = DB.spentByKind(period);
-  const st = DB.statsFor(period);
+  const byCat = Rel.porCategoria(period);
+  const kinds = Rel.porTipo(period);
+  const stCheio = DB.statsFor(period);
+  // Projeção precisa acompanhar o recorte, senão projeta o gasto total
+  const st = { ...stCheio, spent: total,
+    dailyAvg: total / Math.max(stCheio.elapsedDays, 1),
+    projection: stCheio.elapsedDays >= stCheio.totalDays ? total
+      : total + (total / Math.max(stCheio.elapsedDays, 1)) * (stCheio.totalDays - stCheio.elapsedDays) };
 
   /* Histórico de 12 meses, base de tudo que a tela afirma. Os meses ANTERIORES
      ao atual formam a régua — incluir o mês em curso, que está incompleto,
-     puxaria a mediana para baixo e faria todo mês parecer alto no dia 5. */
-  const evo = DB.serieMensal(12, p => DB.expensesOf(p).reduce((s, t) => s + (Number(t.amount) || 0), 0))
+     puxaria a mediana para baixo e faria todo mês parecer alto no dia 5.
+
+     O filtro vale para os 12: comparar "Alimentação deste mês" com "gasto total
+     dos meses anteriores" diria "acima do normal" sem nada estar acima. */
+  const evo = DB.serieMensal(12, p => Rel.gasto(p))
     .map(e => ({ ...e, rot: e.period.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '') }));
   const fechados = evo.slice(0, -1).map(e => e.valor);
   const juizo = DB.anormalidade(total, fechados);
@@ -1601,23 +1673,32 @@ function renderRelatorios() {
   const vsMediana = juizo.med > 0 ? (total - juizo.med) / juizo.med * 100 : 0;
 
   return `
-    <div class="card month-nav">
-      <button id="rep-prev" aria-label="Mês anterior" data-ico="chevL"></button>
-      <div style="text-align:center">
-        <b>${period.label}</b>
-        <div class="muted" style="font-size:11.5px">${atual ? `dia ${st.elapsedDays} de ${st.totalDays}` : 'mês encerrado'}</div>
+    <!-- Mesma barra do extrato: mês, e os filtros logo abaixo. Sem a régua de
+         dias — ela recortaria só o mês em análise, e o relatório inteiro compara
+         MESES FECHADOS entre si. Meio mês contra doze meses cheios não é
+         comparação, é erro de leitura. -->
+    <div class="ext-topo">
+      <div class="card month-nav">
+        <button id="rep-prev" aria-label="Mês anterior" data-ico="chevL"></button>
+        <div style="text-align:center">
+          <b>${period.label}</b>
+          <div class="muted" style="font-size:11.5px">${atual ? `dia ${st.elapsedDays} de ${st.totalDays}` : 'mês encerrado'}</div>
+        </div>
+        <button id="rep-next" aria-label="Próximo mês" data-ico="chevR" ${atual ? 'disabled style="opacity:.35"' : ''}></button>
       </div>
-      <button id="rep-next" aria-label="Próximo mês" data-ico="chevR" ${atual ? 'disabled style="opacity:.35"' : ''}></button>
+      ${barraDePilulas()}
     </div>
+    ${filtrado ? `<p class="rel-recorte">Analisando um recorte: <b>${esc(filtrosAtivos().map(a => a.texto).join(' · '))}</b>.
+      O recorte vale para os 12 meses do histórico, então as comparações continuam justas.</p>` : ''}
 
-    ${relFrase({ period, atual, total, receitas, resultado, juizo, vsMediana, st, kinds })}
-    ${relEntradas(period, receitas)}
-    ${relCascata({ receitas, kinds, resultado, total })}
-    ${relNormal({ evo, fechados, juizo, total, atual, fmtPct, vsMediana })}
+    ${relFrase({ period, atual, total, receitas, resultado, juizo, vsMediana, st, kinds, filtrado })}
+    ${filtrado ? '' : relEntradas(period, receitas)}
+    ${filtrado ? '' : relCascata({ receitas, kinds, resultado, total })}
+    ${relNormal({ evo, fechados, juizo, total, atual, fmtPct, vsMediana, filtrado })}
     ${relCategorias({ period, byCat, total })}
     ${relCortes(period, txs, total)}
-    ${relProjecao({ period, st, atual, total, receitas, juizo })}
-    ${relConstrucao({ period, receitas, resultado })}
+    ${relProjecao({ period, st, atual, total, receitas, juizo, filtrado })}
+    ${relConstrucao({ period, receitas, resultado, filtrado })}
 
     <button class="btn ghost" id="btn-csv" style="display:flex;align-items:center;justify-content:center;gap:8px">
       <span data-ico="download"></span>Exportar ${period.label} em CSV</button>
@@ -1627,7 +1708,26 @@ function renderRelatorios() {
 /* 1. A frase. Um relatório que abre com doze números obriga o leitor a montar a
    conclusão sozinho — e quem não é do ramo não monta. Aqui o app diz o que
    entendeu, e o resto da tela serve de prova. */
-function relFrase({ atual, total, receitas, resultado, juizo, vsMediana, st, kinds }) {
+function relFrase({ atual, total, receitas, resultado, juizo, vsMediana, st, kinds, filtrado }) {
+  /* Com recorte ativo a frase muda de assunto. Dizer "sobrou" sobre um pedaço
+     do mês seria falso: a receita da família não pertence a uma categoria, e
+     "Alimentação − receita total" não é resultado de nada. */
+  if (filtrado) {
+    const contexto = juizo.incerto
+      ? 'Ainda são poucos meses para dizer se é o normal deste recorte.'
+      : Math.abs(juizo.desvios) < 1.5 || !juizo.relevante
+        ? `Está <b>dentro do normal</b> para este recorte — de costume ${fmt(juizo.med)} por mês.`
+        : `Está <b class="${juizo.desvios > 0 ? 'txt-red' : 'txt-green'}">${juizo.rotulo}</b>: de costume ${fmt(juizo.med)} por mês.`;
+    return `
+      <div class="card rel-frase">
+        <span class="rel-frase-ico ${juizo.desvios > 1.5 && juizo.relevante ? 'ruim' : 'ok'}" data-ico="filter"></span>
+        <div>
+          <b>Este recorte consumiu <span class="txt-red">${fmt(total)}</span>${
+            atual && st.projection > total ? `, e caminha para ${fmt(st.projection)}` : ''}.</b>
+          <p class="muted">${contexto}</p>
+        </div>
+      </div>`;
+  }
   const sobrou = resultado >= 0;
   const pctRenda = receitas > 0 ? Math.abs(resultado) / receitas * 100 : 0;
   const desejo = (kinds.Essencial + kinds.Estilo) > 0
@@ -1714,14 +1814,14 @@ function relCascata({ receitas, kinds, resultado, total }) {
 /* 3. A faixa de normalidade. "Normal" medido no histórico da própria família, e
    não contra um ideal de fora — comparar o gasto de alguém com uma média
    nacional não ajuda a decidir nada. */
-function relNormal({ evo, fechados, juizo, total, atual, fmtPct, vsMediana }) {
+function relNormal({ evo, fechados, juizo, total, atual, fmtPct, vsMediana, filtrado }) {
   const positivos = fechados.filter(v => v > 0);
   const mad = DB.desvioMediano(positivos);
-  const dentro = Math.abs(juizo.desvios) < 1.5;
+  const dentro = Math.abs(juizo.desvios) < 1.5 || !juizo.relevante;
   return `
     <div class="card">
       <div class="card-head"><div><b>Isso é normal para vocês?</b>
-        <small>12 meses · a faixa clara é o seu padrão (mediana ± variação típica)</small></div>
+        <small>12 meses · a faixa clara é o padrão${filtrado ? ' deste recorte' : ''} (mediana ± variação típica)</small></div>
         ${!juizo.incerto ? `<span class="rel-selo ${dentro ? 'ok' : juizo.desvios > 0 ? 'ruim' : 'bom'}">${
           dentro ? 'no padrão' : juizo.rotulo}</span>` : ''}
       </div>
@@ -1740,9 +1840,11 @@ function relNormal({ evo, fechados, juizo, total, atual, fmtPct, vsMediana }) {
    anterior. Mês anterior é um ponto só: se ele teve o IPVA, TODA categoria
    aparece "caindo" e o relatório mente sem errar uma conta. */
 function relCategorias({ period, byCat, total }) {
+  // O mesmo recorte nos 6 meses de histórico: comparar categoria filtrada com
+  // histórico cheio daria desvio onde não há desvio
   const historico = {};
   for (let i = 1; i <= 6; i++) {
-    const porCat = DB.spentByCategory(DB.monthPeriod(new Date(), (state.repOffset || 0) - i));
+    const porCat = Rel.porCategoria(DB.monthPeriod(new Date(), (state.repOffset || 0) - i));
     for (const [cid, v] of Object.entries(porCat)) (historico[cid] = historico[cid] || []).push(v);
   }
   const ids = [...new Set([...Object.keys(byCat), ...Object.keys(historico)])];
@@ -1850,8 +1952,10 @@ function relCortes(period, txs, total) {
 
 /* 5. Onde vai parar. Projeção só faz sentido no mês corrente; em mês fechado a
    pergunta é outra — quanto do orçamento foi usado. */
-function relProjecao({ period, st, atual, total, receitas, juizo }) {
-  const orcamento = DB.budgetTotal();
+function relProjecao({ period, st, atual, total, receitas, juizo, filtrado }) {
+  // Orçamento é da família inteira: comparar um recorte contra ele diria que
+  // "Alimentação usou 12% do orçamento", o que não responde pergunta nenhuma
+  const orcamento = filtrado ? 0 : DB.budgetTotal();
   const pctOrc = orcamento > 0 ? Math.round(total / orcamento * 100) : 0;
   const proj = st.projection;
   const estoura = orcamento > 0 && proj > orcamento;
@@ -1882,23 +1986,26 @@ function relProjecao({ period, st, atual, total, receitas, juizo }) {
 /* 6. O que está sendo construído. Um relatório que só mede gasto conta metade da
    história: sobrar dinheiro sem destino e sobrar dinheiro virando reserva são
    coisas diferentes, e é a segunda que muda uma vida financeira. */
-function relConstrucao({ period, receitas, resultado }) {
+function relConstrucao({ period, receitas, resultado, filtrado }) {
   const reserva = DB.reserveTotal();
   const gastoMedio = DB.avgMonthlySpend();
   const meses = gastoMedio > 0 ? reserva / gastoMedio : 0;
   const contas = DB.accountsTotal();
   const metas = DB.all('goals').filter(g => !g.done && !DB.isReserveGoal(g));
-  const taxa = receitas > 0 ? resultado / receitas * 100 : 0;
+  // Taxa de poupança só existe com a receita inteira: sob recorte, o resultado
+  // não é resultado de nada
+  const taxa = !filtrado && receitas > 0 ? resultado / receitas * 100 : null;
 
   return `
     <div class="grid-2">
       <div class="card">
-        <div class="card-head"><div><b>O que está sendo construído</b><small>reserva e patrimônio</small></div></div>
+        <div class="card-head"><div><b>O que está sendo construído</b>
+          <small>reserva e patrimônio — sempre o total, não o recorte</small></div></div>
         <div class="proj-row"><span>Em contas hoje</span><b>${fmt(contas)}</b></div>
         <div class="proj-row"><span>Reserva de emergência</span><b class="${meses >= 6 ? 'txt-green' : meses >= 3 ? '' : 'txt-red'}">${fmt(reserva)}</b></div>
         <div class="proj-row"><span>Cobre quanto tempo</span><b class="${meses >= 6 ? 'txt-green' : meses >= 3 ? '' : 'txt-red'}">${
           meses > 0 ? `${meses.toFixed(1)} meses` : '—'}</b></div>
-        ${receitas > 0 ? `<div class="proj-row"><span>Taxa de poupança do mês</span><b class="${taxa >= 20 ? 'txt-green' : taxa >= 0 ? '' : 'txt-red'}">${Math.round(taxa)}%</b></div>` : ''}
+        ${taxa !== null ? `<div class="proj-row"><span>Taxa de poupança do mês</span><b class="${taxa >= 20 ? 'txt-green' : taxa >= 0 ? '' : 'txt-red'}">${Math.round(taxa)}%</b></div>` : ''}
         <p class="muted" style="margin-top:8px">${
           meses >= 6 ? 'A reserva cobre seis meses de gasto — o patamar em que uma emergência deixa de virar dívida.'
           : meses >= 3 ? `Faltam ${fmt(gastoMedio * 6 - reserva)} para chegar aos seis meses de cobertura.`
