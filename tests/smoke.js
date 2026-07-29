@@ -68,7 +68,7 @@ eval(appSrc + `; Object.assign(global, {
   state, fmt, fmtShort, fmtDay, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
-  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
+  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, filtrosVazios, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -1025,12 +1025,22 @@ try {
   // Bug: calendário espremido na coluna estreita do formulário
   check('calendário tem largura própria', /\.ui-cal\s*\{[^}]*min-width:\s*300px/.test(cssUi), true);
   check('painel se reposiciona para não sair da tela', ui.includes('posicionar(') && ui.includes('innerWidth'), true);
+
+  /* Escolha múltipla: o componente precisa atender <select multiple>, senão o
+     filtro cairia na caixa cinza do navegador — e no celular ela é inutilizável. */
+  check('componente não pula mais o select múltiplo', /if \(sel\.dataset\.ui === '1'\) return;/.test(ui), true);
+  check('marcar não fecha o painel quando é múltiplo', /if \(multi\) \{[\s\S]{0,400}?return;/.test(ui), true);
+  check('o botão conta quantos foram marcados', ui.includes('selecionados`'), true);
+  check('lista vazia mostra o texto de data-vazio', ui.includes('sel.dataset.vazio'), true);
+  check('o grupo fechado mostra quantos marcou dentro', ui.includes('de ${dentro.length}'), true);
 } catch (e) { console.log(` FALHA | componentes: ${e.message}`); fail++; }
 
 console.log('\n=== Semântica de cor por tipo de ação ===');
 try {
   const ext = renderExtrato(p);
-  check('atalhos coloridos de lançamento no extrato', ext.includes('qa-desp') && ext.includes('qa-rec') && ext.includes('qa-tr'), true);
+  // A fileira de atalhos saiu: lançar é só o botão flutuante, e o extrato começa
+  // na lista em vez de em três botões que só pré-marcavam o tipo
+  check('extrato não traz mais a fileira de atalhos', ext.includes('quick-add'), false);
   check('receita marcada em verde', ext.includes('tx-amount income'), true);
   check('despesa mostra sinal de saída', ext.includes('− '), true);
   const css = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
@@ -1039,7 +1049,10 @@ try {
   check('azul reservado para transferência', /\.chip\[data-v="Transferência"\]\.active[^}]*var\(--blue\)/.test(css), true);
   check('folha veste a cor do tipo escolhido', css.includes('.sheet[data-tipo="Receita"] #sh-save'), true);
   check('animações respeitam prefers-reduced-motion', css.includes('prefers-reduced-motion'), true);
-  check('cor nunca vem sozinha (ícone + texto no atalho)', ext.includes('>Despesa<') && ext.includes('data-ico="plus"'), true);
+  // Com a fileira de atalhos fora, o totalizador do dia é onde o princípio vive:
+  // o número colorido vem sempre acompanhado da palavra que diz o que ele é
+  check('cor nunca vem sozinha (rótulo junto do valor no total do dia)',
+    ext.includes('<i>Entradas</i>') && ext.includes('<i>Saídas</i>'), true);
 } catch (e) { console.log(` FALHA | semântica: ${e.message}`); fail++; }
 
 /* ---- Rotulos de coluna estreita ----
@@ -1153,24 +1166,37 @@ try {
 
   console.log('\n=== Painel de filtros do extrato ===');
   const p2 = DB.monthPeriod(new Date());
-  const zerar = () => { state.filtros = { ...FILTROS_VAZIOS }; };
+  const zerar = () => { state.filtros = filtrosVazios(); };
   const qtd = () => txsFiltradas(p2).length;
 
   zerar();
   const totalPeriodo = qtd();
   check('sem filtro, traz tudo do período', totalPeriodo > 5, true);
 
-  zerar(); state.filtros.tag = 'viagem';
+  // Lista vazia é "todos", nunca "nenhum": um filtro só restringe depois de escolha
+  zerar();
+  check('todo filtro nasce como lista vazia',
+    ['scope', 'membro', 'tipo', 'situacao', 'categorias', 'tags', 'metodos', 'contas']
+      .every(k => Array.isArray(state.filtros[k]) && !state.filtros[k].length), true);
+  /* A cópia precisa ser nova a cada vez. Se `filtrosVazios()` devolvesse a mesma
+     referência de array, marcar um chip escreveria dentro da constante e o
+     "limpar tudo" seguinte devolveria exatamente o que deveria apagar. */
+  const a1 = filtrosVazios(), a2 = filtrosVazios();
+  a1.tags.push('x');
+  check('limpar entrega listas novas, não a mesma referência', a2.tags.length, 0);
+  check('e não contamina a constante', FILTROS_VAZIOS.tags.length, 0);
+
+  zerar(); state.filtros.tags = ['viagem'];
   check('filtra por etiqueta', qtd(), 2);
-  zerar(); state.filtros.tipo = 'Receita';
+  zerar(); state.filtros.tipo = ['Receita'];
   check('filtra por tipo', txsFiltradas(p2).every(t => !DB.isExpense(t)), true);
-  zerar(); state.filtros.situacao = 'A Pagar';
+  zerar(); state.filtros.situacao = ['A Pagar'];
   check('filtra por situação', txsFiltradas(p2).every(t => t.status === 'A Pagar'), true);
-  zerar(); state.filtros.scope = 'Pessoal';
+  zerar(); state.filtros.scope = ['Pessoal'];
   check('filtra por âmbito', txsFiltradas(p2).every(t => t.scope === 'Pessoal'), true);
-  zerar(); state.filtros.membro = 'Joctã';
+  zerar(); state.filtros.membro = ['Joctã'];
   check('filtra por membro', txsFiltradas(p2).every(t => t.member === 'Joctã'), true);
-  zerar(); state.filtros.metodo = 'PIX';
+  zerar(); state.filtros.metodos = ['PIX'];
   check('filtra por forma de pagamento', txsFiltradas(p2).every(t => t.method === 'PIX'), true);
   zerar(); state.filtros.valorMin = 800;
   check('filtra por valor mínimo', txsFiltradas(p2).every(t => t.amount >= 800), true);
@@ -1179,17 +1205,43 @@ try {
   zerar(); state.filtros.contas = [contaT];
   check('filtra por conta', txsFiltradas(p2).every(t => t.account_id === contaT || t.card_id === contaT || t.to_account === contaT), true);
 
-  // Categoria filtra pelo envelope, então subcategoria entra junto
+  /* Dentro do mesmo filtro os valores SOMAM; entre filtros diferentes eles
+     RESTRINGEM. É a regra inteira do multiselect, e as duas metades precisam de
+     teste porque as duas leituras são plausíveis para quem usa. */
+  zerar(); state.filtros.situacao = ['Pago', 'A Pagar'];
+  check('dois valores do mesmo filtro somam (ou)', qtd(), totalPeriodo);
+  zerar(); state.filtros.tipo = ['Receita'];
+  const soReceita = qtd();
+  state.filtros.tipo = ['Receita', 'Despesa'];
+  check('somar um segundo tipo aumenta o resultado', qtd() > soReceita, true);
+  zerar(); state.filtros.tipo = ['Receita']; state.filtros.situacao = ['A Pagar'];
+  check('filtros diferentes restringem (e)',
+    txsFiltradas(p2).every(t => !DB.isExpense(t) && t.status === 'A Pagar'), true);
+
+  // Categoria: o envelope traz as subcategorias, a subcategoria traz só ela
   DB.upsert('transactions', { description: 'Feira', amount: 70, date: dia(17), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaT, category_id: mercado.id });
-  zerar(); state.filtros.categoria = alim.id;
+  zerar(); state.filtros.categorias = [alim.id];
   const porEnvelope = txsFiltradas(p2);
   check('filtrar envelope traz as subcategorias', porEnvelope.some(t => t.category_id === mercado.id), true);
-  zerar(); state.filtros.categoria = mercado.id;
-  check('filtrar subcategoria também sobe ao envelope', txsFiltradas(p2).length, porEnvelope.length);
+  /* Antes, escolher a subcategoria subia ao envelope e arrastava tudo junto —
+     impreciso, e sem como desfazer. Agora "Mercado" traz só mercado, e quem quer
+     o envelope inteiro escolhe "Tudo de Alimentação". */
+  zerar(); state.filtros.categorias = [mercado.id];
+  const soMercado = txsFiltradas(p2);
+  check('filtrar subcategoria traz só ela', soMercado.every(t => t.category_id === mercado.id), true);
+  check('e é mais restrito que o envelope', soMercado.length < porEnvelope.length, true);
+  zerar(); state.filtros.categorias = [alim.id, mercado.id];
+  check('envelope e subcategoria juntos não duplicam', txsFiltradas(p2).length, porEnvelope.length);
 
   // Busca sem acento, em vários campos
   zerar(); state.filtros.busca = 'pousada';
   check('busca pela descrição', qtd(), 1);
+  // O painel oferece o envelope como opção própria; o formulário de lançamento não,
+  // senão o gasto pararia no envelope e a subcategoria nunca aconteceria
+  check('painel deixa escolher o envelope inteiro',
+    optionsCategorias([], undefined, true).includes('Tudo de Alimentação'), true);
+  check('lançamento continua só com as folhas',
+    optionsCategorias('').includes('Tudo de Alimentação'), false);
   // A busca varre descrição, categoria, etiqueta, membro e forma de pagamento. Como
   // existe a subcategoria "Viagem", procurar por viagem acha os dois etiquetados e
   // também o classificado nela — que é justamente o que se espera de uma busca ampla.
@@ -1204,17 +1256,27 @@ try {
   check('busca sem resultado devolve vazio', qtd(), 0);
 
   // Filtros combinam
-  zerar(); state.filtros.tag = 'viagem'; state.filtros.valorMin = 700;
+  zerar(); state.filtros.tags = ['viagem']; state.filtros.valorMin = 700;
   check('filtros se somam', qtd(), 1);
 
   // Etiquetas do que está ativo
   zerar();
   check('sem filtro, nenhuma etiqueta ativa', filtrosAtivos().length, 0);
-  state.filtros.tag = 'viagem'; state.filtros.scope = 'Família'; state.filtros.busca = 'x';
+  state.filtros.tags = ['viagem']; state.filtros.scope = ['Família']; state.filtros.busca = 'x';
   const rot = filtrosAtivos();
   check('cada filtro ativo gera uma etiqueta', rot.length, 3);
   check('a etiqueta mostra o nome legível', rot.some(r => r.texto === '#viagem'), true);
   check('cada etiqueta sabe qual filtro limpar', rot.every(r => r.chave in FILTROS_VAZIOS), true);
+
+  /* Uma etiqueta POR VALOR, e cada uma sabe qual valor tirar. Sem isso, remover
+     "Transporte" de uma seleção de três levaria as outras duas junto. */
+  zerar(); state.filtros.situacao = ['Pago', 'A Pagar'];
+  const rotMulti = filtrosAtivos();
+  check('cada valor escolhido vira uma etiqueta', rotMulti.length, 2);
+  check('e cada etiqueta carrega o próprio valor',
+    rotMulti.map(r => r.valor).sort().join(','), 'A Pagar,Pago');
+  zerar(); state.filtros.busca = 'x';
+  check('filtro de valor único não carrega valor', filtrosAtivos()[0].valor, null);
 
   // A tela: só busca e âmbito ficam fora do painel
   zerar();
@@ -1223,10 +1285,11 @@ try {
   check('âmbito fica na tela', ext.includes('id="scope-chips"'), true);
   check('botão de filtros fica na tela', ext.includes('id="btn-filtros"'), true);
   check('chips de membro saíram da tela', ext.includes('id="member-chips"'), false);
-  state.filtros.tag = 'viagem';
+  state.filtros.tags = ['viagem'];
   const comFiltro = renderExtrato(p2);
   check('contador aparece no botão', /filtros-num">1</.test(comFiltro), true);
-  check('etiqueta removível aparece', comFiltro.includes('data-limpa="tag"'), true);
+  check('etiqueta removível aparece', comFiltro.includes('data-limpa="tags"'), true);
+  check('e diz qual valor ela tira', comFiltro.includes('data-valor="viagem"'), true);
   check('há como limpar tudo', comFiltro.includes('id="limpar-filtros"'), true);
   check('etiquetas do lançamento aparecem na linha', comFiltro.includes('data-tag="viagem"'), true);
 
@@ -2078,11 +2141,11 @@ console.log('\n=== Voltar para a tela zera o estado ===');
 {
   // Trocar de tela: o que o usuário havia ajustado na anterior não sobrevive
   setTab('extrato');
-  state.monthOffset = -3; state.filtros.membro = 'Joctã'; state.filtros.situacao = 'A Pagar'; state.filtros.busca = 'mer';
+  state.monthOffset = -3; state.filtros.membro = ['Joctã']; state.filtros.situacao = ['A Pagar']; state.filtros.busca = 'mer';
   setTab('cartoes');
   check('trocar de tela zera o mês', state.monthOffset, 0);
-  check('trocar de tela zera o filtro de membro', state.filtros.membro, 'Todos');
-  check('trocar de tela zera o filtro de situação', state.filtros.situacao, 'Todos');
+  check('trocar de tela zera o filtro de membro', state.filtros.membro.length, 0);
+  check('trocar de tela zera o filtro de situação', state.filtros.situacao.length, 0);
   check('trocar de tela zera a busca', state.filtros.busca, '');
   setTab('inicio');
   state.monthOffset = -5;
@@ -2091,20 +2154,20 @@ console.log('\n=== Voltar para a tela zera o estado ===');
 
   // Redesenho da MESMA tela não pode perder o que está sendo olhado
   setTab('extrato');
-  state.monthOffset = -2; state.filtros.membro = 'Joctã';
+  state.monthOffset = -2; state.filtros.membro = ['Joctã'];
   setTab('extrato');                       // é o que a sincronização faz ao trazer dado novo
   check('redesenhar a mesma tela preserva o mês', state.monthOffset, -2);
-  check('redesenhar a mesma tela preserva o filtro', state.filtros.membro, 'Joctã');
+  check('redesenhar a mesma tela preserva o filtro', state.filtros.membro.join(), 'Joctã');
 
   /* Reabrir o app começa SEMPRE no Painel. Abrir é o momento de perguntar "como
      estamos?", e cair em Relatórios porque foi lá que a sessão anterior terminou
      faz o app parecer que guardou um estado que já não vale. */
-  state.tab = 'relatorios'; state.monthOffset = -4; state.filtros.membro = 'Joctã'; state.repOffset = -1;
+  state.tab = 'relatorios'; state.monthOffset = -4; state.filtros.membro = ['Joctã']; state.repOffset = -1;
   persistUI();
   restoreUI();
   check('reabrir começa no Painel', state.tab, 'inicio');
   check('reabrir mostra o mês corrente', state.monthOffset, 0);
-  check('reabrir esquece o filtro de membro', state.filtros.membro, 'Todos');
+  check('reabrir esquece o filtro de membro', state.filtros.membro.length, 0);
   check('reabrir esquece o mês do relatório', state.repOffset, 0);
 
   // Mesmo tendo terminado em outra aba, e mesmo várias vezes seguidas

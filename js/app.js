@@ -13,11 +13,26 @@ let state = { tab: 'inicio', monthOffset: 0, repOffset: 0, filtros: null };
    hora); o resto vive no painel, para a tela não virar um formulário. Tudo o que
    estiver ativo aparece como etiqueta removível acima da lista, então nenhum
    filtro fica escondido depois de aplicado — é isso que evita o "por que essa
-   lista está vazia?" que painéis fechados costumam causar. */
+   lista está vazia?" que painéis fechados costumam causar.
+
+   Quase todo filtro aceita VÁRIOS valores, e a regra precisa estar dita na tela
+   porque as duas leituras são plausíveis: dentro do mesmo filtro os valores
+   somam (Alimentação OU Transporte), entre filtros diferentes eles restringem
+   (…E Pago E de Gleice). Lista vazia significa "todos" — não "nenhum". */
 const FILTROS_VAZIOS = {
-  busca: '', scope: 'Todos', membro: 'Todos', tipo: 'Todos', situacao: 'Todos',
-  categoria: '', tag: '', metodo: '', contas: [], valorMin: '', valorMax: '', recorrente: false,
+  busca: '',
+  scope: [], membro: [], tipo: [], situacao: [],
+  categorias: [], tags: [], metodos: [], contas: [],
+  valorMin: '', valorMax: '', recorrente: false,
 };
+
+/* Cópia sempre nova das listas. `{ ...FILTROS_VAZIOS }` copiaria a REFERÊNCIA
+   dos arrays, e marcar um chip passaria a escrever dentro da própria constante —
+   o "limpar" seguinte devolveria os filtros que deveria ter apagado. */
+function filtrosVazios() {
+  return Object.fromEntries(Object.entries(FILTROS_VAZIOS)
+    .map(([k, v]) => [k, Array.isArray(v) ? [] : v]));
+}
 
 /* Quanto uma transferência moveu DENTRO do conjunto de contas em análise.
 
@@ -47,7 +62,7 @@ function efeitoDaTransferencia(t, contas) {
 const ESTADO_DA_TELA = { monthOffset: 0, repOffset: 0 };
 function zerarEstadoDaTela() {
   Object.assign(state, ESTADO_DA_TELA);
-  state.filtros = { ...FILTROS_VAZIOS };
+  state.filtros = filtrosVazios();
 }
 
 /* ---------- Memória da navegação: recarregar volta para a mesma aba ---------- */
@@ -711,21 +726,22 @@ function renderInicio(period) {
    o valor no topo sempre corresponde ao que está listado embaixo. Antes a busca
    apenas escondia linhas pelo CSS, e o total continuava contando o que sumiu. */
 function filtrosAtivos() {
-  const f = state.filtros || FILTROS_VAZIOS;
+  const f = state.filtros || filtrosVazios();
   const rotulos = [];
-  const add = (chave, texto) => rotulos.push({ chave, texto });
+  /* `valor` diz QUAL item sai ao tocar no × — sem ele a etiqueta apagaria o
+     filtro inteiro, e tirar "Transporte" levaria "Alimentação" junto. */
+  const add = (chave, texto, valor = null) => rotulos.push({ chave, texto, valor });
+  const cada = (chave, rotulo) => (f[chave] || []).forEach(v => add(chave, rotulo(v), v));
+
   if (f.busca) add('busca', `“${f.busca}”`);
-  if (f.scope !== 'Todos') add('scope', f.scope);
-  if (f.membro !== 'Todos') add('membro', f.membro === MEMBRO_COMUM ? 'Comum' : f.membro);
-  if (f.tipo !== 'Todos') add('tipo', f.tipo);
-  if (f.situacao !== 'Todos') add('situacao', f.situacao);
-  if (f.categoria) add('categoria', DB.categoryPath(f.categoria) || 'Categoria');
-  if (f.tag) add('tag', '#' + f.tag);
-  if (f.metodo) add('metodo', f.metodo);
-  if (f.contas && f.contas.length) {
-    const nomes = f.contas.map(id => (DB.get('accounts', id) || DB.get('cards', id) || {}).name).filter(Boolean);
-    add('contas', nomes.length <= 2 ? nomes.join(' + ') : `${nomes.length} contas`);
-  }
+  cada('scope', v => v);
+  cada('membro', v => (v === MEMBRO_COMUM ? 'Comum' : v));
+  cada('tipo', v => v);
+  cada('situacao', v => v);
+  cada('categorias', v => DB.categoryPath(v) || 'Categoria');
+  cada('tags', v => '#' + v);
+  cada('metodos', v => v);
+  cada('contas', v => (DB.get('accounts', v) || DB.get('cards', v) || {}).name || 'Conta');
   if (f.valorMin) add('valorMin', `a partir de ${fmtShort(f.valorMin)}`);
   if (f.valorMax) add('valorMax', `até ${fmtShort(f.valorMax)}`);
   if (f.recorrente) add('recorrente', 'Só custos fixos');
@@ -733,20 +749,25 @@ function filtrosAtivos() {
 }
 
 function txsFiltradas(period) {
-  const f = state.filtros || FILTROS_VAZIOS;
+  const f = state.filtros || filtrosVazios();
   const busca = DB._semAcento(f.busca);
+  // Lista vazia é "todos": o filtro só restringe depois que alguém escolhe algo
+  const algum = (lista, valor) => !lista || !lista.length || lista.includes(valor);
   return DB.txOfPeriod(period).filter(t => {
-    if (f.scope !== 'Todos' && t.scope !== f.scope) return false;
-    if (f.membro !== 'Todos' && (t.member || MEMBRO_COMUM) !== f.membro) return false;
-    if (f.tipo !== 'Todos') {
-      const tipo = DB.isTransfer(t) ? 'Transferência' : DB.isExpense(t) ? 'Despesa' : 'Receita';
-      if (tipo !== f.tipo) return false;
+    if (!algum(f.scope, t.scope)) return false;
+    if (!algum(f.membro, t.member || MEMBRO_COMUM)) return false;
+    if (!algum(f.tipo, DB.isTransfer(t) ? 'Transferência' : DB.isExpense(t) ? 'Despesa' : 'Receita')) return false;
+    if (!algum(f.situacao, t.status)) return false;
+    /* Casa pela categoria OU pela raiz dela: escolher o envelope "Alimentação"
+       traz mercado e delivery, escolher "Mercado" traz só mercado. Um teste só
+       cobre os dois níveis, e escolher a subcategoria deixou de arrastar o
+       envelope inteiro junto — que era impreciso e não dava para desfazer. */
+    if (f.categorias && f.categorias.length) {
+      const raiz = DB.categoryRootId(t.category_id);
+      if (!f.categorias.some(id => id === t.category_id || id === raiz)) return false;
     }
-    if (f.situacao !== 'Todos' && t.status !== f.situacao) return false;
-    // Categoria filtra pelo envelope: escolher "Alimentação" traz mercado e delivery
-    if (f.categoria && DB.categoryRootId(t.category_id) !== DB.categoryRootId(f.categoria)) return false;
-    if (f.tag && !DB.tagsOf(t).includes(f.tag)) return false;
-    if (f.metodo && t.method !== f.metodo) return false;
+    if (f.tags && f.tags.length && !f.tags.some(tg => DB.tagsOf(t).includes(tg))) return false;
+    if (!algum(f.metodos, t.method)) return false;
     if (f.contas && f.contas.length &&
         !f.contas.some(id => t.account_id === id || t.card_id === id || t.to_account === id)) return false;
     if (f.valorMin && Number(t.amount) < Number(f.valorMin)) return false;
@@ -764,7 +785,7 @@ function txsFiltradas(period) {
 }
 
 function renderExtrato(period) {
-  if (!state.filtros) state.filtros = { ...FILTROS_VAZIOS };
+  if (!state.filtros) state.filtros = filtrosVazios();
   const ativos = filtrosAtivos();
   const txs = txsFiltradas(period);
   const total = txs.filter(t => DB.isExpense(t) && !t.adjustment).reduce((s, t) => s + Number(t.amount || 0), 0);
@@ -922,13 +943,11 @@ function renderExtrato(period) {
       : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> neste mês, tirados dos ${fmt(anterior)} que vieram do anterior.`}${
       Math.abs(conciliado) > 0.005 ? ` Há ainda <b>${fmt(Math.abs(conciliado))}</b> de conciliação, que mexe no saldo sem ser gasto nem entrada.` : ''}</p>`;
     })()}
-    <div class="quick-add">
-      <button class="qa qa-desp" data-novo="Despesa"><span data-ico="plus"></span>Despesa</button>
-      <button class="qa qa-rec" data-novo="Receita"><span data-ico="plus"></span>Receita</button>
-      <button class="qa qa-tr" data-novo="Transferência"><span data-ico="sync"></span>Transferir</button>
-    </div>
+    <!-- Lançar é o botão flutuante, e só ele: a fileira Despesa/Receita/Transferir
+         que ficava aqui empurrava a lista para baixo da primeira dobra, e os três
+         botões só pré-marcavam o tipo — que a própria folha já deixa escolher.
 
-    <!-- Na tela ficam só a busca e o atalho de âmbito, que é o filtro do dia a dia.
+         Na tela ficam a busca e o atalho de âmbito, que são o filtro do dia a dia.
          O resto abre no painel, para o extrato continuar sendo uma lista. -->
     <div class="busca-row">
       <input id="tx-search" type="search" placeholder="Buscar descrição, categoria, etiqueta…" autocomplete="off" value="${esc(state.filtros.busca)}">
@@ -937,12 +956,15 @@ function renderExtrato(period) {
       </button>
     </div>
     <div class="filter-row">
+      <!-- "Todos" é o chip que zera a lista; os outros somam entre si -->
       <div class="chips" id="scope-chips">
-        ${['Todos', 'Família', 'Pessoal'].map(f => `<button class="chip ${state.filtros.scope === f ? 'active' : ''}" data-f="${f}">${f}</button>`).join('')}
+        <button class="chip ${!state.filtros.scope.length ? 'active' : ''}" data-f="">Todos</button>
+        ${['Família', 'Pessoal'].map(f => `<button class="chip ${state.filtros.scope.includes(f) ? 'active' : ''}" data-f="${f}">${f}</button>`).join('')}
       </div>
     </div>
     ${ativos.length ? `<div class="ativos">
-      ${ativos.map(a => `<button class="tag-ativa" data-limpa="${a.chave}">${esc(a.texto)}<span>×</span></button>`).join('')}
+      ${ativos.map(a => `<button class="tag-ativa" data-limpa="${a.chave}"${
+        a.valor === null ? '' : ` data-valor="${esc(a.valor)}"`}>${esc(a.texto)}<span>×</span></button>`).join('')}
       <button class="tag-limpar" id="limpar-filtros">Limpar tudo</button>
     </div>` : ''}
     ${isCurrent ? '<button class="btn ghost" id="btn-recur" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="sync"></span>Lançar custos fixos deste mês</button>' : ''}
@@ -1313,28 +1335,36 @@ function bindView() {
   }
   const btnFiltros = $('#btn-filtros');
   if (btnFiltros) btnFiltros.onclick = openFiltrosSheet;
-  const limpar = () => { state.filtros = { ...FILTROS_VAZIOS }; render(); };
+  const limpar = () => { state.filtros = filtrosVazios(); render(); };
   const btnLimpar = $('#limpar-filtros');
   if (btnLimpar) btnLimpar.onclick = limpar;
   const btnLimparVazio = $('#limpar-vazio');
   if (btnLimparVazio) btnLimparVazio.onclick = limpar;
-  // Cada etiqueta ativa remove só o próprio filtro
+  // Cada etiqueta remove só o VALOR dela. Tirar "Transporte" de uma seleção de
+  // três categorias tem de deixar as outras duas de pé.
   v.querySelectorAll('[data-limpa]').forEach(el => el.onclick = () => {
     const chave = el.dataset.limpa;
-    state.filtros[chave] = FILTROS_VAZIOS[chave];
+    const atual = state.filtros[chave];
+    if (Array.isArray(atual) && el.dataset.valor !== undefined) {
+      state.filtros[chave] = atual.filter(x => x !== el.dataset.valor);
+    } else {
+      state.filtros[chave] = Array.isArray(atual) ? [] : FILTROS_VAZIOS[chave];
+    }
     render();
   });
-  // Tocar numa etiqueta do lançamento filtra por ela
+  // Tocar numa etiqueta do lançamento soma ela ao filtro, em vez de trocar: com
+  // vários valores possíveis, substituir seria descartar o que já estava escolhido
   v.querySelectorAll('[data-tag]').forEach(el => el.onclick = e => {
     e.stopPropagation();
-    state.filtros.tag = el.dataset.tag;
+    const tag = el.dataset.tag;
+    if (!state.filtros.tags.includes(tag)) state.filtros.tags = [...state.filtros.tags, tag];
     render();
   });
   // Do relatório por etiqueta direto para os lançamentos dela
   v.querySelectorAll('[data-ver-tag]').forEach(el => el.onclick = () => {
     const tag = el.dataset.verTag;
     setTab('extrato');                    // zera o resto dos filtros, então o alvo fica só a etiqueta
-    state.filtros.tag = tag;
+    state.filtros.tags = [tag];
     render();
   });
 
@@ -1385,7 +1415,14 @@ function bindView() {
     a.click();
     toast('CSV exportado ✓');
   };
-  v.querySelectorAll('#scope-chips .chip').forEach(ch => ch.onclick = () => { state.filtros.scope = ch.dataset.f; render(); });
+  v.querySelectorAll('#scope-chips .chip').forEach(ch => ch.onclick = () => {
+    const val = ch.dataset.f;
+    const atual = state.filtros.scope || [];
+    state.filtros.scope = !val ? []                                  // "Todos" zera
+      : atual.includes(val) ? atual.filter(x => x !== val)
+      : [...atual, val];
+    render();
+  });
   v.querySelectorAll('[data-novo]').forEach(b => b.onclick = () => openTxSheet({
     type: b.dataset.novo, date: todayISO(), description: '', amount: '',
     status: 'Pago', method: b.dataset.novo === 'Transferência' ? 'Transferência' : 'PIX',
@@ -1453,8 +1490,8 @@ function bindView() {
    extrato existe para mostrar a lista. Aplicar fecha e a tela mostra o que
    está ativo em etiquetas, então nada fica escondido depois de escolhido. */
 function openFiltrosSheet() {
-  const f = { ...(state.filtros || FILTROS_VAZIOS) };
-  const membros = ['Todos', MEMBRO_COMUM, ...DB.settings().members];
+  const f = state.filtros || filtrosVazios();
+  const membros = [MEMBRO_COMUM, ...DB.settings().members];
   const contas = DB.all('accounts').filter(a => a.active !== false);
   const cartoes = DB.all('cards').filter(c => c.active !== false);
   const tags = DB.allTags();
@@ -1462,23 +1499,24 @@ function openFiltrosSheet() {
 
   openSheet(`
     <div class="sheet-title">Filtrar extrato<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin:-4px 0 12px">Dá para escolher mais de um em cada filtro. Valores do mesmo filtro <b>somam</b>; filtros diferentes <b>restringem</b>. Nada marcado quer dizer todos.</p>
 
-    <div class="field"><label>Tipo</label>${chipGroup('fl-tipo', ['Todos', 'Despesa', 'Receita', 'Transferência'].map(v => ({ value: v, label: v })), f.tipo)}</div>
-    <div class="field"><label>Situação</label>${chipGroup('fl-sit', ['Todos', 'Pago', 'A Pagar'].map(v => ({ value: v, label: v })), f.situacao)}</div>
-    <div class="field"><label>Âmbito</label>${chipGroup('fl-scope', ['Todos', 'Família', 'Pessoal'].map(v => ({ value: v, label: v })), f.scope)}</div>
+    <div class="field"><label>Tipo</label>${chipGroupMulti('fl-tipo', ['Despesa', 'Receita', 'Transferência'].map(v => ({ value: v, label: v })), f.tipo)}</div>
+    <div class="field"><label>Situação</label>${chipGroupMulti('fl-sit', ['Pago', 'A Pagar'].map(v => ({ value: v, label: v })), f.situacao)}</div>
+    <div class="field"><label>Âmbito</label>${chipGroupMulti('fl-scope', ['Família', 'Pessoal'].map(v => ({ value: v, label: v })), f.scope)}</div>
 
     <div class="field"><label>De quem</label>
-      <select id="fl-membro">${membros.map(m => `<option value="${esc(m)}"${f.membro === m ? ' selected' : ''}>${m === MEMBRO_COMUM ? 'Comum / Família' : esc(m)}</option>`).join('')}</select>
+      <select id="fl-membro" multiple data-vazio="Todos">${membros.map(m => `<option value="${esc(m)}"${f.membro.includes(m) ? ' selected' : ''}>${m === MEMBRO_COMUM ? 'Comum / Família' : esc(m)}</option>`).join('')}</select>
     </div>
     <div class="field"><label>Categoria</label>
-      <select id="fl-cat"><option value="">Todas</option>${optionsCategorias(f.categoria)}</select>
-      <p class="muted" style="margin-top:6px">Escolher um envelope traz também as subcategorias dele.</p>
+      <select id="fl-cat" multiple data-vazio="Todas">${optionsCategorias(f.categorias, undefined, true)}</select>
+      <p class="muted" style="margin-top:6px">“Tudo de Alimentação” traz o envelope inteiro; escolher só “Mercado” traz só o mercado.</p>
     </div>
     ${tags.length ? `<div class="field"><label>Etiqueta</label>
-      <select id="fl-tag"><option value="">Todas</option>${tags.map(t => `<option value="${esc(t)}"${f.tag === t ? ' selected' : ''}>#${esc(t)} (${DB.tagCount(t)})</option>`).join('')}</select>
+      <select id="fl-tag" multiple data-vazio="Todas">${tags.map(t => `<option value="${esc(t)}"${f.tags.includes(t) ? ' selected' : ''}>#${esc(t)} (${DB.tagCount(t)})</option>`).join('')}</select>
     </div>` : ''}
     <div class="field"><label>Forma de pagamento</label>
-      <select id="fl-metodo"><option value="">Todas</option>${metodos.map(m => `<option value="${esc(m)}"${f.metodo === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>
+      <select id="fl-metodo" multiple data-vazio="Todas">${metodos.map(m => `<option value="${esc(m)}"${f.metodos.includes(m) ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select>
     </div>
     <div class="field"><label>Conta ou cartão</label>
       <!-- Chips em vez de select: escolher várias contas é o que permite conferir
@@ -1503,28 +1541,25 @@ function openFiltrosSheet() {
   initMoney('#fl-min', f.valorMin || 0);
   initMoney('#fl-max', f.valorMax || 0);
   $('#sh-close').onclick = closeSheet;
-  bindChips('fl-tipo'); bindChips('fl-sit'); bindChips('fl-scope');
-  // Contas alternam de forma independente: bindChips deixaria só uma ativa
-  document.querySelectorAll('#fl-contas .chip').forEach(c => {
-    c.onclick = () => c.classList.toggle('active');
-  });
+  bindChipsMulti('fl-tipo'); bindChipsMulti('fl-sit'); bindChipsMulti('fl-scope');
+  bindChipsMulti('fl-contas');
 
   $('#fl-limpar').onclick = () => {
-    state.filtros = { ...FILTROS_VAZIOS };
+    state.filtros = filtrosVazios();
     closeSheet(); render();
   };
   $('#sh-save').onclick = () => {
     const val = id => moneyVal(id) || '';
     state.filtros = {
       ...state.filtros,
-      tipo: chipValue('fl-tipo') || 'Todos',
-      situacao: chipValue('fl-sit') || 'Todos',
-      scope: chipValue('fl-scope') || 'Todos',
-      membro: $('#fl-membro').value || 'Todos',
-      categoria: $('#fl-cat').value || '',
-      tag: ($('#fl-tag') || {}).value || '',
-      metodo: $('#fl-metodo').value || '',
-      contas: [...document.querySelectorAll('#fl-contas .chip.active')].map(c => c.dataset.v),
+      tipo: chipValues('fl-tipo'),
+      situacao: chipValues('fl-sit'),
+      scope: chipValues('fl-scope'),
+      membro: selectValues('#fl-membro'),
+      categorias: selectValues('#fl-cat'),
+      tags: selectValues('#fl-tag'),
+      metodos: selectValues('#fl-metodo'),
+      contas: chipValues('fl-contas'),
       valorMin: val('#fl-min'),
       valorMax: val('#fl-max'),
       recorrente: !!$('#fl-rec').value,
@@ -1600,6 +1635,26 @@ function bindChips(id, onChange) {
 function selectChip(id, value) {
   if (!value) return;
   document.querySelectorAll(`#${id} .chip`).forEach(ch => ch.classList.toggle('active', ch.dataset.v === value));
+}
+
+/* Grupo de chips com escolha múltipla, para os filtros. Nenhum marcado significa
+   "todos" — e é por isso que não existe um chip "Todos" aqui: ele seria um quarto
+   estado dizendo a mesma coisa que os outros três desmarcados. */
+function chipGroupMulti(id, options, selecionados = []) {
+  return `<div class="chips" id="${id}">
+    ${options.map(o => `<button type="button" class="chip ${selecionados.includes(o.value) ? 'active' : ''}" data-v="${esc(o.value)}">${esc(o.label)}</button>`).join('')}
+  </div>`;
+}
+function chipValues(id) {
+  return [...document.querySelectorAll(`#${id} .chip.active`)].map(c => c.dataset.v);
+}
+function bindChipsMulti(id) {
+  document.querySelectorAll(`#${id} .chip`).forEach(ch => ch.onclick = () => ch.classList.toggle('active'));
+}
+// Valores escolhidos num <select multiple>
+function selectValues(sel) {
+  const el = typeof sel === 'string' ? $(sel) : sel;
+  return el ? [...el.options].filter(o => o.selected && o.value).map(o => o.value) : [];
 }
 
 /* Categorias mais usadas primeiro (as 3 viram botões; o resto fica no dropdown).
@@ -2757,14 +2812,22 @@ function openConfigSection(sec) {
    cabeçalho de grupo. Melhor que repetir "Alimentação › " em cada linha: o nome
    do envelope aparece uma vez, e a busca do painel também procura por ele.
    Folha sem envelope (categoria simples) fica solta no fim, sem cabeçalho. */
-function optionsCategorias(selecionado, tipo) {
+/* `selecionado` aceita um id ou uma lista deles (filtro com escolha múltipla).
+
+   `incluirRaizes` põe o próprio envelope como opção, no topo do grupo dele. Só o
+   filtro usa: lá "tudo de Alimentação" é uma pergunta legítima. No formulário de
+   lançamento continua fora, senão o gasto pararia no envelope e a subcategoria
+   nunca aconteceria — que é o motivo de só folhas entrarem por padrão. */
+function optionsCategorias(selecionado, tipo, incluirRaizes) {
+  const marcados = Array.isArray(selecionado) ? selecionado : [selecionado];
   const opcao = (c, rotulo) =>
-    `<option value="${c.id}"${selecionado === c.id ? ' selected' : ''}>${esc(rotulo)}</option>`;
+    `<option value="${c.id}"${marcados.includes(c.id) ? ' selected' : ''}>${esc(rotulo)}</option>`;
   const soltas = [], grupos = [];
   for (const raiz of DB.rootCategories(tipo).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))) {
     const filhas = DB.subcategoriesOf(raiz.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
     if (!filhas.length) { soltas.push(raiz); continue; }   // envelope sem detalhe é ele mesmo a folha
     grupos.push(`<optgroup label="${esc(raiz.icon)} ${esc(raiz.name)}">${
+      (incluirRaizes ? opcao(raiz, `Tudo de ${raiz.name}`) : '') +
       filhas.map(f => opcao(f, f.name)).join('')}</optgroup>`);
   }
   const semGrupo = soltas.length

@@ -15,7 +15,7 @@ const UI = {
 
   /* ---------------- Select estilo Select2 ---------------- */
   enhanceSelect(sel) {
-    if (sel.dataset.ui === '1' || sel.multiple) return;
+    if (sel.dataset.ui === '1') return;
     sel.dataset.ui = '1';
     sel.classList.add('ui-native');
 
@@ -29,11 +29,26 @@ const UI = {
     sel.parentNode.insertBefore(box, sel);
     box.appendChild(sel);
 
+    /* Com escolha múltipla o botão não cabe a lista inteira, então ele conta.
+       Um item ainda aparece pelo nome — é o caso comum, e trocar "Alimentação"
+       por "1 selecionado" esconderia justamente a informação útil. O texto de
+       lista vazia vem de data-vazio ("Todas"/"Todos"), porque num filtro nada
+       escolhido não é falta de resposta: é "não restrinja por isto". */
     const rotulo = () => {
+      const el = botao.querySelector('.ui-select-txt');
+      const vazioTxt = sel.dataset.vazio || 'Selecione';
+      if (sel.multiple) {
+        const marcadas = [...sel.options].filter(o => o.selected && o.value);
+        el.textContent = !marcadas.length ? vazioTxt
+          : marcadas.length === 1 ? marcadas[0].textContent.trim()
+          : `${marcadas.length} selecionados`;
+        botao.classList.toggle('is-placeholder', !marcadas.length);
+        return;
+      }
       const o = sel.options[sel.selectedIndex];
       const txt = o ? o.textContent.trim() : '';
       const vazio = !o || !o.value;
-      botao.querySelector('.ui-select-txt').textContent = txt || 'Selecione';
+      el.textContent = txt || vazioTxt;
       botao.classList.toggle('is-placeholder', vazio);
     };
     rotulo();
@@ -48,12 +63,14 @@ const UI = {
 
   abrirSelect(sel, box, botao, rotulo) {
     this.fechar();
+    const multi = sel.multiple;
     const opcoes = [];
     for (const o of sel.options) {
       const grupo = o.parentNode.tagName === 'OPTGROUP' ? o.parentNode.label : '';
-      opcoes.push({ value: o.value, label: o.textContent.trim(), grupo, disabled: o.disabled });
+      opcoes.push({ value: o.value, label: o.textContent.trim(), grupo, disabled: o.disabled, marcada: o.selected });
     }
     const comBusca = opcoes.length > 7;
+    const estaMarcada = o => (multi ? o.marcada : o.value === sel.value);
 
     /* Lista longa e agrupada abre em DOIS NÍVEIS. As categorias somavam 75 itens
        — 11 telas de rolagem dentro do painel. Mostrando só os grupos, a primeira
@@ -85,7 +102,7 @@ const UI = {
     let marcado = Math.max(0, opcoes.findIndex(o => o.value === sel.value));
 
     const linhaOpcao = (o, i) => {
-      const sel_ = o.value === sel.value;
+      const sel_ = estaMarcada(o);
       return `<div class="ui-opt${sel_ ? ' is-sel' : ''}${i === marcado ? ' is-mark' : ''}${o.disabled ? ' is-off' : ''}"
         data-i="${i}" role="option" aria-selected="${sel_}">${this.esc(o.label)}${sel_ ? '<span class="ui-check">✓</span>' : ''}</div>`;
     };
@@ -99,9 +116,13 @@ const UI = {
         if (grupoAberto === null) {
           for (const g of grupos) {
             const dentro = opcoes.filter(o => o.grupo === g);
-            const temEscolhida = dentro.some(o => o.value === sel.value);
-            html += `<div class="ui-opt ui-grupo-linha${temEscolhida ? ' is-sel' : ''}" data-grupo="${this.esc(g)}" role="option">
-              <span>${this.esc(g)}</span><span class="ui-grupo-info">${dentro.length}<span class="ui-grupo-seta">›</span></span></div>`;
+            const escolhidas = dentro.filter(estaMarcada).length;
+            // Com escolha múltipla o grupo diz quantas ficaram marcadas dentro
+            // dele: senão, fechado, ele esconderia a própria seleção
+            html += `<div class="ui-opt ui-grupo-linha${escolhidas ? ' is-sel' : ''}" data-grupo="${this.esc(g)}" role="option">
+              <span>${this.esc(g)}</span><span class="ui-grupo-info">${
+                multi && escolhidas ? `${escolhidas} de ${dentro.length}` : dentro.length
+              }<span class="ui-grupo-seta">›</span></span></div>`;
             visiveis++;
           }
           // Opções sem grupo (ex.: "— escolha a categoria —") ficam no primeiro nível
@@ -140,7 +161,20 @@ const UI = {
       if (m) m.scrollIntoView({ block: 'nearest' });
     };
 
+    /* Com escolha múltipla o painel NÃO fecha ao marcar: fechar a cada item
+       obrigaria a reabrir uma vez por valor, que é o atrito que faz desistir de
+       filtrar por três categorias. Fecha no clique fora, no Escape ou no botão. */
     const escolher = i => {
+      if (multi) {
+        const alvoOpt = [...sel.options].find(o => o.value === opcoes[i].value);
+        if (alvoOpt) alvoOpt.selected = !alvoOpt.selected;
+        opcoes[i].marcada = !!(alvoOpt && alvoOpt.selected);
+        marcado = i;
+        rotulo();
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        desenhar(busca ? busca.value : '');
+        return;
+      }
       sel.value = opcoes[i].value;
       rotulo();
       sel.dispatchEvent(new Event('change', { bubbles: true }));

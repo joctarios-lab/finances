@@ -534,24 +534,6 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .sheet[data-tipo="Transferência"]::before { background: var(--blue); }
 .chip-num { opacity: .7; font-weight: 500; margin-left: 4px; font-size: 11.5px; }
 
-/* Atalhos coloridos de lançamento — a cor antecipa o tipo da ação */
-.quick-add { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-.qa {
-  display: flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 12px 8px; border-radius: 10px; border: 1px solid var(--line);
-  background: var(--ink-2); font-family: var(--font-body); font-size: 13px; font-weight: 600;
-  cursor: pointer; box-shadow: var(--shadow); min-height: 46px;
-  transition: transform .12s ease, box-shadow .18s ease, border-color .16s ease;
-}
-.qa svg { width: 15px; height: 15px; }
-.qa:active { transform: scale(.96); }
-.qa-desp { color: var(--red); }
-.qa-rec { color: #1f9d61; }
-.qa-tr { color: var(--blue); }
-.qa-desp:hover { border-color: var(--red); box-shadow: 0 4px 14px rgba(241, 65, 108, .16); }
-.qa-rec:hover { border-color: var(--green); box-shadow: 0 4px 14px rgba(80, 205, 137, .18); }
-.qa-tr:hover { border-color: var(--blue); box-shadow: 0 4px 14px rgba(114, 57, 234, .16); }
-
 /* Linha de filtro rotulada (extrato) */
 /* Barra de busca + botão de filtros. Só estes dois ficam sempre na tela; os
    outros dez controles moram no painel, senão a lista sairia da primeira dobra. */
