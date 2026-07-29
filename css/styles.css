@@ -165,54 +165,102 @@ body {
 /* A legenda do previsto usa a mesma marca vazada das barras futuras, para o olho
    casar legenda e gráfico sem precisar de explicação */
 .fl-k.prev { background: repeating-linear-gradient(45deg, #c4cad4 0 2px, transparent 2px 4px); border: 1px solid #c4cad4; }
-.fl-combo { height: 210px; }
-@media (max-width: 560px) { .fl-combo { height: 190px; } }
+/* ---------- O cartão de fluxo, no padrão Mixed Widget 12 do Metronic ----------
+   Três camadas: cabeçalho colorido, gráfico desenhado SOBRE o campo colorido
+   sangrando até a borda, e um painel branco puxado por cima dele com os números.
+   É a sobreposição que faz esse cartão ser bonito — não a cor sozinha.
 
-/* Barras na FRENTE: elas são o movimento, o dado que se compara mês a mês */
-.fl-in { fill: var(--green); }
-.fl-out { fill: var(--red); }
+   O AZUL É MAIS PROFUNDO que o info do Metronic (#009ef7), e por medida: sobre
+   #009ef7 nada alcança 3:1 de contraste, nem o branco (2,90). O cartão original
+   se sustenta porque desenha só um traço branco liso; aqui é preciso distinguir
+   entrada de saída, e para isso o campo tem de ser escuro o bastante. */
+.flc { padding: 0; overflow: hidden; --flc-campo: #0a5c96; }
+.flc-cab {
+  background: linear-gradient(135deg, #0a5c96 0%, #0072b8 100%);
+  padding: 16px 18px 10px; color: #fff;
+}
+.flc-cab b { display: block; font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+.flc-cab small { display: block; margin-top: 2px; font-size: 11.5px; opacity: .82; }
+.flc-selo {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 8px;
+  padding: 3px 9px; border-radius: 6px; font-size: 11px; font-weight: 700;
+  background: rgba(255, 255, 255, .18); color: #fff;
+}
+.flc-selo.ruim { background: #ff8fa8; color: #6b1226; }
+/* O gráfico continua o campo do cabeçalho, sem costura visível entre os dois */
+.flc-graf { background: linear-gradient(180deg, #0072b8 0%, #0a5c96 60%, #094f81 100%); }
+.fl-combo { height: 200px; }
+@media (max-width: 560px) { .fl-combo { height: 176px; } }
+
+/* Verde-claro e rosa medidos: 5,97 e 3,27 de contraste no campo azul, e ΔE 15,3
+   sob deuteranomalia — a forma mais comum de daltonismo, em que verde e vermelho
+   fortes ficariam indistinguíveis. Verde ainda é entrada e rosa ainda é saída, e
+   os dois se leem no fundo colorido. */
+.fl-in { fill: #c8f7dd; }
+.fl-out { fill: #ff8fa8; }
 /* Futuro esmaecido: é estimativa, e preenchimento cheio o faria pesar igual ao fato */
-.fl-in.prev { fill: rgba(80, 205, 137, .34); }
-.fl-out.prev { fill: rgba(241, 65, 108, .3); }
+.fl-in.prev { fill: rgba(200, 247, 221, .38); }
+.fl-out.prev { fill: rgba(255, 143, 168, .36); }
 
-/* Área ATRÁS, lavada: ela é o nível, não o movimento. Com o mesmo peso visual das
-   barras, as duas competiriam e nenhuma seria lida. */
+/* Área ATRÁS, em branco lavado: ela é o nível, não o movimento. Com o mesmo peso
+   visual das barras, as duas competiriam e nenhuma seria lida. */
 .fl-area { fill: url(#grad-fl); stroke: none; }
-.fl-area.prev { fill: url(#hach-fl); opacity: .5; }
-.fl-hach { stroke: #009ef7; stroke-width: 1.4; opacity: .3; }
+.fl-area.prev { fill: url(#hach-fl); opacity: .7; }
+.fl-hach { stroke: #fff; stroke-width: 1.3; opacity: .3; }
 .fl-borda {
-  fill: none; stroke: var(--gold); stroke-width: 2;
+  fill: none; stroke: #fff; stroke-width: 2.5;
   stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke;
 }
 /* Tracejado é o que diz "daqui para frente é estimativa" sem precisar de rótulo */
-.fl-borda.prev { stroke-dasharray: 5 4; opacity: .8; }
-.fl-base { stroke: #c4cad4; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.fl-borda.prev { stroke-dasharray: 6 4; opacity: .8; }
+.fl-base { stroke: rgba(255, 255, 255, .3); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.ch-grid { stroke: var(--line); stroke-width: 1; }
+.flc .ch-grid { stroke: rgba(255, 255, 255, .13); }
 /* A fronteira de hoje: à esquerda é fato conciliado, à direita é estimativa */
-.fl-hoje { stroke: var(--paper-dim); stroke-width: 1; stroke-dasharray: 3 3; opacity: .5; vector-effect: non-scaling-stroke; }
+.fl-hoje { stroke: rgba(255, 255, 255, .5); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
 .fl-marca-hoje {
-  position: absolute; top: 0; transform: translateX(-50%);
-  font-size: 9.5px; font-weight: 700; color: var(--paper-dim);
-  background: var(--ink-2); padding: 0 4px; letter-spacing: .04em; text-transform: uppercase;
+  position: absolute; top: 1px; transform: translateX(-50%);
+  font-size: 9px; font-weight: 700; color: #fff;
+  background: rgba(255, 255, 255, .22); padding: 1px 5px; border-radius: 4px;
+  letter-spacing: .05em; text-transform: uppercase;
 }
 .fl-pt {
-  position: absolute; width: 9px; height: 9px; border-radius: 50%;
+  position: absolute; width: 10px; height: 10px; border-radius: 50%;
   transform: translate(-50%, -50%);
-  background: var(--gold); border: 2px solid #fff; box-sizing: border-box; z-index: 1;
+  background: #fff; border: 2px solid #0a5c96; box-sizing: border-box; z-index: 1;
 }
-.fl-pt.prev { background: #fff; border-color: var(--gold); }
-.fl-pt.neg { background: var(--red); border-color: #fff; }
-/* Fundo próprio no rótulo do saldo: ele pousa sobre as barras, e sem o fundo o
-   número se perderia no meio delas */
+.fl-pt.prev { background: #0a5c96; border-color: #fff; }
+.fl-pt.neg { background: #ff8fa8; border-color: #fff; }
+/* Rótulos em branco: eles pousam sobre o campo azul */
+.flc .g-t-eixo { color: rgba(255, 255, 255, .7); background: none; }
+.flc .g-t-rot { color: rgba(255, 255, 255, .72); }
+.flc .g-t-rot.on { color: #fff; font-weight: 700; }
 .g-t-saldo {
   transform: translate(-50%, -100%);
-  font-size: 11px; font-weight: 700; color: #0072b8;
-  background: var(--ink-2); padding: 1px 4px; border-radius: 4px;
+  font-size: 11px; font-weight: 700; color: #0a5c96;
+  background: #fff; padding: 1px 5px; border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(9, 79, 129, .35);
 }
-.g-t-saldo.ruim { color: var(--red); }
-.g-t-eixo.dir { padding-left: 3px; padding-right: 0; }
-.fl-nota { margin-top: 8px; font-size: 11px; color: var(--paper-dim); line-height: 1.45; }
-.fl-k.area { background: linear-gradient(to bottom, rgba(0, 158, 247, .45), rgba(0, 158, 247, .05)); border-top: 2px solid var(--gold); }
-.fl-k.prev { background: repeating-linear-gradient(45deg, rgba(0, 158, 247, .35) 0 2px, transparent 2px 4px); }
+.g-t-saldo.ruim { color: #c9264a; }
+.fl-legenda { display: flex; flex-wrap: wrap; gap: 3px 13px; padding: 0 18px 12px; background: #094f81; }
+.fl-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; color: rgba(255, 255, 255, .8); font-weight: 600; }
+.fl-k { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.fl-k.in { background: #c8f7dd; }
+.fl-k.out { background: #ff8fa8; }
+.fl-k.area { background: linear-gradient(to bottom, rgba(255, 255, 255, .55), transparent); border-top: 2px solid #fff; }
+.fl-k.prev { background: repeating-linear-gradient(45deg, rgba(255, 255, 255, .6) 0 2px, transparent 2px 4px); }
+
+/* O painel branco puxado por cima do gráfico — é o que dá profundidade ao cartão
+   (mt-n10 + card-rounded, no Metronic) */
+.flc-painel {
+  position: relative; margin: -22px 12px 0; padding: 16px 16px 14px;
+  background: var(--ink-2); border-radius: 12px;
+  box-shadow: 0 -2px 18px rgba(9, 79, 129, .18);
+}
+.flc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 12px; }
+.flc-item small { display: block; font-size: 11px; color: var(--paper-dim); font-weight: 600; }
+.flc-item b { display: block; font-size: 16px; font-weight: 800; letter-spacing: -.02em; margin-top: 1px; }
+.flc-nota { margin: 12px 16px 14px; font-size: 11.5px; color: var(--paper-dim); line-height: 1.45; }
 
 /* Linha prevista no extrato (fatura que ainda vai vencer): tracejada e recuada,
    para não se confundir com movimento que já aconteceu.

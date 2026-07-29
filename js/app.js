@@ -599,19 +599,13 @@ function svgFluxoSaldo(meses, opts = {}) {
 
   return `
     <div class="fl">
-      <div class="fl-topo">
-        <span class="fl-leg"><i class="fl-k in"></i>entrou</span>
-        <span class="fl-leg"><i class="fl-k out"></i>saiu</span>
-        <span class="fl-leg"><i class="fl-k area"></i>saldo</span>
-        <span class="fl-leg"><i class="fl-k prev"></i>previsto</span>
-      </div>
       <div class="g-wrap fl-combo">
         <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
           aria-label="${esc(opts.alt || 'Entradas, saídas e saldo mês a mês')}">
           <defs>
             <linearGradient id="grad-fl" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#009ef7" stop-opacity=".26"/>
-              <stop offset="100%" stop-color="#009ef7" stop-opacity="0"/>
+              <stop offset="0%" stop-color="#ffffff" stop-opacity=".4"/>
+              <stop offset="100%" stop-color="#ffffff" stop-opacity=".03"/>
             </linearGradient>
             <!-- Hachura para a metade prevista: diz "estimativa" mesmo em
                  impressão e para quem não distingue as cores -->
@@ -639,7 +633,12 @@ function svgFluxoSaldo(meses, opts = {}) {
           ${rotulos}
         </div>
       </div>
-      <p class="fl-nota">Barras: o que entrou e saiu em cada mês (escala à esquerda). Área: o saldo acumulado (escala à direita). O zero é o mesmo para as duas.</p>
+      <div class="fl-legenda">
+        <span class="fl-leg"><i class="fl-k in"></i>entrou</span>
+        <span class="fl-leg"><i class="fl-k out"></i>saiu</span>
+        <span class="fl-leg"><i class="fl-k area"></i>saldo</span>
+        <span class="fl-leg"><i class="fl-k prev"></i>previsto</span>
+      </div>
     </div>`;
 }
 
@@ -2450,26 +2449,36 @@ function relProximosMeses() {
   const hoje = meses.find(m => !m.futuro && m === meses[meses.filter(x => !x.futuro).length - 1]);
   const fim = meses[meses.length - 1];
 
+  /* Três camadas, no padrão Mixed Widget 12 do Metronic: cabeçalho colorido,
+     gráfico sobre o campo colorido sangrando até a borda, e um painel branco
+     puxado por cima dele com os números. É a sobreposição que faz esse cartão
+     ser bonito — a cor sozinha não faria. */
   return `
-    <div class="card">
-      <div class="card-head"><div><b>De onde vim, para onde vou</b>
-        <small>seis meses atrás e seis à frente · à direita da linha é previsão</small></div>
-        ${negativo ? `<span class="rel-selo ruim">aperto em ${esc(nomeMes(negativo.period))}</span>`
-          : '<span class="rel-selo bom">no azul</span>'}
+    <div class="card flc">
+      <div class="flc-cab">
+        <b>De onde vim, para onde vou</b>
+        <small>seis meses atrás e seis à frente · à direita de “hoje” é previsão</small>
+        ${negativo ? `<span class="flc-selo ruim">aperto em ${esc(nomeMes(negativo.period))}</span>`
+          : '<span class="flc-selo">no azul nos próximos 6 meses</span>'}
       </div>
-      ${svgFluxoSaldo(meses, {
-        altBarras: 'Entradas e saídas mês a mês, seis meses atrás e seis à frente',
-        altLinha: 'Saldo real até hoje e projetado daqui para frente',
-      })}
-      <div class="chart-foot">
-        <span>Hoje <b>${fmtShort(hoje ? hoje.saldo : 0)}</b></span>
-        <span>Em ${esc(nomeMes(fim.period))} <b class="${fim.saldo < 0 ? 'txt-red' : 'txt-green'}">${fmtShort(fim.saldo)}</b></span>
-        <span>Previsto entrar <b class="txt-green">${fmtShort(futuros.reduce((s, m) => s + m.entra, 0))}</b></span>
-        <span>Previsto sair <b class="txt-red">${fmtShort(futuros.reduce((s, m) => s + m.sai, 0))}</b></span>
+      <div class="flc-graf">
+        ${svgFluxoSaldo(meses, { alt: 'Entradas, saídas e saldo mês a mês, seis meses atrás e seis à frente' })}
       </div>
-      <p class="muted" style="margin-top:8px">${negativo
+      <div class="flc-painel">
+        <div class="flc-grid">
+          <div class="flc-item"><small>Saldo hoje</small><b>${fmt(hoje ? hoje.saldo : 0)}</b></div>
+          <div class="flc-item"><small>Em ${esc(nomeMes(fim.period))}</small>
+            <b class="${fim.saldo < 0 ? 'txt-red' : 'txt-green'}">${fmt(fim.saldo)}</b></div>
+          <div class="flc-item"><small>Previsto entrar</small>
+            <b class="txt-green">${fmt(futuros.reduce((s, m) => s + m.entra, 0))}</b></div>
+          <div class="flc-item"><small>Previsto sair</small>
+            <b class="txt-red">${fmt(futuros.reduce((s, m) => s + m.sai, 0))}</b></div>
+        </div>
+      </div>
+      <p class="flc-nota">${negativo
         ? `⚠️ Com o que já está prometido, o saldo fecha <b class="txt-red">${fmt(negativo.saldo)}</b> em <b>${esc(nomeMes(negativo.period))}</b>. Ainda dá tempo de mudar.`
-        : 'O saldo se mantém positivo nos próximos seis meses. A previsão só conhece o que está cadastrado como conta fixa — receita fora disso não entra nesta conta.'}</p>
+        : 'A previsão só conhece o que está cadastrado como conta fixa — receita fora disso não entra nesta conta.'}
+        <br>Barras: o que entrou e saiu no mês. Área: o saldo acumulado. As duas escalas partem do mesmo zero.</p>
     </div>`;
 }
 
