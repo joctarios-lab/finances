@@ -70,7 +70,7 @@ eval(appSrc + `; Object.assign(global, {
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
-  serieDeSaldo, sparkArea, ligarGrafico,
+  serieDeSaldo, sparkArea, ligarGrafico, caminhoSuave,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -1574,6 +1574,25 @@ try {
   /* Saldo anterior NÃO virou gráfico: é uma constante, e sparkline em constante
      é decoração. Ele é o ponto de partida da série. */
   check('o saldo anterior é o ponto de partida', /data-antes="[\d.,]+"/.test(cabecalho), true);
+
+  /* Entrou e saiu ganharam linha própria: espremidos ao lado da data eles
+     quebravam e empurravam o valor da direita para baixo em tela estreita. */
+  check('entrou e saiu têm linha só deles', cabecalho.includes('class="res-fluxo"'), true);
+  check('e ficam fora da linha do saldo',
+    cabecalho.indexOf('res-fluxo') > cabecalho.indexOf('res-dir'), true);
+  // Tooltip com os três números do dia
+  check('o gráfico leva o movimento de cada dia',
+    /data-ent="[\d.,]*"/.test(cabecalho) && /data-sai="[\d.,]*"/.test(cabecalho), true);
+  check('e tem onde desenhar o balão', cabecalho.includes('id="res-tip"'), true);
+  const apTip = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const corpoTip = apTip.slice(apTip.indexOf('function ligarGrafico'), apTip.indexOf('function ligarPilulas'));
+  check('o balão mostra saldo, entrou e saiu',
+    ["linha('saldo'", "linha('entrou'", "linha('saiu'"].every(x => corpoTip.includes(x)), true);
+  /* Preso no alto e correndo só na horizontal: no celular o dedo está sobre a
+     linha, e um balão que segue os dois eixos nasce debaixo do próprio dedo. */
+  check('o balão não segue o dedo na vertical',
+    corpoTip.includes("tip.style.left") && !corpoTip.includes('tip.style.top'), true);
+  check('e não vaza do cartão', corpoTip.includes('Math.min(r.width - larg - 6'), true);
   check('a variação vem com seta além da cor', /res-selo (ok|ruim)"><i class="pt pt-(up|dn)/.test(cabecalho), true);
   check('e diz o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(cabecalho), true);
 
@@ -1624,6 +1643,41 @@ try {
   check('série que cruza o zero ganha a régua', sparkArea([-100, 200]).includes('spark-zero'), true);
   // Série sem variação nenhuma (dias parados) não pode dividir por zero
   check('série parada não quebra', sparkArea([500, 500, 500]).includes('spark-linha'), true);
+
+  /* ---- Linha suavizada ----
+     A trava dos pontos de controle não e capricho: sem ela a Bézier ultrapassa
+     os dados entre dois dias, e num gráfico de saldo isso desenha o dinheiro
+     caindo abaixo do que realmente caiu. Suavizar arredonda o caminho; não pode
+     inventar valor que não existiu. */
+  check('a linha virou curva', sparkArea([100, 300, 200]).includes(' C'), true);
+  const pico = caminhoSuave([[0, 50], [100, 10], [200, 50]]);
+  const ys = [...pico.matchAll(/[\d.]+ ([\d.]+)/g)].map(m => Number(m[1]));
+  check('nenhum controle passa acima do ponto mais alto', Math.min(...ys) >= 10, true);
+  check('nem abaixo do mais baixo', Math.max(...ys) <= 50, true);
+  // Um vale fundo entre dois picos é onde a curva livre estouraria
+  const vale = caminhoSuave([[0, 10], [50, 10], [100, 90], [150, 10], [200, 10]]);
+  const ysVale = [...vale.matchAll(/[\d.]+ ([\d.]+)/g)].map(m => Number(m[1]));
+  check('vale fundo não faz a curva estourar', Math.max(...ysVale) <= 90 && Math.min(...ysVale) >= 10, true);
+  check('dois pontos ainda desenham', caminhoSuave([[0, 0], [10, 10]]).startsWith('M0.0 0.0 C'), true);
+  check('um ponto só não desenha nada', caminhoSuave([[0, 0]]), '');
+
+  /* A prova de verdade: amostrar a própria curva. Checar ponto de controle testa
+     o mecanismo; amostrar testa a propriedade — que a curva desenhada nunca
+     mostra um saldo que não existiu em dia nenhum. */
+  const zigue = [[0, 60], [75, 20], [150, 80], [225, 15], [300, 55]];
+  const segmentos = [...caminhoSuave(zigue).matchAll(/C([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+)/g)];
+  let estouro = 0;
+  segmentos.forEach((m, i) => {
+    const [, , c1y, , c2y, , py] = [null, ...m.slice(1).map(Number)];
+    const y0 = zigue[i][1];
+    const baixo = Math.min(y0, py), alto = Math.max(y0, py);
+    for (let t = 0; t <= 1; t += 0.02) {
+      const u = 1 - t;
+      const y = u * u * u * y0 + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * py;
+      estouro = Math.max(estouro, baixo - y, y - alto);
+    }
+  });
+  check('a curva amostrada nunca sai da faixa dos dados', estouro <= 0.001, true);
   check('KPIs do painel também', !/kpi-value[^"]*">\$\{fmtShort\(/.test(apF), true);
   check('e o hero do painel', /<small>Em contas<\/small><b>\$\{fmt\(/.test(apF), true);
 
@@ -1698,7 +1752,7 @@ try {
   // O valor aparece na linha do próprio ajuste; o que importa é o total que saiu
   // no resumo, que deve contar só o gasto real do mês (300), não os 300 + 250
   // Pega a coluna "saiu" do resumo, não o selo de variação — os dois trazem seta
-  const totalSaiu = (comConc.match(/pt pt-dn"><\/i>([\d.,]+) (?:saiu|despesas)/) || [])[1];
+  const totalSaiu = (comConc.match(/pt pt-dn"><\/i>([\d.,]+) <small>(?:saiu|despesas)/) || [])[1];
   check('a conciliação não entra no total que saiu', (totalSaiu || '').trim(), fmtSemMoeda(300));
   check('mas é explicada por extenso', comConc.includes('de conciliação'), true);
   // O erro que existia: derivar o fechamento da soma dava 250 a mais
@@ -1755,7 +1809,7 @@ try {
   state.filtros = { ...filtrosVazios(), contas: [cA] };
   saida = renderExtrato(pC);
   check('na conta, a saída inclui a transferência', linhaDia(saida).includes(fmtShort(800)), true);
-  check('o topo mostra o que saiu da conta', /pt pt-dn"><\/i>[\d.,]+ saiu/.test(saida), true);
+  check('o topo mostra o que saiu da conta', /pt pt-dn"><\/i>[\d.,]+ <small>saiu/.test(saida), true);
   check('e o saldo atual dela', saida.includes(fmtSemMoeda(DB.get('accounts', cA).balance)), true);
   check('a linha ganha sinal de saída', /transfer">− /.test(saida), true);
   check('dizendo para onde foi', saida.includes('para Conta Conf B'), true);

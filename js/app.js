@@ -968,6 +968,30 @@ function serieDeSaldo(contas, dias, anterior) {
    a variação — que é o que o gráfico existe para mostrar — sumiria. As duas
    pontas vêm escritas por extenso logo acima e abaixo, então a forma nunca é a
    única fonte do número. Quando a série cruza o zero, o zero aparece como régua. */
+/* Catmull-Rom convertido em cúbicas de Bézier, com cada ponto de controle preso
+   à faixa dos dois pontos que ele liga.
+
+   A trava não é capricho: sem ela a curva ultrapassa os dados entre dois dias, e
+   num gráfico de saldo isso desenha o dinheiro caindo abaixo do que realmente
+   caiu — ou subindo acima do que subiu. Suavizar pode arredondar o caminho;
+   não pode inventar valor que não existiu. */
+function caminhoSuave(pts) {
+  if (pts.length < 2) return '';
+  let d = `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i];
+    const p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    const baixo = Math.min(p1[1], p2[1]), alto = Math.max(p1[1], p2[1]);
+    const trava = y => Math.min(alto, Math.max(baixo, y));
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = trava(p1[1] + (p2[1] - p0[1]) / 6);
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = trava(p2[1] - (p3[1] - p1[1]) / 6);
+    d += ` C${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
+
 function sparkArea(vals) {
   const n = vals.length;
   if (n < 2) return '';
@@ -976,7 +1000,7 @@ function sparkArea(vals) {
   const amplitude = (max - min) || Math.abs(max) || 1;
   const y = v => padT + (1 - (v - min) / amplitude) * (H - padT - padB);
   const x = i => (i / (n - 1)) * W;
-  const linha = vals.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+  const linha = caminhoSuave(vals.map((v, i) => [x(i), y(v)]));
   const zero = (min < 0 && max > 0)
     ? `<line x1="0" y1="${y(0).toFixed(1)}" x2="${W}" y2="${y(0).toFixed(1)}" class="spark-zero"/>` : '';
   /* Degradê que apaga para baixo, como nos widgets do Metronic. Lavagem chapada
@@ -1011,24 +1035,36 @@ function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSa
   return `
     <div class="card res${aberto ? '' : ' fechado'}" id="ext-resumo">
       <button class="res-topo" id="ext-resumo-toggle" aria-expanded="${aberto}">
-        <span class="res-rot">
-          <b>${esc(titulo)}</b>
-          <small id="res-sub">${esc(intervalo)} · <i class="pt pt-up"></i>${fmtSemMoeda(entrou)} ${esc(rotEntrou)} · <i class="pt pt-dn"></i>${fmtSemMoeda(saiu)} ${esc(rotSaiu)}</small>
+        <span class="res-linha1">
+          <span class="res-rot">
+            <b>${esc(titulo)}</b>
+            <small>${esc(intervalo)}</small>
+          </span>
+          <span class="res-dir">
+            <b class="${saldo >= 0 ? '' : 'txt-red'}">${fmt(saldo)}</b>
+            <span class="res-selo ${variacao >= 0 ? 'ok' : 'ruim'}"><i class="pt pt-${variacao >= 0 ? 'up' : 'dn'}"></i>${fmtSemMoeda(Math.abs(variacao))}</span>
+          </span>
+          <span class="res-seta" data-ico="chev"></span>
         </span>
-        <span class="res-dir">
-          <b class="${saldo >= 0 ? '' : 'txt-red'}">${fmt(saldo)}</b>
-          <span class="res-selo ${variacao >= 0 ? 'ok' : 'ruim'}"><i class="pt pt-${variacao >= 0 ? 'up' : 'dn'}"></i>${fmtSemMoeda(Math.abs(variacao))}</span>
+        <!-- Entrou e saiu numa linha inteira só deles: espremidos ao lado da data
+             eles quebravam e empurravam o valor da direita para baixo em tela
+             estreita. Aqui têm a largura toda e nunca disputam espaço. -->
+        <span class="res-fluxo">
+          <span><i class="pt pt-up"></i>${fmtSemMoeda(entrou)} <small>${esc(rotEntrou)}</small></span>
+          <span><i class="pt pt-dn"></i>${fmtSemMoeda(saiu)} <small>${esc(rotSaiu)}</small></span>
         </span>
-        <span class="res-seta" data-ico="chev"></span>
       </button>
       <p class="muted res-nota">${nota}</p>
       <!-- Sangra até a borda, com o raio de baixo do cartão. É o que separa um
            gráfico desenhado de um gráfico encaixotado, e é o padrão do Metronic
            (card-body p-0 + card-rounded-bottom). -->
       <div class="res-graf" id="res-graf" data-dias="${esc(dias.join(','))}" data-vals="${esc(serie.join(','))}"
+        data-ent="${esc(dias.map(d => (porDia[d] || {}).entrou || 0).join(','))}"
+        data-sai="${esc(dias.map(d => (porDia[d] || {}).saiu || 0).join(','))}"
         data-antes="${fmtSemMoeda(anterior)}"
         role="img" aria-label="Saldo dia a dia de ${esc(intervalo)}, de ${fmtSemMoeda(anterior)} a ${fmtSemMoeda(saldo)}">
         ${sparkArea(serie)}
+        <div class="res-tip" id="res-tip" hidden></div>
       </div>
     </div>`;
 }
@@ -1803,33 +1839,47 @@ function ligarRegua(period) {
    traz o total de cada dia. */
 function ligarGrafico() {
   const caixa = $('#res-graf');
-  const pe = $('#res-sub');
-  if (!caixa || !pe) return;
-  const dias = (caixa.dataset.dias || '').split(',').filter(Boolean);
-  const vals = (caixa.dataset.vals || '').split(',').filter(x => x !== '').map(Number);
+  const tip = $('#res-tip');
+  if (!caixa || !tip) return;
+  const lista = k => (caixa.dataset[k] || '').split(',').filter(x => x !== '');
+  const dias = lista('dias');
+  const vals = lista('vals').map(Number);
+  const ent = lista('ent').map(Number);
+  const sai = lista('sai').map(Number);
   if (dias.length < 2 || vals.length !== dias.length) return;
-  const svg = caixa.querySelector('svg');
   const cursor = caixa.querySelector('.spark-cursor');
-  const original = pe.innerHTML;
 
   const mostrar = e => {
     const r = caixa.getBoundingClientRect();
     if (!r.width) return;
-    const px = ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) / r.width;
-    const i = Math.max(0, Math.min(dias.length - 1, Math.round(px * (dias.length - 1))));
+    const i = Math.max(0, Math.min(dias.length - 1,
+      Math.round(((e.clientX - r.left) / r.width) * (dias.length - 1))));
     const d = new Date(dias[i] + 'T12:00:00');
-    pe.innerHTML = `<b>${d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })}</b>`
-      + ` · saldo <b>${fmtSemMoeda(vals[i])}</b>`;
-    if (cursor && svg) {
+    const linha = (rot, v, cls) => (v
+      ? `<span class="res-tip-l"><i>${rot}</i><b${cls ? ` class="${cls}"` : ''}>${fmtSemMoeda(v)}</b></span>` : '');
+    tip.innerHTML = `<span class="res-tip-d">${d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })}</span>`
+      + linha('saldo', vals[i])
+      + linha('entrou', ent[i] || 0, 'txt-green')
+      + linha('saiu', sai[i] || 0, 'txt-red');
+    tip.hidden = false;
+
+    /* O balão fica preso no ALTO do gráfico e só corre na horizontal: no celular
+       o dedo está sobre a linha, e um balão que segue o toque nos dois eixos
+       nasce debaixo do próprio dedo. Preso na borda para não vazar do cartão. */
+    const larg = tip.offsetWidth || 120;
+    const esq = Math.max(6, Math.min(r.width - larg - 6, (e.clientX - r.left) - larg / 2));
+    tip.style.left = Math.round(esq) + 'px';
+
+    if (cursor) {
       const x = (i / (dias.length - 1)) * 300;
       cursor.setAttribute('x1', x); cursor.setAttribute('x2', x);
       cursor.hidden = false;
     }
   };
-  const soltar = () => { pe.innerHTML = original; if (cursor) cursor.hidden = true; };
+  const soltar = () => { tip.hidden = true; if (cursor) cursor.hidden = true; };
 
   caixa.onpointerdown = e => { caixa.setPointerCapture && caixa.setPointerCapture(e.pointerId); mostrar(e); };
-  caixa.onpointermove = e => { if (e.buttons || e.pointerType === 'touch') mostrar(e); };
+  caixa.onpointermove = e => { if (e.buttons || e.pointerType !== 'touch') mostrar(e); };
   caixa.onpointerup = soltar;
   caixa.onpointercancel = soltar;
   caixa.onpointerleave = soltar;
