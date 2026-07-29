@@ -301,36 +301,48 @@ function svgBars(series, refLine, opts = {}) {
   const iMax = valores.indexOf(Math.max(...valores));
   const iAtual = series.findIndex(s => s.hint === '#009ef7');
 
+  /* Texto FORA do SVG, no overlay em HTML.
+
+     Medido nos outros gráficos: viewBox de 760 num cartão de 307px dá escala
+     0,40 — um rótulo de 11px sairia a 4,4px na tela, e o mesmo gráfico mudaria
+     de tamanho conforme a largura do cartão. Aqui o SVG guarda só a geometria e
+     o texto renderiza no tamanho real do aparelho, igual em qualquer contexto. */
+  const px = v => (v / W * 100).toFixed(2);
+  const py = v => (v / H * 100).toFixed(2);
+  let textos = '';
+
   // Grade: hairline sólida, recessiva, com os valores à esquerda
   let grid = '';
   for (let i = 0; i <= 4; i++) {
     const v = max * i / 4, gy = y(v);
-    grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '" class="ch-grid"/>' +
-      '<text x="' + (padL - 10) + '" y="' + (gy + 4).toFixed(1) + '" text-anchor="end" class="ch-axis">' +
-      (v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(v)) + '</text>';
+    grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '" class="ch-grid"/>';
+    textos += '<span class="g-t g-t-eixo" style="left:0;top:' + py(gy) + '%">' +
+      (v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(v)) + '</span>';
   }
 
   // Referências: renda (teto) e média do período — linhas finas e sólidas
   let refs = '';
   if (media > 0) {
     const my = y(media);
-    refs += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + my.toFixed(1) + '" y2="' + my.toFixed(1) + '" class="ch-avg"/>' +
-      '<text x="' + (W - padR) + '" y="' + (my - 7).toFixed(1) + '" text-anchor="end" class="ch-avg-lbl">média ' + fmtShort(media).replace('R$', '').trim() + '</text>';
+    refs += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + my.toFixed(1) + '" y2="' + my.toFixed(1) + '" class="ch-avg"/>';
+    textos += '<span class="g-t g-t-ref" style="right:0;top:' + py(my - 4) + '%">média ' + fmtShort(media).replace('R$', '').trim() + '</span>';
   }
   if (refLine > 0 && refLine <= max) {
     const ry = y(refLine);
-    refs += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + ry.toFixed(1) + '" y2="' + ry.toFixed(1) + '" class="ch-ref-line"/>' +
-      '<text x="' + (W - padR) + '" y="' + (ry - 7).toFixed(1) + '" text-anchor="end" class="ch-ref">renda ' + fmtShort(refLine).replace('R$', '').trim() + '</text>';
+    refs += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + ry.toFixed(1) + '" y2="' + ry.toFixed(1) + '" class="ch-ref-line"/>';
+    textos += '<span class="g-t g-t-ref renda" style="right:0;top:' + py(ry - 4) + '%">renda ' + fmtShort(refLine).replace('R$', '').trim() + '</span>';
   }
 
-  let marcas = '', rotulos = '', hits = '';
+  let marcas = '', hits = '';
   series.forEach((s, i) => {
     const cx = padL + i * banda + banda / 2;
     const topo = s.value > 0 ? y(s.value) : y(0);
     const base = y(0);
     const alt = Math.max(0, base - topo);
     const atual = i === iAtual;
-    const x = cx - larg / 2, r = Math.min(4, alt);   // ponta arredondada, base reta
+    /* Raio menor que nos outros gráficos: com o SVG esticado na horizontal para
+       o overlay casar, um canto de 4 vira elíptico. Em 2,5 a distorção some. */
+    const x = cx - larg / 2, r = Math.min(2.5, alt);
 
     if (alt > 0) {
       marcas += '<path d="M' + x.toFixed(1) + ' ' + base.toFixed(1) +
@@ -341,11 +353,10 @@ function svgBars(series, refLine, opts = {}) {
 
     // Rótulo só no período atual e no maior valor — nunca em toda barra
     if (s.value > 0 && (atual || i === iMax)) {
-      rotulos += '<text x="' + cx.toFixed(1) + '" y="' + (topo - 10).toFixed(1) + '" text-anchor="middle" class="ch-val">' +
-        fmtShort(s.value).replace('R$', '').trim() + '</text>';
+      textos += '<span class="g-t g-t-val" style="left:' + px(cx) + '%;top:' + py(topo - 3) + '%">' +
+        fmtShort(s.value).replace('R$', '').trim() + '</span>';
     }
-
-    rotulos += '<text x="' + cx.toFixed(1) + '" y="' + (H - 12) + '" text-anchor="middle" class="ch-lbl' + (atual ? ' ch-lbl-on' : '') + '">' + esc(s.label) + '</text>';
+    textos += '<span class="g-t g-t-rot' + (atual ? ' on' : '') + '" style="left:' + px(cx) + '%">' + esc(s.label) + '</span>';
 
     // Alvo de hover maior que a marca, cobrindo a faixa inteira
     hits += '<rect x="' + (padL + i * banda).toFixed(1) + '" y="' + padT + '" width="' + banda.toFixed(1) + '" height="' + plotH +
@@ -353,8 +364,11 @@ function svgBars(series, refLine, opts = {}) {
   });
 
   const baseline = '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y(0).toFixed(1) + '" y2="' + y(0).toFixed(1) + '" class="ch-base"/>';
-  return '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Evolução dos gastos por período">' +
-    grid + refs + baseline + marcas + rotulos + hits + '</svg>';
+  return '<div class="g-wrap g-wrap-bars">' +
+    '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"' +
+    ' role="img" aria-label="Evolução dos gastos por período">' +
+    grid + refs + baseline + marcas + hits + '</svg>' +
+    '<div class="g-textos">' + textos + '</div></div>';
 }
 
 // Arredonda o topo da escala para um número redondo — deixa a grade legível
@@ -595,11 +609,15 @@ function svgBurnup(period, refLimit) {
   const X = i => padL + (i / Math.max(1, totalDias - 1)) * (W - padL - padR);
   const Y = v => padT + plotH - (v / max) * plotH;
 
-  let grid = '';
+  // Texto no overlay, como nos outros: aqui o SVG é esticado e um rótulo dentro
+  // dele sairia minúsculo e deformado
+  let grid = '', textos = '';
+  const pyB = v => (v / H * 100).toFixed(2);
   for (let i = 0; i <= 4; i++) {
     const gy = Y(max * i / 4);
     grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '" class="ch-grid"/>';
-    if (i) grid += '<text x="' + padL + '" y="' + (gy - 5).toFixed(1) + '" class="ch-axis">' + fmtShort(max * i / 4).replace('R$', '').trim() + '</text>';
+    if (i) textos += '<span class="g-t g-t-eixo" style="left:0;top:' + pyB(gy) + '%">' +
+      fmtShort(max * i / 4).replace('R$', '').trim() + '</span>';
   }
 
   const pts = [];
@@ -609,10 +627,11 @@ function svgBurnup(period, refLimit) {
     ? linha + 'L' + X(decorridos - 1).toFixed(1) + ',' + Y(0).toFixed(1) + 'L' + X(0).toFixed(1) + ',' + Y(0).toFixed(1) + 'Z'
     : '';
 
-  const ideal = refLimit > 0
-    ? '<line x1="' + X(0) + '" y1="' + Y(0).toFixed(1) + '" x2="' + X(totalDias - 1).toFixed(1) + '" y2="' + Y(refLimit).toFixed(1) + '" class="ch-ref-line"/>' +
-      '<text x="' + (W - padR) + '" y="' + (Y(refLimit) - 7).toFixed(1) + '" text-anchor="end" class="ch-ref">trilha ideal</text>'
-    : '';
+  let ideal = '';
+  if (refLimit > 0) {
+    ideal = '<line x1="' + X(0) + '" y1="' + Y(0).toFixed(1) + '" x2="' + X(totalDias - 1).toFixed(1) + '" y2="' + Y(refLimit).toFixed(1) + '" class="ch-ref-line"/>';
+    textos += '<span class="g-t g-t-ref renda" style="right:0;top:' + pyB(Y(refLimit) - 4) + '%">trilha ideal</span>';
+  }
 
   const dx = X(Math.max(0, decorridos - 1)), dy = Y(gastoHoje);
   const estourou = refLimit > 0 && gastoHoje > refLimit * (decorridos / totalDias);
@@ -628,7 +647,7 @@ function svgBurnup(period, refLimit) {
     (area ? '<path d="' + area + '" fill="url(#gArea)"/>' : '') +
     '<path d="' + linha + '" fill="none" stroke="' + (estourou ? '#f1416c' : '#009ef7') + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
     '</svg>' +
-    '<div class="g-textos">' +
+    '<div class="g-textos">' + textos +
       '<span class="g-bola' + (estourou ? ' ruim' : ' agora') + '" style="left:' + pct(dx, W) + '%;top:' + pct(dy, H) + '%"></span>' +
       '<span class="g-t g-t-val" style="left:' + pct(dx, W) + '%;top:' + pct(dy - 10, H) + '%">' + fmtShort(gastoHoje) + '</span>' +
       '<span class="g-t g-t-rot" style="left:0;transform:none">dia 1</span>' +

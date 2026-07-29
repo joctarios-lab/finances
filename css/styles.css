@@ -359,6 +359,21 @@ body {
 }
 .g-t-val { font-size: 11.5px; font-weight: 700; color: var(--paper); transform: translate(-50%, -100%); }
 .g-t-rot { bottom: 0; font-size: 11px; color: var(--paper-dim); }
+/* O período atual em destaque: a barra dele já tem tom próprio, e o rótulo
+   acompanha para a leitura casar de cima a baixo */
+.g-t-rot.on { color: var(--gold); font-weight: 700; }
+
+/* Barras: mais alto que a linha, porque doze colunas precisam de espaço para o
+   rótulo de cada mês caber embaixo sem colidir */
+.g-wrap-bars { height: 250px; }
+@media (max-width: 560px) { .g-wrap-bars { height: 215px; } }
+/* Eixo à esquerda e referências à direita, ancorados na própria altura da linha */
+.g-t-eixo {
+  left: 0; font-size: 10.5px; color: var(--paper-dim);
+  transform: translateY(-50%); background: var(--ink-2); padding-right: 3px;
+}
+.g-t-ref { font-size: 10.5px; font-weight: 700; color: var(--paper-dim); transform: translateY(-100%); }
+.g-t-ref.renda { color: var(--red); }
 /* Div com border-radius em vez de <circle>: o SVG é esticado sem preservar
    proporção para o overlay casar, e círculo esticado vira elipse */
 .g-bola {

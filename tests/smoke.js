@@ -734,7 +734,13 @@ try {
 console.log('\n=== Gráficos ===');
 try {
   const barras = svgBars([{ label: 'jan', value: 100 }, { label: 'fev', value: 250, hint: '#009ef7' }], 300);
-  check('barras: SVG válido com grade e rótulos', barras.startsWith('<svg') && barras.includes('ch-grid') && barras.includes('fev'), true);
+  /* O texto saiu de dentro do SVG: com viewBox de 760 num cartão de 307px a
+     escala é 0,40, e um rótulo de 11px sairia a 4,4px na tela. Agora o SVG
+     guarda só a geometria e o texto vem no overlay, no tamanho real. */
+  check('barras: geometria no SVG, texto fora', barras.startsWith('<div class="g-wrap') && barras.includes('ch-grid'), true);
+  check('e o rótulo do mês aparece no overlay', /class="g-t g-t-rot[^"]*"[^>]*>fev</.test(barras), true);
+  check('sem texto dentro do SVG escalado', /<svg[\s\S]*?<text/.test(barras), false);
+  check('o eixo também saiu para o overlay', barras.includes('g-t-eixo'), true);
   check('barras: linha de renda desenhada', barras.includes('ch-ref-line'), true);
   check('escala arredonda para número redondo', niceCeil(2340), 2500);
   check('escala funciona com valores pequenos', niceCeil(37), 40);
@@ -4649,3 +4655,40 @@ DB.data.transactions = DB.data.transactions.filter(t =>
 DB.data.cards = DB.data.cards.filter(c => c.name !== 'Cartao Pendencia');
 DB.data.accounts = DB.data.accounts.filter(a => a.name !== 'Conta Pendencia');
 DB.save();
+
+/* ---- Nitidez: nenhum texto dentro de SVG esticado ----
+   Medido: viewBox de 760 num cartão de 307px dá escala 0,40 — um rótulo de 11px
+   sai a 4,4px na tela, e o mesmo gráfico muda de tamanho conforme o cartão. */
+console.log('\n=== Nitidez de todos os gráficos ===');
+{
+  const apN = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const cssN = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  const semTexto = (nome, html) => {
+    check(`${nome}: sem texto dentro do SVG`, /<svg[\s\S]*?<text/.test(html), false);
+    check(`${nome}: texto no overlay`, html.includes('class="g-textos"'), true);
+  };
+  semTexto('barras', svgBars([{ label: 'jan', value: 100 }, { label: 'fev', value: 250, hint: '#009ef7' }], 300));
+  semTexto('cascata', svgCascata([
+    { rot: 'E', valor: 1000, tipo: 'entra' }, { rot: 'S', valor: 400, tipo: 'sai' },
+    { rot: 'R', valor: 0, tipo: 'total' }]));
+  semTexto('faixa', svgLinhaFaixa([{ rot: 'jan', valor: 100 }, { rot: 'fev', valor: 200 }]));
+  semTexto('burnup', svgBurnup(DB.monthPeriod(new Date()), 3000));
+
+  /* O donut é a exceção legítima: quadrado, com proporção preservada e escala
+     entre 0,79 e 1,04 — o texto dele renderiza no tamanho certo. Esticá-lo
+     deformaria o anel, que é o oposto do que se quer. */
+  const donut = svgDonut([{ label: 'a', value: 60, color: '#009ef7' }], 60);
+  check('donut mantém o texto dentro, e pode', donut.includes('dn-total'), true);
+  check('porque ele preserva a proporção', donut.includes('preserveAspectRatio="none"'), false);
+  check('e é dimensionado perto de 1:1', /\.donut-svg \{ width: clamp\(190px, 46%, 250px\)/.test(cssN), true);
+
+  // Todo gráfico esticado precisa de traço com espessura real
+  const esticados = (apN.match(/preserveAspectRatio="none"/g) || []).length;
+  check('há gráficos esticados', esticados >= 4, true);
+  check('e todos usam traço não escalável',
+    (apN.match(/vector-effect="non-scaling-stroke"/g) || []).length
+    + (cssN.match(/vector-effect: non-scaling-stroke/g) || []).length >= esticados, true);
+  // A altura vem do contêiner, não do aspecto: é o que dá fonte igual em qualquer largura
+  check('as barras têm altura própria', /\.g-wrap-bars \{ height: 250px/.test(cssN), true);
+  check('e encolhem em tela estreita', /max-width: 560px\)[^}]*\.g-wrap-bars \{ height: 215px/.test(cssN), true);
+}
