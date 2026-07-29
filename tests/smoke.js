@@ -68,7 +68,7 @@ eval(appSrc + `; Object.assign(global, {
   state, fmt, fmtShort, fmtDay, esc, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil,
-  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, filtrosVazios, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
+  Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, openFiltrosSheet, FILTROS_VAZIOS, filtrosVazios, janelasDoMes, somarDias, openJanelaSheet, bindView, fmt, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -1307,6 +1307,53 @@ try {
     check(`painel tem ${campo}`, folha.includes(campo), true);
   }
   check('painel oferece limpar tudo', folha.includes('fl-limpar'), true);
+
+  /* ---- Recorte de dias dentro do mês ---- */
+  zerar();
+  const janelas = janelasDoMes(p2);
+  const iniP = DB.inicioISO(p2), fimP = somarDias(DB.fimISO(p2), -1);
+  check('o mês todo é a primeira janela', janelas[0].de, '');
+  check('a 1ª quinzena começa no início do mês', janelas[1].de, iniP);
+  check('a 2ª quinzena termina no fim do mês', janelas[2].ate, fimP);
+  check('as quinzenas se encostam sem buraco', somarDias(janelas[1].ate, 1), janelas[2].de);
+  check('nenhuma janela escapa do mês', janelas.every(j => !j.de || (j.de >= iniP && j.ate <= fimP)), true);
+
+  zerar();
+  const tudoDoMes = qtd();
+  state.filtros.de = janelas[1].de; state.filtros.ate = janelas[1].ate;
+  const naQuinzena = txsFiltradas(p2);
+  check('o recorte reduz a lista', naQuinzena.length < tudoDoMes, true);
+  check('e não deixa passar dia de fora',
+    naQuinzena.every(t => t.date >= janelas[1].de && t.date <= janelas[1].ate), true);
+  zerar(); state.filtros.de = janelas[2].de; state.filtros.ate = janelas[2].ate;
+  check('as duas quinzenas somam o mês inteiro', naQuinzena.length + qtd(), tudoDoMes);
+
+  /* O cabeçalho tem de seguir o recorte junto com a lista. Saldo anterior do dia 1
+     sobre uma lista que começa no dia 16 é exatamente a divergência que já fez o
+     extrato discordar do saldo da conta. */
+  zerar();
+  const extMes = renderExtrato(p2);
+  state.filtros.de = janelas[2].de; state.filtros.ate = janelas[2].ate;
+  const extQuinzena = renderExtrato(p2);
+  const saldoAnterior = html => (html.match(/Saldo anterior<\/small><b[^>]*>([^<]+)/) || [])[1];
+  check('o saldo anterior muda com o recorte', saldoAnterior(extMes) !== saldoAnterior(extQuinzena), true);
+  check('e o saldo anterior do recorte é o saldo na data de início',
+    saldoAnterior(extQuinzena), fmt(DB.saldoNaData(null, janelas[2].de)));
+  check('o texto explica de quando é o saldo anterior', extQuinzena.includes('que havia em'), true);
+  check('sem recorte, volta a falar do mês anterior', extMes.includes('vieram do anterior'), true);
+
+  /* Trocar de mês volta ao mês todo: o recorte guarda datas absolutas, e levá-lo
+     para outro mês daria um intervalo que não toca nada do que a tela mostra.
+     A aba é acertada ANTES de aplicar o recorte — senão setTab zeraria o filtro
+     por conta própria e o teste passaria sem o clique provar nada. */
+  setTab('extrato');
+  bindView();
+  state.filtros.de = janelas[1].de; state.filtros.ate = janelas[1].ate;
+  check('o recorte está de pé antes do clique', state.filtros.de, janelas[1].de);
+  els['#mn-prev'].onclick();
+  check('trocar de mês desfaz o recorte', state.filtros.de, '');
+  check('e o mês realmente andou', state.monthOffset, -1);
+  state.monthOffset = 0;
   zerar();
 } catch (e) { console.log(` FALHA | etiquetas/filtros: ${e.message}`); fail++; }
 

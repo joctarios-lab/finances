@@ -500,6 +500,16 @@ svg:hover .ch-bar-on { fill: #005a92; }
   width: 34px; height: 34px; border-radius: 8px; font-size: 15px; cursor: pointer;
 }
 
+/* Recorte de dias dentro do mês: rola na horizontal em vez de quebrar linha, para
+   não empurrar a lista para baixo da dobra logo depois de a fileira de atalhos ter
+   saído justamente por isso. */
+.janela-chips {
+  flex-wrap: nowrap; overflow-x: auto; margin: -4px 0 2px;
+  padding-bottom: 2px; scrollbar-width: none;
+}
+.janela-chips::-webkit-scrollbar { display: none; }
+.janela-chips .chip { flex: none; }
+
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip {
   border: 1px solid var(--line); background: var(--ink-2); color: var(--paper-dim);

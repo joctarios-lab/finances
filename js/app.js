@@ -24,6 +24,8 @@ const FILTROS_VAZIOS = {
   scope: [], membro: [], tipo: [], situacao: [],
   categorias: [], tags: [], metodos: [], contas: [],
   valorMin: '', valorMax: '', recorrente: false,
+  // Recorte de dias DENTRO do mês em análise. Vazio = o mês inteiro.
+  de: '', ate: '',
 };
 
 /* Cópia sempre nova das listas. `{ ...FILTROS_VAZIOS }` copiaria a REFERÊNCIA
@@ -114,6 +116,12 @@ const fmt = v => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', c
 const fmtShort = v => (Number(v) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
 const todayISO = () => {
   const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+// Meio-dia para o horário de verão não empurrar a data um dia para trás
+const somarDias = (iso, n) => {
+  const d = new Date(iso + 'T12:00:00');
+  d.setDate(d.getDate() + n);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 const fmtDay = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' });
@@ -770,6 +778,8 @@ function txsFiltradas(period) {
     if (!algum(f.metodos, t.method)) return false;
     if (f.contas && f.contas.length &&
         !f.contas.some(id => t.account_id === id || t.card_id === id || t.to_account === id)) return false;
+    if (f.de && t.date < f.de) return false;
+    if (f.ate && t.date > f.ate) return false;
     if (f.valorMin && Number(t.amount) < Number(f.valorMin)) return false;
     if (f.valorMax && Number(t.amount) > Number(f.valorMax)) return false;
     if (f.recorrente && !t.recurring) return false;
@@ -782,6 +792,27 @@ function txsFiltradas(period) {
     }
     return true;
   }).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/* Recortes de dias oferecidos dentro do mês. Um toque cobre quase todo caso; o
+   resto vai no "Personalizado", que não pode escapar do mês em análise. */
+function janelasDoMes(period) {
+  const ini = DB.inicioISO(period);
+  const fim = somarDias(DB.fimISO(period), -1);      // period.end é exclusivo
+  const meio = somarDias(ini, 14);
+  const janelas = [
+    { rot: 'Mês todo', de: '', ate: '' },
+    { rot: '1ª quinzena', de: ini, ate: meio },
+    { rot: '2ª quinzena', de: somarDias(meio, 1), ate: fim },
+  ];
+  // "Últimos 7 dias" só existe quando hoje cai dentro do mês em análise: em mês
+  // encerrado seria um intervalo que não toca nada do que está na tela
+  const hoje = todayISO();
+  if (hoje >= ini && hoje <= fim) {
+    const de = somarDias(hoje, -6);
+    janelas.push({ rot: 'Últimos 7 dias', de: de < ini ? ini : de, ate: hoje });
+  }
+  return janelas;
 }
 
 function renderExtrato(period) {
@@ -797,6 +828,15 @@ function renderExtrato(period) {
 
      Entre duas contas que estão AMBAS no filtro, porém, o dinheiro continua sem
      entrar nem sair: contar seria inventar movimento. Ver efeitoDaTransferencia. */
+  /* As bordas do que está sendo olhado. Recortar a lista sem recortar os saldos
+     daria um "Saldo anterior" do dia 1 acima de uma lista que começa no dia 10 —
+     o mesmo tipo de divergência que já fez o extrato discordar do saldo da conta.
+     saldoNaData(D) é o saldo ANTES de qualquer lançamento de D, então o fim é o
+     dia seguinte ao último dia do recorte. */
+  const bordaDe = state.filtros.de || DB.inicioISO(period);
+  const bordaAte = state.filtros.ate ? somarDias(state.filtros.ate, 1) : DB.fimISO(period);
+  const recortado = !!(state.filtros.de || state.filtros.ate);
+
   const contasFiltradas = (state.filtros.contas || []).filter(id => DB.get('accounts', id));
   const efeitoNaConta = t => efeitoDaTransferencia(t, contasFiltradas);
   const contaFiltrada = contasFiltradas.length ? contasFiltradas : null;
@@ -891,6 +931,22 @@ function renderExtrato(period) {
       <b>${period.label} · ${fmtShort(total)}</b>
       <button id="mn-next" aria-label="Próximo mês" data-ico="chevR"></button>
     </div>
+    <!-- Recorte de dias dentro do mês. Vale para a lista e para os saldos do topo;
+         o orçamento dos envelopes segue mensal de propósito — meia dose de gasto
+         contra um orçamento inteiro seria leitura errada. -->
+    <div class="chips janela-chips" id="janela-chips">
+      ${(() => {
+        const janelas = janelasDoMes(period);
+        const casa = j => (state.filtros.de || '') === j.de && (state.filtros.ate || '') === j.ate;
+        const personalizado = !janelas.some(casa);
+        return janelas.map(j =>
+          `<button class="chip ${casa(j) ? 'active' : ''}" data-de="${j.de}" data-ate="${j.ate}">${j.rot}</button>`).join('')
+          + `<button class="chip ${personalizado ? 'active' : ''}" id="janela-custom">${
+            personalizado
+              ? `${fmtDate(new Date(bordaDe + 'T12:00:00'))} a ${fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`
+              : 'Personalizado'}</button>`;
+      })()}
+    </div>
     ${contaFiltrada ? (() => {
       // Conferindo contas: os números viram os DELAS, para bater com o extrato do
       // banco linha a linha.
@@ -907,8 +963,8 @@ function renderExtrato(period) {
 
          Quando sobra diferença, ela é a conciliação, e aparece dita por extenso
          em vez de deixar a conta parecer errada. */
-      const anterior = DB.saldoNaData(contasFiltradas, DB.inicioISO(period));
-      const finalMes = DB.saldoNaData(contasFiltradas, DB.fimISO(period));
+      const anterior = DB.saldoNaData(contasFiltradas, bordaDe);
+      const finalMes = DB.saldoNaData(contasFiltradas, bordaAte);
       const conciliado = finalMes - (anterior + entrouNaConta - saiuNaConta);
       return `
     <div class="stat-2x2">
@@ -917,7 +973,8 @@ function renderExtrato(period) {
       <div class="card"><small>Entrou</small><b class="txt-green">${fmt(entrouNaConta)}</b></div>
       <div class="card"><small>Saiu</small><b class="txt-red">${fmt(saiuNaConta)}</b></div>
     </div>
-    <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc(nomes.join(' + '))}</b> — o saldo anterior é o que veio do mês passado.${
+    <p class="muted" style="margin:-4px 0 2px">Extrato de <b>${esc(nomes.join(' + '))}</b> — o saldo anterior é o que ${
+      recortado ? `havia em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}` : 'veio do mês passado'}.${
       Math.abs(conciliado) > 0.005 ? ` Há <b>${fmt(Math.abs(conciliado))}</b> de conciliação no período, que mexe no saldo mas não é gasto nem entrada.` : ''}${varias
       ? ' Transferência entre estas contas não conta, porque o dinheiro não saiu daqui.' : ''}</p>`;
     })()
@@ -927,8 +984,8 @@ function renderExtrato(period) {
          parece começar do zero e a soma nunca fecha com o saldo das contas. */
       // Os dois saldos vêm do saldo real das contas, cada um na sua data — ver o
       // comentário no ramo de cima: derivar o fechamento da soma ignora a conciliação
-      const anterior = DB.saldoNaData(null, DB.inicioISO(period));
-      const finalMes = DB.saldoNaData(null, DB.fimISO(period));
+      const anterior = DB.saldoNaData(null, bordaDe);
+      const finalMes = DB.saldoNaData(null, bordaAte);
       const resultado = receitas - total;
       const conciliado = finalMes - (anterior + resultado);
       return `
@@ -938,9 +995,15 @@ function renderExtrato(period) {
       <div class="card"><small>Receitas</small><b class="txt-green">${fmt(receitas)}</b></div>
       <div class="card"><small>Despesas</small><b class="txt-red">${fmt(total)}</b></div>
     </div>
-    <p class="muted" style="margin:-4px 0 2px">${resultado >= 0
-      ? `Sobrou <b class="txt-green">${fmt(resultado)}</b> neste mês, somados aos ${fmt(anterior)} que vieram do anterior.`
-      : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> neste mês, tirados dos ${fmt(anterior)} que vieram do anterior.`}${
+    <p class="muted" style="margin:-4px 0 2px">${(() => {
+      const onde = recortado ? 'neste intervalo' : 'neste mês';
+      const vindo = recortado
+        ? `que havia em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}`
+        : 'que vieram do anterior';
+      return resultado >= 0
+        ? `Sobrou <b class="txt-green">${fmt(resultado)}</b> ${onde}, somados aos ${fmt(anterior)} ${vindo}.`
+        : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> ${onde}, tirados dos ${fmt(anterior)} ${vindo}.`;
+    })()}${
       Math.abs(conciliado) > 0.005 ? ` Há ainda <b>${fmt(Math.abs(conciliado))}</b> de conciliação, que mexe no saldo sem ser gasto nem entrada.` : ''}</p>`;
     })()}
     <!-- Lançar é o botão flutuante, e só ele: a fileira Despesa/Receita/Transferir
@@ -1307,8 +1370,19 @@ function bindView() {
   const v = $('#view');
   v.querySelectorAll('[data-tx]').forEach(el => el.onclick = () => openTxSheet(DB.get('transactions', el.dataset.tx)));
   const prev = $('#mn-prev'), next = $('#mn-next');
-  if (prev) prev.onclick = () => { state.monthOffset--; render(); };
-  if (next) next.onclick = () => { if (state.monthOffset < 0) { state.monthOffset++; render(); } };
+  /* Trocar de mês volta para o mês todo: o recorte guarda datas absolutas, e
+     levá-lo para outro mês daria um intervalo que não toca nada do que a tela
+     passou a mostrar. */
+  const zerarJanela = () => { if (state.filtros) { state.filtros.de = ''; state.filtros.ate = ''; } };
+  if (prev) prev.onclick = () => { state.monthOffset--; zerarJanela(); render(); };
+  if (next) next.onclick = () => { if (state.monthOffset < 0) { state.monthOffset++; zerarJanela(); render(); } };
+  v.querySelectorAll('#janela-chips .chip[data-de]').forEach(ch => ch.onclick = () => {
+    state.filtros.de = ch.dataset.de;
+    state.filtros.ate = ch.dataset.ate;
+    render();
+  });
+  const janelaCustom = $('#janela-custom');
+  if (janelaCustom) janelaCustom.onclick = () => openJanelaSheet(DB.monthPeriod(new Date(), state.monthOffset));
   const rprev = $('#rep-prev'), rnext = $('#rep-next');
   if (rprev) rprev.onclick = () => { state.repOffset = (state.repOffset || 0) - 1; render(); };
   if (rnext) rnext.onclick = () => { state.repOffset = (state.repOffset || 0) + 1; render(); };
@@ -1489,6 +1563,39 @@ function bindView() {
    controles: na tela, empurrariam a lista para fora da primeira dobra — e o
    extrato existe para mostrar a lista. Aplicar fecha e a tela mostra o que
    está ativo em etiquetas, então nada fica escondido depois de escolhido. */
+/* Intervalo personalizado. Os dois campos são limitados ao mês em análise: o
+   recorte é DENTRO do mês, e deixar escapar criaria um extrato que não bate com
+   o mês escrito logo acima dele. */
+function openJanelaSheet(period) {
+  const ini = DB.inicioISO(period);
+  const fim = somarDias(DB.fimISO(period), -1);
+  const f = state.filtros || filtrosVazios();
+  openSheet(`
+    <div class="sheet-title">Intervalo de datas<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin-bottom:12px">Dentro de <b>${esc(period.label)}</b>. A lista e os saldos do topo passam a valer só para o intervalo; o orçamento dos envelopes continua mensal.</p>
+    <div class="row2">
+      <div class="field"><label>De</label><input id="jn-de" type="date" min="${ini}" max="${fim}" value="${f.de || ini}"></div>
+      <div class="field"><label>Até</label><input id="jn-ate" type="date" min="${ini}" max="${fim}" value="${f.ate || fim}"></div>
+    </div>
+    <button class="btn" id="sh-save">Aplicar intervalo</button>
+    <div class="btn-row"><button class="btn ghost" id="jn-mes">Ver o mês todo</button></div>
+  `);
+  $('#sh-close').onclick = closeSheet;
+  $('#jn-mes').onclick = () => {
+    state.filtros.de = ''; state.filtros.ate = '';
+    closeSheet(); render();
+  };
+  $('#sh-save').onclick = () => {
+    const dentro = v => (!v ? '' : v < ini ? ini : v > fim ? fim : v);
+    let de = dentro($('#jn-de').value), ate = dentro($('#jn-ate').value);
+    // Datas invertidas são engano de digitação, não pedido de lista vazia
+    if (de && ate && de > ate) [de, ate] = [ate, de];
+    state.filtros.de = de === ini && ate === fim ? '' : de;   // o mês inteiro é "mês todo"
+    state.filtros.ate = de === ini && ate === fim ? '' : ate;
+    closeSheet(); render();
+  };
+}
+
 function openFiltrosSheet() {
   const f = state.filtros || filtrosVazios();
   const membros = [MEMBRO_COMUM, ...DB.settings().members];
