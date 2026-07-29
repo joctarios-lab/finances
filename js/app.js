@@ -1473,10 +1473,13 @@ function renderExtrato(period) {
         <button id="mn-prev" aria-label="Mês anterior" data-ico="chevL"></button>
         <div style="text-align:center">
           <b>${esc(period.label)}</b>
+          <!-- Mês futuro precisa se anunciar: sem isso, o extrato quase vazio de
+               setembro pareceria perda de dados em vez de mês que não chegou. -->
           <div class="muted" style="font-size:11.5px">${fmtDate(period.start)} a ${fmtDate(new Date(period.end.getTime() - 86400000))}${
-            isCurrent ? ` · dia ${st.elapsedDays} de ${st.totalDays}` : ' · encerrado'}</div>
+            isCurrent ? ` · dia ${st.elapsedDays} de ${st.totalDays}`
+            : state.monthOffset > 0 ? ' · ainda não chegou' : ' · encerrado'}</div>
         </div>
-        <button id="mn-next" aria-label="Próximo mês" data-ico="chevR" ${isCurrent ? 'disabled style="opacity:.35"' : ''}></button>
+        <button id="mn-next" aria-label="Próximo mês" data-ico="chevR" ${state.monthOffset >= 6 ? 'disabled style="opacity:.35"' : ''}></button>
       </div>
       ${reguaDoMes(period, movimentoPorDia)}
       ${barraDePilulas()}
@@ -1833,6 +1836,7 @@ function renderRelatorios() {
     ${relCategorias({ period, byCat, total })}
     ${relCortes(period, txs, total)}
     ${relProjecao({ period, st, atual, total, receitas, juizo, filtrado })}
+    ${atual && !filtrado ? relProximosMeses() : ''}
     ${relConstrucao({ period, receitas, resultado, filtrado })}
 
     <button class="btn ghost" id="btn-csv" style="display:flex;align-items:center;justify-content:center;gap:8px">
@@ -2220,6 +2224,48 @@ function projecaoCard(period) {
       : '<p class="muted" style="margin-top:8px">O saldo se mantém positivo até o fim do ciclo com o que está previsto.</p>'}`;
 }
 
+/* Os próximos meses: o que já está prometido antes de acontecer.
+
+   Nenhuma outra tela responde isto. O extrato mostra o passado e o mês corrente;
+   a projeção diária para no fim do ciclo. Mas o financiamento tem 22 parcelas, o
+   IPVA vence em setembro e o aluguel não vai parar — tudo isso já é decidido, e
+   ver antes é o que permite não se surpreender.
+
+   O saldo ROLA de um mês para o outro: um mês negativo no meio contamina os
+   seguintes, e olhar mês a mês isolado esconde exatamente isso. */
+function relProximosMeses() {
+  const meses = DB.previsaoMeses(6);
+  if (!meses.some(m => m.itens.length)) return '';
+  const primeiroNegativo = meses.find(m => m.saldoAoFim < 0);
+  const nomeMes = p => p.start.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '');
+
+  return `
+    <div class="card">
+      <div class="card-head"><div><b>Próximos meses</b>
+        <small>o que já está prometido — recorrências, parcelas e faturas</small></div>
+        ${primeiroNegativo ? `<span class="rel-selo ruim">aperto em ${esc(nomeMes(primeiroNegativo.period))}</span>` : ''}
+      </div>
+      <div class="table-wrap"><table class="rep-table">
+        <thead><tr><th>Mês</th><th class="num">Entra</th><th class="num">Sai</th><th class="num">Sobra</th><th class="num">Saldo</th></tr></thead>
+        <tbody>${meses.map(m => `<tr class="prox-linha" data-prox="${m.period.start.getTime()}">
+          <td><span class="rep-seta" data-ico="chev"></span>${esc(nomeMes(m.period))}
+            <small class="muted">${m.itens.length} ${m.itens.length === 1 ? 'item' : 'itens'}</small></td>
+          <td class="num ${m.entra ? 'txt-green' : 'muted'}">${m.entra ? fmtShort(m.entra) : '—'}</td>
+          <td class="num ${m.sai ? 'txt-red' : 'muted'}">${m.sai ? fmtShort(m.sai) : '—'}</td>
+          <td class="num ${m.resultado >= 0 ? '' : 'txt-red'}">${fmtShort(m.resultado)}</td>
+          <td class="num"><b class="${m.saldoAoFim >= 0 ? '' : 'txt-red'}">${fmtShort(m.saldoAoFim)}</b></td>
+        </tr>` + m.itens.map(i => `<tr class="rep-sub prox-item" data-prox-de="${m.period.start.getTime()}" hidden>
+          <td colspan="2">${esc(i.titulo)}
+            <small class="muted">${fmtDate(new Date(i.data + 'T12:00:00'))} · ${i.origem}</small></td>
+          <td class="num ${i.receita ? 'txt-green' : 'txt-red'}" colspan="3">${i.receita ? '+ ' : '− '}${fmtShort(i.valor)}</td>
+        </tr>`).join('')).join('')}</tbody>
+      </table></div>
+      ${primeiroNegativo
+        ? `<p class="muted" style="margin-top:8px">⚠️ Com o que está previsto, o saldo fecha <b class="txt-red">${fmt(primeiroNegativo.saldoAoFim)}</b> em <b>${esc(nomeMes(primeiroNegativo.period))}</b>. Ainda dá tempo de mudar.</p>`
+        : '<p class="muted" style="margin-top:8px">O saldo se mantém positivo nos próximos seis meses com o que já está previsto. Receita ainda não cadastrada como recorrência não entra nesta conta.</p>'}
+    </div>`;
+}
+
 /* 6. O que está sendo construído. Um relatório que só mede gasto conta metade da
    história: sobrar dinheiro sem destino e sobrar dinheiro virando reserva são
    coisas diferentes, e é a segunda que muda uma vida financeira. */
@@ -2273,7 +2319,14 @@ function bindView() {
      passou a mostrar. */
   const zerarJanela = () => { if (state.filtros) { state.filtros.de = ''; state.filtros.ate = ''; } };
   if (prev) prev.onclick = () => { state.monthOffset--; zerarJanela(); render(); };
-  if (next) next.onclick = () => { if (state.monthOffset < 0) { state.monthOffset++; zerarJanela(); render(); } };
+  /* Andar para FRENTE também, até seis meses: as parcelas de cartão e as contas
+     agendadas já vivem lá, e não havia como olhá-las. O limite existe porque só
+     o ciclo atual é materializado — mais adiante o extrato ficaria quase vazio e
+     pareceria defeito, e para isso serve a previsão dos Relatórios. */
+  if (next) next.onclick = () => {
+    if (state.monthOffset >= 6) return;
+    state.monthOffset++; zerarJanela(); render();
+  };
   ligarRegua(DB.monthPeriod(new Date(), state.monthOffset));
   ligarPilulas();
   const resumoToggle = $('#ext-resumo-toggle');
@@ -2291,6 +2344,12 @@ function bindView() {
   /* Abre as subcategorias de um envelope sem redesenhar a tela: refazer o
      relatório inteiro recalcularia 12 meses de histórico e perderia a rolagem,
      num toque que só precisa mostrar quatro linhas. */
+  // Abre os itens de um mês futuro, sem redesenhar a tela
+  v.querySelectorAll('[data-prox]').forEach(tr => tr.onclick = () => {
+    const k = tr.dataset.prox;
+    const aberto = tr.classList.toggle('aberto');
+    v.querySelectorAll(`[data-prox-de="${k}"]`).forEach(el => { el.hidden = !aberto; });
+  });
   v.querySelectorAll('[data-abre-cat]').forEach(tr => tr.onclick = () => {
     const cid = tr.dataset.abreCat;
     const aberto = tr.classList.toggle('aberto');
@@ -4788,17 +4847,29 @@ function openRecorrencias() {
     mexer(b.dataset.recAtiva, { status: 'ativa' });
     DB.gerarRecorrencias();          // retoma de onde parou
   });
-  /* Cancelar não apaga: o histórico do que já foi lançado continua valendo, e
-     apagar o contrato deixaria as transações órfãs de explicação. */
-  document.querySelectorAll('[data-rec-cancela]').forEach(b => b.onclick = () => {
-    if (!confirm('Cancelar esta conta fixa?\n\nAs próximas deixam de ser lançadas. O que já foi lançado continua no extrato.')) return;
-    mexer(b.dataset.recCancela, { status: 'cancelada' });
-  });
-  document.querySelectorAll('[data-rec-apaga]').forEach(b => b.onclick = () => {
-    if (!confirm('Apagar de vez?\n\nOs lançamentos que ela já criou continuam no extrato.')) return;
-    DB.remove('recurrences', b.dataset.recApaga);
+  /* Cancelar apaga o que ficou PENDENTE e preserva o que foi pago.
+
+     A distinção importa: lançamento já pago é histórico, e apagá-lo reescreveria
+     o passado mexendo em saldos já conciliados. Mas "A Pagar" de assinatura
+     cancelada é lixo — infla o comprometido e fica na fila pedindo uma decisão
+     que nunca vai vir. Era o defeito relatado. */
+  const encerrar = (id, apagar) => {
+    const pend = DB.all('transactions').filter(t => t.recurrence_id === id && t.status === 'A Pagar').length;
+    const pagos = DB.all('transactions').filter(t => t.recurrence_id === id && t.status === 'Pago').length;
+    const texto = [
+      apagar ? 'Apagar esta conta fixa?' : 'Cancelar esta conta fixa?',
+      '',
+      'As próximas deixam de ser lançadas.',
+      pend ? `${pend} lançamento(s) ainda não pago(s) saem do extrato e do comprometido.` : '',
+      pagos ? `${pagos} já pago(s) continuam no extrato, como histórico.` : '',
+    ].filter(Boolean).join('\n');
+    if (!confirm(texto)) return;
+    const limpos = DB.encerrarRecorrencia(id, apagar);
     Sync.autoSync(); openRecorrencias();
-  });
+    toast(limpos ? `Encerrada — ${limpos} pendência(s) removida(s) ✓` : 'Encerrada ✓');
+  };
+  document.querySelectorAll('[data-rec-cancela]').forEach(b => b.onclick = () => encerrar(b.dataset.recCancela, false));
+  document.querySelectorAll('[data-rec-apaga]').forEach(b => b.onclick = () => encerrar(b.dataset.recApaga, true));
   /* Reajuste: vale da PRÓXIMA em diante. O que já foi lançado é histórico — o
      aluguel de janeiro não passa a custar o preço de fevereiro. */
   document.querySelectorAll('[data-rec-val]').forEach(b => b.onclick = () => {

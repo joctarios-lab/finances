@@ -337,6 +337,10 @@ body {
 }
 .rep-sub > td { background: rgba(245, 248, 250, .55); }
 .rep-sub i { font-style: italic; color: var(--paper-dim); }
+.prox-linha { cursor: pointer; }
+.prox-linha:hover td { background: rgba(0, 158, 247, .04); }
+.prox-linha.aberto .rep-seta { transform: rotate(90deg); }
+.prox-linha td small, .prox-item td small { display: block; font-size: 10.5px; margin-top: 1px; }
 
 /* ---------- Gráfico com texto fora do SVG ----------
    Medido: viewBox de 720 num cartão de 307px dá escala 0,43 — um rótulo de 11px

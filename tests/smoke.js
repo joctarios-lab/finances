@@ -111,19 +111,22 @@ check('despesas do período (receita não entra)', DB.expensesOf(p).reduce((s, t
 check('receitas do período', DB.realizedIncome(p), 9000);
 check('statsFor.spent ignora receitas', DB.statsFor(p).spent, 1550);
 check('fatura do cartão: compra menos estorno', DB.invoicesOf(DB.get('cards', cartao))[0].total, 200);
-check('comprometido = fatura aberta + A Pagar', DB.committed(), 200 + 450);
+/* Comprometido do mês = o que VENCE no mês. A fatura do cenário vence 05/ago com
+   o ciclo fechando 01/ago, então ela pertence a agosto — o dinheiro dela não sai
+   do caixa em julho, e somá-la aqui faria o disponível de julho mentir. */
+check('comprometido = só o que vence no ciclo', DB.committed(), 450);
 check('total em contas', DB.accountsTotal(), 17000);
 /* O disponível desconta também o GUARDADO: dinheiro com plano não é dinheiro
    livre. Era o defeito central — quem guardou R$ 15.000 de reserva os via como
    gastáveis. Descontar não conta duas vezes porque o aporte é transferência real
    entre contas próprias: o dinheiro está em accountsTotal, só que com dono. */
 check('guardado = reserva + metas', DB.guardado(), 2000);
-check('disponível = contas − comprometido − guardado', DB.available(), 17000 - 650 - 2000);
-/* Fatura de cartão conta sempre, venha a vencer quando vier: as compras já
-   aconteceram, só o débito é que está marcado para depois. O horizonte serve
-   para compromissos FUTUROS (o IPVA de setembro), não para dinheiro já gasto. */
-check('a fatura pesa mesmo vencendo no ciclo seguinte', DB.committed() >= 200, true);
-check('e o que vence depois do ciclo fica à parte', DB.committedDepois(), 0);
+check('disponível = contas − comprometido − guardado', DB.available(), 17000 - 450 - 2000);
+/* A fatura não desaparece: ela vai para "vence depois deste mês". Sem isso, tirá-la
+   do comprometido a faria sumir das DUAS contas — e fatura invisível é o pior
+   lugar possível para uma dívida existir. */
+check('a fatura do ciclo seguinte aparece à parte', DB.committedDepois(), 200);
+check('e não some do total geral', DB.committed() + DB.committedDepois(), 650);
 check('reserva zerada enquanto não houver caixinha de reserva', DB.reserveTotal(), 0);
 check('gasto por categoria: Alimentação', DB.spentByCategory(p)[cat('Aliment').id], 800);
 check('50/30/20 — necessidades', DB.spentByKind(p).Essencial, 800 + 450);
@@ -158,7 +161,7 @@ for (const [nome, fn] of [['Início', renderInicio], ['Extrato', renderExtrato],
 console.log('\n=== Painel mostra os números certos ===');
 const inicio = renderInicio(p);
 // O disponível passou a descontar o guardado: 17000 − 650 comprometido − 2000 guardado
-for (const [rotulo, valor] of [['disponível', fmt(14350)], ['gasto do mês', fmtShort(1550)], ['comprometido', fmtShort(650)]]) {
+for (const [rotulo, valor] of [['disponível', fmt(14550)], ['gasto do mês', fmtShort(1550)], ['comprometido', fmtShort(450)]]) {
   check(`painel exibe ${rotulo} (${valor})`, inicio.includes(valor), true);
 }
 /* A conta vem por extenso, não só o resultado: sem as parcelas visíveis o
@@ -698,7 +701,7 @@ try {
   check('transferência NÃO é despesa', DB.statsFor(p).spent, gastoAntes);
   check('transferência NÃO é receita', DB.realizedIncome(p), receitaAntes);
   check('transferência aparece no extrato', renderExtrato(p).includes('Guardar dinheiro'), true);
-  check('não entra no comprometido', DB.committed(), 650);
+  check('não entra no comprometido', DB.committed(), 450);
 
   applyTxEffect(DB.get('transactions', trId), -1);
   DB.remove('transactions', trId);
@@ -4510,8 +4513,13 @@ try {
      apagar o contrato deixaria as transações órfãs de explicação. */
   const apU = apRecUI;
   const corpoU = apU.slice(apU.indexOf('function openRecorrencias'), apU.indexOf('function openConfigSection'));
-  check('cancelar só muda o status', corpoU.includes("{ status: 'cancelada' }"), true);
-  check('e avisa que o extrato continua', corpoU.includes('continua no extrato'), true);
+  /* Cancelar apaga o PENDENTE e preserva o PAGO. Lançamento pago é histórico —
+     apagá-lo reescreveria o passado mexendo em saldos já conciliados. Mas "A
+     Pagar" de assinatura cancelada é lixo: infla o comprometido e fica na fila
+     pedindo uma decisão que nunca vem. */
+  check('cancelar limpa as pendências', corpoU.includes('DB.encerrarRecorrencia(id, apagar)'), true);
+  check('e diz quantas saem', corpoU.includes('saem do extrato e do comprometido'), true);
+  check('avisando que o pago fica', corpoU.includes('continuam no extrato, como histórico'), true);
   check('pausada pode ser reativada', corpoU.includes("{ status: 'ativa' }"), true);
   /* Reajuste vale da PRÓXIMA em diante: o aluguel de janeiro não passa a custar
      o preço de fevereiro. */
@@ -4692,3 +4700,143 @@ console.log('\n=== Nitidez de todos os gráficos ===');
   check('as barras têm altura própria', /\.g-wrap-bars \{ height: 250px/.test(cssN), true);
   check('e encolhem em tela estreita', /max-width: 560px\)[^}]*\.g-wrap-bars \{ height: 215px/.test(cssN), true);
 }
+
+/* ---- Quatro correções vindas do teste em uso real ---- */
+console.log('\n=== Comprometido por vencimento, encerrar recorrência e previsão ===');
+const apAj = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+try {
+  const cA = DB.upsert('accounts', { name: 'Conta Ajuste', type: 'Conta Corrente', balance: 20000 });
+  const hoje = DB.paraISO(new Date());
+  const fimCiclo = DB.fimISO(DB.monthPeriod(new Date()));
+
+  /* 1) COMPROMETIDO DO MÊS = o que VENCE no mês, fatura incluída.
+     Eu tinha feito a fatura contar sempre, argumentando que é dinheiro já gasto.
+     O argumento é verdadeiro mas responde outra pergunta: comprometido alimenta
+     "quanto posso gastar até o fim do mês", e fatura que vence dia 5 de agosto
+     não sai do caixa em julho. */
+  const cardA = DB.upsert('cards', { name: 'Cartao Ajuste', closing_day: 28, due_day: 10, account_id: cA, active: true });
+  const chaveA = DB.invoiceKeyFor(DB.get('cards', cardA), hoje);
+  DB.upsert('transactions', { description: 'Compra ajuste', amount: 900, date: hoje, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito', card_id: cardA, invoice_key: chaveA });
+  const inv = DB.invoicesOf(DB.get('cards', cardA)).find(i => i.key === chaveA);
+  const venceDepois = DB.paraISO(inv.due) >= fimCiclo;
+  check('a fatura do cenário vence no ciclo seguinte', venceDepois, true);
+  check('e por isso NÃO entra no comprometido deste mês',
+    DB.faturasAbertas(fimCiclo).some(i => i.key === chaveA), false);
+  /* Mas não pode desaparecer: sem entrar em committedDepois ela sumiria das DUAS
+     contas, e fatura invisível é o pior lugar possível para uma dívida existir. */
+  check('mas aparece no que vence depois', DB.committedDepois(fimCiclo) >= 900, true);
+
+  // Fatura que vence DENTRO do ciclo entra normalmente
+  const cardB = DB.upsert('cards', { name: 'Cartao Ajuste B', closing_day: 1, due_day: 2, account_id: cA, active: true });
+  const chaveB = DB.invoiceKeyFor(DB.get('cards', cardB), DB.somarDiasISO(hoje, -40));
+  DB.upsert('transactions', { description: 'Compra B ajuste', amount: 300, date: DB.somarDiasISO(hoje, -40), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito', card_id: cardB, invoice_key: chaveB });
+  const invB = DB.invoicesOf(DB.get('cards', cardB)).find(i => i.key === chaveB);
+  if (DB.paraISO(invB.due) < fimCiclo) {
+    check('fatura que vence no ciclo entra no comprometido',
+      DB.faturasAbertas(fimCiclo).some(i => i.key === chaveB), true);
+  }
+
+  /* 2) ENCERRAR RECORRÊNCIA limpa o PENDENTE e preserva o PAGO.
+     Lançamento pago é histórico — apagá-lo reescreveria o passado mexendo em
+     saldos já conciliados. Mas "A Pagar" de assinatura cancelada é lixo: infla o
+     comprometido e fica na fila pedindo decisão que nunca vem. */
+  const rid = DB.upsert('recurrences', {
+    description: 'Netflix ajuste', amount: 45, valor_tipo: 'fixo', type: 'Despesa',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto',
+    category_id: null, account_id: cA, card_id: null, tags: [], notes: '',
+    periodicidade: 'mensal', dia: 15, inicio: DB.somarDiasISO(hoje, -60),
+    fim_tipo: 'sem_prazo', fim_data: null, fim_vezes: null,
+    geradas: 0, status: 'ativa', ultima_geracao: null,
+  });
+  DB.gerarRecorrencias();
+  const geradas = DB.all('transactions').filter(t => t.recurrence_id === rid);
+  check('a recorrência gerou lançamentos', geradas.length > 0, true);
+  // Marca uma como paga: ela é histórico e tem de sobreviver
+  const umaPaga = geradas[0];
+  DB.upsert('transactions', { ...umaPaga, status: 'Pago' });
+  const pendentesAntes = DB.all('transactions').filter(t => t.recurrence_id === rid && t.status === 'A Pagar').length;
+
+  const limpos = DB.encerrarRecorrencia(rid, false);
+  check('encerrar remove as pendências', limpos, pendentesAntes);
+  check('e nenhuma sobra no extrato',
+    DB.all('transactions').filter(t => t.recurrence_id === rid && t.status === 'A Pagar').length, 0);
+  check('mas o que já foi pago continua', !!DB.get('transactions', umaPaga.id), true);
+  check('e o contrato fica como cancelado', DB.get('recurrences', rid).status, 'cancelada');
+  check('sem gerar de novo', (DB.gerarRecorrencias(), DB.all('transactions').filter(t => t.recurrence_id === rid && t.status === 'A Pagar').length), 0);
+
+  /* Apagar de vez também preserva o histórico: o lançamento pago existiu, e
+     apagá-lo mudaria um saldo que já foi conciliado com o banco. */
+  const rid2 = DB.upsert('recurrences', {
+    description: 'Spotify ajuste', amount: 22, valor_tipo: 'fixo', type: 'Despesa',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto',
+    category_id: null, account_id: cA, card_id: null, tags: [], notes: '',
+    periodicidade: 'mensal', dia: 20, inicio: DB.somarDiasISO(hoje, -40),
+    fim_tipo: 'sem_prazo', fim_data: null, fim_vezes: null,
+    geradas: 0, status: 'ativa', ultima_geracao: null,
+  });
+  DB.gerarRecorrencias();
+  const g2 = DB.all('transactions').filter(t => t.recurrence_id === rid2);
+  if (g2.length) DB.upsert('transactions', { ...g2[0], status: 'Pago' });
+  DB.encerrarRecorrencia(rid2, true);
+  check('apagar remove o contrato', !!DB.get('recurrences', rid2), false);
+  check('e ainda assim preserva o pago',
+    g2.length ? !!DB.get('transactions', g2[0].id) : true, true);
+
+  /* 3 e 4) PREVISÃO DOS PRÓXIMOS MESES, calculada e não materializada.
+     Gerar "A Pagar" para doze meses encheria o extrato e deixaria dezenas de
+     órfãos ao cancelar uma recorrência. */
+  const rAluguel = DB.upsert('recurrences', {
+    description: 'Aluguel previsao', amount: 1800, valor_tipo: 'fixo', type: 'Despesa',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto',
+    category_id: null, account_id: cA, card_id: null, tags: [], notes: '',
+    periodicidade: 'mensal', dia: 10, inicio: hoje,
+    fim_tipo: 'sem_prazo', fim_data: null, fim_vezes: null,
+    geradas: 0, status: 'ativa', ultima_geracao: null,
+  });
+  const rSalario = DB.upsert('recurrences', {
+    description: 'Salario previsao', amount: 6200, valor_tipo: 'fixo', type: 'Receita',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'PIX',
+    category_id: null, account_id: cA, card_id: null, tags: [], notes: '',
+    periodicidade: 'mensal', dia: 5, inicio: hoje,
+    fim_tipo: 'sem_prazo', fim_data: null, fim_vezes: null,
+    geradas: 0, status: 'ativa', ultima_geracao: null,
+  });
+  const prox = DB.previsaoMeses(6);
+  check('prevê seis meses', prox.length, 6);
+  check('cada mês tem o que sai', prox[0].sai >= 1800, true);
+  check('e o que entra', prox[0].entra >= 6200, true);
+  check('com o resultado do mês', Math.round(prox[0].resultado), Math.round(prox[0].entra - prox[0].sai));
+  /* O saldo ROLA de um mês para o outro: um mês negativo no meio contamina os
+     seguintes, e olhar mês a mês isolado esconde isso. */
+  check('o saldo rola para o mês seguinte',
+    Math.round(prox[1].saldoAoFim), Math.round(prox[0].saldoAoFim + prox[1].resultado));
+  check('e o primeiro parte do disponível de hoje',
+    Math.round(prox[0].saldoAoFim), Math.round(DB.available() + prox[0].resultado));
+  check('o aluguel aparece na lista do mês', prox[0].itens.some(i => i.titulo === 'Aluguel previsao'), true);
+  check('marcado como previsto', prox[0].itens.find(i => i.titulo === 'Aluguel previsao').origem, 'prevista');
+  check('e o salário como receita', prox[0].itens.find(i => i.titulo === 'Salario previsao').receita, true);
+
+  /* Nada é materializado além do ciclo atual: o extrato não pode encher de linhas
+     que ninguém pediu. */
+  const doAluguel = DB.all('transactions').filter(t => t.recurrence_id === rAluguel);
+  check('a previsão não cria lançamentos', doAluguel.every(t => String(t.date) < fimCiclo), true);
+
+  /* Não contar duas vezes: o que já foi materializado no ciclo atual não deve ser
+     somado de novo pela recorrência. */
+  const pMes = DB.monthPeriod(new Date(), 1);
+  const antesMat = DB.previsaoDoMes(pMes).sai;
+  DB.upsert('transactions', { description: 'Aluguel previsao', amount: 1800, date: DB.somarDiasISO(DB.inicioISO(pMes), 9), type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cA, recurrence_id: rAluguel });
+  check('lançamento já materializado não conta duas vezes', DB.previsaoDoMes(pMes).sai, antesMat);
+
+  // Navegar para o futuro no extrato
+  check('o extrato anda para frente', /if \(state\.monthOffset >= 6\) return;/.test(apAj), true);
+  check('e o mês futuro se anuncia', apAj.includes('ainda não chegou'), true);
+  check('a previsão aparece nos relatórios', apAj.includes('relProximosMeses()'), true);
+} catch (e) { console.log(` FALHA | ajustes: ${e.message}`); fail++; }
+// Limpeza fora do try: dirty deixado atrás faz os testes async de sync girarem
+DB.data.transactions = DB.data.transactions.filter(t =>
+  !/ajuste|previsao|Netflix ajuste|Spotify ajuste/i.test(t.description || ''));
+DB.data.recurrences = [];
+DB.data.cards = DB.data.cards.filter(c => !/Cartao Ajuste/.test(c.name || ''));
+DB.data.accounts = DB.data.accounts.filter(a => a.name !== 'Conta Ajuste');
+DB.save();

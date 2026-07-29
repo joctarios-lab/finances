@@ -664,21 +664,36 @@ const DB = {
      estimado aqui de propósito — a resposta para isso é a geração automática das
      recorrências, não um palpite. */
   committed(ateISO) {
-    /* FATURA DE CARTÃO SEMPRE CONTA, venha a vencer quando vier.
+    /* Comprometido do mês = o que VENCE no mês, fatura incluída.
 
-       O horizonte existe para separar "conta que vence amanhã" de "IPVA de
-       setembro" — compromissos FUTUROS. Fatura não é compromisso futuro: as
-       compras já aconteceram, o dinheiro já saiu do seu bolso, só o débito é que
-       está marcado para depois. Excluí-la porque vence dia 5 do mês que vem
-       diria que sobra dinheiro que já foi gasto — e o cartão é justamente onde
-       esse engano custa caro. */
+       Eu tinha feito a fatura contar sempre, argumentando que é dinheiro já
+       gasto. O argumento é verdadeiro, mas responde outra pergunta: comprometido
+       alimenta "quanto posso gastar até o fim do mês", e uma fatura que vence dia
+       5 de agosto não sai do caixa em julho.
+
+       O risco de a fatura desaparecer da vista — que era a razão da regra antiga
+       — agora tem lugar próprio: committedDepois a mostra, e a projeção diz em
+       que dia ela derruba o saldo. Cada número responde uma coisa só. */
     let total = 0;
-    for (const card of this.all('cards').filter(c => c.active !== false))
-      for (const inv of this.invoicesOf(card))
-        // Com pagamento parcial, pesa o que FALTA — não a fatura inteira
-        if (inv.status !== 'Paga') total += Math.max(0, inv.falta);
+    for (const inv of this.faturasAbertas(ateISO)) total += Math.max(0, inv.falta);
     for (const t of this.txsAPagar(ateISO)) total += Number(t.amount) || 0;
     return total;
+  },
+
+  // Faturas não pagas que vencem ANTES do limite. Com pagamento parcial, o que
+  // pesa é o que falta — não a fatura inteira.
+  faturasAbertas(ateISO, deISO) {
+    const limite = ateISO || this.fimISO(this.monthPeriod(new Date()));
+    const fora = [];
+    for (const card of this.all('cards').filter(c => c.active !== false))
+      for (const inv of this.invoicesOf(card)) {
+        if (inv.status === 'Paga' || !(inv.falta > 0.005)) continue;
+        const vence = this.paraISO(inv.due);
+        if (vence >= limite) continue;
+        if (deISO && vence < deISO) continue;
+        fora.push(inv);
+      }
+    return fora;
   },
 
   /* Lançamentos a pagar (fora de cartão) que vencem dentro do horizonte.
@@ -696,10 +711,20 @@ const DB = {
   // aparece à parte para ninguém ser pego de surpresa
   committedDepois(ateISO) {
     const limite = ateISO || this.fimISO(this.monthPeriod(new Date()));
-    return this.all('transactions')
+    let total = this.all('transactions')
       .filter(t => t.status === 'A Pagar' && !t.card_id && this.isExpense(t) && !this.isNeutral(t)
         && String(t.date) >= limite)
       .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    /* Faturas também. Sem isto, tirar a fatura do comprometido do mês a faria
+       desaparecer das DUAS contas — e uma fatura invisível é o pior lugar
+       possível para uma dívida existir. */
+    for (const card of this.all('cards').filter(c => c.active !== false))
+      for (const inv of this.invoicesOf(card)) {
+        if (inv.status === 'Paga' || !(inv.falta > 0.005)) continue;
+        if (this.paraISO(inv.due) < limite) continue;
+        total += Math.max(0, inv.falta);
+      }
+    return total;
   },
 
   paraISO(d) {
@@ -942,6 +967,28 @@ const DB = {
     return tx;
   },
 
+  /* Encerra uma recorrência e limpa o que ela deixou pendente.
+
+     A distinção é o ponto: lançamento JÁ PAGO é histórico e fica — apagá-lo
+     reescreveria o passado e mudaria saldos que já foram conciliados. Mas "A
+     Pagar" de uma assinatura cancelada é lixo: infla o comprometido, aparece na
+     fila de pendências pedindo decisão, e você nunca vai pagar.
+
+     Devolve quantos foram limpos, para a tela poder dizer. */
+  encerrarRecorrencia(id, apagarContrato) {
+    const pendentes = this.all('transactions')
+      .filter(t => t.recurrence_id === id && t.status === 'A Pagar');
+    this.emLote(() => {
+      for (const t of pendentes) this.remove('transactions', t.id);
+      if (apagarContrato) this.remove('recurrences', id);
+      else {
+        const r = this.get('recurrences', id);
+        if (r) this.upsert('recurrences', { ...r, status: 'cancelada' });
+      }
+    });
+    return pendentes.length;
+  },
+
   // Quantas ocorrências ainda faltam, quando há prazo — para a tela dizer
   // "faltam 22 de 48" em vez de só "ativa"
   restamDaRecorrencia(r) {
@@ -1051,6 +1098,75 @@ const DB = {
      mês fechando positivo esconde exatamente isso. */
   primeiroDiaNegativo(ateISO, deISO) {
     return this.projecaoSaldo(ateISO, deISO).find(p => p.saldo < 0) || null;
+  },
+
+  /* ---------- Previsão dos próximos meses ----------
+     O futuro é CALCULADO, não materializado. Gerar "A Pagar" para doze meses
+     encheria o extrato de linhas que ninguém pediu e, ao cancelar uma
+     recorrência, deixaria dezenas de órfãos para limpar.
+
+     Aqui cada mês é somado na hora, a partir de três fontes: as recorrências
+     ativas, o que já está lançado com data futura (parcelas de cartão, contas
+     agendadas) e as faturas que vencem lá. */
+  previsaoDoMes(period) {
+    const de = this.inicioISO(period), ate = this.fimISO(period);
+    let entra = 0, sai = 0;
+    const itens = [];
+    const add = (titulo, valor, receita, quando, origem) => {
+      itens.push({ titulo, valor, receita, data: quando, origem });
+      if (receita) entra += valor; else sai += valor;
+    };
+
+    /* Lançado com data futura: parcelas de cartão e contas agendadas. Vem antes
+       das recorrências porque é o que já existe — e o que existe manda. */
+    const materializado = new Set();
+    for (const t of this.all('transactions')) {
+      if (t.status !== 'A Pagar' || this.isNeutral(t)) continue;
+      const d = String(t.date);
+      if (d < de || d >= ate) continue;
+      if (t.card_id) continue;                 // compra no cartão pesa na fatura, não solta
+      if (t.recurrence_id) materializado.add(`${t.recurrence_id}|${d}`);
+      add(t.description, Number(t.amount) || 0, !this.isExpense(t), d, 'lançado');
+    }
+
+    // Recorrências ativas: as ocorrências que caem neste mês
+    for (const r of this.all('recurrences')) {
+      if (r.status !== 'ativa') continue;
+      for (let n = 0; n < 400; n++) {
+        const data = this.dataDaOcorrencia(r, n);
+        if (data >= ate) break;
+        if (this.recorrenciaEncerrada(r, data, n)) break;
+        if (data < de) continue;
+        // Já materializada: contar de novo somaria o mesmo compromisso duas vezes
+        if (materializado.has(`${r.id}|${data}`)) continue;
+        add(r.description, this.valorDaRecorrencia(r), r.type === 'Receita', data, 'prevista');
+      }
+    }
+
+    // Faturas que vencem neste mês
+    for (const inv of this.faturasAbertas(ate, de)) {
+      add(`Fatura ${inv.card.name}`, Math.max(0, inv.falta), false, this.paraISO(inv.due), 'fatura');
+    }
+
+    itens.sort((a, b) => String(a.data).localeCompare(String(b.data)));
+    return { period, entra, sai, resultado: entra - sai, itens };
+  },
+
+  /* Os próximos n meses, com o saldo rolando de um para o outro.
+
+     O saldo acumulado é o ponto: cada mês parte do que sobrou do anterior, então
+     um mês negativo no meio contamina os seguintes — e é exatamente isso que
+     olhar mês a mês, isolado, não mostra. */
+  previsaoMeses(n = 6, deOffset = 1) {
+    let saldo = this.accountsTotal() - this.committed() - this.guardado();
+    const fora = [];
+    for (let i = 0; i < n; i++) {
+      const p = this.monthPeriod(new Date(), deOffset + i);
+      const m = this.previsaoDoMes(p);
+      saldo += m.resultado;
+      fora.push({ ...m, saldoAoFim: saldo });
+    }
+    return fora;
   },
 
   /* ---------- Estatística dos relatórios ----------
