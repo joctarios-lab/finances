@@ -1399,16 +1399,28 @@ function renderInicio(period) {
   const previsto = DB.previsaoDoMes(period);
   const cadeia = state.monthOffset > 0 ? DB.previsaoMeses(state.monthOffset, 1) : [];
   const saldoAoFim = cadeia.length ? cadeia[cadeia.length - 1].saldoAoFim : 0;
+  /* "DISPONÍVEL", não "saldo": este número desconta o comprometido e o que já tem
+     dono (reserva e metas), exatamente como o hero do mês corrente. Chamá-lo de
+     saldo o faria divergir do saldo que o extrato do mesmo mês mostra no topo — e
+     dois números com o mesmo nome e valores diferentes destroem a confiança nos
+     dois. O extrato mostra CAIXA (o que estará na conta); aqui é PLANEJAMENTO. */
+  const saldoEmContaFim = DB.saldoPrevistoNaData(null, DB.fimISO(period));
   const heroFuturo = `
     <div class="hero hero-${saldoAoFim >= 0 ? 'green' : 'red'}">
       <div class="hero-top">
-        <span class="hero-label">Saldo previsto ao fim de ${esc(period.label)}</span>
+        <span class="hero-label">Disponível previsto ao fim de ${esc(period.label)}</span>
         <span class="hero-badge b-${saldoAoFim >= 0 ? 'green' : 'red'}">${saldoAoFim >= 0 ? 'No azul' : 'Aperto'}</span>
       </div>
       <div class="hero-value">${fmt(saldoAoFim)}</div>
       <p class="hero-msg">${previsto.itens.length
         ? `Projeção com ${previsto.itens.length} item(ns) já conhecido(s) — contas fixas, repetições e faturas. Gasto variável não entra nesta conta.`
         : 'Nada previsto para este mês ainda. Contas que se repetem e faturas apareceriam aqui.'}</p>
+      <!-- A ponte entre os dois números: o extrato do mesmo mês mostra o saldo em
+           conta, e sem esta linha a diferença pareceria erro de um dos dois. -->
+      <p class="hero-depois">Em conta haverá <b>${fmt(saldoEmContaFim)}</b>${
+        Math.abs(saldoEmContaFim - saldoAoFim) > 0.005
+          ? ` — a diferença de ${fmt(Math.abs(saldoEmContaFim - saldoAoFim))} é o que já tem destino (reserva, metas e contas a vencer).`
+          : '.'}</p>
       <!-- Rótulos curtos: em três colunas de celular eles quebram acima de ~14
            caracteres, e "Previsto entrar" já passava. O cabeçalho do card abaixo
            é que diz que tudo aqui é previsão. -->
@@ -1991,37 +2003,16 @@ function renderExtrato(period) {
     <span class="tx-amount pending">− ${fmt(inv.falta)}</span>
   </div>`;
 
-  /* ITENS PREVISTOS ainda não lançados: recorrência que não foi gerada e custo
-     fixo que não foi copiado. Sem eles, um mês daqui a três meses aparecia vazio
-     — e um extrato vazio para setembro diz "não há nada previsto", o que é falso
-     quando existe aluguel todo mês.
+  /* Mistura transações e faturas numa lista só, ordenada por data. Renderizar
+     cada grupo à parte os tiraria da leitura cronológica, que é o que faz um
+     extrato ser extrato.
 
-     Só entram em período FUTURO. No mês corrente e no passado, o que não foi
-     lançado não aconteceu, e mostrar previsão ali competiria com o fato.
-
-     Não são transações: não têm id, não se editam e não somam no saldo realizado.
-     Aparecem como linha prevista, do mesmo jeito que a fatura. */
-  const ehFuturo = DB.inicioISO(period) > todayISO();
-  const previstos = (ehFuturo && !temFiltroAtivo())
-    ? DB.previstosNaoLancados(period).filter(i =>
-      // Respeita o filtro de tipo, o único que dá para aplicar a um item sem conta
-      !state.filtros.tipo.length || state.filtros.tipo.includes(i.receita ? 'Receita' : 'Despesa'))
-    : [];
-
-  const linhaPrevista = i => `<div class="tx tx-prev">
-    <span class="tx-ico">${i.receita ? '📈' : '📌'}</span>
-    <span class="tx-info"><span class="tx-name">${esc(i.titulo)}</span>
-    <span class="tx-meta">Previsto · ${i.origem === 'custo fixo' ? 'custo fixo' : 'repete todo mês'} · ainda não lançado</span></span>
-    <span class="tx-amount pending">${i.receita ? '+' : '−'} ${fmt(i.valor)}</span>
-  </div>`;
-
-  /* Mistura transações, faturas e previstos numa lista só, ordenada por data.
-     Renderizar cada grupo à parte os tiraria da leitura cronológica, que é o que
-     faz um extrato ser extrato. */
+     Os itens PREVISTOS já vêm dentro de `txs`: em mês futuro o `DB.txOfPeriod`
+     devolve as transações virtuais junto das reais. Montá-los aqui também, como
+     esta função fazia antes, duplicava cada linha na tela. */
   const linhas = [
     ...txs.map(t => ({ data: t.date, tx: t })),
     ...faturasNoPeriodo.map(inv => ({ data: inv.venceISO, inv })),
-    ...previstos.map(i => ({ data: i.data, prev: i })),
   ].sort((a, b) => b.data.localeCompare(a.data));
 
   let list = '', lastDay = '';
@@ -2041,15 +2032,6 @@ function renderExtrato(period) {
         list += `<p class="tx-day"><span>${fmtDay(item.data)}</span>${totF ? `<span class="tx-day-tot">${totF}</span>` : ''}</p>`;
       }
       list += linhaFatura(item.inv);
-      continue;
-    }
-    if (item.prev) {
-      // Cabeçalho do dia igual ao das outras linhas: a data manda na leitura
-      if (item.data !== lastDay) {
-        lastDay = item.data;
-        list += `<p class="tx-day"><span>${fmtDay(item.data)}</span></p>`;
-      }
-      list += linhaPrevista(item.prev);
       continue;
     }
     const t = item.tx;
@@ -2088,10 +2070,19 @@ function renderExtrato(period) {
       : efeito < 0 ? `para ${esc((DB.get('accounts', t.to_account) || {}).name || '?')}`
       : efeito > 0 ? `de ${esc((DB.get('accounts', t.account_id) || {}).name || '?')}`
       : `${esc((DB.get('accounts', t.account_id) || {}).name || '?')} → ${esc((DB.get('accounts', t.to_account) || {}).name || '?')}`;
-    list += `<div class="tx ${DB.isNeutral(t) ? 'tx-adj' : ''}" data-tx="${t.id}">
+    /* Linha VIRTUAL (previsão de um mês futuro) não tem id: não recebe `data-tx`
+       nem botão de pagar, porque não há registro para abrir nem para quitar. O
+       rodapé diz de onde ela veio, para a projeção ser auditável linha a linha —
+       ninguém confia num número que não consegue rastrear. */
+    const ehVirtual = !!t.virtual;
+    list += `<div class="tx ${ehVirtual ? 'tx-prev' : DB.isNeutral(t) ? 'tx-adj' : ''}"${
+      ehVirtual ? '' : ` data-tx="${t.id}"`}>
       <span class="tx-ico ${isTr ? 'i-transfer' : !isExp && !t.adjustment ? 'i-receita' : ''}">${isTr ? '⇄' : t.adjustment ? '⚖️' : isExp ? esc(c ? c.icon : '🧾') : '💵'}</span>
       <span class="tx-info"><span class="tx-name">${esc(t.description)}</span>
-      <span class="tx-meta">${isTr ? `Transferência · ${rota}`
+      <span class="tx-meta">${ehVirtual
+        ? `Previsto · ${t.origemPrevista === 'custo fixo' ? 'custo fixo' : 'repete todo mês'} · ainda não lançado${
+          c ? ' · ' + esc(DB.categoryPath(t.category_id)) : ''}`
+        : isTr ? `Transferência · ${rota}`
         : t.adjustment ? 'Conciliação — fora das análises · toque para classificar'
         : `${c ? esc(DB.categoryPath(t.category_id)) : (isExp ? 'Sem categoria' : 'Entrada sem origem')} · ${via}${t.member ? ' · ' + esc(t.member) : ''}${t.installment ? ' · parcela ' + esc(t.installment) : ''}`}</span>
       ${DB.tagsOf(t).length ? `<span class="tx-tags">${DB.tagsOf(t).map(tg =>
@@ -2099,7 +2090,7 @@ function renderExtrato(period) {
       <span class="tx-amount ${isTr ? 'transfer' : !isExp ? 'income' : t.status === 'A Pagar' ? 'pending' : ''}">${
         isTr ? (efeitoNaConta(t) < 0 ? '− ' : efeitoNaConta(t) > 0 ? '+ ' : '')
         : isExp ? '− ' : '+ '}${fmt(t.amount)}</span>
-      ${t.status === 'A Pagar' ? `<button class="pay-btn" data-pay-tx="${t.id}" title="Marcar como ${isExp ? 'pago' : 'recebido'}"><span data-ico="check"></span></button>` : ''}
+      ${t.status === 'A Pagar' && !ehVirtual ? `<button class="pay-btn" data-pay-tx="${t.id}" title="Marcar como ${isExp ? 'pago' : 'recebido'}"><span data-ico="check"></span></button>` : ''}
     </div>`;
   }
   // Vazio com filtro ativo é ambíguo: pode ser que não haja nada, ou que o filtro
@@ -3160,7 +3151,13 @@ function bindView() {
       rows.push([
         DB.isExpense(t) ? 'Despesa' : 'Receita',
         t.description, String(t.amount).replace('.', ','), t.date,
-        DB.categoryPath(t.category_id), t.scope, t.member || '', t.method, t.status, t.installment || '',
+        DB.categoryPath(t.category_id), t.scope, t.member || '', t.method,
+        /* Previsto se identifica na coluna Status. Num mês futuro o CSV leva
+           também as linhas da previsão — o que é desejável, é o mesmo conteúdo da
+           tela —, mas sair como "A Pagar" as faria parecer compromisso registrado
+           numa planilha aberta fora do app, onde não há cor nem rodapé que avise. */
+        t.virtual ? `Previsto (${t.origemPrevista || 'repete'})` : t.status,
+        t.installment || '',
         (DB.get('cards', t.card_id) || {}).name || '', (DB.get('accounts', t.account_id) || {}).name || '',
       ]);
     }
@@ -3596,7 +3593,14 @@ function aplicarTags(atuais, modo, valores) {
 }
 
 function openMassaModal(period) {
-  Massa.ids = txsFiltradas(period).map(t => t.id);
+  /* Só o que existe de verdade. Num mês futuro `txsFiltradas` devolve também as
+     transações VIRTUAIS da previsão, e elas não têm id: entrariam aqui como
+     `null`, apareceriam como linha editável e a primeira gravação criaria um
+     registro fantasma — ou apagaria outro, se dois `null` colidissem.
+
+     Previsão não se edita: para mudar o aluguel dos próximos meses, muda-se o
+     contrato em "Contas fixas", não uma cópia dele numa tela de lote. */
+  Massa.ids = txsFiltradas(period).filter(t => !t.virtual && t.id).map(t => t.id);
   Massa.marcados = new Set(Massa.ids);      // abre com tudo marcado: o filtro já escolheu
   renderMassa();
 }

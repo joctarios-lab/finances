@@ -337,7 +337,7 @@ try {
        "Resultado de setembro: R$ 0,00" — o zero lia como "vai sobrar nada" em vez
        de "ainda não há dado". */
     check(`painel de ${per.label}: hero de previsão`,
-      painelFut.includes('Saldo previsto ao fim de'), true);
+      painelFut.includes('Disponível previsto ao fim de'), true);
     check(`  e não o hero de mês encerrado`, /hero-label">Resultado de/.test(painelFut), false);
     check(`  com a lista do que já se sabe`,
       (painelFut.match(/class="prev-linha"/g) || []).length >= 2, true);
@@ -373,7 +373,7 @@ try {
     check(`extrato de ${per.label} não mistura previsão`,
       /repete todo mês · ainda não lançado|custo fixo · ainda não lançado/.test(html), false);
     check(`painel de ${per.label} não usa o hero de previsão`,
-      html.includes('Saldo previsto ao fim de'), false);
+      renderInicio(per).includes('previsto ao fim de'), false);
   }
 
   // O limite é 6 meses: a seta pára ali, senão a projeção viraja adivinhação
@@ -391,6 +391,197 @@ try {
   for (const t of DB.all('transactions').filter(t => / FUT$/.test(t.description || ''))) DB.remove('transactions', t.id);
   DB.save();
 } catch (e) { console.log(` FALHA | cenários futuros: ${e.message}`); fail++; }
+
+/* ---- Visão de futuro: todos os objetos contam a mesma história ----
+   Um mês que ainda não chegou não tem lançamento além do agendado à mão. Cada
+   objeto lia isso por conta própria e mostrava zero: KPI de gasto, donut por
+   categoria, cascata, regra 50·30·20, resumo do extrato, frase dos relatórios.
+
+   A correção é única — `txOfPeriod` devolve, em mês futuro, transações VIRTUAIS
+   geradas do contrato e do custo fixo — e é por isso que os testes aqui verificam
+   IDENTIDADES entre os objetos, não cada um isolado: o que se conserta em oito
+   lugares volta a divergir no nono. */
+console.log('\n=== Visão de futuro: coerência entre todos os objetos ===');
+try {
+  const ctaV = DB.all('accounts')[0];
+  const catsV = DB.rootCategories('Despesa');
+  const mesAntV = DB.inicioISO(DB.monthPeriod(new Date(), -1));
+  const fixV = (d, v, tipo, cat) => DB.upsert('transactions', {
+    description: d, amount: v, date: mesAntV, type: tipo, status: 'Pago',
+    scope: 'Família', member: MEMBRO_COMUM, method: tipo === 'Receita' ? 'PIX' : 'Boleto',
+    account_id: ctaV.id, recurring: true, category_id: cat,
+  });
+  fixV('Salario VIS', 9000, 'Receita', null);
+  fixV('Aluguel VIS', 2500, 'Despesa', catsV[0].id);
+  fixV('Internet VIS', 150, 'Despesa', (catsV[1] || catsV[0]).id);
+  const setV = DB.monthPeriod(new Date(), 2);
+  const idAgendado = DB.upsert('transactions', {
+    description: 'IPVA VIS', amount: 1800, date: DB.somarDiasISO(DB.inicioISO(setV), 10),
+    type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Boleto', account_id: ctaV.id, category_id: catsV[0].id,
+  });
+  const offV = state.monthOffset, repV = state.repOffset;
+  state.filtros = filtrosVazios();
+  state.monthOffset = 2; state.repOffset = 2;
+
+  /* AS VIRTUAIS. Forma de transação, sem id, marcadas — e só em mês futuro. */
+  const virtuais = DB.txOfPeriod(setV).filter(t => t.virtual);
+  check('mês futuro traz as previsões como transação', virtuais.length >= 3, true);
+  check('e elas não têm id, porque não existem no banco',
+    virtuais.every(t => !t.id), true);
+  check('mas têm o que os agregadores precisam: tipo, valor, data e categoria',
+    virtuais.every(t => t.type && t.amount > 0 && t.date && 'category_id' in t), true);
+  /* A CATEGORIA tem de vir preenchida, não só existir como campo. Sem ela o item
+     não aparece no donut nem na tabela por categoria, e o mês futuro fica com um
+     total que não se decompõe em lugar nenhum — foi por isso que `previsaoDoMes`
+     passou a carregar o molde de onde cada item veio. */
+  const virtDespesa = virtuais.filter(t => DB.isExpense(t));
+  check('as despesas previstas herdam a categoria do molde',
+    virtDespesa.length > 0 && virtDespesa.every(t => !!t.category_id), true);
+  check('e a conta, para o saldo por conta funcionar',
+    virtuais.every(t => !!t.account_id), true);
+  // Um item sem categoria cairia em "_sem" e sumiria de qualquer envelope
+  check('nenhuma despesa prevista cai em "sem categoria"',
+    Object.keys(DB.spentByCategory(setV)).includes('_sem'), false);
+  check('e status de compromisso futuro', virtuais.every(t => t.status === 'A Pagar'), true);
+  check('o mês corrente não recebe nenhuma',
+    DB.txOfPeriod(DB.monthPeriod(new Date())).some(t => t.virtual), false);
+  check('nem o mês passado',
+    DB.txOfPeriod(DB.monthPeriod(new Date(), -1)).some(t => t.virtual), false);
+  // E nada disso é gravado: elas nascem a cada leitura
+  check('nenhuma virtual é gravada no banco',
+    DB.all('transactions').some(t => t.virtual), false);
+
+  /* AS IDENTIDADES. Cada objeto lê de um agregador diferente; se algum deles
+     ficasse de fora, um número da tela discordaria do outro. */
+  const prevV = DB.previsaoDoMes(setV);
+  const txsV = txsFiltradas(setV);
+  const despV = txsV.filter(t => DB.isExpense(t) && !DB.isNeutral(t))
+    .reduce((s, t) => s + Number(t.amount || 0), 0);
+  const recV = txsV.filter(t => !DB.isExpense(t) && !t.card_id && !DB.isNeutral(t))
+    .reduce((s, t) => s + Number(t.amount || 0), 0);
+  const faturaV = prevV.itens.filter(i => i.origem === 'fatura').reduce((s, i) => s + i.valor, 0);
+
+  check('o extrato soma as saídas que a previsão conhece', despV, prevV.sai - faturaV);
+  check('e as entradas também', recV, prevV.entra);
+  check('o KPI de gasto do painel bate com o extrato',
+    DB.expensesOf(setV).reduce((s, t) => s + Number(t.amount || 0), 0), despV);
+  check('a tela de relatórios lê o mesmo gasto', Rel.gasto(setV), despV);
+  check('e a mesma receita', Rel.receita(setV), recV);
+  /* Decomposição: um total que não se abre em categorias é um número que ninguém
+     consegue conferir. */
+  check('a soma das categorias fecha com o total',
+    Math.round(Object.values(Rel.porCategoria(setV)).reduce((a, b) => a + b, 0)), Math.round(despV));
+  check('o donut do painel também',
+    Math.round(Object.values(DB.spentByCategory(setV)).reduce((a, b) => a + b, 0)), Math.round(despV));
+  const kindsV = Rel.porTipo(setV);
+  check('e a cascata (essencial + estilo)', Math.round(kindsV.Essencial + kindsV.Estilo), Math.round(despV));
+
+  /* O SALDO do extrato tem de fechar com as linhas dele. Um extrato cujo topo não
+     bate com a soma das linhas é o pior defeito possível — foi por isso que
+     `saldoPrevistoNaData` passou a contar contrato e custo fixo. */
+  const iniV = DB.saldoPrevistoNaData(null, DB.inicioISO(setV));
+  const fimV = DB.saldoPrevistoNaData(null, DB.fimISO(setV));
+  check('saldo do fim = saldo do início + entradas − saídas − fatura',
+    Math.round(fimV * 100) / 100, Math.round((iniV + recV - despV - faturaV) * 100) / 100);
+  check('e o saldo previsto cresce quando há salário previsto', fimV > iniV, true);
+  /* A JANELA importa: o saldo numa data conta só o que vence ATÉ ela. Sem o corte,
+     o saldo do início de setembro já traria o aluguel do próprio setembro, e o
+     extrato abriria o mês com um número que só é verdade no fim dele. */
+  /* O corte vai no dia 5: o salário e o aluguel vencem no dia 1 e o IPVA no 11.
+     Assim o saldo do dia 5 tem de conter os dois primeiros e NÃO o IPVA — um corte
+     depois do dia 11 daria o mesmo número do fim do mês e o teste não teria poder
+     nenhum, passando mesmo sem janela alguma. */
+  const dia5 = DB.somarDiasISO(DB.inicioISO(setV), 5);
+  const saldoDia5 = DB.saldoPrevistoNaData(null, dia5);
+  check('o saldo do dia 5 já conta o salário e o aluguel do dia 1',
+    Math.round(saldoDia5), Math.round(iniV + 9000 - 2500 - 150));
+  check('mas ainda não conta o IPVA, que vence no dia 11', saldoDia5 > fimV, true);
+  check('e o do fim do mês conta tudo', Math.round(fimV), Math.round(saldoDia5 - 1800 - faturaV));
+  /* Um custo fixo que vence DEPOIS do corte. Sem ele o teste acima não teria poder
+     sobre a janela dos previstos: salário, aluguel e internet vencem no dia 1, e o
+     IPVA é transação real (cortada por outro caminho) — nenhum previsto ficaria de
+     fora do dia 5, e remover o corte não mudaria número nenhum. */
+  const idTardio = DB.upsert('transactions', {
+    description: 'Seguro VIS', amount: 400,
+    date: DB.somarDiasISO(DB.inicioISO(DB.monthPeriod(new Date(), -1)), 19),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Boleto', account_id: ctaV.id, recurring: true, category_id: catsV[0].id,
+  });
+  const comTardio5 = DB.saldoPrevistoNaData(null, dia5);
+  const comTardioFim = DB.saldoPrevistoNaData(null, DB.fimISO(setV));
+  /* No dia 5 de setembro só a ocorrência de AGOSTO já venceu (dia 20/08); a de
+     setembro (dia 20/09) ainda não. No fim do mês as duas contam. É a diferença
+     entre 1 e 2 ocorrências que prova que a janela está sendo respeitada. */
+  check('no dia 5 conta só a ocorrência de agosto',
+    Math.round(saldoDia5 - comTardio5), 400);
+  check('e no fim do mês, as duas', Math.round(fimV - comTardioFim), 800);
+  DB.remove('transactions', idTardio);
+
+  /* AS TELAS. Cada objeto que antes aparecia vazio. */
+  const paV = renderInicio(setV), exV = renderExtrato(setV), reV = renderRelatorios();
+  check('painel: hero de previsão', /Disponível previsto ao fim de/.test(paV), true);
+  /* "Disponível", não "saldo": este número desconta o comprometido e o guardado,
+     como o hero do mês corrente. Chamá-lo de saldo o faria divergir do saldo que o
+     extrato do mesmo mês mostra — dois números com o mesmo nome e valores
+     diferentes destroem a confiança nos dois. */
+  check('e a ponte com o saldo em conta, que é outro número',
+    /Em conta haverá/.test(paV), true);
+  check('painel: o donut tem dados', /Nenhum gasto no período/.test(paV), false);
+  check('painel: a regra 50·30·20 aparece', /Regra 50/.test(paV), true);
+  check('painel: a lista do que já se sabe', /prev-linha/.test(paV), true);
+  check('extrato: as linhas previstas aparecem', /class="tx tx-prev"/.test(exV), true);
+  check('relatórios: "De onde vem o dinheiro"', /De onde vem o dinheiro/.test(reV), true);
+  check('relatórios: "O caminho do dinheiro"', /O caminho do dinheiro/.test(reV), true);
+  check('relatórios: detalhe por categoria', /Detalhe por categoria/.test(reV), true);
+  check('relatórios: o gráfico de doze meses', /data-g="fluxo-saldo"/.test(reV), true);
+  // A frase de abertura não pode mais dizer que não houve receita
+  check('a frase de abertura conhece a receita prevista',
+    /nenhuma receita lançada/.test(reV), false);
+
+  /* AS VIRTUAIS NÃO PODEM VAZAR PARA NADA QUE GRAVE. Sem id, um upsert criaria
+     registro fantasma — ou apagaria outro, se dois `null` colidissem. */
+  openMassaModal(setV);
+  check('a edição em massa ignora as previsões', Massa.ids.every(id => !!id), true);
+  check('e só leva o que existe de verdade',
+    Massa.ids.length, txsFiltradas(setV).filter(t => !t.virtual).length);
+  // A linha virtual não abre edição nem oferece "marcar como pago"
+  check('linha prevista não vira alvo de clique',
+    /tx-prev"\s+data-tx=/.test(exV), false);
+  check('nem oferece o botão de pagar',
+    /class="tx tx-prev"(?:(?!<\/div>)[\s\S])*pay-btn/.test(exV), false);
+  // No CSV elas se identificam: fora do app não há cor nem rodapé que avise
+  const apCsv = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('no CSV a previsão se identifica na coluna Status',
+    apCsv.includes("t.virtual ? `Previsto (${t.origemPrevista || 'repete'})` : t.status"), true);
+  // Renderizar o futuro não pode gravar nada
+  const antesV = DB.all('transactions').length, saldoV = DB.accountsTotal();
+  renderInicio(setV); renderExtrato(setV); renderRelatorios();
+  check('renderizar o futuro não cria lançamento', DB.all('transactions').length, antesV);
+  check('nem mexe no saldo das contas', DB.accountsTotal(), saldoV);
+
+  /* A PREVISÃO SOME quando o lançamento de verdade aparece — senão o mês contaria
+     o aluguel duas vezes assim que ele fosse lançado. */
+  const nVirtuaisAntes = DB.txOfPeriod(setV).filter(t => t.virtual).length;
+  const idReal = DB.upsert('transactions', {
+    description: 'Aluguel VIS', amount: 2500, date: DB.somarDiasISO(DB.inicioISO(setV), 5),
+    type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Boleto', account_id: ctaV.id, category_id: catsV[0].id,
+  });
+  const depois = DB.txOfPeriod(setV);
+  check('lançar de verdade remove a previsão correspondente',
+    depois.filter(t => t.virtual).length, nVirtuaisAntes - 1);
+  check('e o aluguel aparece uma vez só',
+    depois.filter(t => t.description === 'Aluguel VIS').length, 1);
+  check('agora como lançamento real', depois.find(t => t.description === 'Aluguel VIS').virtual, undefined);
+  DB.remove('transactions', idReal);
+
+  state.monthOffset = offV; state.repOffset = repV;
+  state.filtros = filtrosVazios();
+  DB.remove('transactions', idAgendado);
+  for (const t of DB.all('transactions').filter(t => / VIS$/.test(t.description || ''))) DB.remove('transactions', t.id);
+  DB.save();
+} catch (e) { console.log(` FALHA | visão de futuro: ${e.message}`); fail++; }
 
 console.log('\n=== Faturas em aberto (o que falta, não o total) ===');
 try {

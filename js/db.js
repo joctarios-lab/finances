@@ -326,8 +326,60 @@ const DB = {
   // Um lançamento é despesa por padrão; 'Receita' representa entrada de dinheiro.
   isExpense(t) { return (t && t.type) !== 'Receita'; },
 
+  /* Os lançamentos do período — e, num mês FUTURO, também os previstos.
+
+     Um mês que ainda não chegou não tem lançamento nenhum além do que foi
+     agendado à mão. Sem isto, cada objeto das telas mostrava zero por conta
+     própria: o KPI de gasto, o donut por categoria, a cascata, a regra 50·30·20, o
+     resumo do extrato. Cada um lia daqui e cada um teria de ser corrigido à parte —
+     e o que se corrige em oito lugares volta a divergir no nono.
+
+     As virtuais têm forma de transação e `virtual: true`. Não têm id, não são
+     gravadas e não existem em `DB.data`: nascem a cada leitura, a partir do
+     contrato e do custo fixo, e somem quando o lançamento de verdade aparece.
+
+     SÓ EM PERÍODO INTEIRAMENTE FUTURO. No mês corrente e no passado, o que não foi
+     lançado não aconteceu — misturar previsão ali competiria com o fato e faria o
+     extrato do mês discordar do extrato do banco.
+
+     Os dois pontos que ESCREVEM a partir daqui estão a salvo por construção: o
+     botão de custos fixos sempre lê o mês corrente, e `avgMonthlySpend` e
+     `fluxoMensal` só olham meses passados. */
   txOfPeriod(period) {
-    return this.all('transactions').filter(t => this.inPeriod(t.date, period));
+    const reais = this.all('transactions').filter(t => this.inPeriod(t.date, period));
+    if (this.inicioISO(period) <= this.hojeISO()) return reais;
+    return reais.concat(this.virtuaisDoPeriodo(period));
+  },
+
+  hojeISO() { return this.paraISO(new Date()); },
+
+  /* Os previstos ainda não lançados, com forma de transação.
+
+     `status: 'A Pagar'` não é enfeite: é o que faz o saldo previsto, os totais do
+     dia e as regras de "o que ainda vai sair" tratarem o item como compromisso
+     futuro, que é o que ele é. */
+  virtuaisDoPeriodo(period) {
+    return this.previstosNaoLancados(period).map(i => ({
+      id: null,
+      virtual: true,
+      description: i.titulo,
+      amount: i.valor,
+      date: i.data,
+      type: i.receita ? 'Receita' : 'Despesa',
+      status: 'A Pagar',
+      category_id: i.category_id,
+      account_id: i.account_id,
+      card_id: null,          // compra no cartão pesa na fatura, não solta
+      to_account: null,
+      method: i.method,
+      scope: i.scope,
+      member: i.member,
+      tags: '',
+      recurring: false,
+      adjustment: false,
+      invoice_key: '',
+      origemPrevista: i.origem,
+    }));
   },
   isTransfer(t) { return !!t && t.type === 'Transferência'; },
   // Transferências entre contas próprias e ajustes de saldo aparecem no extrato
@@ -586,6 +638,30 @@ const DB = {
       if (String(t.date) >= dataISO) continue;
       if (!dentro(t.account_id)) continue;
       previsto += (this.isExpense(t) ? -1 : 1) * (Number(t.amount) || 0);
+    }
+
+    /* CONTRATO E CUSTO FIXO que ainda não viraram lançamento.
+
+       Sem isto o saldo do extrato de um mês futuro contava só o que estava
+       agendado à mão: o extrato de setembro listava o salário e o aluguel na
+       lista, mas o saldo no topo os ignorava — a soma das linhas não fechava com
+       o número acima delas, que é o defeito mais grave que um extrato pode ter.
+
+       Varre mês a mês em vez de pedir um período só: `previstosNaoLancados`
+       trabalha por ciclo, e a data alvo pode estar a seis meses daqui. O limite de
+       24 é fôlego de sobra para o horizonte de 6 meses das telas e impede laço
+       infinito se a data vier absurda. */
+    for (let i = 0; i < 24; i++) {
+      const p = this.monthPeriod(new Date(), i);
+      if (this.inicioISO(p) >= dataISO) break;
+      if (this.fimISO(p) <= hoje) continue;      // ciclo já encerrado não tem previsão
+      for (const it of this.previstosNaoLancados(p)) {
+        if (String(it.data) >= dataISO || String(it.data) <= hoje) continue;
+        // Sem conta definida, o item pertence ao conjunto todo: só entra quando
+        // não há recorte de contas, senão apareceria em qualquer conta filtrada
+        if (it.account_id ? !dentro(it.account_id) : (contaIds && contaIds.length)) continue;
+        previsto += (it.receita ? 1 : -1) * (Number(it.valor) || 0);
+      }
     }
     /* Fatura conta pelo VENCIMENTO, e é o que faltava para o extrato de um mês
        futuro fechar: a compra no cartão não sai da conta quando é feita, sai
@@ -1229,8 +1305,22 @@ const DB = {
     const de = this.inicioISO(period), ate = this.fimISO(period);
     let entra = 0, sai = 0;
     const itens = [];
-    const add = (titulo, valor, receita, quando, origem) => {
-      itens.push({ titulo, valor, receita, data: quando, origem });
+    /* `molde` é o registro de onde o item veio — transação, contrato ou custo
+       fixo. Carregar categoria, conta e método daqui é o que permite às telas
+       tratarem a previsão como lançamento: sem categoria, o item não apareceria no
+       donut nem na tabela por categoria, e o mês futuro teria um total que não se
+       decompõe em lugar nenhum. */
+    const add = (titulo, valor, receita, quando, origem, molde) => {
+      const m = molde || {};
+      itens.push({
+        titulo, valor, receita, data: quando, origem,
+        category_id: m.category_id || null,
+        account_id: m.account_id || null,
+        card_id: m.card_id || null,
+        method: m.method || '',
+        scope: m.scope || '',
+        member: m.member || '',
+      });
       if (receita) entra += valor; else sai += valor;
     };
 
@@ -1243,7 +1333,7 @@ const DB = {
       if (d < de || d >= ate) continue;
       if (t.card_id) continue;                 // compra no cartão pesa na fatura, não solta
       if (t.recurrence_id) materializado.add(`${t.recurrence_id}|${d}`);
-      add(t.description, Number(t.amount) || 0, !this.isExpense(t), d, 'lançado');
+      add(t.description, Number(t.amount) || 0, !this.isExpense(t), d, 'lançado', t);
     }
 
     // Recorrências ativas: as ocorrências que caem neste mês
@@ -1256,7 +1346,7 @@ const DB = {
         if (data < de) continue;
         // Já materializada: contar de novo somaria o mesmo compromisso duas vezes
         if (materializado.has(`${r.id}|${data}`)) continue;
-        add(r.description, this.valorDaRecorrencia(r), r.type === 'Receita', data, 'prevista');
+        add(r.description, this.valorDaRecorrencia(r), r.type === 'Receita', data, 'prevista', r);
       }
     }
 
@@ -1297,7 +1387,7 @@ const DB = {
       const quando = this.paraISO(new Date(ref.getFullYear(), ref.getMonth(),
         Math.min(base.getDate(), ultimo)));
       if (quando < de || quando >= ate) continue;
-      add(molde.description, Number(molde.amount) || 0, !this.isExpense(molde), quando, 'custo fixo');
+      add(molde.description, Number(molde.amount) || 0, !this.isExpense(molde), quando, 'custo fixo', molde);
     }
 
     // Faturas que vencem neste mês
