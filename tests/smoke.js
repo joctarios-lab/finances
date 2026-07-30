@@ -476,9 +476,17 @@ try {
       (extratoFut.match(/class="tx tx-prev"/g) || []).length >= 2, true);
     check(`  e não diz "sem lançamentos"`, /Sem lançamentos/.test(extratoFut), false);
 
-    // RELATÓRIOS: previsão + o gráfico de fluxo, que é onde o futuro se lê
-    check(`relatórios de ${per.label}: traz a previsão`,
-      (relFut.match(/class="prev-linha"/g) || []).length >= 2, true);
+    /* RELATÓRIOS: os NÚMEROS do futuro, não a lista.
+
+       A lista do previsto vive só no Painel, na seção "O que ainda vem" — a mesma
+       lista em duas telas envelhece em duas velocidades. O que os Relatórios não
+       podem voltar a fazer é mostrar ZERO num mês futuro, que era o defeito
+       original: um relatório de zeros lê como "não vai gastar nada". */
+    check(`relatórios de ${per.label}: a lista fica só no Painel`,
+      /class="prev-linha"/.test(relFut), false);
+    check(`  mas os números do mês continuam de pé`, Rel.gasto(per) > 0, true);
+    check(`  e a tela não diz que nada foi lançado`,
+      /nenhuma receita lançada/i.test(relFut), false);
     /* O gráfico de doze meses é onde "como chego até setembro" se responde.
        Limitá-lo ao mês corrente o tirava justamente de quem navega o futuro. */
     check(`  e o gráfico de doze meses`, relFut.includes('De onde vim, para onde vou'), true);
@@ -1176,7 +1184,7 @@ console.log('\n=== Subcategorias nas telas ===');
   check('barra de orçamento abre o detalhe', ap.includes('openEnvelopeDetail') && ap.includes('data-envelope='), true);
   check('cadastro de categoria recolhível', ap.includes('openCategoriesConfig') && ap.includes('data-abrir'), true);
   check('dá para criar subcategoria dentro do envelope', ap.includes('data-nova-sub'), true);
-  check('subcategoria não pede orçamento próprio', /monthly_budget: semEnvelope \? 0 :/.test(ap), true);
+  check('subcategoria não pede orçamento próprio', /const novoBudget = semEnvelope \? 0 :/.test(ap), true);
   check('subcategoria herda âmbito e tipo do envelope', /scope: semEnvelope \?[\s\S]{0,180}kind: semEnvelope \?/.test(ap), true);
   check('entrada também não tem orçamento', /const semEnvelope = pai \|\| ehEntrada;/.test(ap), true);
   check('base antiga recebe a oferta de migração', ap.includes('md-sugerir') && ap.includes('DB.sugerirSubcategorias()'), true);
@@ -5169,6 +5177,144 @@ check('função is_member definida antes das policies', schema.indexOf('function
       DB.data = guardaDados;
     }
   })();
+
+  console.log('\n=== Orçamento flexível (ajuste por ciclo) ===');
+  try {
+    const pAgora = DB.monthPeriod(new Date());
+    const pProx = DB.monthPeriod(pAgora.start, 1);
+    const pAnterior = DB.monthPeriod(pAgora.start, -1);
+    const env = DB.upsert('categories', {
+      name: 'Envelope Orc', icon: '🧪', scope: 'Família', kind: 'Essencial',
+      type: 'Despesa', parent_id: null, monthly_budget: 500,
+    });
+
+    /* O PADRÃO continua respondendo quando não há ajuste — o ajuste é a exceção,
+       não o novo normal. */
+    check('sem ajuste, vale o padrão da categoria', DB.budgetOf(env, pAgora), 500);
+    check('em qualquer ciclo', DB.budgetOf(env, pProx), 500);
+
+    DB.ajustarOrcamento(env, pProx, 800);
+    check('ajuste vale só no ciclo ajustado', DB.budgetOf(env, pProx), 800);
+    check('  e não vaza para o mês corrente', DB.budgetOf(env, pAgora), 500);
+    check('  nem para o anterior', DB.budgetOf(env, pAnterior), 500);
+    check('  o padrão da categoria fica intacto', DB.get('categories', env).monthly_budget, 500);
+
+    /* ZERO É AJUSTE LEGÍTIMO — "neste mês não se gasta nada aqui". Com `||` no
+       lugar do teste de existência, ele cairia de volta no padrão em silêncio. */
+    DB.ajustarOrcamento(env, pProx, 0);
+    check('ajuste de zero não cai de volta no padrão', DB.budgetOf(env, pProx), 0);
+
+    /* Um registro por categoria por ciclo: o índice único do banco é
+       (family_id, category_id, period_start), e duas linhas para o mesmo par
+       fariam a leitura escolher uma delas sem dizer qual. */
+    DB.ajustarOrcamento(env, pProx, 700);
+    check('reajustar reusa o registro, não cria outro',
+      DB.all('budget_overrides').filter(o => o.category_id === env).length, 1);
+
+    check('limpar devolve o padrão', (() => {
+      DB.limparAjusteDeOrcamento(env, pProx);
+      return DB.budgetOf(env, pProx);
+    })(), 500);
+
+    // O total do mês soma os ajustes, não os padrões
+    const totalPadrao = DB.budgetTotal(pAgora);
+    DB.ajustarOrcamento(env, pAgora, 900);
+    check('o total do ciclo acompanha o ajuste', DB.budgetTotal(pAgora), totalPadrao + 400);
+    check('  e o total dos outros ciclos não muda', DB.budgetTotal(pProx), totalPadrao);
+    DB.limparAjusteDeOrcamento(env, pAgora);
+
+    /* MUDAR O PADRÃO VALE DAQUI PARA A FRENTE. Sem o congelamento, subir de 500
+       para 800 reescrevia o passado: o relatório de um mês fechado passava a
+       comparar o gasto contra um teto que não valia lá. */
+    const contaEnv = DB.all('accounts')[0];
+    DB.upsert('transactions', {
+      description: 'Gasto Orc Passado', amount: 120, date: DB.inicioISO(pAnterior),
+      type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+      method: 'Débito', account_id: contaEnv.id, category_id: env,
+    });
+    DB.ajustarOrcamento(env, pProx, 650);          // um ajuste futuro, que deve sumir
+    DB.definirOrcamentoPadrao(env, 800, pAgora);
+    check('o padrão novo vale no ciclo corrente', DB.budgetOf(env, pAgora), 800);
+    check('  e daí para a frente', DB.budgetOf(env, pProx), 800);
+    check('  o mês fechado guarda o valor que valia nele', DB.budgetOf(env, pAnterior), 500);
+    check('  o ajuste futuro que existia foi revisto junto', DB.budgetOf(env, pProx) === 650, false);
+    // Só congela onde houve gasto: materializar o passado inteiro encheria a base
+    check('mês sem gasto não vira registro',
+      DB.all('budget_overrides').some(o => o.category_id === env
+        && String(o.period_start) === DB.chaveDoCiclo(DB.monthPeriod(pAgora.start, -6))), false);
+
+    /* MOVER ENTRE ENVELOPES conserva o total do mês. É o que separa "remanejei"
+       de "aumentei o orçamento" — sem isso o total sobe sem ninguém perceber. */
+    const env2 = DB.upsert('categories', {
+      name: 'Envelope Orc 2', icon: '🧪', scope: 'Família', kind: 'Essencial',
+      type: 'Despesa', parent_id: null, monthly_budget: 300,
+    });
+    const totalAntes = DB.budgetTotal(pAgora);
+    const deAntes = DB.budgetOf(env2, pAgora), paraAntes = DB.budgetOf(env, pAgora);
+    DB.emLote(() => {
+      DB.ajustarOrcamento(env2, pAgora, deAntes - 100);
+      DB.ajustarOrcamento(env, pAgora, paraAntes + 100);
+    });
+    check('mover não muda o total orçado do mês', DB.budgetTotal(pAgora), totalAntes);
+    check('  sai de um lado', DB.budgetOf(env2, pAgora), deAntes - 100);
+    check('  e entra no outro', DB.budgetOf(env, pAgora), paraAntes + 100);
+
+    /* A TELA: a barra usa o limite do ciclo, e diz quando ele está ajustado —
+       um limite diferente do padrão sem aviso é um número que ninguém explica. */
+    const offOrc = state.monthOffset;
+    state.monthOffset = 0;
+    const telaOrc = renderInicio(pAgora);
+    check('a barra do envelope traz o botão de ajuste', telaOrc.includes(`data-orc="${env}"`), true);
+    check('e o mês ajustado ganha selo', /selo-ajuste/.test(telaOrc), true);
+    check('o CSS do selo existe',
+      fs.readFileSync(BASE + 'css/styles.css', 'utf8').includes('.selo-ajuste'), true);
+
+    /* O ALERTA usa o limite do ciclo: acusar estouro contra o padrão num mês
+       ajustado seria cobrar de um teto que a pessoa já corrigiu. */
+    DB.upsert('transactions', {
+      description: 'Gasto Orc Agora', amount: 600, date: todayISO(),
+      type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+      method: 'Débito', account_id: contaEnv.id, category_id: env,
+    });
+    DB.ajustarOrcamento(env, pAgora, 100);          // 600 de 100 = estouro
+    check('com o limite baixo, o conselheiro acusa',
+      renderInicio(pAgora).includes('Envelope Orc estourou o orçamento'), true);
+    DB.ajustarOrcamento(env, pAgora, 5000);         // agora cabe
+    check('com o mês ajustado para caber, ele se cala',
+      renderInicio(pAgora).includes('Envelope Orc estourou o orçamento'), false);
+    state.monthOffset = offOrc;
+
+    /* BACKUP ANTIGO CONTINUA IMPORTÁVEL. A validação exigia TODAS as stores, então
+       uma versão que acrescenta tabela invalidava todos os arquivos salvos até
+       ali — o backup só serve se abrir depois. */
+    const backupVelho = JSON.stringify({
+      meta: { seeded: true }, accounts: [], cards: [], categories: [], transactions: [],
+      goals: [], goal_entries: [], invoice_status: [], recurrences: [], family_settings: [],
+    });
+    const guardaImp = DB.data;
+    let importou = true;
+    try { DB.importJSON(backupVelho); } catch (_) { importou = false; }
+    check('backup sem a tabela nova ainda importa', importou, true);
+    check('  e a store ausente nasce vazia', Array.isArray(DB.data.budget_overrides), true);
+    let recusou = false;
+    try { DB.importJSON('{"foo":1}'); } catch (_) { recusou = true; }
+    check('  mas arquivo que não é backup continua recusado', recusou, true);
+    DB.data = guardaImp;
+
+    // O servidor precisa concordar com a tela, senão o push contradiz o app
+    const nt = fs.readFileSync(BASE + 'supabase/functions/notify/index.ts', 'utf8');
+    check('a Edge Function lê os ajustes', nt.includes("from('budget_overrides')"), true);
+    check('  e usa o ajuste no lugar do padrão', /ajuste\.has\(c\.id\) \? ajuste\.get\(c\.id\)! : c\.monthly_budget/.test(nt), true);
+    // Tabela nova precisa sincronizar, senão o ajuste fica preso num aparelho
+    check('a tabela entra no sync',
+      fs.readFileSync(BASE + 'js/sync.js', 'utf8').includes('budget_overrides: ['), true);
+
+    // Limpa o cenário
+    for (const t of DB.all('transactions').filter(t => /^Gasto Orc/.test(t.description || ''))) DB.remove('transactions', t.id);
+    for (const o of DB.all('budget_overrides').filter(o => o.category_id === env || o.category_id === env2)) DB.remove('budget_overrides', o.id);
+    DB.remove('categories', env); DB.remove('categories', env2);
+    DB.save();
+  } catch (e) { console.log(` FALHA | orçamento flexível: ${e.message}`); fail++; }
 
   for (const k of Object.keys(store)) delete store[k];
   Object.assign(store, storeAntes);

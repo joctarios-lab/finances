@@ -1260,7 +1260,7 @@ function renderInicio(period) {
   const available = saldo - committed - guardado;
   const realized = DB.realizedIncome(period);              // receitas realmente lançadas
   const income = realized > 0 ? realized : (Number(DB.settings().monthly_income) || 0);
-  const budgetTotal = DB.budgetTotal();
+  const budgetTotal = DB.budgetTotal(period);
   const refLimit = income > 0 ? income : budgetTotal;
   const health = healthOf(stats, refLimit, available);
 
@@ -1337,12 +1337,20 @@ function renderInicio(period) {
   let budgets = '';
   for (const c of DB.rootCategories('Despesa').sort((a, b) => (byCat[b.id] || 0) - (byCat[a.id] || 0))) {
     const spent = byCat[c.id] || 0;
-    if (!c.monthly_budget && !spent) continue;
-    const pct = c.monthly_budget > 0 ? Math.round(spent / c.monthly_budget * 100) : 0;
+    const limite = DB.budgetOf(c.id, period);
+    const ajustado = !!DB.overrideDeOrcamento(c.id, period);
+    if (!limite && !spent) continue;
+    const pct = limite > 0 ? Math.round(spent / limite * 100) : 0;
     const detalhavel = spent > 0 && DB.subcategoriesOf(c.id).length > 0;
+    /* O lápis abre o ajuste DESTE ciclo. Fica na própria barra porque é onde a
+       necessidade aparece — quem vê "170%" numa categoria é quem sabe se o mês
+       era atípico. O selo diz que o mês está ajustado: um limite diferente do
+       padrão, sem aviso, seria um número que a pessoa não consegue explicar. */
     budgets += `<div class="budget-row${detalhavel ? ' clicavel' : ''}"${detalhavel ? ` data-envelope="${c.id}"` : ''}>
-      <div class="budget-head"><b>${esc(c.icon)} ${esc(c.name)}${detalhavel ? ' <span class="chev-min" data-ico="chev"></span>' : ''}</b>
-        <span class="num">${fmtShort(spent)}${c.monthly_budget ? ` <span class="muted">/ ${fmtShort(c.monthly_budget)} · ${pct}%</span>` : ''}</span></div>
+      <div class="budget-head"><b>${esc(c.icon)} ${esc(c.name)}${detalhavel ? ' <span class="chev-min" data-ico="chev"></span>' : ''}${
+        ajustado ? ' <span class="selo-ajuste" title="orçamento ajustado neste mês">ajustado</span>' : ''}</b>
+        <span class="num">${fmtShort(spent)}${limite ? ` <span class="muted">/ ${fmtShort(limite)} · ${pct}%</span>` : ''}
+          <button class="mini-btn" data-orc="${c.id}" title="Ajustar o orçamento deste mês" aria-label="Ajustar orçamento de ${esc(c.name)}"><span data-ico="edit"></span></button></span></div>
       <div class="bar ${barClass(pct)}"><i style="width:${Math.min(100, pct)}%"></i></div>
     </div>`;
   }
@@ -1426,8 +1434,11 @@ function renderInicio(period) {
   const tips = [];
   if (available < 0) tips.push({ cls: 'red', txt: `Compromissos superam o saldo em ${fmtShort(-available)} — priorize quitar ou remanejar.` });
   for (const c of DB.rootCategories('Despesa')) {
-    if (!c.monthly_budget) continue;
-    const pct = Math.round((byCat[c.id] || 0) / c.monthly_budget * 100);
+    // O limite DESTE ciclo: alertar contra o padrão num mês ajustado seria acusar
+    // estouro de um teto que a própria pessoa já corrigiu
+    const limiteC = DB.budgetOf(c.id, period);
+    if (!limiteC) continue;
+    const pct = Math.round((byCat[c.id] || 0) / limiteC * 100);
     const pace = Math.round(stats.elapsedDays / Math.max(stats.totalDays, 1) * 100);
     if (pct >= 100) tips.push({ cls: 'red', txt: `${c.icon} ${c.name} estourou o orçamento (${pct}%).` });
     else if (pct >= 80 && pct > pace + 15) tips.push({ cls: 'amber', txt: `${c.icon} ${c.name} já usou ${pct}% do orçamento no dia ${stats.elapsedDays} — freie o ritmo.` });
@@ -2607,11 +2618,12 @@ function renderRelatorios() {
       O recorte vale para os 12 meses do histórico, então as comparações continuam justas.</p>` : ''}
 
     ${relFrase({ period, atual, total, receitas, resultado, juizo, vsMediana, st, kinds, filtrado })}
-    <!-- Mês futuro: os agregadores todos dão zero porque nada foi lançado ainda, e
-         um relatório de zeros lê como "não vai gastar nada". A previsão vem antes
-         dos gráficos, que continuam mostrando o histórico para comparação. -->
-    ${(state.repOffset || 0) > 0 && !filtrado
-      ? cardPrevisaoDoMes(DB.previsaoDoMes(period), period) : ''}
+    <!-- A LISTA do previsto vive no Painel, na seção "O que ainda vem", que reúne
+         este mês e o próximo. Ela existia aqui também, e a mesma lista em duas
+         telas envelhece em duas velocidades: cada mudança precisa lembrar das
+         duas. Os Relatórios continuam falando do futuro pelos números e pelos
+         gráficos — a frase do topo, o "Onde isso vai parar" e o "De onde vim,
+         para onde vou" —, que é o que esta tela sabe fazer melhor que o Painel. -->
     <!-- Os três primeiros gráficos são a resposta em três tempos — de onde veio,
          para onde foi, se é normal. Em tela larga eles ficam lado a lado, porque
          a comparação entre os três É a leitura; empilhados, exigem rolar e o
@@ -2959,7 +2971,7 @@ function relCortes(period, txs, total) {
 function relProjecao({ period, st, atual, total, receitas, juizo, filtrado }) {
   // Orçamento é da família inteira: comparar um recorte contra ele diria que
   // "Alimentação usou 12% do orçamento", o que não responde pergunta nenhuma
-  const orcamento = filtrado ? 0 : DB.budgetTotal();
+  const orcamento = filtrado ? 0 : DB.budgetTotal(period);
   const pctOrc = orcamento > 0 ? Math.round(total / orcamento * 100) : 0;
   const proj = st.projection;
   const estoura = orcamento > 0 && proj > orcamento;
@@ -2983,7 +2995,7 @@ function relProjecao({ period, st, atual, total, receitas, juizo, filtrado }) {
       <div class="card">
         <div class="card-head"><div><b>${atual ? 'Saldo projetado' : 'Ritmo do mês'}</b>
           <small>${atual ? 'cruzando o que ainda entra e sai, nas datas' : 'gasto acumulado dia a dia'}</small></div></div>
-        ${atual ? projecaoCard(period) : svgBurnup(period, DB.budgetTotal() || undefined)}
+        ${atual ? projecaoCard(period) : svgBurnup(period, DB.budgetTotal(period) || undefined)}
       </div>
     </div>`;
 }
@@ -3305,6 +3317,12 @@ function bindView() {
   // Contas: tocar para atualizar o saldo (conciliação rápida)
   v.querySelectorAll('[data-acc]').forEach(el => el.onclick = () => openSaldoSheet(el.dataset.acc));
   v.querySelectorAll('[data-envelope]').forEach(el => el.onclick = () => openEnvelopeDetail(el.dataset.envelope));
+  /* stopPropagation: o lápis vive DENTRO da linha do envelope, que também é
+     clicável. Sem isto, ajustar o orçamento abriria o detalhe por baixo. */
+  v.querySelectorAll('[data-orc]').forEach(el => el.onclick = ev => {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    openOrcamentoSheet(el.dataset.orc);
+  });
   const transf = $('#btn-transfer');
   if (transf) transf.onclick = () => openTxSheet({ type: 'Transferência', date: todayISO(), description: '', amount: '', status: 'Pago', method: 'Transferência', scope: 'Família', member: MEMBRO_COMUM }, true);
   const criarReserva = $('#btn-criar-reserva');
@@ -4257,7 +4275,9 @@ function openEnvelopeDetail(rootId) {
     .map(([id, v]) => [(catOf(id) || {}).name || '—', v]);
   if (direto > 0) linhas.push(['Sem subcategoria', direto]);
 
-  const limite = Number(c.monthly_budget) || 0;
+  // O limite do MÊS NAVEGADO. Antes lia o padrão atemporal, então a folha
+  // mostrava o gasto de um mês contra o teto de outro.
+  const limite = DB.budgetOf(c.id, period);
   const pct = limite > 0 ? Math.round(total / limite * 100) : 0;
 
   openSheet(`
@@ -4270,6 +4290,132 @@ function openEnvelopeDetail(rootId) {
     <div class="btn-row" style="margin-top:14px"><button class="btn ghost" id="sh-close">Fechar</button></div>
   `);
   $('#sh-close').onclick = closeSheet;
+}
+
+/* ---------- Ajustar o orçamento de um ciclo ----------
+
+   O padrão da categoria responde "quanto costuma caber aqui"; esta folha responde
+   "e neste mês?". As duas perguntas convivem, e a diferença entre elas é o
+   ALCANCE — que por isso é uma escolha explícita na tela, não um efeito colateral
+   de onde a pessoa clicou:
+
+   - "só neste mês" grava um ajuste do ciclo e não toca no padrão
+   - "deste mês em diante" muda o padrão, congelando o valor antigo nos meses
+     fechados que tiveram gasto (senão o relatório de um mês encerrado passaria a
+     comparar o gasto contra um teto que não valia lá)
+
+   E há o caminho que motivou tudo: MOVER de outro envelope. Ele grava os dois
+   lados de uma vez, porque "reforcei alimentação tirando do lazer" é uma decisão
+   só — feita em dois passos, o total do mês fica errado no meio do caminho e
+   ninguém confere. */
+function openOrcamentoSheet(categoryId) {
+  const c = catOf(categoryId);
+  if (!c) return;
+  const period = DB.monthPeriod(new Date(), state.monthOffset);
+  const atual = DB.budgetOf(categoryId, period);
+  const padrao = Number(c.monthly_budget) || 0;
+  const temAjuste = !!DB.overrideDeOrcamento(categoryId, period);
+  const gasto = DB.spentByCategory(period)[categoryId] || 0;
+  const outros = DB.rootCategories('Despesa')
+    .filter(o => o.id !== categoryId && DB.budgetOf(o.id, period) > 0);
+
+  openSheet(`
+    <div class="sheet-title">${esc(c.icon)} ${esc(c.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin:-4px 0 12px">Orçamento de <b>${esc(period.label)}</b>${
+      temAjuste ? ` · ajustado (padrão ${fmtShort(padrao)})` : ' · usando o padrão'} · já gasto ${fmtShort(gasto)}</p>
+    <div class="field"><label>Quanto cabe neste mês</label><input id="orc-valor" type="text" inputmode="numeric" placeholder="R$ 0,00"></div>
+    <div class="field"><label>Vale para</label>
+      ${chipGroup('orc-alcance', [
+        { value: 'mes', label: 'Só neste mês' },
+        { value: 'diante', label: 'Deste mês em diante' },
+      ], 'mes')}
+      <p class="muted" id="orc-explica" style="margin-top:6px"></p>
+    </div>
+    <button class="btn" id="sh-save">Salvar</button>
+    <div class="btn-row">
+      ${outros.length ? '<button class="btn ghost" id="orc-mover">Mover de outro envelope</button>' : ''}
+      ${temAjuste ? '<button class="btn ghost t-danger" id="orc-limpar">Voltar ao padrão</button>' : ''}
+    </div>
+  `);
+  initMoney('#orc-valor', atual);
+  const explicar = () => {
+    const el = $('#orc-explica');
+    if (!el) return;
+    el.textContent = chipValue('orc-alcance') === 'diante'
+      ? `Muda o padrão de ${c.name}. Os meses já fechados ficam com ${fmtShort(padrao)}, o valor que valia neles.`
+      : `Só ${period.label}. O padrão de ${fmtShort(padrao)} continua valendo nos outros meses.`;
+  };
+  explicar();
+  bindChips('orc-alcance', explicar);
+  $('#sh-close').onclick = closeSheet;
+  $('#sh-save').onclick = () => {
+    const valor = moneyVal('#orc-valor');
+    if (chipValue('orc-alcance') === 'diante') DB.definirOrcamentoPadrao(categoryId, valor, period);
+    else DB.ajustarOrcamento(categoryId, period, valor);
+    closeSheet(); Sync.autoSync(); render();
+    toast(`Orçamento de ${c.name}: ${fmtShort(valor)} ✓`);
+  };
+  const limpar = $('#orc-limpar');
+  if (limpar) limpar.onclick = () => {
+    DB.limparAjusteDeOrcamento(categoryId, period);
+    closeSheet(); Sync.autoSync(); render();
+    toast(`${c.name} voltou ao padrão de ${fmtShort(padrao)}`);
+  };
+  const mover = $('#orc-mover');
+  if (mover) mover.onclick = () => openMoverOrcamentoSheet(categoryId, period);
+}
+
+/* Mover orçamento entre envelopes, dentro do mesmo ciclo.
+
+   O total do mês fica INALTERADO por construção: o que entra de um lado sai do
+   outro, gravado de uma vez só. É a diferença entre "remanejei" e "aumentei o
+   orçamento", e as duas coisas precisam ser distinguíveis — senão o total do mês
+   sobe sem ninguém perceber e o plano deixa de significar alguma coisa. */
+function openMoverOrcamentoSheet(destinoId, period) {
+  const destino = catOf(destinoId);
+  const candidatos = DB.rootCategories('Despesa')
+    .filter(o => o.id !== destinoId && DB.budgetOf(o.id, period) > 0)
+    .sort((a, b) => DB.budgetOf(b.id, period) - DB.budgetOf(a.id, period));
+  if (!candidatos.length) return toast('Nenhum outro envelope tem orçamento neste mês');
+
+  openSheet(`
+    <div class="sheet-title">Mover para ${esc(destino.icon)} ${esc(destino.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin:-4px 0 12px">Em <b>${esc(period.label)}</b>. O total orçado do mês não muda — sai de um envelope e entra no outro.</p>
+    <div class="field"><label>Tirar de</label>
+      <select id="mv-origem">${candidatos.map(o => `<option value="${o.id}">${esc(o.icon)} ${esc(o.name)} — tem ${fmtShort(DB.budgetOf(o.id, period))}</option>`).join('')}</select></div>
+    <div class="field"><label>Quanto</label><input id="mv-valor" type="text" inputmode="numeric" placeholder="R$ 0,00"></div>
+    <p class="muted" id="mv-previa"></p>
+    <button class="btn" id="sh-save">Mover</button>
+  `);
+  initMoney('#mv-valor', 0);
+  /* A prévia existe porque a operação mexe em dois números ao mesmo tempo: sem
+     ver os dois lados antes de confirmar, "mover 200" é um palpite. */
+  const previa = () => {
+    const el = $('#mv-previa');
+    const origem = catOf($('#mv-origem').value);
+    const v = moneyVal('#mv-valor');
+    if (!el || !origem) return;
+    const de = DB.budgetOf(origem.id, period), para = DB.budgetOf(destinoId, period);
+    el.innerHTML = v > 0
+      ? `${esc(origem.name)}: ${fmtShort(de)} → <b>${fmtShort(de - v)}</b> · ${esc(destino.name)}: ${fmtShort(para)} → <b>${fmtShort(para + v)}</b>`
+      : '';
+  };
+  $('#mv-valor').addEventListener('input', previa);
+  $('#mv-origem').addEventListener('change', previa);
+  $('#sh-close').onclick = closeSheet;
+  $('#sh-save').onclick = () => {
+    const origem = catOf($('#mv-origem').value);
+    const v = moneyVal('#mv-valor');
+    if (!origem || v <= 0) return toast('Informe quanto mover');
+    const de = DB.budgetOf(origem.id, period);
+    if (v > de) return toast(`${origem.name} só tem ${fmtShort(de)} neste mês`);
+    DB.emLote(() => {
+      DB.ajustarOrcamento(origem.id, period, de - v);
+      DB.ajustarOrcamento(destinoId, period, DB.budgetOf(destinoId, period) + v);
+    });
+    closeSheet(); Sync.autoSync(); render();
+    toast(`${fmtShort(v)} de ${origem.name} para ${destino.name} ✓`);
+  };
 }
 
 function openSheet(html) {
@@ -6193,14 +6339,21 @@ function openCategoryEditor(cat, paiFixo, tipoNovo, voltarPara) {
     }
     const envelope = pai ? DB.get('categories', pai) : null;
     const semEnvelope = pai || ehEntrada;   // entrada não tem orçamento nem 50/30/20
+    const novoBudget = semEnvelope ? 0 : moneyVal('#c-budget');
+    const mudouBudget = isEdit && Number(cat.monthly_budget || 0) !== novoBudget;
     DB.upsert('categories', {
       ...cat, name: nome, icon: $('#c-icon').value || '🏷️', parent_id: pai, type: tipo,
       // Subcategoria segue o envelope: guardar cópia divergente aqui só criaria
       // dois lugares dizendo coisas diferentes sobre o mesmo gasto.
       scope: semEnvelope ? (envelope ? envelope.scope : 'Família') : $('#c-scope').value,
       kind: semEnvelope ? (envelope ? envelope.kind : 'Essencial') : $('#c-kind').value,
-      monthly_budget: semEnvelope ? 0 : moneyVal('#c-budget'),
+      monthly_budget: novoBudget,
     });
+    /* Mudar o padrão aqui vale DAQUI PARA A FRENTE. Sem isto, subir o orçamento
+       de 500 para 800 reescrevia o passado — o relatório de um mês fechado
+       passava a comparar o gasto contra um teto que não valia lá. O valor antigo
+       fica congelado nos ciclos encerrados que tiveram gasto nesta categoria. */
+    if (mudouBudget) DB.definirOrcamentoPadrao(cat.id, novoBudget);
     Sync.autoSync(); toast(isEdit ? 'Categoria atualizada ✓' : 'Categoria criada ✓'); voltar();
   };
 
@@ -6853,8 +7006,11 @@ const Notif = {
     const period = DB.monthPeriod(new Date());
     const byCat = DB.spentByCategory(period);
     for (const c of DB.rootCategories('Despesa')) {
-      if (!c.monthly_budget) continue;
-      const pct = Math.round((byCat[c.id] || 0) / c.monthly_budget * 100);
+      // Limite do ciclo corrente: avisar contra o padrão num mês ajustado seria
+      // dizer "estourou" de um teto que a pessoa já corrigiu
+      const limite = DB.budgetOf(c.id, period);
+      if (!limite) continue;
+      const pct = Math.round((byCat[c.id] || 0) / limite * 100);
       if (pct >= 100) this.push(`orc-${c.id}-${period.label}`, '⚠️ Orçamento estourado', `${c.icon} ${c.name} chegou a ${pct}% do limite do mês.`);
     }
     for (const g of DB.all('goals').filter(g => !g.done)) {

@@ -46,6 +46,10 @@ function alertsFor(
   paidKeys: Set<string>,
   categories: { id: string; name: string; icon: string; monthly_budget: number; parent_id: string | null }[],
   monthStartDay: number,
+  /* Ajustes de orçamento do ciclo. Sem eles o servidor avisaria "estourou"
+     comparando com o padrão — um teto que a pessoa já corrigiu na tela. Um push
+     que contradiz o app é pior que push nenhum: ensina a ignorar os avisos. */
+  overrides: { category_id: string; period_start: string; amount: number }[] = [],
 ): Alert[] {
   const out: Alert[] = [];
   const today = new Date();
@@ -101,11 +105,22 @@ function alertsFor(
     const k = envelopeDe(t.category_id);
     spent.set(k, (spent.get(k) ?? 0) + Number(t.amount || 0));
   }
+  /* Mesma regra do app (DB.budgetOf): o ajuste do ciclo manda; sem ajuste, o
+     padrão. A chave é o primeiro dia do ciclo, e ela é montada aqui do mesmo
+     jeito que `start` — em UTC — para não escorregar um dia. */
+  const chaveCiclo = start.toISOString().slice(0, 10);
+  const ajuste = new Map(
+    overrides.filter(o => String(o.period_start).slice(0, 10) === chaveCiclo)
+      .map(o => [o.category_id, Number(o.amount) || 0]),
+  );
   for (const c of categories) {
     if (c.parent_id) continue;         // o limite vive no envelope
-    if (!c.monthly_budget) continue;
+    // Zero é ajuste legítimo ("neste mês não se gasta aqui"), então o teste é
+    // pela existência da chave, não pela verdade do valor
+    const limite = ajuste.has(c.id) ? ajuste.get(c.id)! : c.monthly_budget;
+    if (!limite) continue;
     const used = spent.get(c.id) ?? 0;
-    const pct = Math.round(used / c.monthly_budget * 100);
+    const pct = Math.round(used / limite * 100);
     if (pct >= 100) {
       out.push({ key: `orc-${c.id}-${label}`, title: '⚠️ Orçamento estourado', body: `${c.icon} ${c.name} chegou a ${pct}% do limite do mês.` });
     }
@@ -128,12 +143,13 @@ Deno.serve(async () => {
   let sent = 0, removed = 0;
 
   for (const [familyId, familySubs] of byFamily) {
-    const [cards, txs, invStatus, cats, settings] = await Promise.all([
+    const [cards, txs, invStatus, cats, settings, overrides] = await Promise.all([
       db.from('cards').select('id,name,closing_day,due_day,limit_amount').eq('family_id', familyId).eq('deleted', false).eq('active', true),
       db.from('transactions').select('amount,card_id,invoice_key,category_id,date,type').eq('family_id', familyId).eq('deleted', false),
       db.from('invoice_status').select('invoice_key,paid').eq('family_id', familyId).eq('deleted', false),
       db.from('categories').select('id,name,icon,monthly_budget,parent_id').eq('family_id', familyId).eq('deleted', false),
       db.from('family_settings').select('month_start_day').eq('family_id', familyId).eq('deleted', false).limit(1),
+      db.from('budget_overrides').select('category_id,period_start,amount').eq('family_id', familyId).eq('deleted', false),
     ]);
 
     const paidKeys = new Set((invStatus.data ?? []).filter(i => i.paid).map(i => i.invoice_key));
@@ -143,6 +159,7 @@ Deno.serve(async () => {
       paidKeys,
       (cats.data ?? []) as never,
       settings.data?.[0]?.month_start_day ?? 1,
+      (overrides.data ?? []) as never,
     );
 
     for (const alert of alerts) {

@@ -189,6 +189,41 @@ create table if not exists invoice_status (
   deleted boolean not null default false
 );
 
+-- Orçamento ajustado para UM ciclo.
+--
+-- `categories.monthly_budget` é o orçamento PADRÃO, atemporal. Ele responde
+-- "quanto costumamos gastar aqui por mês", e continua sendo a base. Esta tabela
+-- responde outra pergunta: "e neste mês específico?" — a conta do carro que só
+-- chega em janeiro, o mês da matrícula da escola, o mês em que se tira de um
+-- envelope para reforçar outro.
+--
+-- A chave do período é `period_start`, o PRIMEIRO DIA DO CICLO — não um rótulo
+-- "AAAA-MM". O dia de virada do mês é configurável (`family_settings.
+-- month_start_day`), então um rótulo de mês-calendário divergiria do período que
+-- o app usa em todo o resto, e o ajuste cairia no mês errado para quem fecha o
+-- ciclo no dia 25.
+create table if not exists budget_overrides (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  -- Sem NOT NULL de propósito: `category_id` é nulável em transactions (lançamento
+  -- sem categoria é legítimo), e o mapa de tipos do sync é por NOME de coluna, um
+  -- só para o banco inteiro. Divergir aqui faria o higienizador tratar a coluna de
+  -- um jeito numa tabela e de outro na vizinha. Quem garante o preenchimento é o
+  -- app — `ajustarOrcamento` é o único caminho de escrita —, e a unicidade fica no
+  -- índice abaixo.
+  category_id uuid,
+  period_start date not null,          -- primeiro dia do ciclo (não "AAAA-MM": o ciclo é configurável)
+  -- Sem default, como em transactions.amount: o app sempre informa o valor, e um
+  -- default silencioso deixaria passar um ajuste de R$ 0 sem ninguém notar.
+  amount numeric not null,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+-- Um ajuste por categoria por ciclo. Sem isto, dois aparelhos criando o ajuste do
+-- mesmo mês gerariam duas linhas e a leitura teria de escolher uma — silenciosamente.
+create unique index if not exists idx_bov_unico
+  on budget_overrides(family_id, category_id, period_start);
+
 create table if not exists family_settings (
   id uuid primary key,
   family_id uuid not null references families(id) on delete cascade,
@@ -237,7 +272,7 @@ do $
 declare t text;
 begin
   foreach t in array array['accounts','cards','categories','transactions','recurrences',
-                           'goals','goal_entries','invoice_status','family_settings']
+                           'goals','goal_entries','invoice_status','family_settings','budget_overrides']
   loop
     execute format(
       'alter table %I add column if not exists server_at timestamptz not null default clock_timestamp()', t);
@@ -261,7 +296,7 @@ do $
 declare t text;
 begin
   foreach t in array array['accounts','cards','categories','transactions','recurrences',
-                           'goals','goal_entries','invoice_status','family_settings']
+                           'goals','goal_entries','invoice_status','family_settings','budget_overrides']
   loop
     execute format('drop trigger if exists trg_server_at on %I', t);
     execute format(
@@ -314,6 +349,7 @@ alter table goal_entries enable row level security;
 alter table invoice_status enable row level security;
 alter table recurrences enable row level security;
 alter table family_settings enable row level security;
+alter table budget_overrides enable row level security;
 alter table push_subscriptions enable row level security;
 alter table notification_log enable row level security;   -- sem policies: só a Edge Function (service_role) acessa
 
@@ -335,7 +371,7 @@ create policy fm_select on family_members for select to authenticated using (use
 do $$
 declare t text;
 begin
-  foreach t in array array['accounts','cards','categories','transactions','goals','goal_entries','invoice_status','recurrences','family_settings']
+  foreach t in array array['accounts','cards','categories','transactions','goals','goal_entries','invoice_status','recurrences','family_settings','budget_overrides']
   loop
     execute format('drop policy if exists %I_rw on %I', t, t);
     execute format(

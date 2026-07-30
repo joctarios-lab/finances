@@ -52,6 +52,10 @@ const SYNC_TABLES = {
     'category_id', 'account_id', 'card_id', 'tags', 'notes',
     'periodicidade', 'dia', 'inicio', 'fim_tipo', 'fim_data', 'fim_vezes', 'geradas', 'status', 'ultima_geracao'],
   family_settings: ['members', 'month_start_day', 'monthly_income', 'family_name'],
+  // Orçamento ajustado para um ciclo. Tabela nova: num banco onde o SQL ainda não
+  // foi rodado, o pull e o push já isolam falha POR TABELA, então só o ajuste
+  // deixa de sincronizar — o resto da base continua andando.
+  budget_overrides: ['category_id', 'period_start', 'amount'],
 };
 
 /* Tipo de cada coluna do banco, por nome (nenhum nome se repete com tipo
@@ -80,7 +84,7 @@ const COLUNAS = {
   target_amount: 'num#', monthly_income: 'num#',
   closing_day: 'int#', due_day: 'int#', month_start_day: 'int#',
   dia: 'int#', fim_vezes: 'int', geradas: 'int#',
-  inicio: 'date!', fim_data: 'date', ultima_geracao: 'date',
+  inicio: 'date!', fim_data: 'date', ultima_geracao: 'date', period_start: 'date!',
   date: 'date!', target_date: 'date',
   deleted: 'bool', active: 'bool', is_reserve: 'bool', recurring: 'bool',
   adjustment: 'bool', paid: 'bool', done: 'bool',

@@ -3,7 +3,7 @@
 'use strict';
 
 const DB_KEY = 'financas.v1';
-const STORES = ['accounts', 'cards', 'categories', 'transactions', 'goals', 'goal_entries', 'invoice_status', 'recurrences', 'family_settings'];
+const STORES = ['accounts', 'cards', 'categories', 'transactions', 'goals', 'goal_entries', 'invoice_status', 'recurrences', 'family_settings', 'budget_overrides'];
 
 /* Criptografia local: AES-256-GCM com chave derivada do PIN (PBKDF2, 150 mil iterações). */
 const KCrypto = {
@@ -796,10 +796,97 @@ const DB = {
       .reduce((s, t) => s + (Number(t.amount) || 0), 0);
   },
 
+  /* ---------- Orçamento: o padrão e o ajuste do mês ----------
+
+     `categories.monthly_budget` é o orçamento PADRÃO — quanto costuma caber
+     naquele envelope num mês qualquer. `budget_overrides` responde outra
+     pergunta: e NESTE mês? O IPVA cai em janeiro, a matrícula em agosto, e num
+     mês aperta-se um envelope para reforçar outro.
+
+     A chave do ajuste é o PRIMEIRO DIA DO CICLO, não um rótulo "AAAA-MM": o dia
+     de virada é configurável (`month_start_day`), e um rótulo de mês-calendário
+     cairia no mês errado para quem fecha o ciclo no dia 25.
+
+     Toda leitura de orçamento no app passa por aqui. Enquanto o valor morava
+     direto na categoria, cada tela lia `c.monthly_budget` por conta própria — o
+     que já produzia uma inconsistência: a folha do envelope mostrava o GASTO do
+     mês navegado contra o LIMITE atemporal. */
+  chaveDoCiclo(period) { return this.inicioISO(period || this.monthPeriod(new Date())); },
+
+  overrideDeOrcamento(categoryId, period) {
+    const chave = this.chaveDoCiclo(period);
+    return this.all('budget_overrides')
+      .find(o => o.category_id === categoryId && String(o.period_start) === chave) || null;
+  },
+
+  /* O orçamento que vale para uma categoria num ciclo: o ajuste, se existir;
+     senão o padrão. `0` é um ajuste legítimo — "neste mês não se gasta nada
+     aqui" —, então o teste é pela EXISTÊNCIA do registro, nunca pela verdade do
+     valor. Com `||` um ajuste de zero cairia de volta no padrão em silêncio. */
+  budgetOf(categoryId, period) {
+    const o = this.overrideDeOrcamento(categoryId, period);
+    if (o) return Number(o.amount) || 0;
+    const c = this.get('categories', categoryId);
+    return c ? Number(c.monthly_budget) || 0 : 0;
+  },
+
   // Soma dos limites: só os envelopes de GASTO. Contar pai e filha dobraria o
   // total; incluir entrada somaria um teto que não existe.
-  budgetTotal() {
-    return this.rootCategories('Despesa').reduce((s, c) => s + (Number(c.monthly_budget) || 0), 0);
+  budgetTotal(period) {
+    return this.rootCategories('Despesa').reduce((s, c) => s + this.budgetOf(c.id, period), 0);
+  },
+
+  /* Grava o ajuste de um ciclo. REUSA o registro existente em vez de criar outro:
+     o índice único no banco é (family_id, category_id, period_start), e duas
+     linhas para o mesmo par fariam a leitura escolher uma delas em silêncio. */
+  ajustarOrcamento(categoryId, period, valor) {
+    const existente = this.overrideDeOrcamento(categoryId, period);
+    return this.upsert('budget_overrides', {
+      ...(existente || {}),
+      category_id: categoryId,
+      period_start: this.chaveDoCiclo(period),
+      amount: Number(valor) || 0,
+      deleted: false,
+    });
+  },
+
+  // Volta ao padrão da categoria naquele ciclo
+  limparAjusteDeOrcamento(categoryId, period) {
+    const o = this.overrideDeOrcamento(categoryId, period);
+    if (o) this.remove('budget_overrides', o.id);
+    return !!o;
+  },
+
+  /* Muda o padrão VALENDO DAQUI PARA A FRENTE.
+
+     Sem isto, mudar o orçamento de 500 para 800 reescrevia o passado: o relatório
+     de um mês fechado passava a comparar o gasto contra um teto que não valia
+     lá. Como o app nunca guardou o histórico, a correção é copy-on-write —
+     congelar o valor ANTIGO nos ciclos já fechados que têm gasto naquele
+     envelope, no momento em que o padrão muda. Só a categoria alterada, e só
+     onde houve movimento: nada de materializar o passado inteiro.
+
+     Os ajustes FUTUROS já gravados são apagados: quem diz "de agora em diante é
+     800" está justamente revendo o que tinha planejado para a frente. */
+  definirOrcamentoPadrao(categoryId, valor, deQualCiclo) {
+    const c = this.get('categories', categoryId);
+    if (!c) return;
+    const base = deQualCiclo || this.monthPeriod(new Date());
+    const chaveBase = this.chaveDoCiclo(base);
+    const antigo = Number(c.monthly_budget) || 0;
+
+    for (let i = -1; i >= -24; i--) {
+      const p = this.monthPeriod(base.start, i);
+      if (this.overrideDeOrcamento(categoryId, p)) continue;      // já tem ajuste próprio
+      const gastou = this.spentByCategory(p)[categoryId] || 0;
+      if (gastou <= 0.005) continue;                              // sem movimento, nada a congelar
+      this.ajustarOrcamento(categoryId, p, antigo);
+    }
+    for (const o of this.all('budget_overrides')) {
+      if (o.category_id === categoryId && String(o.period_start) > chaveBase) this.remove('budget_overrides', o.id);
+    }
+    this.upsert('categories', { ...c, monthly_budget: Number(valor) || 0 });
+    this.limparAjusteDeOrcamento(categoryId, base);               // o padrão novo já vale neste ciclo
   },
 
   /* Entradas por categoria, com o mesmo roll-up do gasto: subcategoria sobe para o
@@ -1047,10 +1134,20 @@ const DB = {
     return JSON.stringify(this.data, null, 2);
   },
 
+  /* Importar backup.
+
+     A validação exige as stores que SEMPRE existiram — sem elas o arquivo não é
+     um backup deste app. As demais são normalizadas: um backup gerado antes de
+     uma tabela nova existir é legítimo, e recusá-lo transformaria toda versão
+     que acrescenta store numa versão que invalida os backups anteriores. Foi o
+     que aconteceria com `budget_overrides`: todo arquivo salvo até aqui passaria
+     a dar "não parece um backup do app". */
   importJSON(text) {
     const parsed = JSON.parse(text);
     if (!parsed || typeof parsed !== 'object') throw new Error('Arquivo inválido');
-    for (const s of STORES) if (!Array.isArray(parsed[s])) throw new Error('Arquivo não parece um backup do app');
+    const ESSENCIAIS = ['accounts', 'categories', 'transactions'];
+    for (const s of ESSENCIAIS) if (!Array.isArray(parsed[s])) throw new Error('Arquivo não parece um backup do app');
+    for (const s of STORES) if (!Array.isArray(parsed[s])) parsed[s] = [];
     this.data = parsed;
     this.save();
   },

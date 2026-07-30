@@ -623,9 +623,30 @@ body {
 /* Barras de orçamento */
 .budget-row { padding: 10px 0; border-bottom: 1px dashed var(--line); }
 .budget-row:last-child { border-bottom: 0; }
-.budget-head { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+.budget-head { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; gap: 8px; }
 .budget-head b { font-weight: 600; }
 .budget-head .num, .num { font-weight: 700; }
+/* O número e o lápis andam juntos: alinhados na base, o lápis não empurra a
+   linha nem desalinha a coluna de valores entre um envelope e outro. */
+.budget-head .num { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+/* Selo do mês ajustado. Discreto de propósito: ele informa, não alerta — um
+   orçamento diferente do padrão é uma decisão de quem usa, não um problema. */
+.selo-ajuste {
+  font-size: 10px; font-weight: 700; letter-spacing: .02em; text-transform: lowercase;
+  padding: 2px 7px; border-radius: 999px; margin-left: 6px; vertical-align: middle;
+  background: rgba(0, 158, 247, .1); color: var(--gold);
+}
+/* Botão de ícone dentro de uma linha densa: área de toque de 28px sem ocupar
+   espaço visual, porque ele acompanha CADA envelope da lista. */
+.mini-btn {
+  width: 28px; height: 28px; flex: none; border: none; border-radius: 7px; cursor: pointer;
+  background: transparent; color: var(--paper-dim);
+  display: inline-grid; place-items: center;
+  transition: background .15s ease, color .15s ease;
+}
+.mini-btn:hover { background: var(--ink-3); color: var(--gold); }
+.mini-btn:active { transform: scale(.92); }
+.mini-btn svg { width: 14px; height: 14px; }
 .bar { height: 7px; border-radius: 4px; background: var(--ink-3); overflow: hidden; }
 .bar > i { display: block; height: 100%; border-radius: 4px; transition: width .5s ease; }
 .bar-green > i { background: var(--green); }
