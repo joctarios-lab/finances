@@ -89,6 +89,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
+  cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
@@ -511,6 +512,105 @@ try {
   check('mas não antes disso',
     /id="mn-next"[^>]*disabled/.test(renderInicio(DB.monthPeriod(new Date(), 5))), false);
 
+  /* ---- Run-rate não existe em mês que não começou ----
+     `expensesOf` de um mês futuro traz o mês INTEIRO previsto, e o run-rate
+     tratava esse total como gasto de UM dia: multiplicava pelos dias restantes.
+     Medido em agosto/2026 — R$ 6.737,80 previstos viravam "fechamento projetado
+     R$ 215.610", 1268% das receitas e poupança projetada de −1168%. */
+  for (const off of [1, 2, 3]) {
+    const pf = DB.monthPeriod(new Date(), off);
+    const st = DB.statsFor(pf);
+    check(`${pf.label}: a projeção é o previsto, não uma extrapolação`, Math.round(st.projection), Math.round(st.spent));
+    check(`  e a média diária divide pelo mês, não por 1`,
+      Math.abs(st.dailyAvg - st.spent / st.totalDays) < 0.005, true);
+    check(`  marcado como mês que não começou`, st.naoComecou, true);
+  }
+  // No mês corrente o run-rate continua sendo run-rate: projeta acima do gasto
+  const stHoje = DB.statsFor(DB.monthPeriod(new Date()));
+  check('mês corrente: a projeção continua extrapolando o ritmo',
+    stHoje.projection >= stHoje.spent && !stHoje.naoComecou, true);
+
+  /* ---- "Evolução dos gastos" acompanha o mês exibido ----
+     Ancorada em `new Date()`, a janela ficava idêntica em qualquer mês navegado e
+     o mês que se estava olhando não aparecia nela. Medido: julho, agosto e
+     setembro traziam a mesma série, soma 53.653 nas três. */
+  const serieDe = off => {
+    state.monthOffset = off;
+    zeraFila();
+    renderInicio(DB.monthPeriod(new Date(), off));
+    const bars = Graficos.fila.find(g => g.nome === 'barras');
+    return pontosDe(bars.opts.series[0]);
+  };
+  const sHoje = serieDe(0), sFuturo = serieDe(2);
+  check('a janela das barras muda com o mês exibido', JSON.stringify(sHoje) === JSON.stringify(sFuturo), false);
+  check('  e termina no mês que está na tela',
+    sFuturo.slice(-1)[0],
+    Math.round(DB.expensesOf(DB.monthPeriod(new Date(), 2)).reduce((s, t) => s + (Number(t.amount) || 0), 0)));
+  check('  ainda com seis períodos', sFuturo.length, 6);
+  state.monthOffset = 1;
+
+  /* ---- "O que ainda vem": este mês e o próximo, numa seção só ----
+     Eram duas seções em pontas opostas da tela respondendo a mesma pergunta, e a
+     fatura saía nas duas. */
+  state.monthOffset = 0;
+  const perA = DB.monthPeriod(new Date());
+  const perB = DB.monthPeriod(perA.start, 1);
+  const telaA = renderInicio(perA);
+  check('a seção fica no fim do Painel', telaA.indexOf('O que ainda vem') > telaA.indexOf('kpi-grid'), true);
+  check('  e traz o mês seguinte junto', telaA.includes(`O que já está previsto para ${perB.label}`),
+    DB.previsaoDoMes(perB).itens.length > 0);
+  check('  cada mês num card', (telaA.match(/O que já está previsto para/g) || []).length,
+    [perA, perB].filter(p => DB.previsaoDoMes(p).itens.length).length);
+  /* Card sem item SOME — não vira caixa vazia dizendo "nada previsto", que ocupa
+     espaço para não informar. */
+  const vazio = { entra: 0, sai: 0, resultado: 0, itens: [] };
+  check('mês sem nada previsto não vira card vazio', cardPrevisaoDoMes(vazio, perA, 0), '');
+
+  /* TETO DE 10 e o caminho para o resto. Sem o botão, o item 11 sumiria da tela
+     sem dizer para onde foi. */
+  const muitos = {
+    entra: 0, sai: 1400, resultado: -1400,
+    itens: Array.from({ length: 14 }, (_, n) => ({
+      titulo: `Conta ${n + 1}`, valor: 100, receita: false,
+      data: DB.inicioISO(perB), origem: 'prevista', category_id: null,
+    })),
+  };
+  const cardCheio = cardPrevisaoDoMes(muitos, perB, 1);
+  check('lista no máximo 10 linhas', (cardCheio.match(/class="prev-linha"/g) || []).length, 10);
+  check('  e o botão diz o total, não o que sobrou', cardCheio.includes('Ver os 14 no extrato'), true);
+  check('  apontando para o mês daquele card', /data-vermais="1"/.test(cardCheio), true);
+  check('com 10 ou menos, nada de botão',
+    cardPrevisaoDoMes({ ...muitos, itens: muitos.itens.slice(0, 10) }, perB, 1).includes('data-vermais'), false);
+  /* A FATURA ENTRA MESMO ALÉM DO TETO. A lista é cronológica e a fatura vence no
+     fim do mês, então é ela quem cai fora do corte — medido em agosto/2026, era o
+     11º de 11 itens e sumia da tela. Esquecer fatura custa juros. */
+  const comFaturaNoFim = {
+    entra: 0, sai: 1500, resultado: -1500,
+    itens: [...muitos.itens, { titulo: 'Fatura Zeta', valor: 100, receita: false,
+      data: DB.fimISO(perB), origem: 'fatura', fatura_status: 'Aberta', fatura_total: 100, fatura_pago: 0 }],
+  };
+  const cardComFatura = cardPrevisaoDoMes(comFaturaNoFim, perB, 1);
+  check('a fatura aparece mesmo sendo a 15ª da fila', cardComFatura.includes('Fatura Zeta'), true);
+  check('  e o teto continua valendo para o resto',
+    (cardComFatura.match(/class="prev-linha"/g) || []).length, 11);
+  check('  com o botão contando os que ficaram de fora', cardComFatura.includes('Ver os 15 no extrato'), true);
+
+  /* LINHA ENRIQUECIDA: cada item diz o que basta para ser julgado sem abrir outra
+     tela — categoria na conta comum, status e total na fatura. */
+  const cat = DB.all('categories').find(c => c.parent_id);
+  const linhaCat = linhaPrevista({ titulo: 'Aluguel', valor: 100, receita: false, data: DB.inicioISO(perB),
+    origem: 'prevista', category_id: cat.id });
+  check('a linha traz a categoria', linhaCat.includes(DB.categoryPath(cat.id)), true);
+  check('  junto da origem, numa linha só', /repete todo mês · /.test(linhaCat), true);
+  const linhaFat = linhaPrevista({ titulo: 'Fatura X', valor: 300, receita: false, data: DB.inicioISO(perB),
+    origem: 'fatura', fatura_status: 'Parcial', fatura_total: 1000, fatura_pago: 700 });
+  check('a linha de fatura traz status e total', /Parcial · de /.test(linhaFat), true);
+  check('  e o valor continua sendo o que falta', linhaFat.includes(fmtShort(300)), true);
+  // Fatura sem pagamento parcial não ganha "de X": seria repetir o próprio valor
+  check('sem pagamento parcial, sem referência redundante',
+    / · de /.test(linhaPrevista({ titulo: 'Fatura Y', valor: 300, receita: false, data: DB.inicioISO(perB),
+      origem: 'fatura', fatura_status: 'Aberta', fatura_total: 300, fatura_pago: 0 })), false);
+
   state.monthOffset = offSalvoFut; state.repOffset = repSalvoFut;
   state.filtros = filtrosVazios();
   for (const t of DB.all('transactions').filter(t => / FUT$/.test(t.description || ''))) DB.remove('transactions', t.id);
@@ -746,46 +846,40 @@ try {
   check('e falta difere do total, senão o teste seria vazio', somaDosTotais > esperado, true);
   check('o KPI não mostra a soma dos totais', lidoKpi === fmt(somaDosTotais), false);
 
-  /* ---- Próximos vencimentos ----
-     Mostrava as três primeiras, um corte arbitrário: quem tem quatro cartões via
-     três. Agora mostra tudo o que vence até o fim do ciclo, mais o que já venceu. */
+  /* ---- A fatura em aberto na seção "O que ainda vem" ----
+     A lista de vencimentos deixou de ser seção própria: ela e "o que já está
+     previsto" respondiam a mesma pergunta, e a fatura aparecia nas DUAS. O que
+     aquela seção protegia continua valendo e é isto que se verifica aqui — só que
+     no lugar novo, a linha da previsão do mês em que a fatura vence. */
   const apVenc = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   check('a lista não é mais cortada em três', /upcoming\.slice\(0, 3\)/.test(apVenc), false);
-  check('e o recorte é por vencimento até o fim do ciclo',
+  check('o recorte do KPI segue sendo até o fim do ciclo',
     apVenc.includes('emAberto.filter(inv => inv.due < period.end)'), true);
+  check('e a seção antiga não existe mais', telaKpi.includes('Próximos vencimentos'), false);
+  check('  nem a linha solta de fatura', telaKpi.includes('class="invoice-row"'), false);
 
-  // A linha mostra o que FALTA, não o total — senão contradiz o KPI ao lado
-  const iVenc = telaKpi.indexOf('Próximos vencimentos');
-  const blocoVenc = iVenc >= 0 ? telaKpi.slice(iVenc, iVenc + 4000) : '';
-  check('a seção de vencimentos existe', iVenc >= 0, true);
-  check('e ela nunca some enquanto houver fatura aberta',
-    (blocoVenc.match(/invoice-row/g) || []).length > 0, true);
-  /* Quando nada vence no ciclo, a lista cai para as próximas a vir e o subtítulo
-     diz isso. Uma seção chamada "Próximos vencimentos" que renderiza vazia
-     enquanto existe fatura fechada a caminho mente por omissão. */
-  const temNoCiclo = DB.all('cards').filter(c => c.active !== false)
-    .flatMap(c => DB.invoicesOf(c))
-    .some(i => i.status !== 'Paga' && i.due < DB.monthPeriod(new Date()).end);
-  check('o subtítulo diz de qual recorte a lista é',
-    /nada vence neste ciclo|vence até o fim do ciclo/.test(blocoVenc), true);
-
-  /* A LINHA mostra o que falta, não o total — senão ela contradiz o KPI ao lado.
-     Testado com a fatura parcial deste bloco, num período onde ela aparece: sem
-     um caso em que falta e total DIVERGEM, a assertiva seria vazia. */
+  /* A FATURA NUNCA SOME. Ela é item da previsão do mês em que vence, e é lá que a
+     tela tem de mostrá-la — inclusive com falta e total divergindo, senão a
+     assertiva seria vazia. */
   const perDaFatura = DB.monthPeriod(invParcial.due);
+  const offSalvoF = state.monthOffset;
+  state.monthOffset = 0;
   const telaDaFatura = renderInicio(perDaFatura);
-  const iVF = telaDaFatura.indexOf('Próximos vencimentos');
-  const blocoF = iVF >= 0 ? telaDaFatura.slice(iVF, iVF + 4000) : '';
-  const linhaDaParcial = (blocoF.match(/<div class="invoice-row">[\s\S]*?Cartao Aberto[\s\S]*?<\/div>/) || [''])[0];
-  check('a fatura parcial aparece na lista do mês em que vence', !!linhaDaParcial, true);
+  const linhaDaParcial = (telaDaFatura.match(/<div class="prev-linha">[\s\S]*?Fatura Cartao Aberto[\s\S]*?<\/div>/) || [''])[0];
+  check('a fatura aparece na previsão do mês em que vence', !!linhaDaParcial, true);
   check('e a linha mostra o que FALTA', linhaDaParcial.includes(fmtShort(300)), true);
   check('não o total da fatura como valor principal',
-    new RegExp('class="num">' + fmtShort(1000).replace(/\$/g, '\\$')).test(linhaDaParcial), false);
-  // Mas o total continua à vista, senão quem pagou parcial perde a referência
-  check('o total aparece como referência ao lado',
+    new RegExp('class="num [^"]*">[^<]*' + fmtShort(1000).replace(/\$/g, '\\$')).test(linhaDaParcial), false);
+  /* O total continua à vista: sem ele, quem pagou parcial lê o número menor como
+     "o pagamento não entrou" — foi o defeito que criou esta verificação. */
+  check('o total aparece como referência na própria linha',
     linhaDaParcial.includes('de ' + fmtShort(1000)), true);
-  check('e o aviso casa com o que existe de fato',
-    /nada vence neste ciclo/.test(blocoVenc), !temNoCiclo);
+  check('e o status da fatura também', /Parcial/.test(linhaDaParcial), true);
+  /* Fatura VENCIDA não depende desta seção: ela está na fila de pendências do
+     topo, que é a única com botão de pagar. */
+  check('fatura vencida entra na fila de pendências',
+    DB.pendencias(todayISO()).some(i => i.tipo === 'fatura') || invParcial.due > new Date(), true);
+  state.monthOffset = offSalvoF;
 
   // Limpa: registro dirty faria os testes async de sync girarem por sujeira
   DB.data.transactions = DB.data.transactions.filter(t => !/Aberto$/.test(t.description || ''));
@@ -1601,6 +1695,24 @@ try {
     cBu.series[0].data.slice(-1)[0] === null || DB.elapsedDays(p) >= DB.periodDays(p), true);
   check('sem orçamento, não desenha trilha nem legenda',
     (() => { zeraFila(); svgBurnup(p, 0); const c = cfgDo(); return c.series.length === 1 && c.legend.show === false; })(), true);
+
+  /* ---- MÊS QUE AINDA NÃO COMEÇOU ----
+     O corte em "hoje" deixava `decorridos = 0` num mês futuro e a série saía
+     INTEIRA nula: o cartão desenhava só a trilha e o gráfico lia como vazio.
+     Medido em agosto/2026 com dados reais: 31 pontos, 0 com valor. */
+  const pFuturo = DB.monthPeriod(new Date(), 2);
+  zeraFila();
+  svgBurnup(pFuturo, 3000);
+  const cFut = cfgDo();
+  const pontosFut = cFut.series[0].data.filter(v => v !== null && v !== undefined);
+  check('mês futuro: o burn-up tem curva, não série vazia', pontosFut.length > 0, true);
+  check('  e ela é a do previsto, dita no nome', cFut.series[0].name, 'previsto acumulado');
+  check('  com o traço tracejado, porque é previsão', cFut.stroke.dashArray[0], 4);
+  check('  o rótulo vai no fim do mês, não num "hoje" que não existe',
+    cFut.markers.discrete[0].dataPointIndex, DB.periodDays(pFuturo) - 1);
+  // No mês corrente nada disso muda: lá "hoje" existe e o futuro segue nulo
+  check('mês corrente: continua "gasto acumulado"', cBu.series[0].name, 'gasto acumulado');
+  check('  e o traço do realizado segue sólido', cBu.stroke.dashArray[0], 0);
 
   /* ---- A TRILHA IDEAL TEM DE APARECER ----
      Ela estava na configuração e não desenhava. Duas causas, as duas aqui: */

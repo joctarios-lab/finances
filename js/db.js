@@ -841,6 +841,21 @@ const DB = {
     const spent = txs.reduce((s, t) => s + (Number(t.amount) || 0), 0);
     const total = this.periodDays(period);
     const elapsed = this.elapsedDays(period);
+    /* MÊS QUE AINDA NÃO COMEÇOU: não existe ritmo para extrapolar.
+
+       Aqui `spent` é o mês INTEIRO previsto — em período futuro `expensesOf` traz
+       as transações virtuais —, e o run-rate tratava esse total como se fosse o
+       gasto de UM dia, multiplicando pelos dias restantes. Medido em agosto/2026:
+       R$ 6.737,80 previstos viravam "fechamento projetado R$ 215.610", 1268% das
+       receitas, poupança projetada −1168%. Números absurdos o bastante para
+       ninguém acreditar, mas errados no mesmo lugar onde os certos aparecem.
+
+       Num mês que não começou a projeção É o previsto, e a média diária é ele
+       distribuído pelos dias do mês — não `spent / 1`. */
+    if (elapsed === 0) {
+      return { spent, count: txs.length, dailyAvg: spent / Math.max(total, 1), projection: spent,
+        totalDays: total, elapsedDays: 0, remainingDays: total, naoComecou: true };
+    }
     const dailyAvg = spent / Math.max(elapsed, 1);
     const projection = elapsed >= total ? spent : spent + dailyAvg * (total - elapsed);
     return { spent, count: txs.length, dailyAvg, projection, totalDays: total, elapsedDays: elapsed, remainingDays: Math.max(0, total - elapsed) };
@@ -1334,7 +1349,7 @@ const DB = {
        tratarem a previsão como lançamento: sem categoria, o item não apareceria no
        donut nem na tabela por categoria, e o mês futuro teria um total que não se
        decompõe em lugar nenhum. */
-    const add = (titulo, valor, receita, quando, origem, molde) => {
+    const add = (titulo, valor, receita, quando, origem, molde, extra) => {
       const m = molde || {};
       itens.push({
         titulo, valor, receita, data: quando, origem,
@@ -1344,6 +1359,7 @@ const DB = {
         method: m.method || '',
         scope: m.scope || '',
         member: m.member || '',
+        ...(extra || {}),
       });
       if (receita) entra += valor; else sai += valor;
     };
@@ -1433,9 +1449,18 @@ const DB = {
       add(molde.description, Number(molde.amount) || 0, !this.isExpense(molde), quando, 'custo fixo', molde);
     }
 
-    // Faturas que vencem neste mês
+    /* Faturas que vencem neste mês.
+
+       O valor é o que FALTA, não o total: uma fatura de R$ 1.000 com R$ 700 já
+       pagos pesa R$ 300 no mês. Mas quem pagou parcial precisa da referência do
+       total, senão o número menor lê como "o pagamento não entrou" — por isso
+       `status`, `total` e `pago` viajam junto com o item. Antes eles ficavam só na
+       lista de vencimentos do Painel, e a linha da previsão dizia menos do que a
+       tela ao lado sobre a mesma fatura. */
     for (const inv of this.faturasAbertas(ate, de)) {
-      add(`Fatura ${inv.card.name}`, Math.max(0, inv.falta), false, this.paraISO(inv.due), 'fatura');
+      add(`Fatura ${inv.card.name}`, Math.max(0, inv.falta), false, this.paraISO(inv.due), 'fatura',
+        { card_id: inv.card.id },
+        { invoice_key: inv.key, fatura_status: inv.status, fatura_total: inv.total, fatura_pago: inv.pago });
     }
 
     itens.sort((a, b) => String(a.data).localeCompare(String(b.data)));

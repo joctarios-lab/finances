@@ -1000,16 +1000,29 @@ function svgBurnup(period, refLimit) {
   }
   let acc = 0;
   const cum = diario.map(v => (acc += v));
-  const gastoHoje = decorridos > 0 ? cum[decorridos - 1] : 0;
+  /* MÊS QUE AINDA NÃO COMEÇOU: a curva é a do PREVISTO, o mês inteiro.
+
+     Com o corte em "hoje", um mês futuro tinha `decorridos = 0` e a série saía
+     inteira nula — o cartão desenhava só a trilha ideal e o gráfico lia como
+     vazio. Mas o mês futuro tem uma curva legítima para mostrar: o acumulado dos
+     compromissos já conhecidos, que é justamente o que responde "o que já está
+     marcado estoura o limite?".
+
+     A distinção previsto/realizado não se perde: o nome da série muda e o traço
+     vai tracejado, do mesmo jeito que o resto do app marca previsão. */
+  const naoComecou = decorridos === 0 && DB.paraISO(period.start) > DB.hojeISO();
+  const gastoHoje = decorridos > 0 ? cum[decorridos - 1] : (naoComecou ? cum[totalDias - 1] : 0);
   // Depois de hoje a série é null, não zero: zero afirmaria "não gastou nada
   // no dia 20" num mês que ainda não chegou lá
-  const realizado = cum.map((v, i) => (i < decorridos ? Math.round(v) : null));
-  const estourou = refLimit > 0 && gastoHoje > refLimit * (decorridos / Math.max(1, totalDias));
+  const realizado = cum.map((v, i) => (naoComecou || i < decorridos ? Math.round(v) : null));
+  // O ponto que leva marcador e rótulo: hoje, ou o fim do mês quando ele é todo previsto
+  const destaque = naoComecou ? totalDias - 1 : decorridos - 1;
+  const estourou = refLimit > 0 && gastoHoje > refLimit * (naoComecou ? 1 : decorridos / Math.max(1, totalDias));
   const corLinha = estourou ? Graficos.cor.vermelho : Graficos.cor.azul;
   const temTrilha = refLimit > 0;
   const dias = Array.from({ length: totalDias }, (_, i) => String(i + 1));
 
-  const series = [{ name: 'gasto acumulado', type: 'area', data: realizado }];
+  const series = [{ name: naoComecou ? 'previsto acumulado' : 'gasto acumulado', type: 'area', data: realizado }];
   if (temTrilha) {
     series.push({
       name: 'trilha ideal', type: 'line',
@@ -1053,7 +1066,9 @@ function svgBurnup(period, refLimit) {
          série linear é uma reta. */
       curve: 'smooth',
       width: temTrilha ? [3, 2] : [3],
-      dashArray: temTrilha ? [0, 5] : [0],
+      // Mês todo previsto: a própria curva vai tracejada. Confundir previsão com
+      // fato é o pior engano possível num app de finanças.
+      dashArray: temTrilha ? [naoComecou ? 4 : 0, 5] : [naoComecou ? 4 : 0],
       colors: temTrilha ? [corLinha, Graficos.cor.cinza] : [corLinha],
     },
     colors: temTrilha ? [corLinha, Graficos.cor.cinza] : [corLinha],
@@ -1066,9 +1081,10 @@ function svgBurnup(period, refLimit) {
     },
     markers: {
       size: 0, hover: { size: 6 }, strokeColor: '#ffffff', strokeWidth: 3,
-      // Só o ponto de hoje: ele é a resposta do gráfico
-      discrete: decorridos > 0 ? [{
-        seriesIndex: 0, dataPointIndex: decorridos - 1, size: 5,
+      // Só o ponto de hoje: ele é a resposta do gráfico. Em mês todo previsto, o
+      // ponto é o fim do mês — o total que já está comprometido.
+      discrete: destaque >= 0 ? [{
+        seriesIndex: 0, dataPointIndex: destaque, size: 5,
         fillColor: '#ffffff', strokeColor: corLinha, strokeWidth: 3,
       }] : [],
     },
@@ -1078,7 +1094,7 @@ function svgBurnup(period, refLimit) {
     dataLabels: {
       enabled: true, offsetY: -12,
       formatter: (v, { seriesIndex, dataPointIndex }) => (
-        seriesIndex === 0 && dataPointIndex === decorridos - 1 && v != null
+        seriesIndex === 0 && dataPointIndex === destaque && v != null
           ? fmtShort(v).replace('R$', '').trim() : ''),
       style: { fontSize: Graficos.fonte.valor, fontWeight: 700, colors: [Graficos.cor.tinta] },
       background: { enabled: false },
@@ -1125,27 +1141,98 @@ function resumoDoProximoMes() {
 
    Deixa claro o que NÃO está aqui: gasto variável. Uma projeção que só conhece
    contas fixas e chama o resto de "sobra" seria otimista por construção. */
-function cardPrevisaoDoMes(previsto, period) {
+const ROTULO_ORIGEM = {
+  'lançado': 'já lançado',
+  prevista: 'repete todo mês',
+  'custo fixo': 'custo fixo',
+  fatura: 'fatura de cartão',
+};
+
+/* A linha de um item previsto.
+
+   UMA linha de metadados, no formato que o extrato já usa (`origem · detalhe`).
+   O detalhe é o que aquele tipo de item precisa para ser julgado sem abrir mais
+   nada — e nada além disso, porque a segunda linha de meta em dez linhas seguidas
+   vira parede de texto e o olho para de ler qualquer uma:
+
+   - conta comum: a CATEGORIA, que é o que diz se o gasto era esperado
+   - fatura: o STATUS e o TOTAL. O valor à direita é o que FALTA; sem a referência
+     do total, quem pagou parcial lê o número menor como "meu pagamento não
+     entrou". Era a informação que a lista de vencimentos dava e a previsão não. */
+function linhaPrevista(i) {
+  const meta = [ROTULO_ORIGEM[i.origem] || i.origem];
+  if (i.origem === 'fatura') {
+    if (i.fatura_status) meta.push(i.fatura_status);
+    if (i.fatura_pago > 0.005) meta.push(`de ${fmtShort(i.fatura_total)}`);
+  } else if (i.category_id) {
+    meta.push(catLabel(i.category_id));
+  }
+  return `<div class="prev-linha">
+    <span class="prev-dia">${fmtDay(i.data)}</span>
+    <span class="prev-nome">${esc(i.titulo)}<small>${esc(meta.join(' · '))}</small></span>
+    <span class="num ${i.receita ? 'txt-green' : ''}">${i.receita ? '+' : '−'} ${fmtShort(i.valor)}</span>
+  </div>`;
+}
+
+/* Teto de linhas: dez.
+
+   A lista existe para responder "de que é feito esse número", e isso se responde
+   com os primeiros itens — que são os mais próximos, porque a lista é cronológica.
+   Sem teto, um mês com trinta compromissos empurrava o resto da tela para fora do
+   alcance e a seção deixava de ser um resumo. O que passa de dez continua
+   acessível no extrato daquele mês, que é a tela feita para listar. */
+const TETO_PREVISTO = 10;
+
+function cardPrevisaoDoMes(previsto, period, offsetDoMes) {
   if (!previsto.itens.length) return '';
-  const rotuloOrigem = {
-    'lançado': 'já lançado',
-    prevista: 'repete todo mês',
-    'custo fixo': 'custo fixo',
-    fatura: 'fatura de cartão',
-  };
+  /* A FATURA ENTRA MESMO ALÉM DO TETO. A lista é cronológica e a fatura costuma
+     vencer no fim do mês, então ela é justamente quem cai fora do corte — medido
+     em agosto/2026: era o 11º de 11 itens e sumia da tela. Esquecer uma fatura
+     custa juros; esquecer a décima primeira conta do mês, não. Ela entra na
+     posição cronológica dela, e não no fim, para a lista continuar sendo uma
+     linha do tempo. */
+  const primeiros = new Set(previsto.itens.slice(0, TETO_PREVISTO));
+  const mostra = previsto.itens.filter(i => primeiros.has(i) || i.origem === 'fatura');
+  const resto = previsto.itens.length - mostra.length;
   return `
     <div class="card">
       <div class="card-head"><div><b>O que já está previsto para ${esc(period.label)}</b>
         <small>${previsto.itens.length} item(ns) conhecido(s) — gasto variável não entra</small></div>
-        <span class="num" style="font-size:16px" class="${previsto.resultado >= 0 ? 'txt-green' : 'txt-red'}">${fmtShort(previsto.resultado)}</span></div>
-      <div class="prev-lista">
-        ${previsto.itens.map(i => `<div class="prev-linha">
-          <span class="prev-dia">${fmtDay(i.data)}</span>
-          <span class="prev-nome">${esc(i.titulo)}<small>${esc(rotuloOrigem[i.origem] || i.origem)}</small></span>
-          <span class="num ${i.receita ? 'txt-green' : ''}">${i.receita ? '+' : '−'} ${fmtShort(i.valor)}</span>
-        </div>`).join('')}
-      </div>
+        <span class="num ${previsto.resultado >= 0 ? 'txt-green' : 'txt-red'}" style="font-size:16px">${fmtShort(previsto.resultado)}</span></div>
+      <div class="prev-lista">${mostra.map(linhaPrevista).join('')}</div>
+      ${resto > 0 && offsetDoMes !== undefined
+        ? `<button class="btn ghost btn-sub" data-vermais="${offsetDoMes}">Ver os ${previsto.itens.length} no extrato de ${esc(period.label)}</button>`
+        : ''}
     </div>`;
+}
+
+/* O fim do Painel: este mês e o próximo, lado a lado.
+
+   Antes eram duas seções em pontas opostas da tela respondendo a mesma pergunta —
+   "o que ainda vai sair": a lista de faturas no rodapé e o previsto lá em cima,
+   colado no hero. E a fatura saía nas DUAS (medido em agosto/2026: C6 Carbon,
+   R$ 179,22, uma abaixo da outra). Agora é uma seção só, e cada compromisso
+   aparece uma vez.
+
+   DOIS MESES porque a pergunta de quem olha o painel raramente para no dia 31: o
+   aluguel do mês que vem já está contratado, e é ele que decide se dá para gastar
+   hoje. O mês seguinte era mencionado só numa frase dentro do hero, sem os itens.
+
+   CADA CARD SOME sozinho quando não tem item — e some mesmo, não vira caixa vazia
+   dizendo "nada previsto". Medido: julho/2026 está com zero itens, então hoje a
+   seção mostra só agosto, ocupando a largura toda. Isso sai de graça do
+   `.grid-3`, que já se reorganiza para o número de cards que sobrou. */
+function secaoDoQueAindaVem(period, previstoDoMes) {
+  const proximo = DB.monthPeriod(period.start, 1);
+  const off = state.monthOffset || 0;
+  const cards = [
+    cardPrevisaoDoMes(previstoDoMes, period, off),
+    cardPrevisaoDoMes(DB.previsaoDoMes(proximo), proximo, off + 1),
+  ].filter(Boolean);
+  if (!cards.length) return '';
+  return `<p class="section-title">O que ainda vem <span class="muted">— compromissos já conhecidos${
+    cards.length > 1 ? ' deste mês e do próximo' : ''}; gasto variável não entra</span></p>
+    <div class="grid-3">${cards.join('')}</div>`;
 }
 
 /* ---------- Situação financeira (conceitos: disponível real, run-rate, 50/30/20, reserva) ---------- */
@@ -1195,23 +1282,16 @@ function renderInicio(period) {
   }
   emAberto.sort((a, b) => a.due - b.due);
 
-  /* Próximos vencimentos: TUDO o que está em aberto com vencimento até o fim do
-     ciclo, mais o que já venceu. Não as três primeiras — três era um corte
-     arbitrário que escondia o que a seção existe para mostrar: quem tem quatro
-     cartões via três.
-
-     Vencida entra sempre, mesmo sendo de um ciclo anterior: ela é a mais urgente
-     da lista e esconder atraso é o oposto do que um painel serve para fazer.
-
+  /* Quantas dessas faturas vencem dentro do ciclo — só para o subtítulo do KPI.
      `period.end` é EXCLUSIVO (é o primeiro dia do próximo ciclo), daí o `<`.
 
-     E quando nada vence no ciclo, a lista cai para as próximas a vir. Uma seção
-     chamada "Próximos vencimentos" que renderiza vazia enquanto existe fatura
-     fechada a caminho mente por omissão — foi o caso medido aqui: a única fatura
-     aberta fechou em julho e vence em 5 de agosto. */
+     A LISTA de vencimentos deixou de existir como seção própria: ela e "o que já
+     está previsto" respondiam a mesma pergunta, e a fatura aparecia nas duas —
+     medido em agosto/2026, a do C6 Carbon saía duas vezes na mesma tela. Agora a
+     fatura é item da previsão do mês em que vence, com status e total na linha, e
+     a que já VENCEU continua na fila de pendências do topo, que é onde ela tem
+     botão de pagar. */
   const doCiclo = emAberto.filter(inv => inv.due < period.end);
-  const vencemNoMes = doCiclo.length ? doCiclo : emAberto.slice(0, 3);
-  const soAdiante = doCiclo.length === 0 && emAberto.length > 0;
 
   const goals = DB.all('goals').filter(g => !g.done);
   const avgPct = goals.length
@@ -1271,26 +1351,20 @@ function renderInicio(period) {
      vai sair da conta. Numa fatura parcial os dois aparecem, senão a linha
      contradiria o histórico: quem pagou R$ 700 de R$ 1.000 precisa ver que faltam
      R$ 300 sem perder de vista de quanto era a fatura. */
-  let venc = '';
-  for (const inv of vencemNoMes) {
-    venc += `<div class="invoice-row">
-      <span>💳 ${esc(inv.card.name)}</span>
-      <span class="badge ${inv.status.toLowerCase()}">${inv.status}</span>
-      <span style="flex:1"></span>
-      <span class="muted">vence ${fmtDate(inv.due)}</span>
-      <span class="num">${fmtShort(inv.falta)}${inv.pago > 0.005
-        ? ` <small class="muted">de ${fmtShort(inv.total)}</small>` : ''}</span>
-    </div>`;
-  }
-
   // --- Projeção de fim de mês (run-rate) ---
   const projPct = refLimit > 0 ? Math.round(stats.projection / refLimit * 100) : 0;
   const savingsRate = income > 0 ? Math.round((income - stats.projection) / income * 100) : null;
   const projCard = `
     <div class="card">
-      <div class="card-head"><div><b>Projeção do mês</b><small>no ritmo atual de gastos (${fmtShort(stats.dailyAvg)}/dia)</small></div><span class="kpi-ico t-warning" data-ico="calendar" style="width:34px;height:34px;margin:0"></span></div>
-      ${realized > 0 ? `<div class="proj-row"><span>Receitas lançadas no período</span><b class="txt-green">${fmtShort(realized)}</b></div>` : ''}
-      <div class="proj-row"><span>Gasto até hoje (dia ${stats.elapsedDays} de ${stats.totalDays})</span><b>${fmtShort(stats.spent)}</b></div>
+      <div class="card-head"><div><b>Projeção do mês</b><small>${stats.naoComecou
+        ? `com o que já está previsto (${fmtShort(stats.dailyAvg)}/dia em média)`
+        : `no ritmo atual de gastos (${fmtShort(stats.dailyAvg)}/dia)`}</small></div><span class="kpi-ico t-warning" data-ico="calendar" style="width:34px;height:34px;margin:0"></span></div>
+      ${realized > 0 ? `<div class="proj-row"><span>${stats.naoComecou ? 'Receitas previstas para o mês' : 'Receitas lançadas no período'}</span><b class="txt-green">${fmtShort(realized)}</b></div>` : ''}
+      <!-- Num mês que não começou não existe "até hoje": o número é o mês inteiro
+           previsto, e chamá-lo de gasto realizado seria mentir sobre o que ele é. -->
+      <div class="proj-row"><span>${stats.naoComecou
+        ? `Previsto para o mês (${stats.totalDays} dias)`
+        : `Gasto até hoje (dia ${stats.elapsedDays} de ${stats.totalDays})`}</span><b>${fmtShort(stats.spent)}</b></div>
       <div class="proj-row"><span>Fechamento projetado</span><b class="${refLimit > 0 && stats.projection > refLimit ? 'txt-red' : 'txt-green'}">${fmtShort(stats.projection)}</b></div>
       ${refLimit > 0 ? `
         <div class="bar ${barClass(projPct)}" style="margin:8px 0 4px"><i style="width:${Math.min(100, projPct)}%"></i></div>
@@ -1487,7 +1561,6 @@ function renderInicio(period) {
     ${periodBar}
     ${atual ? heroAtual : state.monthOffset > 0 ? heroFuturo : heroFechado}
     ${atual ? avisoDeAperto() : ''}
-    ${state.monthOffset > 0 ? cardPrevisaoDoMes(previsto, period) : ''}
     ${adviceCard}
     <div class="kpi-grid">
       <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
@@ -1509,10 +1582,14 @@ function renderInicio(period) {
     </div>
     <div class="grid-2">
       <div class="card">
-        <div class="card-head"><div><b>Evolução dos gastos</b><small>últimos 6 períodos${income > 0 ? ' · linha tracejada = renda' : ''}</small></div></div>
+        <div class="card-head"><div><b>Evolução dos gastos</b><small>6 períodos até ${esc(period.label)}${income > 0 ? ' · linha tracejada = renda' : ''}</small></div></div>
+        <!-- A janela termina no mês EXIBIDO, não em hoje. Ancorada em hoje, o
+             gráfico ficava idêntico em qualquer mês que se navegasse — e o mês que
+             se está olhando não aparecia nele. Medido: em agosto e em setembro a
+             série vinha igual à de julho, soma 53.653 nas três. -->
         ${svgBars(
           Array.from({ length: 6 }, (_, i) => {
-            const p = DB.monthPeriod(new Date(), i - 5);
+            const p = DB.monthPeriod(period.start, i - 5);
             const v = DB.expensesOf(p).reduce((s, t) => s + (Number(t.amount) || 0), 0);
             return { label: p.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', ''), value: v, hint: i === 5 ? '#009ef7' : '#a6d9f7' };
           }), income)}
@@ -1538,9 +1615,7 @@ function renderInicio(period) {
         </div>` : ''}
       </div>
     </div>
-    ${venc ? `<p class="section-title">Próximos vencimentos <span class="muted">— ${soAdiante
-      ? 'nada vence neste ciclo, estas são as próximas'
-      : 'tudo que vence até o fim do ciclo, e o que já venceu'}</span></p>${venc}` : ''}
+    ${secaoDoQueAindaVem(period, previsto)}
     <button class="btn ghost" id="go-reports" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="pie"></span>Ver relatórios completos</button>
   `;
 }
@@ -3116,6 +3191,18 @@ function bindView() {
   const rprev = $('#rep-prev'), rnext = $('#rep-next');
   if (rprev) rprev.onclick = () => { state.repOffset = (state.repOffset || 0) - 1; render(); };
   if (rnext) rnext.onclick = () => { if ((state.repOffset || 0) >= 6) return; state.repOffset = (state.repOffset || 0) + 1; render(); };
+  /* "Ver os N no extrato": leva ao mês do card, filtrado por "A Pagar".
+
+     Sem o filtro o destino seria o extrato inteiro — 120 linhas em julho, contra
+     as 10 do card — e quem tocou em "ver mais" não encontraria o que estava
+     olhando. `setTab` zera mês e filtros, então os dois são ajustados DEPOIS dele. */
+  v.querySelectorAll('[data-vermais]').forEach(b => b.onclick = () => {
+    const alvo = Number(b.dataset.vermais) || 0;
+    setTab('extrato');
+    state.monthOffset = alvo;
+    state.filtros.situacao = ['A Pagar'];
+    render();
+  });
   const goRep = $('#go-reports');
   if (goRep) goRep.onclick = () => setTab('relatorios');
   const futVer = $('#fut-ver');
