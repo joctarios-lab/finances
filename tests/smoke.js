@@ -1687,6 +1687,7 @@ try {
     cfgsDe().length > 0 && cfgsDe().every(c => c.chart.fontFamily === 'inherit'), true);
 } catch (e) { console.log(` FALHA | gráficos: ${e.message}`); fail++; }
 
+
 console.log('\n=== Sincronização automática ===');
 {
   const s = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
@@ -4702,8 +4703,21 @@ check('função is_member definida antes das policies', schema.indexOf('function
     check('e avisa se não conseguiu conferir', apO.includes('Não consegui confirmar com a nuvem'), true);
     check('o aviso aparece junto do número de novos',
       /situacao === 'sem-resposta' \? `<div class="callout warn">[\s\S]{0,200}podem estar errados/.test(apO), true);
+    /* Avançar o marcador com uma leitura falhada faria as linhas daquela tabela
+       nunca mais serem buscadas — a próxima consulta já as ignoraria. Casa o
+       BLOCO, não a linha: escrito numa linha só, um regex literal quebrava a cada
+       reformatação sem que nada de errado tivesse acontecido. */
+    const syncSrc = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
+    const guarda = syncSrc.slice(syncSrc.indexOf('if (!falhas.length) {'),
+      syncSrc.indexOf('DB.save();', syncSrc.indexOf('if (!falhas.length) {')));
     check('só marca pronto quando o pull inteiro deu certo',
-      /if \(!falhas\.length\) \{ DB\.data\.meta\.lastSync = DB\.now\(\); this\.pronto = true; \}/.test(fs.readFileSync(BASE + 'js/sync.js', 'utf8')), true);
+      guarda.includes('this.pronto = true'), true);
+    check('e o marcador de tempo também só avança aí',
+      guarda.includes('DB.data.meta.lastSync = DB.now()'), true);
+    /* A releitura completa marca só quando aconteceu de fato: marcar antes adiaria
+       a próxima em uma semana sem ter reconciliado nada. */
+    check('a releitura completa só se registra quando ocorre',
+      guarda.includes('if (precisaFull) DB.data.meta.lastFull'), true);
   }
 
   /* ---- Login numa conta que já tem família ---- */
@@ -4820,6 +4834,152 @@ check('função is_member definida antes das policies', schema.indexOf('function
   check('avisa que a nuvem não é afetada', apW.includes('a nuvem não é afetada'), true);
 
   DB.data = dadosAntes;   // devolve o cenário caso mais algo rode depois
+  /* ---- O pull não pode deixar registro para trás ----
+     Aconteceu de verdade, com dados de produção: um lançamento de aluguel gravado às
+     04:43 estava no Supabase e NÃO na base local. O extrato de agosto e o card de
+     previsão simplesmente não o mostravam.
+  
+     A causa: `updated_at` é a hora da EDIÇÃO no aparelho de origem, não a da chegada
+     ao servidor — quem preenche o campo é quem cria o registro. Um aparelho que ficou
+     offline envia, ao voltar, registros com timestamp de horas atrás; qualquer outro
+     aparelho que já tenha sincronizado nesse intervalo pede `> lastSync` e nunca mais
+     os busca. É o pior tipo de perda: silenciosa, e o dado existe no servidor. */
+  console.log('\n=== Pull: registro de aparelho offline não pode se perder ===');
+  // `await`: sem ele o bloco só agenda, e o process.exit do fim da suíte roda
+  // antes de qualquer check — os testes existiriam sem nunca ter rodado
+  await (async () => {
+    const guardaFetch = global.fetch;
+    const guardaOnline = global.navigator.onLine;
+    const guardaDados = DB.data;
+    try {
+      global.navigator.onLine = true;
+      // O Sync real, carregado do arquivo — o global do harness é um dublê inerte
+      const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+      S.saveCfg = () => {}; S.GIRO_MINIMO = 0;
+      S.cfg = { url: 'https://x.supabase.co', anonKey: 'k', access_token: 'a',
+        refresh_token: 'r', token_exp: Date.now() + 600000, family_id: 'fam-1' };
+  
+      /* O SERVIDOR falso guarda um lançamento com timestamp ANTIGO — foi criado num
+         aparelho que estava offline e só agora enviou. */
+      const ANTIGO = '2026-07-30T04:43:22.352+00:00';
+      const RECENTE = '2026-07-30T15:22:32.167+00:00';
+      const noServidor = {
+        transactions: [
+          { id: 'tx-antigo', family_id: 'fam-1', updated_at: ANTIGO, deleted: false,
+            description: 'Aluguel do aparelho offline', amount: 3500, date: '2026-08-10',
+            type: 'Despesa', status: 'A Pagar', scope: 'Família', method: 'PIX' },
+          { id: 'tx-recente', family_id: 'fam-1', updated_at: RECENTE, deleted: false,
+            description: 'Energia', amount: 400, date: '2026-08-10',
+            type: 'Despesa', status: 'A Pagar', scope: 'Família', method: 'PIX' },
+        ],
+      };
+      const pedidos = [];
+      global.fetch = async (url, opts) => {
+        const u = String(url);
+        if ((opts || {}).method === 'POST') return { ok: true, status: 201, json: async () => [], text: async () => '' };
+        const tabela = (u.match(/\/rest\/v1\/([a-z_]+)/) || [])[1];
+        const desde = decodeURIComponent((u.match(/updated_at=gt\.([^&]+)/) || [])[1] || '');
+        if (tabela === 'transactions') pedidos.push(desde);
+        const linhas = (noServidor[tabela] || []).filter(r => r.updated_at > desde);
+        return { ok: true, status: 200, json: async () => linhas, text: async () => '' };
+      };
+  
+      // A base local está vazia, e o marcador é POSTERIOR ao registro antigo —
+      // exatamente o estado do aparelho que perdeu o aluguel
+      DB.data = { meta: { lastSync: '2026-07-30T15:00:00.000Z' } };
+      for (const t of ['transactions', 'accounts', 'categories', 'cards', 'goals',
+        'goal_entries', 'invoice_status', 'recurrences', 'family_settings']) DB.data[t] = [];
+  
+      await S.syncAll(false).catch(() => {});
+      clearTimeout(S._debounce);
+  
+      const veio = id => (DB.data.transactions || []).some(r => r.id === id);
+      check('a janela do pull recua antes do último marcador',
+        pedidos.length > 0 && pedidos[0] < '2026-07-30T15:00:00.000Z', true);
+      check('o registro do aparelho offline é recuperado', veio('tx-antigo'), true);
+      check('e o recente continua vindo', veio('tx-recente'), true);
+  
+      /* Sem o recuo, o mesmo cenário perde o registro — é o que prova que a janela
+         está fazendo trabalho, e não só existindo. */
+      const sem = (noServidor.transactions || [])
+        .filter(r => r.updated_at > '2026-07-30T15:00:00.000Z');
+      check('com o marcador cru, o antigo ficaria de fora',
+        sem.some(r => r.id === 'tx-antigo'), false);
+  
+      /* PAGINAÇÃO: sem ela, uma tabela com mais alterações que o limite trazia só a
+         primeira página e o marcador avançava como se tudo tivesse vindo — o resto
+         ficava invisível para sempre, pelo mesmo mecanismo. */
+      const muitos = [];
+      for (let i = 0; i < 2300; i++) {
+        const ms = new Date('2026-07-25T00:00:00.000Z').getTime() + i * 1000;
+        muitos.push({ id: 'tx-' + i, family_id: 'fam-1', updated_at: new Date(ms).toISOString(),
+          deleted: false, description: 'Linha ' + i, amount: 10, date: '2026-08-01',
+          type: 'Despesa', status: 'A Pagar', scope: 'Família', method: 'PIX' });
+      }
+      noServidor.transactions = muitos;
+      global.fetch = async (url, opts) => {
+        const u = String(url);
+        if ((opts || {}).method === 'POST') return { ok: true, status: 201, json: async () => [], text: async () => '' };
+        const tabela = (u.match(/\/rest\/v1\/([a-z_]+)/) || [])[1];
+        const desde = decodeURIComponent((u.match(/updated_at=gt\.([^&]+)/) || [])[1] || '');
+        const limite = Number((u.match(/limit=(\d+)/) || [])[1] || 1000);
+        const linhas = (noServidor[tabela] || [])
+          .filter(r => r.updated_at > desde)
+          .sort((a, b) => String(a.updated_at).localeCompare(String(b.updated_at)))
+          .slice(0, limite);
+        return { ok: true, status: 200, json: async () => linhas, text: async () => '' };
+      };
+      DB.data = { meta: {} };
+      for (const t of ['transactions', 'accounts', 'categories', 'cards', 'goals',
+        'goal_entries', 'invoice_status', 'recurrences', 'family_settings']) DB.data[t] = [];
+      await S.syncAll(false).catch(() => {});
+      clearTimeout(S._debounce);
+      check('a paginação traz tudo, não só a primeira página',
+        (DB.data.transactions || []).length, 2300);
+
+      /* RECONCILIAÇÃO COMPLETA semanal. A janela de 7 dias cobre o aparelho que
+         ficou offline alguns dias, mas não um buraco mais ANTIGO — e buraco antigo
+         é o que ninguém descobre, porque o dado não está lá para ser procurado.
+         Uma vez por semana o pull relê tudo, e a divergência se fecha sozinha. */
+      noServidor.transactions = [
+        { id: 'tx-muito-antigo', family_id: 'fam-1', updated_at: '2026-01-05T10:00:00.000Z',
+          deleted: false, description: 'Some há meses', amount: 99, date: '2026-08-15',
+          type: 'Despesa', status: 'A Pagar', scope: 'Família', method: 'PIX' },
+      ];
+      const zerar = marcadores => {
+        DB.data = { meta: marcadores };
+        for (const t of ['transactions', 'accounts', 'categories', 'cards', 'goals',
+          'goal_entries', 'invoice_status', 'recurrences', 'family_settings']) DB.data[t] = [];
+      };
+      // Releitura recente: a janela de 7 dias não alcança um registro de janeiro
+      zerar({ lastSync: '2026-07-30T15:00:00.000Z', lastFull: '2026-07-29T00:00:00.000Z' });
+      await S.syncAll(false).catch(() => {});
+      clearTimeout(S._debounce);
+      check('com releitura recente, o registro antigo fica fora da janela',
+        (DB.data.transactions || []).length, 0);
+      // Releitura vencida: o pull relê tudo e o registro volta
+      zerar({ lastSync: '2026-07-30T15:00:00.000Z', lastFull: '2026-06-01T00:00:00.000Z' });
+      await S.syncAll(false).catch(() => {});
+      clearTimeout(S._debounce);
+      check('com a releitura vencida, ele é recuperado',
+        (DB.data.transactions || []).some(r => r.id === 'tx-muito-antigo'), true);
+      check('e a releitura fica registrada para não repetir toda hora',
+        !!DB.data.meta.lastFull && DB.data.meta.lastFull > '2026-06-01', true);
+      // Sem marcador nenhum (instalação nova, ou app atualizado) também relê tudo
+      zerar({ lastSync: '2026-07-30T15:00:00.000Z' });
+      await S.syncAll(false).catch(() => {});
+      clearTimeout(S._debounce);
+      check('aparelho sem releitura registrada lê tudo',
+        (DB.data.transactions || []).some(r => r.id === 'tx-muito-antigo'), true);
+    } catch (e) {
+      console.log(` FALHA | pull: ${e.message}`); fail++;
+    } finally {
+      global.fetch = guardaFetch;
+      global.navigator.onLine = guardaOnline;
+      DB.data = guardaDados;
+    }
+  })();
+
   for (const k of Object.keys(store)) delete store[k];
   Object.assign(store, storeAntes);
 

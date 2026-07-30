@@ -2,6 +2,22 @@
    Estratégia: local-first; push de registros dirty, pull incremental por updated_at; last-write-wins. */
 'use strict';
 
+/* Quanto a janela do pull RECUA a cada sincronização.
+
+   `updated_at` é a hora da edição no aparelho de origem, não a da chegada ao
+   servidor. Um aparelho offline envia, ao voltar, registros com timestamp de horas
+   atrás — e quem já sincronizou nesse intervalo pede `> lastSync` e nunca mais os
+   busca. Sete dias cobrem uma viagem sem sinal com folga.
+
+   O custo é baixar de novo uma semana de alterações a cada sincronização, e ele é
+   pequeno: o pull é filtrado por família e o merge é por id, então reprocessar não
+   duplica nem sujeita nada. Perder um lançamento custa muito mais. */
+const JANELA_MS = 7 * 24 * 60 * 60 * 1000;
+
+// Tamanho da página do pull. Menor que o limite do PostgREST, para a paginação
+// ser exercitada de verdade em bases grandes em vez de só existir no papel.
+const PAGINA = 1000;
+
 const SYNC_TABLES = {
   accounts: ['name', 'type', 'institution', 'balance', 'active', 'is_reserve'],
   cards: ['name', 'brand', 'limit_amount', 'closing_day', 'due_day', 'account_id', 'active'],
@@ -391,14 +407,61 @@ const Sync = {
         }
       }
 
-      // PULL: incremental por updated_at (inclui deletados para propagar remoções)
-      const since = DB.data.meta.lastSync || '1970-01-01T00:00:00Z';
+      /* PULL: incremental por updated_at (inclui deletados para propagar remoções).
+
+         A JANELA RECUA. `updated_at` é a hora da EDIÇÃO no aparelho de origem, não
+         a da chegada ao servidor — quem grava o campo é quem cria o registro. Um
+         aparelho que ficou offline envia, ao voltar, registros com timestamp de
+         horas atrás; qualquer outro aparelho que já tenha sincronizado nesse
+         intervalo pede `> lastSync` e NUNCA MAIS os busca.
+
+         Aconteceu de verdade: um lançamento gravado às 04:43 sumiu da base local
+         de um aparelho cujo lastSync era de 15:00. Estava no servidor e não na
+         tela — o pior tipo de perda, porque é silenciosa.
+
+         Recuar a janela não é gambiarra: reprocessar é inofensivo (o merge é por
+         id, e o próprio bloco abaixo pula o que não mudou), e o custo é baixar de
+         novo alguns dias de alterações. A correção definitiva seria um carimbo do
+         SERVIDOR — uma coluna preenchida por `default now()` —, mas ela exige
+         mexer no esquema de oito tabelas, e a janela cobre o caso real. */
+      /* RECONCILIAÇÃO COMPLETA de tempos em tempos: uma vez por semana o pull
+         ignora o marcador e relê tudo.
+
+         A janela de 7 dias cobre o aparelho que ficou offline alguns dias, mas não
+         um buraco mais antigo — e buraco antigo é o que ninguém descobre, porque o
+         dado simplesmente não está lá para ser procurado. Com a releitura completa,
+         qualquer divergência se fecha sozinha em no máximo uma semana, sem
+         depender de alguém notar.
+
+         O custo é uma sincronização mais pesada a cada sete dias. Para a base de
+         uma família isso são centenas de linhas, não milhares. */
+      const ultimoFull = DB.data.meta.lastFull;
+      const precisaFull = !ultimoFull
+        || (Date.now() - new Date(ultimoFull).getTime()) > JANELA_MS;
+      const since = (!precisaFull && DB.data.meta.lastSync)
+        ? new Date(new Date(DB.data.meta.lastSync).getTime() - JANELA_MS).toISOString()
+        : '1970-01-01T00:00:00Z';
       for (const table of Object.keys(SYNC_TABLES)) {
-        let rows;
+        /* PAGINADO. Sem isto, uma tabela com mais alterações que o limite trazia só
+           a primeira página e o marcador avançava como se tudo tivesse vindo — o
+           resto ficava invisível para sempre, pelo mesmo mecanismo. */
+        let rows = [];
         try {
-          rows = await this.rest(
-            `${table}?family_id=eq.${fid}&updated_at=gt.${encodeURIComponent(since)}&order=updated_at.asc&limit=2000`,
-            { method: 'GET' });
+          let cursor = since;
+          for (let pagina = 0; pagina < 50; pagina++) {
+            const lote = await this.rest(
+              `${table}?family_id=eq.${fid}&updated_at=gt.${encodeURIComponent(cursor)}`
+              + `&order=updated_at.asc&limit=${PAGINA}`,
+              { method: 'GET' });
+            if (!lote || !lote.length) break;
+            rows = rows.concat(lote);
+            if (lote.length < PAGINA) break;          // última página
+            const ultimo = lote[lote.length - 1].updated_at;
+            // Sem avanço não há próxima página a pedir: todas as linhas do lote
+            // têm o mesmo instante, e insistir repetiria o mesmo pedido para sempre
+            if (!ultimo || ultimo === cursor) break;
+            cursor = ultimo;
+          }
         } catch (e) { falhas.push(e.message); continue; }
         if (!DB.data[table]) DB.data[table] = [];      // mesma proteção do push
         for (const remote of rows || []) {
@@ -416,7 +479,13 @@ const Sync = {
       // Avançar o marcador com alguma leitura falhada faria as linhas dessa
       // tabela nunca mais serem buscadas: a próxima consulta já as ignoraria.
       // Leitura completa das oito tabelas: agora dá para confiar no que está aqui
-      if (!falhas.length) { DB.data.meta.lastSync = DB.now(); this.pronto = true; }
+      if (!falhas.length) {
+        DB.data.meta.lastSync = DB.now();
+        // Só marca a releitura completa quando ela DE FATO aconteceu sem falha —
+        // marcar antes adiaria a próxima em uma semana sem ter reconciliado nada
+        if (precisaFull) DB.data.meta.lastFull = DB.now();
+        this.pronto = true;
+      }
       DB.save();
       if (descartados) this._descartados = descartados;
       if (falhas.length) {
