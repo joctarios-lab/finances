@@ -681,56 +681,40 @@ function svgLinhaFaixa(serie, opts = {}) {
   }, alt, 'faixa-normal');
 }
 
-/* Rosca: anel espesso, respiro entre fatias e o total no centro.
-   O buraco do meio não é enfeite — é onde mora o número que responde a pergunta
-   do cartão, sem gastar uma linha de texto abaixo do gráfico. */
+/* Rosca em SVG à mão. É o ÚNICO gráfico que não passou para a biblioteca, e o
+   motivo é medido: ele é quadrado e com proporção preservada, então a escala do
+   viewBox fica entre 0,79 e 1,04 — o texto dele já renderiza no tamanho certo. O
+   defeito que motivou a troca (viewBox de 720 num cartão de 307px encolhendo
+   rótulo de 11px para 4,7px) nunca existiu aqui.
+
+   Em troca, o formato à mão dá o que a rosca da biblioteca não dava: o total no
+   centro em duas ou três linhas de tipografia nossa, e a legenda como TABELA ao
+   lado — nome, percentual e valor em colunas alinhadas. A legenda da biblioteca é
+   uma fila de pastilhas, que não alinha número nenhum.
+
+   O anel é espesso, com respiro entre fatias e um trilho cinza por baixo para a
+   volta completa ficar legível mesmo com uma fatia só. */
 function svgDonut(fatias, total, opts = {}) {
-  if (!fatias.length) return '<div class="empty">Sem gastos no período.</div>';
-  const alt = opts.height || 260;
-  return Graficos.novo({
-    chart: { type: 'donut', height: alt, fontFamily: 'inherit', toolbar: { show: false } },
-    series: fatias.map(f => Math.round(Number(f.value) || 0)),
-    labels: fatias.map(f => f.label),
-    colors: fatias.map((f, i) => f.color || PALETTE[i % PALETTE.length]),
-    dataLabels: { enabled: false },
-    // 2px na cor da superfície entre fatias: separa sem desenhar contorno
-    stroke: { show: true, width: 2, colors: ['#ffffff'] },
-    plotOptions: {
-      pie: {
-        donut: {
-          size: '72%',
-          labels: {
-            show: true,
-            value: {
-              show: true, fontSize: '20px', fontWeight: 700, color: Graficos.cor.tinta,
-              offsetY: 6, formatter: v => fmtShort(v).replace('R$', '').trim(),
-            },
-            name: { show: true, fontSize: '11px', color: Graficos.cor.tintaFraca, offsetY: 18 },
-            total: {
-              show: true, showAlways: true,
-              label: opts.caption || 'no período',
-              fontSize: '11px', fontWeight: 500, color: Graficos.cor.tintaFraca,
-              formatter: () => fmtShort(total).replace('R$', '').trim(),
-            },
-          },
-        },
-      },
-    },
-    legend: {
-      show: true, position: 'bottom', fontSize: '11px',
-      markers: { radius: 6 }, itemMargin: { horizontal: 6, vertical: 2 },
-      labels: { colors: Graficos.cor.tintaFraca },
-    },
-    tooltip: {
-      style: { fontSize: '12px', fontFamily: 'inherit' },
-      y: {
-        formatter: (v, { seriesIndex }) => {
-          const pct = total > 0 ? Math.round((v / total) * 100) : 0;
-          return fmt(v) + ' · ' + pct + '%';
-        },
-      },
-    },
-  }, alt, 'rosca');
+  const S = 240, R = 96, W = 30, cx = S / 2, cy = S / 2;   // raio e espessura do anel
+  const circ = 2 * Math.PI * R;
+  const gap = fatias.length > 1 ? 2.5 : 0;                  // respiro entre fatias
+  let offset = 0, aneis = '';
+  for (const f of fatias) {
+    const frac = total > 0 ? f.value / total : 0;
+    const comp = Math.max(0, frac * circ - gap);
+    aneis += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${f.color}" stroke-width="${W}"
+      stroke-dasharray="${comp.toFixed(2)} ${(circ - comp).toFixed(2)}"
+      stroke-dashoffset="${(-offset).toFixed(2)}" stroke-linecap="round" class="dn-arc">
+      <title>${esc(f.label)}: ${fmt(f.value)} (${Math.round(frac * 100)}%)</title></circle>`;
+    offset += frac * circ;
+  }
+  return `<svg class="donut-svg" viewBox="0 0 ${S} ${S}" role="img">
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="var(--ink-3)" stroke-width="${W}"/>
+    <g transform="rotate(-90 ${cx} ${cy})">${aneis}</g>
+    <text x="${cx}" y="${cy - 6}" text-anchor="middle" class="dn-total">${fmtShort(total).replace('R$', '').trim()}</text>
+    <text x="${cx}" y="${cy + 14}" text-anchor="middle" class="dn-cap">${esc(opts.caption || 'no período')}</text>
+    ${opts.sub ? `<text x="${cx}" y="${cy + 32}" text-anchor="middle" class="dn-sub">${esc(opts.sub)}</text>` : ''}
+  </svg>`;
 }
 
 /* Quebra um rótulo de eixo em até duas linhas, sem reticências.

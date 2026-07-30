@@ -595,7 +595,22 @@ body {
 .kpi-value.red { color: var(--red); }
 .kpi-sub { font-size: 11.5px; color: var(--paper-dim); margin-top: 2px; }
 
-/* Donut em SVG — anel espesso, fatias separadas, cresce com o card */
+/* Donut em SVG — anel espesso, fatias separadas, cresce com o card.
+
+   É o único gráfico que não passou para a ApexCharts, e por medida: quadrado e
+   com proporção preservada, a escala do viewBox fica entre 0,79 e 1,04, então o
+   texto dele já sai no tamanho certo. O `clamp` abaixo é o que garante isso —
+   sem teto de 250px o anel esticaria num card largo e a escala fugiria da faixa. */
+.donut-svg { width: clamp(190px, 46%, 250px); height: auto; flex: none; }
+/* O buraco do meio é onde mora o número que responde à pergunta do cartão */
+.dn-total { font-size: 27px; font-weight: 800; fill: var(--paper); font-family: var(--font-body); letter-spacing: -.02em; }
+.dn-cap { font-size: 11px; fill: var(--paper-dim); font-family: var(--font-body); }
+.dn-sub { font-size: 10px; fill: #b5bcc9; font-family: var(--font-body); }
+/* A fatia engorda no hover em vez de mudar de cor: cor é identidade e não pode
+   variar com o ponteiro, mas espessura pode */
+.dn-arc { transition: stroke-width .18s ease; }
+.dn-arc:hover { stroke-width: 35; }
+
 .donut-wrap { display: flex; gap: 26px; align-items: center; flex-wrap: wrap; }
 .legend { display: flex; flex-direction: column; gap: 10px; flex: 1 1 200px; min-width: 0; }
 .legend-row { display: flex; align-items: flex-start; gap: 10px; font-size: 13.5px; }
@@ -1470,11 +1485,13 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 .view > *:nth-child(n+6) { animation-delay: .22s; }
 @keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 
-/* Barras e anéis crescem a partir do zero — o dado "chega" */
+/* Barras e anéis crescem a partir do zero — o dado "chega".
+   Os gráficos da ApexCharts animam por conta própria (chart.animations); aqui
+   ficam só os que continuam desenhados à mão. */
 .bar > i { animation: barGrow .55s cubic-bezier(.22, 1, .36, 1); }
 @keyframes barGrow { from { width: 0 !important; } }
+.dn-arc { animation: arcIn .7s cubic-bezier(.22, 1, .36, 1) backwards; }
 @keyframes arcIn { from { opacity: 0; stroke-width: 0; } }
-@keyframes colGrow { from { transform: scaleY(0); opacity: .3; } }
 
 /* Resposta ao toque: o elemento reage antes de a ação acontecer */
 .tx, .settings-item, .acc-row, .invoice-row { transition: transform .12s ease, background .15s ease, border-color .15s ease; }

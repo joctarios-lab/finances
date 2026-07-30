@@ -790,22 +790,68 @@ try {
 
   zeraFila();
   const d = svgDonut([{ label: 'Casa', value: 60, color: '#009ef7' }, { label: 'Comida', value: 40, color: '#50cd89' }], 100);
-  const cDon = cfgDo(d);
-  check('donut: é rosca, não pizza', cDon.chart.type, 'donut');
-  check('e tem as duas fatias', cDon.series.join(','), '60,40');
-  check('com os nomes na legenda', cDon.labels.join(','), 'Casa,Comida');
-  check('e a cor que veio da fatia', cDon.colors[0], '#009ef7');
+  /* A ROSCA É A EXCEÇÃO: continua desenhada à mão, e por medida. Ela é quadrada e
+     com proporção preservada, então a escala do viewBox fica entre 0,79 e 1,04 e o
+     texto dela já sai no tamanho certo — o defeito que motivou a biblioteca
+     (rótulo de 11px chegando a 4,7px) nunca existiu aqui. Em troca o formato à mão
+     dá o total no centro em duas ou três linhas de tipografia nossa e a legenda
+     como TABELA ao lado; a da biblioteca é uma fila de pastilhas, que não alinha
+     número nenhum. */
+  check('a rosca não passa pela biblioteca', Graficos.fila.length, 0);
+  check('donut: duas fatias mais o trilho', (d.match(/<circle/g) || []).length, 3);
+  check('e o texto fica DENTRO do SVG, o que aqui é seguro', /<text/.test(d), true);
+  check('porque ele não é esticado', d.includes('preserveAspectRatio="none"'), false);
+  check('e o clamp segura a escala perto de 1:1',
+    /\.donut-svg \{ width: clamp\(190px, 46%, 250px\)/.test(fs.readFileSync(BASE + 'css/styles.css', 'utf8')), true);
   // O buraco do meio é onde mora o total — não é enfeite
-  check('donut: o total aparece no centro', cDon.plotOptions.pie.donut.labels.total.show, true);
-  check('e está sempre visível, não só no hover',
-    cDon.plotOptions.pie.donut.labels.total.showAlways, true);
+  check('donut: mostra o total no centro', d.includes('dn-total'), true);
   check('e é o total que foi passado, não a soma das fatias',
-    cDon.plotOptions.pie.donut.labels.total.formatter().includes('100'), true);
-  // 2px na cor da superfície: separa as fatias sem desenhar contorno
-  check('donut: fatias separadas por vão, não por borda',
-    cDon.stroke.width === 2 && cDon.stroke.colors[0] === '#ffffff', true);
-  check('a dica mostra valor e percentual', cDon.tooltip.y.formatter(60, { seriesIndex: 0 }).includes('60%'), true);
-  check('donut vazio não quebra', svgDonut([], 0).includes('Sem gastos'), true);
+    d.includes(fmtShort(100).replace('R$', '').trim()), true);
+  /* A legenda do centro precisa do TEXTO, não só da classe: com a classe presente
+     e o texto vazio, o número fica sozinho sem dizer de que ele é. */
+  zeraFila();
+  const dCap = svgDonut([{ label: 'Casa', value: 60, color: '#009ef7' }], 60, { caption: 'gasto no período' });
+  check('com a legenda do que o número significa', /class="dn-cap">gasto no período</.test(dCap), true);
+  check('e um padrão quando não vem legenda',
+    /class="dn-cap">no período</.test(svgDonut([{ label: 'a', value: 1, color: '#000' }], 1)), true);
+  check('a terceira linha só aparece quando há sub',
+    svgDonut([{ label: 'a', value: 1, color: '#000' }], 1).includes('dn-sub'), false);
+
+  /* Respiro entre fatias: separa sem desenhar borda em volta. A soma dos trechos
+     PINTADOS tem de ficar abaixo da circunferência — é o vão que falta. Só checar
+     que existe dasharray passaria com gap zero, que é o anel emendado. */
+  const pintados = [...d.matchAll(/stroke-dasharray="([\d.]+) ([\d.]+)"/g)]
+    .map(m => Number(m[1]));
+  const circ = 2 * Math.PI * 96;
+  check('donut: fatias separadas por vão', pintados.length, 2);
+  check('e o vão realmente falta do anel', pintados.reduce((a, b) => a + b, 0) < circ - 4, true);
+  // Ponta arredondada em cada fatia: é o acabamento do formato antigo
+  check('e a ponta da fatia é arredondada',
+    (d.match(/stroke-linecap="round"/g) || []).length, 2);
+  /* Trilho cinza por baixo: com uma fatia só, sem ele não se vê a volta completa e
+     não dá para julgar quanto do total aquela fatia é. */
+  check('há trilho cinza sob o anel', d.includes('stroke="var(--ink-3)"'), true);
+  check('e cada fatia leva a cor que veio dela', d.includes('#009ef7'), true);
+  check('donut: valor e percentual acessíveis por title', d.includes('Casa: '), true);
+  /* Sem fatia a função desenha só o trilho — um anel cinza vazio, que não diz
+     nada. Quem barra isso são as telas, e é por elas que se testa: se a guarda
+     cair, o cartão mostra um anel oco em vez de "nenhum gasto no período". */
+  check('sem fatia sobra só o trilho', (svgDonut([], 0).match(/<circle/g) || []).length, 1);
+  check('e o painel barra isso antes de chamar',
+    renderInicio(DB.monthPeriod(new Date(), -600)).includes('Nenhum gasto no período'), true);
+  /* Relatórios não recebe período: ele anda por state.repOffset. Passar um
+     período aqui não fazia nada e o mês atual (com gasto) continuava sendo
+     renderizado — a assertiva parecia falhar por causa do código. */
+  const offSalvo = state.repOffset;
+  state.repOffset = -600;
+  check('os relatórios também', renderRelatorios().includes('Sem gastos no período'), true);
+  state.repOffset = offSalvo;
+  /* Cor é identidade e não pode variar com o ponteiro; espessura pode. Por isso o
+     hover engorda a fatia em vez de mudar de cor. */
+  const cssDn = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('a fatia engorda no hover, não muda de cor',
+    /\.dn-arc:hover \{ stroke-width: 35/.test(cssDn), true);
+  check('e nenhuma fatia troca de cor no hover', /\.dn-arc:hover \{[^}]*stroke:/.test(cssDn), false);
 
   zeraFila();
   const r = svgRanking([['Mercado', 800], ['Uber', 200]]);
@@ -835,13 +881,28 @@ try {
 
   zeraFila();
   const inicio = renderInicio(p);
-  check('painel monta a rosca via ApexCharts',
-    cfgsDe().some(c => c.chart.type === 'donut'), true);
+  // A rosca é a única que não vem da biblioteca: no painel ela é SVG no HTML
+  check('painel desenha a rosca à mão', inicio.includes('class="donut-svg"'), true);
+  check('e o resto vem da biblioteca', cfgsDe().length > 0, true);
+  /* O CARTÃO da rosca: anel à esquerda, legenda em TABELA à direita, e o rodapé
+     dizendo qual categoria pesa mais. É esse arranjo que faz o cartão responder
+     "para onde foi" — o anel dá a proporção, a tabela dá os números. */
+  check('o anel fica ao lado da legenda', inicio.includes('class="donut-wrap"'), true);
+  check('e a legenda é tabela: nome, percentual e valor',
+    ['legend-row', 'legend-name', 'legend-pct', 'legend-val'].every(c => inicio.includes(c)), true);
+  check('o anel vem antes da legenda',
+    inicio.indexOf('donut-svg') < inicio.indexOf('class="legend"'), true);
+  check('e o rodapé diz qual categoria pesa mais',
+    /chart-foot[\s\S]{0,200}Maior peso/.test(inicio), true);
   zeraFila();
   const rels = renderRelatorios();
   const tiposRel = cfgsDe().map(c => c.chart.type);
-  check('relatórios trazem rosca, colunas e área',
-    tiposRel.includes('donut') && tiposRel.includes('bar') && tiposRel.includes('area'), true);
+  check('relatórios trazem a rosca à mão', rels.includes('class="donut-svg"'), true);
+  check('com o mesmo arranjo de anel e legenda',
+    rels.includes('class="donut-wrap"') && rels.includes('legend-pct'), true);
+  check('e colunas e área pela biblioteca',
+    tiposRel.includes('bar') && tiposRel.includes('area'), true);
+  check('nenhuma rosca da biblioteca sobrou', tiposRel.includes('donut'), false);
   /* Todo gráfico herda a fonte do app. É o detalhe que mais delata gráfico de
      biblioteca colado num layout: sem isso o ApexCharts usa Helvetica. */
   check('e todos herdam a fonte do app',
@@ -4211,14 +4272,15 @@ console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
       { rot: 'R', valor: 0, tipo: 'total' }]);
     svgLinhaFaixa([{ rot: 'jan', valor: 100 }, { rot: 'fev', valor: 200 }, { rot: 'mar', valor: 150 }]);
     svgBurnup(DB.monthPeriod(new Date()), 3000);
-    svgDonut([{ label: 'a', value: 60, color: '#009ef7' }], 60);
     svgRanking([['Mercado', 800]]);
     svgComposicao([{ id: 'x', rot: 'Env', total: 100, partes: [{ rot: 'p', valor: 100 }] }]);
     svgFluxoSaldo(DB.fluxoMensal(6, 6));
     return Graficos.fila;
   };
   const fila = todos();
-  check('todos os gráficos passaram pela biblioteca', fila.length, 8);
+  /* Oito, não nove: a rosca é desenhada à mão e não entra na fila (ver o bloco
+     de Gráficos, onde o motivo está medido). */
+  check('todos os outros gráficos passaram pela biblioteca', fila.length, 7);
   /* Fonte herdada em TODOS. É o detalhe que mais delata gráfico de biblioteca
      colado num layout: sem isso o ApexCharts usa a Helvetica dele. */
   check('todos herdam a fonte do app',
@@ -4229,7 +4291,7 @@ console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
   // Cada um se identifica pelo que É, e reserva altura para o cartão não pular
   check('cada gráfico se identifica no div',
     fila.every(f => !!f.nome), true);
-  check('e nenhum nome se repete', new Set(fila.map(f => f.nome)).size, 8);
+  check('e nenhum nome se repete', new Set(fila.map(f => f.nome)).size, 7);
   check('todos reservam altura', fila.every(f => f.opts.chart.height > 0), true);
   // O CSS que costura a lib ao tema
   /* O CSS DA PRÓPRIA BIBLIOTECA. O apexcharts.min.js NÃO o injeta — descobri isso

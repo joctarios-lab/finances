@@ -61,9 +61,9 @@ que os testes verificam:
 - **Fonte herdada** (`fontFamily: 'inherit'`). É o detalhe que mais delata
   gráfico de biblioteca colado num layout.
 
-## Os nove gráficos
+## Os gráficos
 
-Todos passam por `Graficos.novo()`, e cada um se identifica no `data-g` do div:
+Oito passam por `Graficos.novo()`, e cada um se identifica no `data-g` do div:
 
 | `data-g` | Função | Forma |
 |---|---|---|
@@ -71,11 +71,37 @@ Todos passam por `Graficos.novo()`, e cada um se identifica no `data-g` do div:
 | `cascata` | `svgCascata` | barra empilhada com pedestal invisível |
 | `faixa-normal` | `svgLinhaFaixa` | área + faixa como anotação |
 | `composicao` | `svgComposicao` | barra horizontal empilhada, cor por ponto |
-| `rosca` | `svgDonut` | donut com total no centro |
 | `ranking` | `svgRanking` | barra horizontal, cor por linha |
 | `burnup` | `svgBurnup` | área + trilha ideal tracejada |
 | `barras` | `svgBars` | colunas, período atual em destaque |
 | `saldo-dia` | `sparkArea` | sparkline no resumo do extrato |
+
+### A rosca é a exceção: continua desenhada à mão
+
+`svgDonut` foi convertida e depois **revertida**, a pedido de quem usa o app. A
+reversão se sustenta em medida, não em gosto: a rosca é **quadrada e com proporção
+preservada**, então a escala do `viewBox` fica entre 0,79 e 1,04 — o defeito que
+motivou a biblioteca (rótulo de 11px chegando a 4,7px na tela) **nunca existiu
+aqui**. É o `clamp(190px, 46%, 250px)` do `.donut-svg` que garante isso; sem o
+teto de 250px o anel esticaria num card largo e a escala fugiria da faixa.
+
+Em troca, o formato à mão dá duas coisas que a rosca da biblioteca não dava:
+
+- **O total no centro** em duas ou três linhas de tipografia nossa (`.dn-total`,
+  `.dn-cap`, `.dn-sub`). O buraco do meio é onde mora o número que responde à
+  pergunta do cartão, sem gastar uma linha de texto abaixo do gráfico.
+- **A legenda como TABELA ao lado** — nome, percentual e valor em colunas
+  alinhadas. A legenda da biblioteca é uma fila de pastilhas, que não alinha
+  número nenhum.
+
+Detalhes do formato, todos travados por teste: respiro de 2,5 entre fatias (o vão
+falta de verdade do anel, não é só um `dasharray` qualquer), ponta arredondada em
+cada fatia, trilho cinza por baixo (sem ele, com uma fatia só não se vê a volta
+completa e não dá para julgar a proporção), e hover que **engorda** a fatia em vez
+de mudar de cor — cor é identidade e não pode variar com o ponteiro.
+
+Os cartões que a envolvem, no Painel e nos Relatórios, nunca mudaram: só a função
+tinha sido trocada.
 
 ## O eixo duplo do "De onde vim, para onde vou"
 
