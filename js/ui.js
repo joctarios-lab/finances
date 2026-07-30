@@ -13,21 +13,45 @@
 const UI = {
   aberto: null,   // painel atualmente aberto
 
+  /* Devolve o invólucro a usar: o que já existe, ou um novo.
+
+     Reembrulhar sem isto ANINHAVA. `enhance` é chamado de novo quando as opções
+     mudam — o seletor de categoria recarrega a lista ao trocar o tipo do
+     lançamento —, e para isso o chamador tira o `data-ui`. Na segunda passada
+     `el.parentNode` já era o invólucro antigo, então o novo entrava DENTRO dele e
+     sobrava um botão a mais visível. Medido: 1, 2, 3, 4 invólucros em quatro
+     passadas. Era o "select da categoria duplica" ao clicar em "Outra".
+
+     Reaproveitando, o que foi gerado antes é descartado e refeito no mesmo lugar,
+     quantas vezes for. */
+  embrulho(el, classe) {
+    const pai = el.parentNode;
+    if (pai && pai.classList && pai.classList.contains(classe)) {
+      // Descarta o que foi gerado antes, preservando o campo nativo
+      [...pai.children].forEach(f => { if (f !== el) pai.removeChild(f); });
+      return { box: pai, reusado: true };
+    }
+    const box = document.createElement('div');
+    box.className = classe;
+    return { box, reusado: false };
+  },
+
   /* ---------------- Select estilo Select2 ---------------- */
   enhanceSelect(sel) {
     if (sel.dataset.ui === '1') return;
     sel.dataset.ui = '1';
     sel.classList.add('ui-native');
 
-    const box = document.createElement('div');
-    box.className = 'ui-select';
+    const { box, reusado } = this.embrulho(sel, 'ui-select');
     const botao = document.createElement('button');
     botao.type = 'button';
     botao.className = 'ui-select-btn';
     botao.innerHTML = '<span class="ui-select-txt"></span><span class="ui-select-arrow"></span>';
-    box.appendChild(botao);
-    sel.parentNode.insertBefore(box, sel);
-    box.appendChild(sel);
+    box.insertBefore(botao, box.firstChild);
+    if (!reusado) {
+      sel.parentNode.insertBefore(box, sel);
+      box.appendChild(sel);
+    }
 
     /* Com escolha múltipla o botão não cabe a lista inteira, então ele conta.
        Um item ainda aparece pelo nome — é o caso comum, e trocar "Alimentação"
@@ -297,15 +321,17 @@ const UI = {
     inp.dataset.ui = '1';
     inp.classList.add('ui-native');
 
-    const box = document.createElement('div');
-    box.className = 'ui-date';
+    // Mesmo cuidado do select: reembrulhar sem reaproveitar aninharia os invólucros
+    const { box, reusado } = this.embrulho(inp, 'ui-date');
     const botao = document.createElement('button');
     botao.type = 'button';
     botao.className = 'ui-date-btn';
     botao.innerHTML = '<span class="ui-date-txt"></span><span class="ui-date-ico">📅</span>';
-    box.appendChild(botao);
-    inp.parentNode.insertBefore(box, inp);
-    box.appendChild(inp);
+    box.insertBefore(botao, box.firstChild);
+    if (!reusado) {
+      inp.parentNode.insertBefore(box, inp);
+      box.appendChild(inp);
+    }
 
     const rotulo = () => {
       const v = inp.value;

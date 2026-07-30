@@ -1125,6 +1125,21 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
   background: var(--ink-2); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;
   box-shadow: var(--shadow); font-size: 13px;
 }
+
+/* Lista do que já está previsto para um mês futuro. Dentro de um card, então sem
+   moldura própria: uma borda por linha aqui viraria caixa dentro de caixa. */
+.prev-lista { margin-top: 4px; }
+.prev-linha {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 0; border-bottom: 1px dashed var(--line); font-size: 13px;
+}
+.prev-linha:last-child { border-bottom: none; }
+/* Largura fixa na data para os nomes alinharem numa coluna só */
+.prev-dia { flex: none; width: 62px; font-size: 11.5px; color: var(--paper-dim); font-variant-numeric: tabular-nums; }
+/* min-width 0 é o que deixa o nome longo encolher em vez de empurrar o valor */
+.prev-nome { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.prev-nome small { display: block; font-size: 10.5px; color: var(--paper-dim); margin-top: 1px; }
+.prev-linha .num { flex: none; font-weight: 700; }
 .badge { font-size: 11px; padding: 4px 10px; border-radius: 6px; font-weight: 700; }
 .badge.aberta { background: rgba(0, 158, 247, .1); color: var(--gold); }
 .badge.fechada { background: rgba(246, 166, 9, .12); color: #d18b00; }

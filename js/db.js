@@ -1260,6 +1260,46 @@ const DB = {
       }
     }
 
+    /* CUSTOS FIXOS (transações marcadas `recurring`).
+
+       O app tem dois mecanismos de repetição: o contrato em `recurrences`, lido
+       acima, e o custo fixo — uma transação marcada como recorrente que o botão
+       "Custos fixos" copia para o mês corrente, um mês por vez. Só o primeiro
+       entrava aqui, e o resultado era que quem usa o segundo (que é o caminho
+       oferecido no próprio formulário de lançamento) via previsão VAZIA de dois
+       meses à frente em diante: nada tinha sido copiado ainda, e o contrato não
+       existia. O único item que aparecia era fatura de cartão.
+
+       Casa por DESCRIÇÃO, a mesma chave que o botão usa para não duplicar. Se já
+       existe lançamento com aquele nome no mês — materializado ou vindo do
+       contrato —, o custo fixo não entra de novo. */
+    const jaNoMes = new Set(itens.map(i => String(i.titulo).toLowerCase()));
+    const moldes = {};
+    for (const t of this.all('transactions')) {
+      if (!t.recurring || this.isNeutral(t)) continue;
+      if (t.card_id) continue;      // compra no cartão pesa na fatura, não solta
+      if (t.group_id) continue;     // parcela já nasce em todas as faturas
+      // O molde mais recente manda: o valor do aluguel de agora, não o de um ano atrás
+      const k = String(t.description).toLowerCase();
+      if (!moldes[k] || String(t.date) > String(moldes[k].date)) moldes[k] = t;
+    }
+    for (const [k, molde] of Object.entries(moldes)) {
+      if (jaNoMes.has(k)) continue;
+      // Já existe no mês com esse nome, em qualquer situação? Então não é previsão
+      const existe = this.all('transactions').some(t =>
+        String(t.description).toLowerCase() === k
+        && String(t.date) >= de && String(t.date) < ate);
+      if (existe) continue;
+      // Mesmo dia do mês do molde, preso ao último dia quando o mês é mais curto
+      const base = new Date(String(molde.date) + 'T12:00:00');
+      const ref = period.start;
+      const ultimo = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate();
+      const quando = this.paraISO(new Date(ref.getFullYear(), ref.getMonth(),
+        Math.min(base.getDate(), ultimo)));
+      if (quando < de || quando >= ate) continue;
+      add(molde.description, Number(molde.amount) || 0, !this.isExpense(molde), quando, 'custo fixo');
+    }
+
     // Faturas que vencem neste mês
     for (const inv of this.faturasAbertas(ate, de)) {
       add(`Fatura ${inv.card.name}`, Math.max(0, inv.falta), false, this.paraISO(inv.due), 'fatura');
@@ -1267,6 +1307,21 @@ const DB = {
 
     itens.sort((a, b) => String(a.data).localeCompare(String(b.data)));
     return { period, entra, sai, resultado: entra - sai, itens };
+  },
+
+  /* Os itens da previsão que AINDA NÃO EXISTEM como lançamento.
+
+     `previsaoDoMes` devolve tudo o que pesa no mês, inclusive o que já está
+     lançado e as faturas. Para as telas, o que interessa somar por cima do que já
+     existe é só o que não está lá: recorrência ainda não gerada e custo fixo ainda
+     não copiado. Fatura fica fora porque o extrato já a mostra como linha própria.
+
+     Não vira transação de verdade em lugar nenhum — é uma projeção calculada na
+     hora. Materializar seis meses de "A Pagar" encheria o extrato de registros que
+     ninguém pediu e que dariam trabalho para desfazer. */
+  previstosNaoLancados(period) {
+    return this.previsaoDoMes(period).itens
+      .filter(i => i.origem === 'prevista' || i.origem === 'custo fixo');
   },
 
   /* Os próximos n meses, com o saldo rolando de um para o outro.

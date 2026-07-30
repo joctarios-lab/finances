@@ -1089,6 +1089,38 @@ function svgBurnup(period, refLimit) {
   }), alt, 'burnup');
 }
 
+/* O que já se sabe sobre um mês que ainda não chegou.
+
+   Um número sozinho não dá para decidir nada: quem vê "vai sobrar R$ 800" precisa
+   saber DE QUÊ, para poder discordar de uma linha. A lista nomeia cada item e diz
+   de onde ele veio — já lançado, contrato que se repete, custo fixo ou fatura —
+   porque a confiança na projeção depende de poder auditá-la.
+
+   Deixa claro o que NÃO está aqui: gasto variável. Uma projeção que só conhece
+   contas fixas e chama o resto de "sobra" seria otimista por construção. */
+function cardPrevisaoDoMes(previsto, period) {
+  if (!previsto.itens.length) return '';
+  const rotuloOrigem = {
+    'lançado': 'já lançado',
+    prevista: 'repete todo mês',
+    'custo fixo': 'custo fixo',
+    fatura: 'fatura de cartão',
+  };
+  return `
+    <div class="card">
+      <div class="card-head"><div><b>O que já está previsto para ${esc(period.label)}</b>
+        <small>${previsto.itens.length} item(ns) conhecido(s) — gasto variável não entra</small></div>
+        <span class="num" style="font-size:16px" class="${previsto.resultado >= 0 ? 'txt-green' : 'txt-red'}">${fmtShort(previsto.resultado)}</span></div>
+      <div class="prev-lista">
+        ${previsto.itens.map(i => `<div class="prev-linha">
+          <span class="prev-dia">${fmtDay(i.data)}</span>
+          <span class="prev-nome">${esc(i.titulo)}<small>${esc(rotuloOrigem[i.origem] || i.origem)}</small></span>
+          <span class="num ${i.receita ? 'txt-green' : ''}">${i.receita ? '+' : '−'} ${fmtShort(i.valor)}</span>
+        </div>`).join('')}
+      </div>
+    </div>`;
+}
+
 /* ---------- Situação financeira (conceitos: disponível real, run-rate, 50/30/20, reserva) ---------- */
 function healthOf(stats, refLimit, available) {
   if (available < 0) return { label: 'Crítico', cls: 'red', msg: 'Comprometido maior que o saldo — reveja as próximas contas.' };
@@ -1357,6 +1389,36 @@ function renderInicio(period) {
       </div>
     </div>`;
 
+  /* MÊS FUTURO tem hero próprio. Antes caía no de mês encerrado e mostrava
+     "Resultado de setembro: R$ 0,00" — o mês não aconteceu, então não há resultado
+     nenhum, e o zero lia como "vai sobrar nada" em vez de "ainda não há dado".
+
+     O número aqui é o saldo PROJETADO ao fim daquele mês, rolando de mês em mês a
+     partir de hoje: um mês negativo no meio contamina os seguintes, e é isso que
+     olhar mês a mês, isolado, não mostra. */
+  const previsto = DB.previsaoDoMes(period);
+  const cadeia = state.monthOffset > 0 ? DB.previsaoMeses(state.monthOffset, 1) : [];
+  const saldoAoFim = cadeia.length ? cadeia[cadeia.length - 1].saldoAoFim : 0;
+  const heroFuturo = `
+    <div class="hero hero-${saldoAoFim >= 0 ? 'green' : 'red'}">
+      <div class="hero-top">
+        <span class="hero-label">Saldo previsto ao fim de ${esc(period.label)}</span>
+        <span class="hero-badge b-${saldoAoFim >= 0 ? 'green' : 'red'}">${saldoAoFim >= 0 ? 'No azul' : 'Aperto'}</span>
+      </div>
+      <div class="hero-value">${fmt(saldoAoFim)}</div>
+      <p class="hero-msg">${previsto.itens.length
+        ? `Projeção com ${previsto.itens.length} item(ns) já conhecido(s) — contas fixas, repetições e faturas. Gasto variável não entra nesta conta.`
+        : 'Nada previsto para este mês ainda. Contas que se repetem e faturas apareceriam aqui.'}</p>
+      <!-- Rótulos curtos: em três colunas de celular eles quebram acima de ~14
+           caracteres, e "Previsto entrar" já passava. O cabeçalho do card abaixo
+           é que diz que tudo aqui é previsão. -->
+      <div class="hero-stats">
+        <div><small>Entradas</small><b>${fmt(previsto.entra)}</b></div>
+        <div><small>Saídas</small><b>${fmt(previsto.sai)}</b></div>
+        <div><small>Resultado</small><b>${fmt(previsto.resultado)}</b></div>
+      </div>
+    </div>`;
+
   const heroAtual = `
     <div class="hero hero-${health.cls}">
       <div class="hero-top">
@@ -1385,8 +1447,9 @@ function renderInicio(period) {
     ${setupCard}
     ${atual ? filaDePendencias() : ''}
     ${periodBar}
-    ${atual ? heroAtual : heroFechado}
+    ${atual ? heroAtual : state.monthOffset > 0 ? heroFuturo : heroFechado}
     ${atual ? avisoDeAperto() : ''}
+    ${state.monthOffset > 0 ? cardPrevisaoDoMes(previsto, period) : ''}
     ${adviceCard}
     <div class="kpi-grid">
       <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
@@ -1928,12 +1991,37 @@ function renderExtrato(period) {
     <span class="tx-amount pending">− ${fmt(inv.falta)}</span>
   </div>`;
 
-  /* Mistura transações e faturas numa lista só, ordenada por data. Renderizar as
-     faturas à parte as tiraria da leitura cronológica, que é o que faz um extrato
-     ser extrato. */
+  /* ITENS PREVISTOS ainda não lançados: recorrência que não foi gerada e custo
+     fixo que não foi copiado. Sem eles, um mês daqui a três meses aparecia vazio
+     — e um extrato vazio para setembro diz "não há nada previsto", o que é falso
+     quando existe aluguel todo mês.
+
+     Só entram em período FUTURO. No mês corrente e no passado, o que não foi
+     lançado não aconteceu, e mostrar previsão ali competiria com o fato.
+
+     Não são transações: não têm id, não se editam e não somam no saldo realizado.
+     Aparecem como linha prevista, do mesmo jeito que a fatura. */
+  const ehFuturo = DB.inicioISO(period) > todayISO();
+  const previstos = (ehFuturo && !temFiltroAtivo())
+    ? DB.previstosNaoLancados(period).filter(i =>
+      // Respeita o filtro de tipo, o único que dá para aplicar a um item sem conta
+      !state.filtros.tipo.length || state.filtros.tipo.includes(i.receita ? 'Receita' : 'Despesa'))
+    : [];
+
+  const linhaPrevista = i => `<div class="tx tx-prev">
+    <span class="tx-ico">${i.receita ? '📈' : '📌'}</span>
+    <span class="tx-info"><span class="tx-name">${esc(i.titulo)}</span>
+    <span class="tx-meta">Previsto · ${i.origem === 'custo fixo' ? 'custo fixo' : 'repete todo mês'} · ainda não lançado</span></span>
+    <span class="tx-amount pending">${i.receita ? '+' : '−'} ${fmt(i.valor)}</span>
+  </div>`;
+
+  /* Mistura transações, faturas e previstos numa lista só, ordenada por data.
+     Renderizar cada grupo à parte os tiraria da leitura cronológica, que é o que
+     faz um extrato ser extrato. */
   const linhas = [
     ...txs.map(t => ({ data: t.date, tx: t })),
     ...faturasNoPeriodo.map(inv => ({ data: inv.venceISO, inv })),
+    ...previstos.map(i => ({ data: i.data, prev: i })),
   ].sort((a, b) => b.data.localeCompare(a.data));
 
   let list = '', lastDay = '';
@@ -1953,6 +2041,15 @@ function renderExtrato(period) {
         list += `<p class="tx-day"><span>${fmtDay(item.data)}</span>${totF ? `<span class="tx-day-tot">${totF}</span>` : ''}</p>`;
       }
       list += linhaFatura(item.inv);
+      continue;
+    }
+    if (item.prev) {
+      // Cabeçalho do dia igual ao das outras linhas: a data manda na leitura
+      if (item.data !== lastDay) {
+        lastDay = item.data;
+        list += `<p class="tx-day"><span>${fmtDay(item.data)}</span></p>`;
+      }
+      list += linhaPrevista(item.prev);
       continue;
     }
     const t = item.tx;
@@ -2121,7 +2218,13 @@ function renderExtrato(period) {
           ativos.length ? ` de ${DB.txOfPeriod(period).length} no período` : ''}` : 'nada no período'}</small>
       </div>
       <div class="sec-acoes">
-        ${isCurrent ? '<button class="sec-btn" id="btn-recur" title="Lançar os custos fixos que ainda faltam neste mês"><span data-ico="sync"></span>Custos fixos</button>' : ''}
+        <!-- "Custos fixos" é o caminho LEGADO: copia à mão os lançamentos marcados
+             como recorrentes. O formulário não oferece mais essa marca — quem repete
+             agora vira contrato em "Se repete?", que se gera sozinho. O botão fica
+             enquanto existir dado antigo para materializar, e some quando não houver:
+             um botão que não faz nada é pior que botão nenhum. -->
+        ${isCurrent && DB.all('transactions').some(t => t.recurring && !DB.isNeutral(t))
+          ? '<button class="sec-btn" id="btn-recur" title="Lançar os custos fixos que ainda faltam neste mês"><span data-ico="sync"></span>Custos fixos</button>' : ''}
         ${txs.length ? '<button class="sec-btn" id="btn-massa"><span data-ico="edit"></span>Editar</button>' : ''}
       </div>
     </div>
@@ -2412,6 +2515,11 @@ function renderRelatorios() {
       O recorte vale para os 12 meses do histórico, então as comparações continuam justas.</p>` : ''}
 
     ${relFrase({ period, atual, total, receitas, resultado, juizo, vsMediana, st, kinds, filtrado })}
+    <!-- Mês futuro: os agregadores todos dão zero porque nada foi lançado ainda, e
+         um relatório de zeros lê como "não vai gastar nada". A previsão vem antes
+         dos gráficos, que continuam mostrando o histórico para comparação. -->
+    ${(state.repOffset || 0) > 0 && !filtrado
+      ? cardPrevisaoDoMes(DB.previsaoDoMes(period), period) : ''}
     <!-- Os três primeiros gráficos são a resposta em três tempos — de onde veio,
          para onde foi, se é normal. Em tela larga eles ficam lado a lado, porque
          a comparação entre os três É a leitura; empilhados, exigem rolar e o
@@ -2424,7 +2532,10 @@ function renderRelatorios() {
     ${relCategorias({ period, byCat, total })}
     ${relCortes(period, txs, total)}
     ${relProjecao({ period, st, atual, total, receitas, juizo, filtrado })}
-    ${atual && !filtrado ? relProximosMeses() : ''}
+    <!-- "De onde vim, para onde vou" também em mês futuro: é lá que a pergunta
+         "como chego até setembro" se responde, e limitá-lo ao mês corrente tirava o
+         gráfico justamente de quem está navegando o futuro. -->
+    ${(atual || (state.repOffset || 0) > 0) && !filtrado ? relProximosMeses() : ''}
     ${relConstrucao({ period, receitas, resultado, filtrado })}
 
     <button class="btn ghost" id="btn-csv" style="display:flex;align-items:center;justify-content:center;gap:8px">
@@ -4249,7 +4360,6 @@ function openTxSheet(tx, asNew) {
         </select></div>
       <p class="muted" id="rep-resumo" style="margin-bottom:10px"></p>
     </div>`}
-    <div class="field"><label id="lbl-rec">Custo fixo mensal (recorrente)?</label><select id="f-rec"><option value="">Não</option><option value="1" ${tx.recurring ? 'selected' : ''}>Sim — entra nos custos fixos e no lançamento em 1 clique</option></select></div>
     <button class="btn" id="sh-save">${isEdit ? 'Salvar alterações' : 'Lançar'}</button>
     ${isEdit ? '<div class="btn-row"><button class="btn ghost" id="sh-dup">Repetir</button><button class="btn danger" id="sh-del">Excluir</button></div>' : ''}
   `);
@@ -4266,18 +4376,16 @@ function openTxSheet(tx, asNew) {
     if (!isTransf) montarCategorias(isRec ? 'Receita' : 'Despesa');
     $('#wrap-to-account').hidden = !isTransf;
     $('#lbl-method').textContent = isRec ? 'Entrou por' : 'Pagamento';
-    $('#lbl-rec').textContent = isRec ? 'Receita mensal fixa (ex: salário)?' : 'Custo fixo mensal (recorrente)?';
     $('#f-desc').placeholder = isTransf ? 'Ex: Guardar na reserva, Poupança do mês…'
       : isRec ? 'Ex: Salário, Freelance, Reembolso…' : 'Ex: Mercado, Uber, Farmácia…';
     $('#f-status').options[0].textContent = isRec ? 'Recebido' : 'Pago';
     $('#f-status').options[1].textContent = isRec ? 'A Receber' : 'A Pagar';
 
     // Numa transferência, o que importa é de onde sai e para onde vai
-    for (const id of ['#lbl-status', '#wrap-scope', '#wrap-member', '#lbl-rec']) {
+    for (const id of ['#lbl-status', '#wrap-scope', '#wrap-member']) {
       const el = $(id); if (el) el.hidden = isTransf;
     }
     $('#f-status').hidden = isTransf;
-    $('#f-rec').hidden = isTransf;
     $('#wrap-method').hidden = isTransf;
     $('#lbl-account').innerHTML = isTransf ? 'De qual conta' : 'Conta <span class="muted">— o saldo é ajustado sozinho</span>';
     if (isTransf) {
@@ -4577,7 +4685,10 @@ function openTxSheet(tx, asNew) {
       status: $('#f-status').value, method,
       scope, member,
       category_id: chipValue('g-cat') || null,
-      recurring: !!$('#f-rec').value,
+      // `recurring` é legado: some do formulário, mas o valor existente é
+      // preservado — a previsão dos próximos meses ainda o lê, e zerar aqui
+      // apagaria a marca ao editar qualquer lançamento antigo.
+      recurring: !!tx.recurring,
       type: isReceita ? 'Receita' : 'Despesa',
       tags: tagsEscolhidas(),
       adjustment: false,        // classificar um ajuste o transforma em lançamento normal

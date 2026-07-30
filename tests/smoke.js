@@ -231,6 +231,167 @@ check('com o guardado como parcela', inicio.includes('− Guardado'), true);
    fatura de R$ 1.000 com R$ 700 já pagos entrava inteira, e o painel dizia que
    havia R$ 1.000 em aberto quando o débito real era R$ 300. É o pior tipo de erro
    num painel: não parece errado, parece que o pagamento não entrou. */
+/* ---- Cenários futuros até 6 meses no Painel, Extrato e Relatórios ----
+   Navegar para setembro mostrava tela vazia. Duas causas:
+
+   1. `gerarRecorrencias()` só materializa até o fim do ciclo corrente — de
+      propósito: materializar seis meses de "A Pagar" encheria o extrato de
+      registros que ninguém pediu e daria trabalho para desfazer.
+   2. `previsaoDoMes` lia só a tabela `recurrences`, e não os CUSTOS FIXOS
+      (transações marcadas `recurring`) — que é o caminho oferecido no formulário
+      de lançamento. Quem usa o segundo via previsão vazia: nada copiado ainda, e
+      contrato nenhum. O único item que aparecia era fatura de cartão.
+
+   A saída é calcular, não materializar: as telas somam a previsão por cima do que
+   já existe, marcada como previsão. */
+console.log('\n=== Cenários futuros (até 6 meses) ===');
+try {
+  const ctaFut = DB.all('accounts')[0];
+  const mesAnterior = DB.inicioISO(DB.monthPeriod(new Date(), -1));
+  const molde = (desc, valor, tipo) => DB.upsert('transactions', {
+    description: desc, amount: valor, date: mesAnterior, type: tipo, status: 'Pago',
+    scope: 'Família', member: MEMBRO_COMUM, method: tipo === 'Receita' ? 'PIX' : 'Boleto',
+    account_id: ctaFut.id, recurring: true,
+  });
+  molde('Aluguel FUT', 2500, 'Despesa');
+  molde('Salario FUT', 9000, 'Receita');
+
+  /* O CUSTO FIXO entra na previsão de qualquer mês à frente, não só do próximo.
+     É o defeito relatado: depois de agosto, nada. */
+  for (const off of [1, 2, 3, 6]) {
+    const per = DB.monthPeriod(new Date(), off);
+    const prev = DB.previsaoDoMes(per);
+    check(`previsão de ${per.label} conhece o custo fixo`,
+      prev.itens.some(i => i.titulo === 'Aluguel FUT'), true);
+    check(`e a receita que se repete em ${per.label}`,
+      prev.itens.some(i => i.titulo === 'Salario FUT' && i.receita), true);
+  }
+
+  /* NÃO DUPLICA quando o lançamento já existe no mês. A chave é a descrição, a
+     mesma que o botão "Custos fixos" usa para não copiar duas vezes. */
+  const setFut = DB.monthPeriod(new Date(), 2);
+  const idMaterial = DB.upsert('transactions', {
+    description: 'Aluguel FUT', amount: 2500, date: DB.somarDiasISO(DB.inicioISO(setFut), 3),
+    type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Boleto', account_id: ctaFut.id,
+  });
+  const prevDup = DB.previsaoDoMes(setFut);
+  check('custo fixo já lançado não conta duas vezes',
+    prevDup.itens.filter(i => i.titulo === 'Aluguel FUT').length, 1);
+  check('e passa a contar como lançado, não como previsão',
+    prevDup.itens.find(i => i.titulo === 'Aluguel FUT').origem, 'lançado');
+  DB.remove('transactions', idMaterial);
+
+  /* JÁ PAGO no mês futuro também não vira previsão. É o caso de quem adianta o
+     aluguel de setembro: a `previsaoDoMes` só lista o que está "A Pagar", então o
+     pago não entra na lista — e sem uma checagem própria o custo fixo seria
+     projetado por cima de um pagamento que já aconteceu, inflando o mês. */
+  const idPago = DB.upsert('transactions', {
+    description: 'Aluguel FUT', amount: 2500, date: DB.somarDiasISO(DB.inicioISO(setFut), 4),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Boleto', account_id: ctaFut.id,
+  });
+  const prevPago = DB.previsaoDoMes(setFut);
+  check('custo fixo pago adiantado não é projetado de novo',
+    prevPago.itens.filter(i => i.titulo === 'Aluguel FUT').length, 0);
+  check('e o mês não conta esse valor duas vezes',
+    prevPago.sai < 2500, true);
+  DB.remove('transactions', idPago);
+
+  /* NEM COM CONTRATO: se alguém tem os dois mecanismos para a mesma conta — um
+     contrato "Se repete?" e o custo fixo legado com o mesmo nome —, o item entra
+     UMA vez. Contar os dois somaria o aluguel duas vezes e inflaria a previsão de
+     todos os meses à frente. */
+  const contratoDup = DB.upsert('recurrences', {
+    description: 'Aluguel FUT', valor: 2500, valor_tipo: 'fixo', type: 'Despesa',
+    periodicidade: 'mensal', dia: 5, inicio: DB.inicioISO(DB.monthPeriod(new Date(), 1)),
+    fim_tipo: 'sempre', status: 'ativa', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Boleto', account_id: ctaFut.id,
+  });
+  const comAmbos = DB.previsaoDoMes(DB.monthPeriod(new Date(), 3));
+  check('contrato e custo fixo com o mesmo nome não somam em dobro',
+    comAmbos.itens.filter(i => i.titulo === 'Aluguel FUT').length, 1);
+  check('e quem manda é o contrato, que é o caminho novo',
+    comAmbos.itens.find(i => i.titulo === 'Aluguel FUT').origem, 'prevista');
+  DB.remove('recurrences', contratoDup);
+
+  // O que as telas somam por cima do que existe exclui o já lançado e a fatura
+  const soPrevisto = DB.previstosNaoLancados(DB.monthPeriod(new Date(), 2));
+  check('a lista para as telas traz só o que não existe ainda',
+    soPrevisto.every(i => i.origem === 'prevista' || i.origem === 'custo fixo'), true);
+  check('fatura fica de fora: o extrato já a mostra como linha própria',
+    soPrevisto.some(i => i.origem === 'fatura'), false);
+
+  /* ---- As três telas ---- */
+  const offSalvoFut = state.monthOffset, repSalvoFut = state.repOffset;
+  state.filtros = filtrosVazios();
+  const saldos = [];
+  for (const off of [1, 2, 3, 4, 5, 6]) {
+    state.monthOffset = off; state.repOffset = off;
+    const per = DB.monthPeriod(new Date(), off);
+    const painelFut = renderInicio(per);
+    const extratoFut = renderExtrato(per);
+    const relFut = renderRelatorios();
+
+    /* PAINEL: hero próprio de previsão. Antes caía no de mês encerrado e mostrava
+       "Resultado de setembro: R$ 0,00" — o zero lia como "vai sobrar nada" em vez
+       de "ainda não há dado". */
+    check(`painel de ${per.label}: hero de previsão`,
+      painelFut.includes('Saldo previsto ao fim de'), true);
+    check(`  e não o hero de mês encerrado`, /hero-label">Resultado de/.test(painelFut), false);
+    check(`  com a lista do que já se sabe`,
+      (painelFut.match(/class="prev-linha"/g) || []).length >= 2, true);
+    // Tira tudo o que não é dígito: o separador do fmt varia (nbsp, espaço fino)
+    const bruto = (painelFut.match(/hero-value">([^<]+)</) || ['', ''])[1];
+    saldos.push(Number(bruto.replace(/[^\d]/g, '')));
+
+    // EXTRATO: os itens previstos entram na lista cronológica
+    check(`extrato de ${per.label}: linhas previstas`,
+      (extratoFut.match(/class="tx tx-prev"/g) || []).length >= 2, true);
+    check(`  e não diz "sem lançamentos"`, /Sem lançamentos/.test(extratoFut), false);
+
+    // RELATÓRIOS: previsão + o gráfico de fluxo, que é onde o futuro se lê
+    check(`relatórios de ${per.label}: traz a previsão`,
+      (relFut.match(/class="prev-linha"/g) || []).length >= 2, true);
+    /* O gráfico de doze meses é onde "como chego até setembro" se responde.
+       Limitá-lo ao mês corrente o tirava justamente de quem navega o futuro. */
+    check(`  e o gráfico de doze meses`, relFut.includes('De onde vim, para onde vou'), true);
+    check(`  com o desenho, não só o título`, relFut.includes('data-g="fluxo-saldo"'), true);
+  }
+  /* O SALDO ROLA de um mês para o outro: cada mês parte do que sobrou do anterior.
+     Sem isso, todo mês mostraria o mesmo número e o gráfico de "aperto em X" nunca
+     apontaria nada. */
+  check('o saldo previsto rola de um mês para o outro',
+    saldos.every((v, i) => i === 0 || v > saldos[i - 1]), true);
+
+  /* PREVISÃO SÓ NO FUTURO. No mês corrente e no passado, o que não foi lançado não
+     aconteceu — mostrar previsão ali competiria com o fato. */
+  for (const off of [0, -1]) {
+    state.monthOffset = off;
+    const per = DB.monthPeriod(new Date(), off);
+    const html = renderExtrato(per);
+    check(`extrato de ${per.label} não mistura previsão`,
+      /repete todo mês · ainda não lançado|custo fixo · ainda não lançado/.test(html), false);
+    check(`painel de ${per.label} não usa o hero de previsão`,
+      html.includes('Saldo previsto ao fim de'), false);
+  }
+
+  // O limite é 6 meses: a seta pára ali, senão a projeção viraja adivinhação
+  state.monthOffset = 6;
+  check('a seta de avançar pára em 6 meses',
+    /id="mn-next"[^>]*disabled/.test(renderInicio(DB.monthPeriod(new Date(), 6))), true);
+  state.repOffset = 6;
+  check('nos relatórios também', /id="rep-next"[^>]*disabled/.test(renderRelatorios()), true);
+  state.monthOffset = 5;
+  check('mas não antes disso',
+    /id="mn-next"[^>]*disabled/.test(renderInicio(DB.monthPeriod(new Date(), 5))), false);
+
+  state.monthOffset = offSalvoFut; state.repOffset = repSalvoFut;
+  state.filtros = filtrosVazios();
+  for (const t of DB.all('transactions').filter(t => / FUT$/.test(t.description || ''))) DB.remove('transactions', t.id);
+  DB.save();
+} catch (e) { console.log(` FALHA | cenários futuros: ${e.message}`); fail++; }
+
 console.log('\n=== Faturas em aberto (o que falta, não o total) ===');
 try {
   const cKpi = DB.upsert('cards', { name: 'Cartao Aberto', closing_day: 10, due_day: 20, limit_amount: 5000 });
@@ -1503,6 +1664,95 @@ try {
   check('lista completa só abre ao pedir "Outra"', appSrc2.includes("UI.open($('#f-cat-more'))"), true);
 
   // Bug: calendário espremido na coluna estreita do formulário
+  const uiSrcDup = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
+
+  /* ---- Um caminho só para repetição ----
+     O formulário tinha duas perguntas para a mesma coisa: "Se repete?" (contrato em
+     `recurrences`, que se gera sozinho) e "Custo fixo mensal (recorrente)?" (marca
+     `recurring`, copiada à mão por um botão). Duas respostas para a mesma pergunta
+     é convite a marcar as duas e ver o lançamento em dobro. Ficou o contrato. */
+  check('o formulário não pergunta mais por custo fixo',
+    /Custo fixo mensal \(recorrente\)\?/.test(appSrc2), false);
+  check('nem tem o campo dele', /id="f-rec"/.test(appSrc2), false);
+  check('mas continua perguntando "Se repete?"', /Se repete\?/.test(appSrc2), true);
+  /* O valor legado é PRESERVADO ao salvar. Zerar apagaria a marca de custo fixo de
+     todo lançamento antigo que passasse por uma edição — e a previsão dos próximos
+     meses depende dela enquanto a migração não acontece. */
+  check('e o recurring existente não é apagado ao editar',
+    appSrc2.includes('recurring: !!tx.recurring'), true);
+
+  /* ---- Reembrulhar não pode aninhar ----
+     `enhance` roda de novo quando as opções mudam — o seletor de categoria recarrega
+     a lista ao trocar o tipo do lançamento. Sem reaproveitar o invólucro, o novo
+     entrava DENTRO do antigo e sobrava um botão a mais: era o "select da categoria
+     duplica" ao clicar em "Outra". */
+  check('o enhance reaproveita o invólucro existente', /embrulho\(sel, 'ui-select'\)/.test(cssUi + uiSrcDup), true);
+  check('e o datepicker também', /embrulho\(inp, 'ui-date'\)/.test(uiSrcDup), true);
+  check('o invólucro antigo é limpo, não empilhado',
+    /if \(f !== el\) pai\.removeChild\(f\)/.test(uiSrcDup), true);
+  check('e o campo nativo não é movido quando o invólucro é reusado',
+    /if \(!reusado\) \{[\s\S]{0,140}insertBefore\(box/.test(uiSrcDup), true);
+
+  /* E o COMPORTAMENTO, não só o código: um DOM mínimo de verdade, reembrulhando
+     quatro vezes. Antes da correção dava 1, 2, 3, 4 invólucros — o teste acima, que
+     olha o fonte, passaria numa reescrita que voltasse a aninhar por outro caminho. */
+  {
+    const nós = () => {
+      const criar = tag => {
+        const cls = new Set();
+        const el = {
+          tagName: String(tag).toUpperCase(), children: [], parentNode: null, dataset: {},
+          classList: { add: c => cls.add(c), remove: c => cls.delete(c), contains: c => cls.has(c), toggle: () => {} },
+          appendChild(f) { if (f.parentNode) f.parentNode.removeChild(f); f.parentNode = this; this.children.push(f); return f; },
+          removeChild(f) { const i = this.children.indexOf(f); if (i >= 0) this.children.splice(i, 1); f.parentNode = null; return f; },
+          insertBefore(nv, ref) {
+            if (nv.parentNode) nv.parentNode.removeChild(nv);
+            nv.parentNode = this;
+            const i = ref ? this.children.indexOf(ref) : -1;
+            if (i < 0) this.children.push(nv); else this.children.splice(i, 0, nv);
+            return nv;
+          },
+          get firstChild() { return this.children[0] || null; },
+          querySelector: () => criar('span'), querySelectorAll: () => [],
+          addEventListener() {}, removeAttribute() {}, setAttribute() {},
+          options: [], selectedIndex: -1, value: '', innerHTML: '',
+        };
+        Object.defineProperty(el, 'className', {
+          get: () => [...cls].join(' '),
+          set: v => { cls.clear(); String(v).split(' ').filter(Boolean).forEach(x => cls.add(x)); },
+        });
+        return el;
+      };
+      return criar;
+    };
+    const criar = nós();
+    /* Carrega o UI ISOLADO, com `document` como parâmetro em vez de global. Trocar
+       o global e restaurar depois vazava: o `document` falso do harness ficava
+       quebrado para os blocos seguintes, e duas suítes adiante reprovavam por
+       poluição em vez de defeito. */
+    const carregarUI = new Function('document', 'window', uiSrcDup + '; return UI;');
+    const UIiso = carregarUI({ createElement: criar }, {});
+    const campo = criar('div'); campo.className = 'field';
+    const selTeste = criar('select');
+    campo.appendChild(selTeste);
+
+    const contarInvolucros = () => {
+      let n = 0;
+      const anda = e => { if (e.classList.contains('ui-select')) n++; e.children.forEach(anda); };
+      anda(campo);
+      return n;
+    };
+    UIiso.enhanceSelect(selTeste);
+    const depoisDaPrimeira = contarInvolucros();
+    for (let i = 0; i < 3; i++) { delete selTeste.dataset.ui; UIiso.enhanceSelect(selTeste); }
+    const depoisDeQuatro = contarInvolucros();
+    const botoes = selTeste.parentNode.children.filter(c => c.tagName === 'BUTTON').length;
+
+    check('um invólucro na primeira passada', depoisDaPrimeira, 1);
+    check('e continua um depois de reembrulhar quatro vezes', depoisDeQuatro, 1);
+    check('com um botão só, não vários empilhados', botoes, 1);
+  }
+
   /* O calendário tem largura própria — 300px, mais do que o campo —, mas limitada
      pela tela. Ele nasce no <body> como `.ui-pop` para escapar do overflow da
      folha, e vem depois de `.ui-panel.ui-pop` no arquivo: um `min-width: 300px`
@@ -3148,7 +3398,23 @@ try {
     comSec.indexOf('sec-acoes') > comSec.indexOf('sec-tit')
     && comSec.indexOf('sec-acoes') < comSec.indexOf('id="tx-list"'), true);
   check('editar virou botão da seção', /sec-btn" id="btn-massa"/.test(comSec), true);
-  check('custos fixos também', /sec-btn" id="btn-recur"/.test(comSec), true);
+  /* "Custos fixos" é o caminho LEGADO: copia à mão os lançamentos marcados como
+     recorrentes. O formulário não oferece mais essa marca — quem repete agora vira
+     contrato em "Se repete?", que se gera sozinho. Então o botão só aparece
+     enquanto existir dado antigo para materializar: um botão que não faz nada é
+     pior que botão nenhum. */
+  check('sem custo fixo legado, o botão não aparece',
+    /sec-btn" id="btn-recur"/.test(comSec), false);
+  const idLegado = DB.upsert('transactions', {
+    description: 'Legado CF', amount: 100, date: DB.inicioISO(pM), type: 'Despesa',
+    status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto',
+    account_id: DB.all('accounts')[0].id, recurring: true,
+  });
+  check('com dado legado, ele volta — e como botão da seção',
+    /sec-btn" id="btn-recur"/.test(renderExtrato(pM)), true);
+  DB.remove('transactions', idLegado);
+  check('e some de novo quando o legado sai',
+    /sec-btn" id="btn-recur"/.test(renderExtrato(pM)), false);
   check('e não sobrou botão de largura inteira',
     /btn ghost" id="btn-(massa|recur)"/.test(comSec), false);
   // O lote é o filtro; editar só aparece quando há o que editar
