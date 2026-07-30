@@ -1287,9 +1287,15 @@ function renderInicio(period) {
       <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmt(saldo)}</div><div class="kpi-label">Saldo em contas</div><div class="kpi-sub">${contas.length} conta(s)</div></div>
       <div class="card kpi"><span class="kpi-ico t-info" data-ico="target"></span><div class="kpi-value">${avgPct}%</div><div class="kpi-label">Metas (média)</div><div class="kpi-sub">${goals.length} em andamento</div></div>
     </div>
-    <div class="grid-2">
-      ${projCard}
+    <!-- Primeira linha: o que já está guardado, o que o mês vai fechar e como a
+         renda se divide. As três perguntas de "estamos bem?", lado a lado — juntas
+         elas se leem de uma vez; empilhadas, exigem rolar e a comparação se perde.
+         A regra 50·30·20 sai quando não há renda cadastrada, e aí a linha se
+         reorganiza em duas colunas em vez de deixar uma coluna fantasma. -->
+    <div class="grid-3">
       ${reserveCard}
+      ${projCard}
+      ${rule5030}
     </div>
     <div class="grid-2">
       <div class="card">
@@ -1307,7 +1313,6 @@ function renderInicio(period) {
         <p class="muted" style="margin-top:4px">Se a linha azul cruzar a tracejada antes do fim do mês, o limite estoura.</p>
       </div>
     </div>
-    ${rule5030}
     <div class="grid-2">
       <div class="card">
         <div class="card-head"><div><b>Para onde foi o dinheiro</b><small>distribuição do período por categoria</small></div><span class="kpi-ico t-primary" data-ico="pie" style="width:34px;height:34px;margin:0"></span></div>

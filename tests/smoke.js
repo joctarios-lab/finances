@@ -699,6 +699,45 @@ try {
   check('cobertura em meses é calculada', meses > 0, true);
   check('painel mostra o card da reserva', renderInicio(p).includes('Reserva de emergência'), true);
 
+  /* ---- A primeira linha do painel ----
+     Reserva, projeção e regra 50·30·20 juntas: são as três perguntas de "estamos
+     bem?" — quanto já está guardado, como o mês fecha e como a renda se divide.
+     Lado a lado elas se leem de uma vez; empilhadas, exigem rolar e a comparação
+     se perde no caminho. */
+  const painel = renderInicio(p);
+  const iG3 = painel.indexOf('class="grid-3"');
+  const fimG3 = painel.indexOf('class="grid-2"', iG3);
+  const primeiraLinha = painel.slice(iG3, fimG3);
+  const iRes = painel.indexOf('Reserva de emergência');
+  const iProj = painel.indexOf('Projeção do mês');
+  const iRegra = painel.indexOf('Regra 50 · 30 · 20');
+  check('a primeira linha é um grid de três', iG3 > 0 && fimG3 > iG3, true);
+  check('e leva os três cartões', (primeiraLinha.match(/class="card"/g) || []).length, 3);
+  check('reserva vem primeiro, projeção depois, regra por último',
+    iRes > iG3 && iRes < iProj && iProj < iRegra && iRegra < fimG3, true);
+  /* A regra saiu do meio da página: ela ficava solta em largura inteira depois do
+     "Ritmo do mês". Duas cópias seriam pior que estar no lugar errado. */
+  check('a regra não sobrou solta no meio da página',
+    /Regra 50/.test(painel.slice(painel.indexOf('Ritmo do mês'))), false);
+  check('e aparece uma vez só', (painel.match(/Regra 50/g) || []).length, 1);
+  /* A regra 50·30·20 só existe com renda cadastrada — ela é percentual DA renda, e
+     sem denominador não há o que dividir. Aí a linha fica com dois cartões, e as
+     colunas têm de acompanhar em vez de deixar um vão fantasma no fim. */
+  const cssG3 = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('com dois cartões a linha vira duas colunas',
+    /\.grid-3:has\(> \.card:nth-child\(2\):last-child\) \{ grid-template-columns: repeat\(2,/.test(cssG3), true);
+  check('e com um só, largura inteira',
+    /\.grid-3:has\(> \.card:only-child\) \{ grid-template-columns: minmax\(0, 1fr\)/.test(cssG3), true);
+  check('no celular é sempre uma coluna', /\.grid-3 \{ display: grid; grid-template-columns: 1fr/.test(cssG3), true);
+  // E o comportamento de verdade, num mês sem receita nenhuma
+  const semRenda = renderInicio(DB.monthPeriod(new Date(), -600));
+  const linhaSemRenda = semRenda.slice(semRenda.indexOf('class="grid-3"'),
+    semRenda.indexOf('class="grid-2"', semRenda.indexOf('class="grid-3"')));
+  check('sem renda a regra não é montada', /Regra 50/.test(semRenda), false);
+  check('e a linha fica com dois cartões', (linhaSemRenda.match(/class="card"/g) || []).length, 2);
+  check('reserva e projeção continuam lá',
+    /Reserva de emergência/.test(linhaSemRenda) && /Projeção do mês/.test(linhaSemRenda), true);
+
   DB.remove('goals', reservaId);
   DB.all('goal_entries').filter(e => e.goal_id === reservaId).forEach(e => DB.remove('goal_entries', e.id));
   check('sem meta de reserva, painel convida a criar', renderInicio(p).includes('Criar minha reserva'), true);
