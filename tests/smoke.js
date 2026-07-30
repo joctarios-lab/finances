@@ -961,6 +961,61 @@ try {
   check('sem orçamento, não desenha trilha nem legenda',
     (() => { zeraFila(); svgBurnup(p, 0); const c = cfgDo(); return c.series.length === 1 && c.legend.show === false; })(), true);
 
+  /* ---- A TRILHA IDEAL TEM DE APARECER ----
+     Ela estava na configuração e não desenhava. Duas causas, as duas aqui: */
+
+  /* 1. `stroke.curve` NUNCA como array. Lido no fonte da lib: num ponto ela
+        resolve `stroke.curve[serie]` certo, mas na checagem de ponto nulo compara
+        `config.stroke.curve` DIRETO com 'smooth'. Com array a comparação nunca
+        casa e os nulos param de abrir intervalo — a área desce até o zero em vez
+        de terminar em hoje. */
+  check('a curva é escalar, nunca array', Array.isArray(cBu.stroke.curve), false);
+  check('e é suave', cBu.stroke.curve, 'smooth');
+  /* 2. A cor do traço declarada em `stroke.colors`, como o widget 29 faz — é o
+        que garante que a trilha receba a cor dela. */
+  check('cada série declara a cor do próprio traço',
+    cBu.stroke.colors.join(','), Graficos.cor.azul + ',' + Graficos.cor.cinza);
+  check('e a espessura por série', cBu.stroke.width.join(','), '3,2');
+  /* Opacidade 0 na segunda série saiu: o path da linha nasce com fill "none", ela
+     não fazia nada e só escondia a intenção de quem lê o código. */
+  check('não há opacidade zero escondendo a linha',
+    cBu.fill.opacity === undefined || !(cBu.fill.opacity || []).includes(0), true);
+  // A escala tem de caber a trilha inteira, senão ela desenha fora da área visível
+  const topoTrilha = Math.max(...cBu.series[1].data);
+  const topoGasto = Math.max(...cBu.series[0].data.filter(v => v != null));
+  check('a trilha chega ao limite do mês', topoTrilha, 3000);
+  check('e as duas séries dividem um eixo só, porque a unidade é a mesma',
+    Array.isArray(cBu.yaxis), false);
+  check('a trilha é o teto da escala, e é isso que dá a leitura',
+    topoTrilha >= topoGasto, true);
+
+  /* Acabamento de linha do Charts Widget 29: mira vertical tracejada e hover que
+     não repinta a série. */
+  check('há mira vertical seguindo o cursor', cBu.xaxis.crosshairs.position, 'front');
+  check('tracejada, para não ser confundida com dado', cBu.xaxis.crosshairs.stroke.dashArray, 3);
+  check('e na cor da série que ela está medindo',
+    cBu.xaxis.crosshairs.stroke.color, Graficos.cor.azul);
+  /* Numa área com degradê o clareamento da lib come o próprio degradê: a forma
+     "pisca" no hover e o olho perde a referência. */
+  check('o hover não repinta a série', cBu.states.hover.filter.type, 'none');
+  check('o mesmo nos outros dois estados',
+    cBu.states.normal.filter.type === 'none' && cBu.states.active.filter.type === 'none', true);
+  check('quatro marcas no eixo, régua sem virar gaiola', cBu.yaxis.tickAmount, 4);
+
+  /* O MESMO acabamento nos outros gráficos de linha — foi pedido para "gráficos de
+     linha como Ritmo do mês", não só para ele. */
+  for (const [rot, montar] of [
+    ['faixa de normalidade', () => svgLinhaFaixa([{ rot: 'jan', valor: 100 }, { rot: 'fev', valor: 200 }, { rot: 'mar', valor: 150 }])],
+    ['saldo diário', () => sparkArea([1000, 1200, 900], ['2026-07-01', '2026-07-02', '2026-07-03'], {})],
+  ]) {
+    zeraFila(); montar();
+    const cL = cfgDo();
+    check(rot + ': tem mira vertical tracejada',
+      cL.xaxis.crosshairs.position === 'front' && cL.xaxis.crosshairs.stroke.dashArray === 3, true);
+    check(rot + ': o hover não repinta a série', cL.states.hover.filter.type, 'none');
+    check(rot + ': a curva é escalar, nunca array', Array.isArray(cL.stroke.curve), false);
+  }
+
   zeraFila();
   const inicio = renderInicio(p);
   // A rosca é a única que não vem da biblioteca: no painel ela é SVG no HTML
@@ -1898,7 +1953,10 @@ try {
   /* Escala pelo intervalo dos dados, não do zero: com saldo de R$ 14 mil, ancorar
      no zero achataria a linha num traço reto e a variação sumiria. É o padrão do
      sparkline — não há yaxis forçando o zero. */
-  check('a escala não é forçada ao zero', cSp.yaxis === undefined, true);
+  /* Nada de `min: 0`: o que forçaria o zero é declarar o mínimo, não a ausência do
+     eixo. A lib escala pelo intervalo dos dados por conta própria. */
+  check('a escala não é forçada ao zero',
+    !cSp.yaxis || (cSp.yaxis.min === undefined && cSp.yaxis.max === undefined), true);
   // A régua do zero só quando a série de fato cruza: senão é tinta sem dado
   zeraFila();
   sparkArea([500, -200], ['2026-07-01', '2026-07-02'], {});
@@ -4415,11 +4473,31 @@ console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
   const apFonte = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   check('nenhum gráfico crava o tamanho na mão',
     (apFonte.match(/fontSize: '\d[\d.]*px'/g) || []).length, 0);
-  check('todos os eixos saem da escala',
-    fila.every(f => {
-      const x = f.opts.xaxis && f.opts.xaxis.labels && f.opts.xaxis.labels.style;
-      return !x || !x.fontSize || x.fontSize === Graficos.fonte.eixo;
-    }), true);
+  /* EXIGE o tamanho, não aceita ausência. Aceitar "ou ausente" foi o que deixou
+     passar um defeito real: espalhar `...extra` sobre o xaxis trocava `labels`
+     inteiro, e como quase todo gráfico passa um `formatter` ali, o `style` com o
+     tamanho da fonte era descartado justamente nos que mais precisam dele. */
+  check('todo eixo declara o tamanho, e sai da escala',
+    fila.every(f => (f.opts.xaxis.labels.style || {}).fontSize === Graficos.fonte.eixo), true);
+  check('o eixo Y também', fila.every(f =>
+    (f.opts.yaxis.labels ? (f.opts.yaxis.labels.style || {}).fontSize === Graficos.fonte.eixo
+      : Array.isArray(f.opts.yaxis))), true);
+  /* Um gráfico que passa formatter no eixo é o caso que quebrava: o formatter tem
+     de conviver com o style, não substituí-lo. Vale nos DOIS eixos, porque quem
+     passa formatter no X são os de barra e no Y os de linha — testar só um lado
+     deixa a outra metade da mescla sem trava. */
+  check('formatter e tamanho convivem no eixo Y',
+    (() => { zeraFila(); svgBurnup(DB.monthPeriod(new Date()), 3000); const c = cfgDo();
+      return typeof c.yaxis.labels.formatter === 'function'
+        && c.yaxis.labels.style.fontSize === Graficos.fonte.eixo; })(), true);
+  check('e no eixo X',
+    (() => { zeraFila(); svgRanking([['Mercado', 800]]); const c = cfgDo();
+      return typeof c.xaxis.labels.formatter === 'function'
+        && c.xaxis.labels.style.fontSize === Graficos.fonte.eixo; })(), true);
+  // Sem o formatter o eixo mostraria o número cru em vez de moeda
+  check('e o formatter do eixo formata em moeda',
+    (() => { zeraFila(); svgRanking([['Mercado', 800]]);
+      return cfgDo().xaxis.labels.formatter(1500); })(), fmtShort(1500).replace('R$', '').trim());
 
   check('o texto do gráfico usa a fonte do app', /\.apx text \{[^}]*font-family: inherit/.test(cssG), true);
   check('e o div encolhe em vez de estourar o cartão',

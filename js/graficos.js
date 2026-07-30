@@ -125,16 +125,33 @@ const Graficos = {
         yaxis: { lines: { show: true } },
         padding: { left: 6, right: 6, top: 0, bottom: 0 },
       },
-      // Rótulos no cinza de texto secundário: eles são referência, não dado
+      /* Rótulos no cinza de texto secundário: eles são referência, não dado.
+
+         MESCLA `labels` em vez de deixar o gráfico substituí-lo. Espalhar o
+         `...extra` sobre o objeto trocava `labels` inteiro, e como quase todo
+         gráfico passa um `formatter` ali, o `style` com o tamanho da fonte era
+         descartado justamente nos que mais precisam dele. */
       xaxis: {
         axisBorder: { show: false }, axisTicks: { show: false },
-        labels: { style: { colors: this.cor.tintaFraca, fontSize: this.fonte.eixo, fontWeight: 600 } },
         crosshairs: { show: false },
         ...(extra.xaxis || {}),
+        labels: {
+          ...((extra.xaxis || {}).labels || {}),
+          style: {
+            colors: this.cor.tintaFraca, fontSize: this.fonte.eixo, fontWeight: 600,
+            ...(((extra.xaxis || {}).labels || {}).style || {}),
+          },
+        },
       },
       yaxis: {
-        labels: { style: { colors: this.cor.tintaFraca, fontSize: this.fonte.eixo } },
         ...(extra.yaxis || {}),
+        labels: {
+          ...((extra.yaxis || {}).labels || {}),
+          style: {
+            colors: this.cor.tintaFraca, fontSize: this.fonte.eixo,
+            ...(((extra.yaxis || {}).labels || {}).style || {}),
+          },
+        },
       },
       tooltip: {
         style: { fontSize: this.fonte.dica, fontFamily: 'inherit' },
@@ -142,6 +159,51 @@ const Graficos = {
       },
       legend: { show: false },
       states: { hover: { filter: { type: 'darken', value: 0.9 } } },
+    };
+  },
+
+  /* Acabamento comum aos gráficos de linha e área, do Charts Widget 29 do demo25.
+
+     O que vem dele e vale para todos:
+
+     - MIRA VERTICAL tracejada seguindo o cursor (`xaxis.crosshairs`), na frente do
+       desenho. É o que transforma a silhueta em leitura: dá para saber o valor do
+       dia 12, não só que a curva subiu. Antes isso exigia handler de ponteiro
+       próprio; aqui é configuração.
+     - `states` com filtro `none` nos três estados. Sem isso a lib clareia a série
+       inteira ao passar o mouse, e numa área com degradê o clareamento come o
+       degradê — a forma "pisca" e o olho perde a referência.
+     - `tickAmount: 4` nos dois eixos: quatro marcas dão a régua sem virar gaiola.
+     - Marcador com anel de 3px na cor da superfície, que destaca sem engordar.
+
+     `cor` é a cor da série, usada na mira e no anel do marcador — assim a mira
+     pertence visualmente à linha que ela está medindo.
+
+     RECEBE a configuração base e sobrepõe, em vez de devolver um objeto para ser
+     espalhado ao lado dela. A primeira versão fazia isso e apagava os eixos
+     inteiros da base — com eles o tamanho da fonte, justamente o que tinha sido
+     alinhado ao layout. Dois helpers donos do mesmo `xaxis` e o último espalhado
+     ganha; recebendo a base, não há como duplicar. */
+  linha(base, cor) {
+    const bx = base.xaxis || {}, by = base.yaxis || {};
+    return {
+      ...base,
+      xaxis: {
+        tickAmount: 4,
+        ...bx,
+        labels: { rotate: 0, rotateAlways: false, ...(bx.labels || {}) },
+        // Na frente do desenho, senão a linha e a área a cobrem
+        crosshairs: { position: 'front', stroke: { color: cor, width: 1, dashArray: 3 } },
+      },
+      // Array de eixos (o fluxo tem dois) passa intacto: tickAmount ali é por eixo
+      yaxis: Array.isArray(by) ? by : { ...by, tickAmount: by.tickAmount || 4 },
+      // Hover não deve repintar a série: só a mira e a dica reagem ao cursor
+      states: {
+        normal: { filter: { type: 'none', value: 0 } },
+        hover: { filter: { type: 'none', value: 0 } },
+        active: { allowMultipleDataPointsSelection: false, filter: { type: 'none', value: 0 } },
+      },
+      markers: { ...(base.markers || {}), strokeColor: cor, strokeWidth: 3 },
     };
   },
 

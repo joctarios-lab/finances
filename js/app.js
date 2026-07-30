@@ -652,26 +652,28 @@ function svgLinhaFaixa(serie, opts = {}) {
 
   const alt = opts.height || 230;
   return Graficos.novo({
-    ...Graficos.base(alt, {
+    // Acabamento de linha do widget 29, compartilhado com os outros de linha
+    ...Graficos.linha(Graficos.base(alt, {
       chart: { type: 'area' },
       xaxis: {
         categories: serie.map(s => s.rot),
         // Um rótulo a cada N: doze nomes lado a lado colidem no celular
-        labels: { rotate: 0, hideOverlappingLabels: true },
+        labels: { hideOverlappingLabels: true },
         tooltip: { enabled: false },
       },
       yaxis: { labels: { formatter: v => fmtShort(v).replace('R$', '').trim() } },
       tooltip: { y: { formatter: v => fmt(v) } },
-    }),
+    }), Graficos.cor.azul),
     series: [{ name: opts.nome || 'valor', data: vals.map(v => Math.round(v)) }],
     colors: [Graficos.cor.azul],
-    stroke: { curve: 'smooth', width: 3 },
+    // Cor do traço declarada aqui, como no widget 29
+    stroke: { show: true, curve: 'smooth', width: 3, colors: [Graficos.cor.azul] },
     fill: {
       type: 'gradient',
       gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0, stops: [0, 80, 100] },
     },
     markers: {
-      size: 0, hover: { size: 6 },
+      size: 0, hover: { size: 6 }, strokeColor: '#ffffff', strokeWidth: 3,
       discrete: destaque.map(i => ({
         seriesIndex: 0, dataPointIndex: i, size: 5,
         fillColor: '#ffffff', strokeColor: Graficos.cor.azul, strokeWidth: 3,
@@ -869,7 +871,14 @@ function svgRanking(entries, cores, opts = {}) {
 /* Burn-up do mês: gasto acumulado dia a dia contra a trilha ideal do orçamento.
    A trilha é uma reta do zero ao limite ao longo do mês — o valor dela é dizer
    se o gasto está adiantado, não se estourou. Estourar só se sabe no dia 31; a
-   trilha avisa no dia 9. */
+   trilha avisa no dia 9.
+
+   Acabamento de linha do Charts Widget 29 (mira vertical tracejada, hover que não
+   repinta a série, quatro marcas por eixo) via Graficos.linha().
+
+   A escala cobre a trilha inteira, então o gasto aparece pequeno contra ela — e
+   isso É a informação: estar bem abaixo da reta ideal no dia 12 é a resposta que
+   o cartão existe para dar. */
 function svgBurnup(period, refLimit) {
   const totalDias = DB.periodDays(period), decorridos = DB.elapsedDays(period);
   const diario = new Array(totalDias).fill(0);
@@ -885,9 +894,11 @@ function svgBurnup(period, refLimit) {
   const realizado = cum.map((v, i) => (i < decorridos ? Math.round(v) : null));
   const estourou = refLimit > 0 && gastoHoje > refLimit * (decorridos / Math.max(1, totalDias));
   const corLinha = estourou ? Graficos.cor.vermelho : Graficos.cor.azul;
+  const temTrilha = refLimit > 0;
+  const dias = Array.from({ length: totalDias }, (_, i) => String(i + 1));
 
   const series = [{ name: 'gasto acumulado', type: 'area', data: realizado }];
-  if (refLimit > 0) {
+  if (temTrilha) {
     series.push({
       name: 'trilha ideal', type: 'line',
       data: Array.from({ length: totalDias }, (_, i) => Math.round(refLimit * (i / Math.max(1, totalDias - 1)))),
@@ -896,10 +907,11 @@ function svgBurnup(period, refLimit) {
 
   const alt = 240;
   return Graficos.novo({
-    ...Graficos.base(alt, {
-      chart: { type: 'line' },
+    // O acabamento de linha do widget 29 envolve a base: mira, hover e marcador
+    ...Graficos.linha(Graficos.base(alt, {
+      chart: { type: 'area' },
       xaxis: {
-        categories: Array.from({ length: totalDias }, (_, i) => String(i + 1)),
+        categories: dias,
         tickAmount: Math.min(8, totalDias),
         labels: { hideOverlappingLabels: true },
         tooltip: { enabled: false },
@@ -910,23 +922,41 @@ function svgBurnup(period, refLimit) {
         y: { formatter: v => (v == null ? '—' : fmt(v)) },
         x: { formatter: d => 'dia ' + d },
       },
-    }),
+    }), corLinha),
     series,
-    colors: [corLinha, Graficos.cor.cinza],
-    stroke: { curve: ['smooth', 'straight'], width: [3, 2], dashArray: [0, 5] },
+    /* Cor do traço declarada em stroke, não só em colors — é o que o widget 29
+       faz, e o que garante que a trilha receba a cor dela. */
+    stroke: {
+      show: true,
+      /* `curve` ESCALAR de propósito, nunca array. Lido no fonte da lib: num
+         ponto ela resolve `stroke.curve[serie]` corretamente, mas na checagem de
+         ponto nulo compara `config.stroke.curve` DIRETO com a string 'smooth'.
+         Com array essa comparação nunca casa, e os nulos do futuro do mês param
+         de abrir intervalo — a área desce até o zero em vez de terminar em hoje.
+         Suavizar as duas não custa nada: a trilha é linear, e curva suave sobre
+         série linear é uma reta. */
+      curve: 'smooth',
+      width: temTrilha ? [3, 2] : [3],
+      dashArray: temTrilha ? [0, 5] : [0],
+      colors: temTrilha ? [corLinha, Graficos.cor.cinza] : [corLinha],
+    },
+    colors: temTrilha ? [corLinha, Graficos.cor.cinza] : [corLinha],
+    /* Degradê só sob a área; a trilha é linha e não tem o que preencher. Saiu a
+       opacidade 0 na segunda série: o path da linha nasce com fill "none", então
+       ela não fazia nada e só escondia a intenção de quem lê o código. */
     fill: {
-      type: ['gradient', 'solid'], opacity: [1, 0],
+      type: temTrilha ? ['gradient', 'solid'] : ['gradient'],
       gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0, stops: [0, 80, 100] },
     },
     markers: {
-      size: 0, hover: { size: 6 },
+      size: 0, hover: { size: 6 }, strokeColor: '#ffffff', strokeWidth: 3,
       // Só o ponto de hoje: ele é a resposta do gráfico
       discrete: decorridos > 0 ? [{
         seriesIndex: 0, dataPointIndex: decorridos - 1, size: 5,
         fillColor: '#ffffff', strokeColor: corLinha, strokeWidth: 3,
       }] : [],
     },
-    legend: refLimit > 0
+    legend: temTrilha
       ? { show: true, position: 'top', horizontalAlign: 'left', fontSize: Graficos.fonte.valor, markers: { radius: 6 } }
       : { show: false },
   }, alt, 'burnup');
@@ -1535,8 +1565,17 @@ function sparkArea(vals, dias, porDia) {
       gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0, stops: [0, 80, 100] },
     },
     dataLabels: { enabled: false },
-    markers: { size: 0, hover: { size: 5 } },
-    xaxis: { categories: rotulos, crosshairs: { show: true, width: 1, opacity: 0.4 } },
+    /* Mira vertical tracejada seguindo o dedo, e hover que não repinta a série:
+       acabamento de linha do widget 29, o mesmo dos outros gráficos de linha. É a
+       mira que transforma a silhueta em leitura — dá para saber o saldo do dia 12,
+       não só que a curva subiu. Antes isso exigia handler de ponteiro à mão.
+
+       Sparkline não tem eixo visível, então não passa por Graficos.base: aqui o
+       helper sobrepõe uma config mínima, só com as categorias que a mira usa. */
+    ...Graficos.linha({
+      xaxis: { categories: rotulos },
+      markers: { size: 0, hover: { size: 5 } },
+    }, Graficos.cor.azul),
     // A linha do zero só aparece quando a série de fato cruza: senão é tinta sem dado
     annotations: min < 0 && max > 0
       ? { yaxis: [{ y: 0, borderColor: '#c4cad4', strokeDashArray: 0 }] }

@@ -135,6 +135,52 @@ comparando com ele que o erro apareceu.
 `vendor/apexcharts.css` (13 KB) entra **antes** do nosso `styles.css`, para o
 nosso poder sobrepor, e vai para o cache do service worker junto.
 
+## Gráficos de linha: o Charts Widget 29 do demo25
+
+"Ritmo do mês" (`svgBurnup`), a faixa de normalidade (`svgLinhaFaixa`) e o saldo
+diário do extrato (`sparkArea`) seguem o `#kt_charts_widget_29`. O acabamento vive
+em `Graficos.linha()`, compartilhado pelos três:
+
+- **Mira vertical tracejada** seguindo o cursor (`xaxis.crosshairs`), na frente do
+  desenho. É o que transforma a silhueta em leitura: dá para saber o valor do dia
+  12, não só que a curva subiu. No sparkline isso substituiu um handler de ponteiro
+  escrito à mão.
+- **`states` com filtro `none` nos três estados.** Sem isso a lib clareia a série
+  inteira no hover, e numa área com degradê o clareamento come o próprio degradê —
+  a forma "pisca" e o olho perde a referência.
+- **`tickAmount: 4`** nos eixos: quatro marcas dão a régua sem virar gaiola.
+- **Cor do traço declarada em `stroke.colors`**, não só em `colors`.
+- **Marcador com anel de 3px** na cor da superfície, que destaca sem engordar.
+
+### Por que a trilha ideal não aparecia
+
+Duas causas, e a primeira é um **defeito da própria biblioteca**.
+
+**1. `stroke.curve` como array.** Lendo o fonte do ApexCharts: num ponto ela
+resolve `stroke.curve[serie]` corretamente, mas na checagem de ponto nulo compara
+`config.stroke.curve` **direto com a string** `'smooth'`. Com
+`curve: ['smooth','straight']` essa comparação nunca casa, os nulos do futuro do
+mês param de abrir intervalo e a área desce até o zero em vez de terminar em hoje.
+A regra passou a ser: **`curve` é sempre escalar**. Suavizar as duas não custa
+nada — a trilha é linear, e curva suave sobre série linear é uma reta.
+
+**2. `fill.opacity: [1, 0]`.** A intenção era "não preencher sob a trilha", mas o
+path da linha nasce com `fill: "none"` (verificado no fonte), então isso não fazia
+nada além de esconder a intenção de quem lê o código. Saiu.
+
+### O defeito que a estrutura causou
+
+A primeira versão de `linha()` devolvia um objeto para ser espalhado **ao lado** de
+`base()`. Dois helpers donos do mesmo `xaxis`, e o último espalhado ganha: os eixos
+da base eram apagados inteiros, levando com eles o tamanho da fonte que tinha sido
+alinhado ao layout no commit anterior.
+
+Agora `linha()` **recebe** a base e sobrepõe (`Graficos.linha(Graficos.base(…),
+cor)`). Não há como duplicar. E `base()` passou a **mesclar** `labels` em vez de
+deixar o gráfico substituí-lo — espalhar `...extra` trocava `labels` inteiro, e
+como quase todo gráfico passa um `formatter` ali, o `style` com o tamanho era
+descartado justamente nos que mais precisam dele.
+
 ## Rankings: o Charts Widget 27 do demo25
 
 Os rankings — "De onde vem o dinheiro", categoria, membro, forma de pagamento,
