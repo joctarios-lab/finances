@@ -1297,7 +1297,11 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 .ui-empty { padding: 18px; text-align: center; color: var(--paper-dim); font-size: 13px; }
 
 /* Calendário — precisa de largura própria, não cabe na coluna estreita do formulário */
-.ui-cal { padding: 14px; min-width: 300px; }
+/* O calendário agora nasce no <body> como `.ui-pop`, para escapar do overflow da
+   folha. Vem DEPOIS de `.ui-panel.ui-pop` neste arquivo, então o min-width daqui
+   venceria o teto de 88vw de lá e o calendário vazaria numa tela de 320px. O
+   `min()` resolve dos dois lados: 300px quando cabe, a largura da tela quando não. */
+.ui-cal { padding: 14px; min-width: min(300px, calc(100vw - 24px)); }
 .ui-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .ui-cal-head b { font-size: 14px; font-weight: 700; }
 .ui-cal-nav {

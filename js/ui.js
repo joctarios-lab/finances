@@ -330,10 +330,25 @@ const UI = {
     const base = inp.value ? new Date(inp.value + 'T12:00:00') : new Date();
     let ano = base.getFullYear(), mes = base.getMonth();
 
+    /* VAI PARA O <body> com position:fixed, não para dentro do campo.
+
+       A folha (`.sheet`) tem `overflow-y: auto`, e overflow RECORTA qualquer filho
+       que passe da caixa. Preso ao campo, o calendário aparecia cortado sempre que
+       a data ficava na metade de baixo do formulário — no "Nova meta" ela é o
+       último campo, então sobrava meio calendário.
+
+       É a mesma solução que o popover dos filtros já usava, pelo mesmo motivo (lá
+       o recorte vinha do `overflow-x` da fileira de pílulas). Agora as duas usam a
+       mesma infraestrutura: `ui-pop` para escapar do recorte e `posicionarFixo`
+       para ancorar na âncora dentro da área visível. */
     const painel = document.createElement('div');
-    painel.className = 'ui-panel ui-cal';
-    box.appendChild(painel);
-    this.aberto = { painel, box };
+    painel.className = 'ui-panel ui-pop ui-cal';
+    document.body.appendChild(painel);
+    box.classList.add('tem-pop');
+    this.aberto = {
+      painel, box,
+      aoFechar: () => box.classList.remove('tem-pop'),
+    };
 
     const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const hojeISO = iso(new Date());
@@ -379,7 +394,9 @@ const UI = {
         const d = new Date(); d.setDate(d.getDate() - Number(b.dataset.q));
         aplicar(iso(d));
       });
-      this.posicionar(painel, box);
+      // Reposiciona a cada desenho: trocar de mês muda a altura da grade (4, 5 ou
+      // 6 linhas), e um painel ancorado por cima precisa subir junto
+      this.posicionarFixo(painel, box);
     };
 
     const aplicar = valor => {

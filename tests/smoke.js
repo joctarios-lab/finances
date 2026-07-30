@@ -86,7 +86,7 @@ eval(appSrc + `; Object.assign(global, {
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
-  diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
+  diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
@@ -173,6 +173,41 @@ for (const [nome, fn] of [['Início', renderInicio], ['Extrato', renderExtrato],
   } catch (e) {
     console.log(` FALHA | ${nome}: ${e.message}`); fail++;
   }
+}
+
+/* ---- Cabeçalho de seção: um padrão só nas telas que têm ação no topo ----
+   O botão de nova meta era um `.btn ghost` de largura inteira solto no topo: ele
+   empurrava a lista para baixo, competia em peso com o conteúdo e não parecia da
+   mesma família dos botões das outras telas. */
+console.log('\n=== Ações no topo seguem um padrão só ===');
+{
+  const metasHtml = renderMetas();
+  const cartoesHtml = renderCartoes(p);
+  const extratoHtml = renderExtrato(p);
+  // O padrão existe e é o mesmo nas três
+  for (const [tela, html] of [['metas', metasHtml], ['cartões', cartoesHtml], ['extrato', extratoHtml]]) {
+    check(tela + ': usa o cabeçalho de seção', html.includes('class="sec-cab"'), true);
+    check(tela + ': com a ação como sec-btn', html.includes('class="sec-btn"'), true);
+  }
+  check('nova meta é um sec-btn', /<button class="sec-btn" id="btn-new-goal"/.test(metasHtml), true);
+  check('e não o botão largo de antes',
+    /class="btn ghost" id="btn-new-goal"/.test(metasHtml), false);
+  check('o ícone existe no conjunto de ícones',
+    /data-ico="target"><\/span>Nova meta/.test(metasHtml)
+    && fs.readFileSync(BASE + 'js/icons.js', 'utf8').includes('target'), true);
+  // O cabeçalho vem antes da lista, senão a ação fica perdida no meio dela
+  check('o cabeçalho vem antes do conteúdo',
+    metasHtml.indexOf('sec-cab') < metasHtml.indexOf('id="btn-new-goal"') + 400, true);
+  /* O subtítulo aproveita o espaço que o botão largo desperdiçava — e tem de dizer
+     algo em ambos os estados. "R$ 0,00 guardado" numa tela sem metas seria pior que
+     texto nenhum. */
+  const sub = h => (h.match(/<small>([^<]*)<\/small>/) || ['', ''])[1];
+  check('com metas, o subtítulo resume o guardado', /guardado/.test(sub(metasHtml)), true);
+  const guardadasT = DB.data.goals;
+  DB.data.goals = [];
+  check('sem metas, ele explica o que a tela é', sub(renderMetas()), 'objetivos com valor e prazo');
+  check('e não anuncia zero guardado', /R\$/.test(sub(renderMetas())), false);
+  DB.data.goals = guardadasT;
 }
 
 console.log('\n=== Painel mostra os números certos ===');
@@ -1468,7 +1503,42 @@ try {
   check('lista completa só abre ao pedir "Outra"', appSrc2.includes("UI.open($('#f-cat-more'))"), true);
 
   // Bug: calendário espremido na coluna estreita do formulário
-  check('calendário tem largura própria', /\.ui-cal\s*\{[^}]*min-width:\s*300px/.test(cssUi), true);
+  /* O calendário tem largura própria — 300px, mais do que o campo —, mas limitada
+     pela tela. Ele nasce no <body> como `.ui-pop` para escapar do overflow da
+     folha, e vem depois de `.ui-panel.ui-pop` no arquivo: um `min-width: 300px`
+     seco venceria o teto de 88vw de lá e vazaria numa tela de 320px. */
+  check('calendário tem largura própria',
+    /\.ui-cal\s*\{[^}]*min-width:\s*min\(300px,/.test(cssUi), true);
+  check('e ela cede quando a tela é mais estreita',
+    /\.ui-cal\s*\{[^}]*calc\(100vw - 24px\)/.test(cssUi), true);
+
+  /* ---- O calendário não pode ser recortado pela folha ----
+     `.sheet` tem `overflow-y: auto`, e overflow recorta filho posicionado. Preso
+     ao campo, o calendário aparecia cortado sempre que a data ficava na metade de
+     baixo do formulário — no "Nova meta" ela é o último campo, então sobrava meio
+     calendário. A solução é a mesma que o popover dos filtros já usava. */
+  const uiSrc = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
+  /* Fatia até o bloco de Utilitários. `posicionar(painel, box)` não serve de marco
+     de fim: ele aparece ANTES de `abrirData` no arquivo (no enhanceSelect), então a
+     fatia saía vazia e as quatro assertivas abaixo reprovavam sem defeito nenhum. */
+  const iCal = uiSrc.indexOf('abrirData(');
+  const corpoCal = uiSrc.slice(iCal, uiSrc.indexOf('/* ---------------- Utilitários', iCal));
+  check('a folha realmente recorta o que passa dela',
+    /\.sheet \{[^}]*overflow-y: auto/.test(cssUi + fs.readFileSync(BASE + 'css/styles.css', 'utf8')), true);
+  check('o calendário nasce no body, fora do recorte',
+    corpoCal.includes('document.body.appendChild(painel)'), true);
+  check('e não dentro do campo, como antes',
+    /box\.appendChild\(painel\)/.test(corpoCal), false);
+  check('leva a classe que o torna fixo', corpoCal.includes("'ui-panel ui-pop ui-cal'"), true);
+  check('e é ancorado pelo retângulo do campo',
+    corpoCal.includes('posicionarFixo(painel, box)'), true);
+  /* Reposiciona a cada desenho: trocar de mês muda a altura da grade (4, 5 ou 6
+     linhas), e um painel aberto para cima precisa subir junto. */
+  check('reposiciona ao trocar de mês',
+    uiSrc.slice(uiSrc.indexOf('abrirData(')).indexOf('posicionarFixo(painel, box)')
+      < uiSrc.slice(uiSrc.indexOf('abrirData(')).indexOf('const aplicar'), true);
+  // Sem limpar a marca da âncora, o campo fica com o realce de "aberto" para sempre
+  check('a marca de aberto sai ao fechar', corpoCal.includes("box.classList.remove('tem-pop')"), true);
   check('painel se reposiciona para não sair da tela', ui.includes('posicionar(') && ui.includes('innerWidth'), true);
 
   /* Escolha múltipla: o componente precisa atender <select multiple>, senão o
@@ -1641,6 +1711,51 @@ try {
   a1.tags.push('x');
   check('limpar entrega listas novas, não a mesma referência', a2.tags.length, 0);
   check('e não contamina a constante', FILTROS_VAZIOS.tags.length, 0);
+
+  /* ---- Filtrar o que ficou SEM categoria ----
+     É o que se procura depois de importar um OFX: achar o que não foi
+     classificado. Sem essa opção, o único jeito era marcar todas as categorias e
+     ler por exclusão — que não funciona, porque o que não tem categoria não
+     aparece em categoria nenhuma. */
+  const ctaSem = DB.all('accounts')[0];
+  const catSem = DB.rootCategories('Despesa')[0];
+  const dSem = DB.inicioISO(p2);
+  const novoSem = (desc, cid) => DB.upsert('transactions', {
+    description: desc, amount: 10, date: dSem, type: 'Despesa', status: 'Pago',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: ctaSem.id, category_id: cid,
+  });
+  novoSem('ComCat SC', catSem.id);
+  /* `null`, não string vazia: é o que o app grava ao remover a categoria, e
+     `category_id` é coluna uuid no banco. Um `''` aqui passaria neste bloco e
+     seria rejeitado pelo Postgres — o teste de validação de esquema pegou
+     exatamente isso quando escrevi o fixture errado. */
+  novoSem('SemCat SC', null);
+  /* Aponta para categoria que não existe mais — uuid válido, sem registro. É o que
+     sobra quando alguém apaga uma categoria que estava em uso, e o lançamento não
+     pode ficar invisível nos dois filtros ao mesmo tempo. */
+  novoSem('CatMorta SC', DB.uuid());
+
+  const opsSemCat = opcoesCategoriaPilula();
+  check('"Sem categoria" é a primeira opção da lista', opsSemCat[0].v, '_sem');
+  check('e vem destacada como grupo, não perdida entre as filhas', opsSemCat[0].grupo, true);
+  check('o texto não leva travessão, que apareceria na pílula',
+    /^[A-Z]/.test(opsSemCat[0].l), true);
+
+  const soDesteBloco = () => txsFiltradas(p2).map(t => t.description)
+    .filter(x => / SC$/.test(x)).sort().join(',');
+  zerar(); state.filtros.categorias = ['_sem'];
+  check('filtra o que não tem categoria', soDesteBloco(), 'CatMorta SC,SemCat SC');
+  zerar(); state.filtros.categorias = [catSem.id];
+  check('e a categoria de verdade não traz os sem categoria', soDesteBloco(), 'ComCat SC');
+  // Os dois juntos somam, como qualquer multiseleção
+  zerar(); state.filtros.categorias = ['_sem', catSem.id];
+  check('os dois juntos somam', soDesteBloco(), 'CatMorta SC,ComCat SC,SemCat SC');
+  // O rótulo tem de ser legível: categoryPath('_sem') devolveria vazio
+  zerar(); state.filtros.categorias = ['_sem'];
+  check('a pílula ativa diz "Sem categoria"',
+    filtrosAtivos().some(a => a.texto === 'Sem categoria'), true);
+  zerar();
+  for (const t of DB.all('transactions').filter(t => / SC$/.test(t.description || ''))) DB.remove('transactions', t.id);
 
   zerar(); state.filtros.tags = ['viagem'];
   check('filtra por etiqueta', qtd(), 2);

@@ -1461,7 +1461,7 @@ function filtrosAtivos() {
   cada('membro', v => (v === MEMBRO_COMUM ? 'Comum' : v));
   cada('tipo', v => v);
   cada('situacao', v => v);
-  cada('categorias', v => DB.categoryPath(v) || 'Categoria');
+  cada('categorias', v => (v === '_sem' ? 'Sem categoria' : DB.categoryPath(v) || 'Categoria'));
   cada('tags', v => '#' + v);
   cada('metodos', v => v);
   cada('contas', v => (DB.get('accounts', v) || DB.get('cards', v) || {}).name || 'Conta');
@@ -1497,7 +1497,14 @@ function passaNosFiltros(t, ignorarJanela) {
        envelope inteiro junto — que era impreciso e não dava para desfazer. */
     if (f.categorias && f.categorias.length) {
       const raiz = DB.categoryRootId(t.category_id);
-      if (!f.categorias.some(id => id === t.category_id || id === raiz)) return false;
+      /* `_sem` casa o que não tem categoria — inclusive o que aponta para uma
+         categoria que foi apagada depois, e aí `categoryRootId` não resolve. Sem
+         essa segunda parte o lançamento ficaria invisível nos dois filtros: não
+         aparece em categoria nenhuma e também não aparece em "sem categoria". */
+      const semCategoria = !t.category_id || !DB.get('categories', t.category_id);
+      if (!f.categorias.some(id => (id === '_sem'
+        ? semCategoria
+        : id === t.category_id || id === raiz))) return false;
     }
     if (f.tags && f.tags.length && !f.tags.some(tg => DB.tagsOf(t).includes(tg))) return false;
     if (!algum(f.metodos, t.method)) return false;
@@ -1620,7 +1627,15 @@ function pilulasDeFiltro() {
 // Envelope e subcategorias na mesma lista, com o envelope primeiro e recuo nas
 // filhas: é a hierarquia que o filtro usa para casar, então tem de aparecer
 function opcoesCategoriaPilula() {
-  const ops = [];
+  /* "Sem categoria" primeiro, e não em ordem alfabética: é a opção que se procura
+     depois de importar um OFX, quando o trabalho é justamente achar o que ficou
+     sem classificar. Enterrada no meio das categorias ela não seria encontrada.
+
+     `_sem` é a mesma sentinela que os relatórios já usam para agrupar o que não
+     tem categoria — não é um id novo, e não colide com id de categoria, que é uuid. */
+  // `grupo: true` já dá o destaque visual (classe e-grupo) — sem travessão no
+  // texto, que apareceria também no rótulo da pílula quando selecionada
+  const ops = [{ v: '_sem', l: 'Sem categoria', grupo: true }];
   for (const raiz of DB.rootCategories().sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))) {
     const filhas = DB.subcategoriesOf(raiz.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
     ops.push({ v: raiz.id, l: `${raiz.icon} ${raiz.name}`, grupo: true });
@@ -2210,7 +2225,26 @@ function renderCartoes() {
 /* ---------- Metas ---------- */
 function renderMetas() {
   const goals = DB.all('goals');
-  let html = `<button class="btn ghost" id="btn-new-goal">＋ Nova meta</button>`;
+  const ativas = goals.filter(g => !g.done).length;
+  const guardado = goals.reduce((s, g) => s + DB.goalTotal(g.id), 0);
+
+  /* Cabeçalho de seção, o mesmo padrão de Contas & Cartões e do Extrato: título e
+     subtítulo à esquerda, ação à direita. Antes era um `.btn ghost` de largura
+     inteira solto no topo — ele empurrava a lista para baixo e competia em peso
+     com o conteúdo, além de não parecer da mesma família dos botões das outras
+     telas. O subtítulo aproveita o espaço que o botão largo desperdiçava. */
+  let html = `
+    <div class="sec-cab">
+      <div class="sec-tit">
+        <b>Metas</b>
+        <small>${goals.length
+          ? `${fmtShort(guardado)} guardado${ativas ? ` · ${ativas} em andamento` : ''}`
+          : 'objetivos com valor e prazo'}</small>
+      </div>
+      <div class="sec-acoes">
+        <button class="sec-btn" id="btn-new-goal"><span data-ico="target"></span>Nova meta</button>
+      </div>
+    </div>`;
   if (!goals.length) html += `<div class="empty"><b>Nenhuma meta ainda</b>Crie a primeira: reserva de emergência, viagem, troca de carro…</div>`;
   for (const g of goals.sort((a, b) => Number(a.done) - Number(b.done))) {
     const total = DB.goalTotal(g.id);
