@@ -191,6 +191,96 @@ check('com o guardado como parcela', inicio.includes('− Guardado'), true);
    Nunca teve teste, e por isso a descrição das parcelas ficou meses gravando
    "[object HTMLInputElement] (1/12)": o código usava o ELEMENTO do campo em vez
    do texto dele. Quebrava busca, extrato e "repetir custos fixos". */
+/* ---- Faturas em aberto e próximos vencimentos ----
+   O KPI somava `inv.total` — o valor CHEIO da fatura — em vez de `inv.falta`. Uma
+   fatura de R$ 1.000 com R$ 700 já pagos entrava inteira, e o painel dizia que
+   havia R$ 1.000 em aberto quando o débito real era R$ 300. É o pior tipo de erro
+   num painel: não parece errado, parece que o pagamento não entrou. */
+console.log('\n=== Faturas em aberto (o que falta, não o total) ===');
+try {
+  const cKpi = DB.upsert('cards', { name: 'Cartao Aberto', closing_day: 10, due_day: 20, limit_amount: 5000 });
+  const ctaKpi = DB.all('accounts')[0];
+  const hojeKpi = todayISO();
+  const chaveKpi = DB.invoiceKeyFor(DB.get('cards', cKpi), hojeKpi);
+  DB.upsert('transactions', { description: 'Compra Aberto', amount: 1000, date: hojeKpi, type: 'Despesa',
+    status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Crédito', card_id: cKpi, invoice_key: chaveKpi });
+
+  const invCheia = DB.invoicesOf(DB.get('cards', cKpi)).find(i => i.key === chaveKpi);
+  check('fatura nasce inteira em aberto', invCheia.falta, 1000);
+
+  // Paga 700 dos 1.000 — o aberto passa a ser 300, não 1.000
+  DB.upsert('transactions', { description: 'Pgto Aberto', amount: 700, date: hojeKpi, type: 'Despesa',
+    status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito',
+    account_id: ctaKpi.id, pays_invoice: chaveKpi });
+  const invParcial = DB.invoicesOf(DB.get('cards', cKpi)).find(i => i.key === chaveKpi);
+  check('pagamento parcial abate do que falta', invParcial.falta, 300);
+  check('e o total da fatura não muda', invParcial.total, 1000);
+  check('o status vira Parcial', invParcial.status, 'Parcial');
+
+  /* O KPI do painel tem de refletir isso. Somo o esperado a partir do próprio DB em
+     vez de cravar um número: o fixture tem outros cartões, e um valor fixo aqui
+     quebraria a cada mudança de fixture sem apontar defeito nenhum. */
+  const esperado = DB.all('cards').filter(c => c.active !== false)
+    .flatMap(c => DB.invoicesOf(c)).filter(i => i.status !== 'Paga')
+    .reduce((s, i) => s + i.falta, 0);
+  const somaDosTotais = DB.all('cards').filter(c => c.active !== false)
+    .flatMap(c => DB.invoicesOf(c)).filter(i => i.status !== 'Paga')
+    .reduce((s, i) => s + i.total, 0);
+  const telaKpi = renderInicio(DB.monthPeriod(new Date()));
+  const lidoKpi = (telaKpi.match(/kpi-value [^"]*">([^<]+)<\/div><div class="kpi-label">Faturas em aberto/) || [])[1];
+  check('o KPI mostra a soma do que falta', lidoKpi, fmt(esperado));
+  /* E o teste que importa: com um pagamento parcial em jogo, falta e total DIVERGEM.
+     Sem isso a assertiva acima passaria mesmo se o código voltasse a somar total. */
+  check('e falta difere do total, senão o teste seria vazio', somaDosTotais > esperado, true);
+  check('o KPI não mostra a soma dos totais', lidoKpi === fmt(somaDosTotais), false);
+
+  /* ---- Próximos vencimentos ----
+     Mostrava as três primeiras, um corte arbitrário: quem tem quatro cartões via
+     três. Agora mostra tudo o que vence até o fim do ciclo, mais o que já venceu. */
+  const apVenc = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('a lista não é mais cortada em três', /upcoming\.slice\(0, 3\)/.test(apVenc), false);
+  check('e o recorte é por vencimento até o fim do ciclo',
+    apVenc.includes('emAberto.filter(inv => inv.due < period.end)'), true);
+
+  // A linha mostra o que FALTA, não o total — senão contradiz o KPI ao lado
+  const iVenc = telaKpi.indexOf('Próximos vencimentos');
+  const blocoVenc = iVenc >= 0 ? telaKpi.slice(iVenc, iVenc + 4000) : '';
+  check('a seção de vencimentos existe', iVenc >= 0, true);
+  check('e ela nunca some enquanto houver fatura aberta',
+    (blocoVenc.match(/invoice-row/g) || []).length > 0, true);
+  /* Quando nada vence no ciclo, a lista cai para as próximas a vir e o subtítulo
+     diz isso. Uma seção chamada "Próximos vencimentos" que renderiza vazia
+     enquanto existe fatura fechada a caminho mente por omissão. */
+  const temNoCiclo = DB.all('cards').filter(c => c.active !== false)
+    .flatMap(c => DB.invoicesOf(c))
+    .some(i => i.status !== 'Paga' && i.due < DB.monthPeriod(new Date()).end);
+  check('o subtítulo diz de qual recorte a lista é',
+    /nada vence neste ciclo|vence até o fim do ciclo/.test(blocoVenc), true);
+
+  /* A LINHA mostra o que falta, não o total — senão ela contradiz o KPI ao lado.
+     Testado com a fatura parcial deste bloco, num período onde ela aparece: sem
+     um caso em que falta e total DIVERGEM, a assertiva seria vazia. */
+  const perDaFatura = DB.monthPeriod(invParcial.due);
+  const telaDaFatura = renderInicio(perDaFatura);
+  const iVF = telaDaFatura.indexOf('Próximos vencimentos');
+  const blocoF = iVF >= 0 ? telaDaFatura.slice(iVF, iVF + 4000) : '';
+  const linhaDaParcial = (blocoF.match(/<div class="invoice-row">[\s\S]*?Cartao Aberto[\s\S]*?<\/div>/) || [''])[0];
+  check('a fatura parcial aparece na lista do mês em que vence', !!linhaDaParcial, true);
+  check('e a linha mostra o que FALTA', linhaDaParcial.includes(fmtShort(300)), true);
+  check('não o total da fatura como valor principal',
+    new RegExp('class="num">' + fmtShort(1000).replace(/\$/g, '\\$')).test(linhaDaParcial), false);
+  // Mas o total continua à vista, senão quem pagou parcial perde a referência
+  check('o total aparece como referência ao lado',
+    linhaDaParcial.includes('de ' + fmtShort(1000)), true);
+  check('e o aviso casa com o que existe de fato',
+    /nada vence neste ciclo/.test(blocoVenc), !temNoCiclo);
+
+  // Limpa: registro dirty faria os testes async de sync girarem por sujeira
+  DB.data.transactions = DB.data.transactions.filter(t => !/Aberto$/.test(t.description || ''));
+  DB.data.cards = DB.data.cards.filter(c => c.id !== cKpi);
+  DB.save();
+} catch (e) { console.log(` FALHA | faturas em aberto: ${e.message}`); fail++; }
+
 console.log('\n=== Compra parcelada ===');
 try {
   const antesQtd = DB.all('transactions').length;
@@ -4552,7 +4642,14 @@ console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
     const horiz = o.plotOptions && o.plotOptions.bar && o.plotOptions.bar.horizontal;
     return horiz ? o.xaxis : o.yaxis;
   };
-  const semEixo = o => ((eixoDeValor(o) || {}).labels || {}).show === false;
+  /* Trata eixo em ARRAY: o fluxo de saldo tem dois, e um `e.labels.show` direto
+     dava undefined ali — a rede de "nenhum gráfico mudo" passava por cima dele
+     justamente no gráfico mais complexo da tela. */
+  const semEixo = o => {
+    const e = eixoDeValor(o);
+    if (Array.isArray(e)) return e.every(x => ((x.labels || {}).show === false) || x.show === false);
+    return ((e || {}).labels || {}).show === false;
+  };
 
   const p29 = DB.monthPeriod(new Date());
   const casos = [
@@ -4617,23 +4714,39 @@ console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
   zeraFila();
   svgComposicao([{ id: 'x', rot: 'Env', total: 100, partes: [{ rot: 'p', valor: 100 }] }]);
   check('o envelope por dentro mantém o eixo', semEixo(cfgDo()), false);
+  /* "De onde vim, para onde vou" também perdeu o texto dos eixos, mas por caminho
+     próprio: os limites dos dois eixos continuam DECLARADOS, porque ali eles são a
+     geometria que ancora as duas escalas no mesmo zero. Só o rótulo saiu. */
   zeraFila();
   svgFluxoSaldo(DB.fluxoMensal(6, 6));
-  check('e o fluxo de saldo também', (cfgDo().yaxis || []).some(e => (e.labels || {}).show !== false), true);
+  const cFl29 = cfgDo();
+  check('o fluxo de saldo está sem texto nos eixos',
+    cFl29.yaxis.every(e => (e.labels || {}).show === false || e.show === false), true);
+  check('mas mantém os limites, que são a âncora das escalas',
+    typeof cFl29.yaxis[0].min === 'number' && typeof cFl29.yaxis[2].max === 'number', true);
 
   /* NAS TELAS DE VERDADE, não só nas funções isoladas. E a garantia que importa:
      nenhum gráfico fica sem eixo E sem rótulo ao mesmo tempo — isso seria um
      gráfico mudo, onde só o toque revela qualquer número. */
   for (const [tela, montar] of [['painel', () => renderInicio(p29)], ['relatórios', () => renderRelatorios()]]) {
     zeraFila(); montar();
+    /* Duas exceções, as duas com o número no RODAPÉ do cartão em vez de na marca.
+       Elas estão nomeadas aqui de propósito: entrar nesta lista é uma decisão, e
+       cada uma é verificada pelo outro lado — que o rodapé existe e traz os
+       números. Ver os dois checks logo abaixo. */
+    const comRodape = ['faixa-normal', 'fluxo-saldo'];
     const mudos = Graficos.fila.filter(f =>
       semEixo(f.opts) && (f.opts.dataLabels || {}).enabled !== true
-      && !['faixa-normal'].includes(f.nome));
+      && !comRodape.includes(f.nome));
     check(tela + ': nenhum gráfico fica sem eixo e sem número', mudos.map(f => f.nome).join(','), '');
   }
-  /* A exceção é a faixa de normalidade, e ela é justificada: os dois cartões que a
-     usam escrevem os números no rodapé. Se esse rodapé sair, o gráfico emudece —
-     então é ele que se verifica aqui. */
+  /* As exceções são justificadas: os cartões que as usam escrevem os números no
+     rodapé. Se esse rodapé sair, o gráfico emudece — então é ele que se verifica. */
+  check('o cartão do fluxo traz os números no rodapé', (() => {
+    const cardFluxo = relProximosMeses();
+    return /chart-foot/.test(cardFluxo) && /Hoje/.test(cardFluxo)
+      && /Previsto entrar/.test(cardFluxo) && /Previsto sair/.test(cardFluxo);
+  })(), true);
   const relFaixa = renderRelatorios();
   check('a faixa vive sem rótulo porque o cartão traz os números',
     /Isso é normal para vocês\?[\s\S]{0,2000}chart-foot[\s\S]{0,400}Seu normal/.test(relFaixa), true);
@@ -5171,10 +5284,20 @@ try {
 
   /* O aviso que muda comportamento: o mês pode fechar positivo e mesmo assim
      passar por zero no meio do caminho. */
-  const contaGrande = nova('Conta gigante', 99999, DB.somarDiasISO(hoje, 2));
+  /* A data da conta é presa ao FIM DO PERÍODO, não a "hoje + 2".
+
+     Com hoje + 2 o teste quebrava nos dois últimos dias do mês: a conta caía no
+     primeiro dia do ciclo seguinte, fora da janela da projeção, e nenhum dia
+     negativo era encontrado. Passava 29 dias por mês e falhava 2 — o pior tipo de
+     teste, porque a falha parece vir do código que se acabou de mexer. */
+  /* `fimISO` devolve o primeiro dia FORA do período, e `projecaoSaldo` também trata
+     o limite como exclusivo — então o último dia que a projeção cobre é fimP − 1. */
+  const ultimoDia = DB.somarDiasISO(fimP, -1);
+  const diaConta = DB.somarDiasISO(hoje, 2) <= ultimoDia ? DB.somarDiasISO(hoje, 2) : ultimoDia;
+  const contaGrande = nova('Conta gigante', 99999, diaConta);
   const ponto = DB.primeiroDiaNegativo(fimP, hoje);
   check('acha o dia em que o saldo fica negativo', !!ponto, true);
-  check('e é o dia da conta que derruba', ponto && ponto.data, DB.somarDiasISO(hoje, 2));
+  check('e é o dia da conta que derruba', ponto && ponto.data, diaConta);
   check('com o valor que ele atinge', ponto && ponto.saldo < 0, true);
   DB.remove('transactions', contaGrande);
   check('sem aperto previsto, não inventa aviso',
@@ -5721,33 +5844,66 @@ try {
   check('com barras de entrada e saída',
     c.series[0].type === 'column' && c.series[1].type === 'column', true);
   check('e a área do saldo', c.series[2].type, 'area');
-  check('as barras são verde e vermelha, a área azul',
-    c.colors.join(','), '#50cd89,#f1416c,#009ef7');
+  /* HIERARQUIA: as barras são o contexto, a área é a resposta. Elas em tom claro,
+     ela saturada e por cima. Antes era o inverso — verde e vermelho cheios —, e aí
+     a área tinha de ficar translúcida para não cobri-las; translúcida ela não se
+     lia sobre as barras. Invertida a hierarquia, a área pode ser sólida. */
+  check('as barras vêm em tom claro',
+    c.colors[0] === clarear(Graficos.cor.verde, 0.42)
+    && c.colors[1] === clarear(Graficos.cor.vermelho, 0.42), true);
+  check('e são mais claras que a cor cheia',
+    parseInt(c.colors[0].slice(1), 16) > parseInt(Graficos.cor.verde.slice(1), 16), true);
+  check('a área leva a cor saturada', c.colors[2], Graficos.cor.roxo);
   check('e os treze meses viraram categorias', c.xaxis.categories.length, 13);
   check('com os valores que vieram do fluxo mensal',
     pontosDe(c.series[2]).join(','), meses.map(m => Math.round(m.saldo)).join(','));
 
-  /* Duas escalas, porque não há como fugir: fluxo mensal vive nos milhares e
-     saldo acumulado nas dezenas de milhares. O que dá para fazer é não esconder
-     isso — cada eixo rotulado, o do saldo NA COR da própria série, para ninguém
-     ler o cruzamento entre a linha e as barras como significado. */
+  /* DUAS ESCALAS ANCORADAS. Fluxo mensal vive nos milhares e saldo acumulado nas
+     dezenas de milhares — numa escala só o saldo achata as barras a nada. Duas são
+     inevitáveis; o que dá para eliminar é a parte arbitrária: os dois recebem min e
+     max declarados para que o ZERO caia na mesma altura e o TOPO na mesma borda.
+     Sem isso, cada eixo escolhe extremos por conta e o cruzamento entre a área e as
+     barras não significa nada. */
   check('há dois eixos, não um forçado', c.yaxis.length, 3);
   check('o eixo do saldo fica do lado oposto', c.yaxis[2].opposite, true);
-  check('e leva a cor da própria série, para não confundir escala',
-    c.yaxis[2].labels.style.colors, '#009ef7');
   check('as duas colunas dividem o mesmo eixo',
     c.yaxis[0].seriesName === 'entrou' && c.yaxis[1].seriesName === 'entrou', true);
+  check('os dois eixos têm limites declarados',
+    [c.yaxis[0].min, c.yaxis[0].max, c.yaxis[2].min, c.yaxis[2].max]
+      .every(v => typeof v === 'number'), true);
+  const fracaoAcima = y => (y.max - 0) / (y.max - y.min);
+  check('e o zero cai na mesma altura nos dois',
+    Math.abs(fracaoAcima(c.yaxis[0]) - fracaoAcima(c.yaxis[2])) < 1e-9, true);
+  check('nenhum dado é cortado pelo limite',
+    Math.max(...pontosDe(c.series[2])) <= c.yaxis[2].max
+    && Math.min(...pontosDe(c.series[2])) >= c.yaxis[2].min
+    && Math.max(...pontosDe(c.series[0]), ...pontosDe(c.series[1])) <= c.yaxis[0].max, true);
   check('e a nota do cartão avisa que são duas unidades',
     relProximosMeses().includes('onde a linha cruza as barras não significa nada'), true);
 
-  /* A área vem por cima (a linha precisa disso para não desaparecer atrás das
-     barras) mas LAVADA: se tivesse o mesmo peso visual, as duas competiriam. */
-  check('a área é lavada, não chapada', c.fill.opacity[2] <= 0.4, true);
-  check('e se dissolve para baixo', c.fill.gradient.opacityTo < c.fill.gradient.opacityFrom, true);
-  check('a linha do saldo tem traço, as barras não',
-    c.stroke.width.join(','), '0,0,3');
+  /* EIXOS SEM TEXTO: os números que importam estão no rodapé do cartão, e duas
+     colunas de números — uma de cada lado — só apertavam o desenho. Os limites
+     ficam, porque eles são geometria e não rótulo. */
+  check('os dois eixos de valor estão sem texto',
+    c.yaxis[0].labels.show === false && c.yaxis[2].labels.show === false, true);
+  check('mas as linhas de grade ficam, que são a régua', c.grid.yaxis.lines.show, true);
+  check('e o rodapé do cartão traz os números', (() => {
+    const cardFl = relProximosMeses();
+    return /chart-foot/.test(cardFl) && /Hoje/.test(cardFl) && /Previsto entrar/.test(cardFl);
+  })(), true);
+
+  /* A área é a última série, então é desenhada por cima. Com as barras claras ela
+     não precisa mais se apagar: o degradê começa forte no traço e se dissolve para
+     baixo, devolvendo as barras à vista embaixo. */
+  check('a área é sólida, não mais lavada', c.fill.opacity[2], 1);
+  check('e o degradê se dissolve para baixo',
+    c.fill.gradient.opacityTo < c.fill.gradient.opacityFrom, true);
+  check('a área é a última série, então fica por cima', c.series[2].type, 'area');
+  check('a linha do saldo tem traço grosso, as barras não',
+    c.stroke.width.join(','), '0,0,4');
   check('e a barra não ganha contorno, que seria tinta sem dado',
     c.stroke.colors[0] === 'transparent' && c.stroke.colors[1] === 'transparent', true);
+  check('o traço da área leva a cor dela', c.stroke.colors[2], Graficos.cor.roxo);
 
   /* Ponta arredondada, pé reto: o topo é o dado; a base encosta no zero, e
      arredondá-la faria a barra parecer flutuar. */
@@ -5761,9 +5917,31 @@ try {
   check('o trecho previsto é tracejado', c.forecastDataPoints.dashArray > 0, true);
   check('e o tracejado cobre exatamente os meses futuros', c.forecastDataPoints.count, nFut);
   check('a faixa do futuro está sombreada', c.annotations.xaxis.length, 1);
-  check('e começa no primeiro mês previsto',
-    c.annotations.xaxis[0].x, c.xaxis.categories[meses.findIndex(m => m.futuro)]);
   check('com rótulo dizendo previsto', c.annotations.xaxis[0].label.text, 'previsto');
+
+  /* A FAIXA CAÍA NO LUGAR ERRADO, e a causa era o rótulo repetido.
+
+     As anotações do ApexCharts localizam a coluna pelo TEXTO do rótulo, e
+     `getStringX` resolve com `indexOf` — a primeira ocorrência. Numa janela de 13
+     meses o último tem o mesmo nome do primeiro ("jan" … "jan"), então o `x2` da
+     faixa resolvia para o índice 0 e a sombra do "previsto" cobria o passado
+     inteiro em vez do futuro.
+
+     Por isso se testa pelo ÍNDICE que o rótulo resolve, e não só pelo texto: era
+     exatamente isso que o teste anterior deixava passar. */
+  const rotsFl = c.xaxis.categories;
+  const iFuturo = meses.findIndex(m => m.futuro);
+  check('nenhum rótulo de mês se repete',
+    new Set(rotsFl).size, rotsFl.length);
+  check('a faixa começa no primeiro mês previsto',
+    rotsFl.indexOf(c.annotations.xaxis[0].x), iFuturo);
+  check('e termina no último mês da janela',
+    rotsFl.indexOf(c.annotations.xaxis[0].x2), meses.length - 1);
+  check('ou seja, cobre o futuro e não o passado',
+    rotsFl.indexOf(c.annotations.xaxis[0].x2) > rotsFl.indexOf(c.annotations.xaxis[0].x), true);
+  // O ano entra só onde precisa desempatar — poluir os treze rótulos seria pior
+  check('o ano aparece só nos rótulos que empatariam',
+    rotsFl.filter(r => r.includes('/')).length <= 2, true);
   // A dica também diz, por escrito, quando o mês é estimativa
   const iFut = meses.findIndex(m => m.futuro);
   check('e a dica do mês futuro diz previsto',
@@ -5787,6 +5965,34 @@ try {
   svgFluxoSaldo(comNegativo);
   check('saldo negativo desce abaixo do zero, não é cortado',
     pontosDe(cfgDo().series[2]).includes(-2000), true);
+
+  /* O ALINHAMENTO DO ZERO com saldo negativo, que é onde a conta importa. E o
+     limite de meia altura, que não é estético: com o saldo inteiramente negativo o
+     zero seria o próprio topo do eixo do saldo, e as três exigências — zero na
+     mesma altura, topo na mesma borda, barras positivas visíveis — não podem valer
+     juntas. Medido antes do limite: saldos entre −500 e −1.500 punham o piso do
+     fluxo em −12 milhões e as barras de 8 mil viravam um fio. */
+  const fAcima = y => (y.max - 0) / (y.max - y.min);
+  for (const [rotCaso, saldosCaso] of [
+    ['saldo cruza o zero', [4000, 1000, -2000, -6000]],
+    ['saldo sempre positivo', [8000, 12000, 15000, 18000]],
+    ['saldo sempre negativo', [-500, -900, -1200, -1500]],
+  ]) {
+    zeraFila();
+    svgFluxoSaldo(saldosCaso.map((s, i) => ({
+      period: DB.monthPeriod(new Date(), i - 2),
+      entra: 5000, sai: 8000, saldo: s, futuro: i >= 2,
+    })));
+    const cN = cfgDo();
+    check(rotCaso + ': o zero cai na mesma altura nos dois eixos',
+      Math.abs(fAcima(cN.yaxis[0]) - fAcima(cN.yaxis[2])) < 1e-9, true);
+    check(rotCaso + ': as barras cabem no eixo delas', 8000 <= cN.yaxis[0].max, true);
+    check(rotCaso + ': e o saldo cabe no dele',
+      Math.min(...saldosCaso) >= cN.yaxis[2].min && Math.max(...saldosCaso) <= cN.yaxis[2].max, true);
+    // Metade da altura, no mínimo, para as barras — senão elas viram um fio
+    check(rotCaso + ': as barras ficam com pelo menos metade da altura',
+      fAcima(cN.yaxis[0]) >= 0.5 - 1e-9, true);
+  }
 
   // Rótulo no tamanho da escala do tema e sem giro: nome de mês virado é mais
   // difícil de ler, e tamanho solto sai do alinhamento com o resto do layout

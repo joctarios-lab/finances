@@ -546,23 +546,82 @@ function svgComposicao(grupos, opts = {}) {
 
 /* ---------- Fluxo e saldo: seis meses atrás, seis à frente ----------
    Barras para o que entrou e saiu em cada mês; área para a posição do saldo.
-   A fronteira de hoje é a informação mais importante da tela — à esquerda é
-   fato conciliado, à direita é estimativa — e por isso aparece três vezes: faixa
-   sombreada, marca "hoje" e trecho da linha tracejado (`forecastDataPoints`).
 
-   Duas escalas: fluxo mensal vive na casa dos milhares, saldo acumulado nas
-   dezenas de milhares. Elas vão rotuladas nas cores das próprias séries, para
-   que ninguém leia um cruzamento entre a linha e as barras como significado —
-   ele é artefato das duas unidades, não dado. */
+   HIERARQUIA: as barras são o contexto, a área é a resposta. Elas vêm em tom
+   claro e ela vem por cima, saturada e com traço grosso — sem isso as três
+   competem e nenhuma é lida. Foi por isso que as barras clarearam: com verde e
+   vermelho cheios, a área tinha de ficar translúcida para não sumir, e translúcida
+   ela não se lia sobre as barras. Invertida a hierarquia, a área pode ser sólida.
+
+   A fronteira de hoje é a informação mais importante da tela — à esquerda é fato
+   conciliado, à direita é estimativa — e por isso aparece três vezes: faixa
+   sombreada, marca "previsto" e trecho tracejado (`forecastDataPoints`). */
 function svgFluxoSaldo(meses, opts = {}) {
   if (meses.length < 2) return '<div class="empty">Sem histórico suficiente.</div>';
 
   const iPrimeiroFuturo = meses.findIndex(m => m.futuro);
   const nFuturos = iPrimeiroFuturo < 0 ? 0 : meses.length - iPrimeiroFuturo;
-  const rot = m => m.period.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
-  const rotulos = meses.map(rot);
+
+  /* RÓTULOS ÚNICOS, com o ano onde o nome do mês repetiria.
+
+     Não é enfeite: as anotações do ApexCharts localizam a coluna pelo TEXTO do
+     rótulo, e `getStringX` usa `indexOf` — a primeira ocorrência. Numa janela de
+     13 meses o último mês tem o mesmo nome do primeiro ("jan" … "jan"), então a
+     faixa do previsto terminava no índice 0 e sombreava o passado inteiro em vez
+     do futuro. Com rótulo único cada anotação cai na coluna certa. */
+  const nomeMes = m => m.period.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
+  const contagem = {};
+  for (const m of meses) contagem[nomeMes(m)] = (contagem[nomeMes(m)] || 0) + 1;
+  const rotulos = meses.map(m => (contagem[nomeMes(m)] > 1
+    ? nomeMes(m) + '/' + String(m.period.start.getFullYear()).slice(-2)
+    : nomeMes(m)));
+
+  const entradas = meses.map(m => Math.round(Number(m.entra) || 0));
+  const saidas = meses.map(m => Math.round(Number(m.sai) || 0));
+  const saldos = meses.map(m => Math.round(Number(m.saldo) || 0));
+
+  /* DUAS ESCALAS ANCORADAS: mesmo zero, mesmo topo.
+
+     Fluxo mensal vive nos milhares e saldo acumulado nas dezenas de milhares —
+     numa escala só o saldo achata as barras a nada. Duas escalas são inevitáveis;
+     o que dá para eliminar é a parte ARBITRÁRIA delas.
+
+     Sem limites declarados, cada eixo escolhe seus próprios extremos e a linha do
+     zero de um cai numa altura diferente da do outro. Aí o ponto em que a área
+     cruza as barras não significa nada — é artefato de duas escolhas
+     independentes. Aqui os dois recebem min e max calculados para que o zero caia
+     na MESMA altura e o topo na MESMA borda. A única liberdade que sobra é a de
+     unidade, e essa não há como eliminar. */
+  const topoFluxo = niceCeil(Math.max(...entradas, ...saidas, 1));
+  const pisoSaldo = Math.min(0, ...saldos);
+
+  /* Fração da altura abaixo do zero. O eixo do fluxo copia essa fração para as
+     duas linhas do zero coincidirem; sem saldo negativo ela é 0 e os dois eixos
+     começam no zero, no pé do gráfico.
+
+     LIMITADA A METADE, e esse limite não é estético. Com o saldo inteiramente
+     negativo o zero seria o próprio topo do eixo do saldo, e as três exigências —
+     zero na mesma altura, topo na mesma borda, barras positivas visíveis — não
+     podem valer juntas: o eixo do fluxo teria de terminar em zero e as barras não
+     seriam desenhadas. Medido num caso real de saldos entre −500 e −1.500, o piso
+     do fluxo caía em −12 milhões e as barras de 8 mil viravam um fio.
+
+     Quando a fração passa de metade, o eixo do saldo ganha folga positiva até
+     ficar simétrico em torno do zero. Só ACRESCENTA espaço acima — nenhum dado é
+     cortado — e garante ao fluxo metade da altura. */
+  const topoNatural = niceCeil(Math.max(...saldos, 1));
+  const desejada = pisoSaldo < 0 ? -pisoSaldo / (topoNatural - pisoSaldo) : 0;
+  const fracaoNegativa = Math.min(0.5, desejada);
+  const topoSaldo = desejada > 0.5 ? -pisoSaldo : topoNatural;
+  const pisoFluxo = fracaoNegativa > 0
+    ? -topoFluxo * fracaoNegativa / (1 - fracaoNegativa) : 0;
 
   const alt = opts.height || 300;
+  // Verde e vermelho CLAREADOS: as barras são o contexto sobre o qual a área se lê
+  const corEntrou = clarear(Graficos.cor.verde, 0.42);
+  const corSaiu = clarear(Graficos.cor.vermelho, 0.42);
+  const corSaldo = Graficos.cor.roxo;
+
   const cfg = {
     ...Graficos.base(alt, {
       chart: { type: 'line', stacked: false },
@@ -574,52 +633,67 @@ function svgFluxoSaldo(meses, opts = {}) {
           formatter: (_v, { dataPointIndex }) => {
             const m = meses[dataPointIndex];
             if (!m) return '';
-            const nome = m.period.start.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-            return nome + (m.futuro ? ' · previsto' : '');
+            const quando = m.period.start.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+            return quando + (m.futuro ? ' · previsto' : '');
           },
         },
       },
     }),
     series: [
-      { name: 'entrou', type: 'column', data: meses.map(m => Math.round(Number(m.entra) || 0)) },
-      { name: 'saiu', type: 'column', data: meses.map(m => Math.round(Number(m.sai) || 0)) },
-      { name: 'saldo', type: 'area', data: meses.map(m => Math.round(Number(m.saldo) || 0)) },
+      { name: 'entrou', type: 'column', data: entradas },
+      { name: 'saiu', type: 'column', data: saidas },
+      { name: 'saldo', type: 'area', data: saldos },
     ],
-    colors: [Graficos.cor.verde, Graficos.cor.vermelho, Graficos.cor.azul],
+    colors: [corEntrou, corSaiu, corSaldo],
     plotOptions: {
-      bar: { columnWidth: '38%', borderRadius: 5, borderRadiusApplication: 'end' },
+      // Ponta arredondada, pé reto: o topo é o dado; arredondar a base faria a
+      // barra parecer flutuar acima do zero
+      bar: { columnWidth: '42%', borderRadius: 5, borderRadiusApplication: 'end' },
     },
-    /* Largura 0 nas colunas e 3 na linha do saldo. As duas primeiras cores são
-       'transparent' porque no ApexCharts o contorno da coluna também aceita
-       cor — e uma borda em volta da barra é tinta que não é dado. */
-    stroke: { show: true, width: [0, 0, 3], curve: 'smooth', colors: ['transparent', 'transparent', Graficos.cor.azul] },
-    /* A área é o NÍVEL, não o movimento. Ela vem por cima das barras — a linha
-       precisa disso para não ficar escondida atrás delas —, mas LAVADA: opacidade
-       baixa e degradê que se dissolve para baixo. Se tivesse o mesmo peso visual
-       das barras, as duas competiriam e nenhuma seria lida. */
+    /* Traço só na área, e grosso: é ele que garante a leitura do nível por cima
+       das barras. As duas primeiras cores são 'transparent' porque no ApexCharts a
+       coluna também aceita contorno — e borda em volta da barra é tinta que não é
+       dado. */
+    stroke: {
+      show: true, width: [0, 0, 4], curve: 'smooth',
+      colors: ['transparent', 'transparent', corSaldo],
+    },
+    /* A área é a última série, então é desenhada por cima. Com as barras claras
+       ela não precisa mais se apagar para não cobri-las: o degradê começa forte no
+       traço e se dissolve para baixo, devolvendo as barras à vista embaixo. */
     fill: {
       type: ['solid', 'solid', 'gradient'],
-      opacity: [1, 1, 0.35],
-      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0, stops: [0, 80, 100] },
+      opacity: [1, 1, 1],
+      gradient: {
+        type: 'vertical', shadeIntensity: 1,
+        opacityFrom: 0.45, opacityTo: 0.05, stops: [0, 90, 100],
+      },
     },
-    markers: { size: 0, hover: { size: 6 } },
+    /* Marcador nos dois pontos que o rodapé do cartão nomeia: o saldo de hoje e o
+       do fim da janela. Um ponto em cada mês viraria ruído. */
+    markers: {
+      size: 0, hover: { size: 7 }, strokeColor: '#ffffff', strokeWidth: 3,
+      discrete: [...new Set([Math.max(0, iPrimeiroFuturo - 1), meses.length - 1])].map(i => ({
+        seriesIndex: 2, dataPointIndex: i, size: 6,
+        fillColor: corSaldo, strokeColor: '#ffffff', strokeWidth: 3,
+      })),
+    },
+    /* Eixos SEM TEXTO. Os números que importam estão escritos no rodapé do cartão
+       — saldo de hoje, do fim da janela, previsto entrar e previsto sair — e duas
+       colunas de números, uma de cada lado, só apertavam o desenho. Os limites
+       continuam declarados: eles são a geometria que ancora as duas escalas, não
+       rótulo. */
     yaxis: [
-      {
-        seriesName: 'entrou',
-        labels: {
-          formatter: v => fmtShort(v).replace('R$', '').trim(),
-          style: { colors: Graficos.cor.tintaFraca, fontSize: Graficos.fonte.eixo },
-        },
-      },
-      { seriesName: 'entrou', show: false },
-      {
-        seriesName: 'saldo', opposite: true,
-        labels: {
-          formatter: v => fmtShort(v).replace('R$', '').trim(),
-          style: { colors: Graficos.cor.azul, fontSize: Graficos.fonte.eixo },
-        },
-      },
+      { seriesName: 'entrou', min: pisoFluxo, max: topoFluxo, labels: { show: false } },
+      { seriesName: 'entrou', show: false, min: pisoFluxo, max: topoFluxo },
+      { seriesName: 'saldo', opposite: true, min: pisoSaldo, max: topoSaldo, labels: { show: false } },
     ],
+    grid: {
+      borderColor: Graficos.cor.linha, strokeDashArray: 4,
+      xaxis: { lines: { show: false } },
+      yaxis: { lines: { show: true } },
+      padding: { left: -8, right: -8, top: 0, bottom: 0 },
+    },
     legend: {
       show: true, position: 'top', horizontalAlign: 'left', fontSize: Graficos.fonte.valor,
       markers: { radius: 6 }, itemMargin: { horizontal: 8, vertical: 4 },
@@ -630,12 +704,12 @@ function svgFluxoSaldo(meses, opts = {}) {
      série, sem partir o saldo em duas — o que abriria uma emenda visível na
      fronteira e faria a área contar dois níveis onde há um. */
   if (nFuturos > 0) {
-    cfg.forecastDataPoints = { count: nFuturos, dashArray: 5, fillOpacity: 0.12 };
+    cfg.forecastDataPoints = { count: nFuturos, dashArray: 5, fillOpacity: 0.5 };
     cfg.annotations = {
       xaxis: [{
         x: rotulos[iPrimeiroFuturo],
         x2: rotulos[meses.length - 1],
-        fillColor: '#f1f3f8', opacity: 0.55,
+        fillColor: '#eef0f6', opacity: 0.5,
         label: {
           text: 'previsto', position: 'top', orientation: 'horizontal', borderWidth: 0,
           style: { background: 'transparent', color: Graficos.cor.tintaFraca, fontSize: Graficos.fonte.ref, fontWeight: 700 },
@@ -1044,13 +1118,41 @@ function renderInicio(period) {
   const refLimit = income > 0 ? income : budgetTotal;
   const health = healthOf(stats, refLimit, available);
 
-  let openInvoices = 0, upcoming = [];
+  /* Faturas em aberto: soma o que FALTA, não o total da fatura.
+
+     `inv.falta` é o total menos o que já foi pago. Somar `inv.total` contava
+     inteira uma fatura de R$ 1.000 com R$ 700 já quitados — o KPI dizia que havia
+     R$ 1.000 em aberto quando o débito real era R$ 300. Quem pagou parcial via o
+     número não se mexer, que é o pior tipo de erro num painel: ele não parece
+     errado, parece que o pagamento não entrou. */
+  let openInvoices = 0;
+  const emAberto = [];
   for (const card of DB.all('cards').filter(c => c.active !== false)) {
     for (const inv of DB.invoicesOf(card)) {
-      if (inv.status !== 'Paga') { openInvoices += inv.total; upcoming.push(inv); }
+      if (inv.status === 'Paga') continue;
+      openInvoices += inv.falta;
+      emAberto.push(inv);
     }
   }
-  upcoming.sort((a, b) => a.due - b.due);
+  emAberto.sort((a, b) => a.due - b.due);
+
+  /* Próximos vencimentos: TUDO o que está em aberto com vencimento até o fim do
+     ciclo, mais o que já venceu. Não as três primeiras — três era um corte
+     arbitrário que escondia o que a seção existe para mostrar: quem tem quatro
+     cartões via três.
+
+     Vencida entra sempre, mesmo sendo de um ciclo anterior: ela é a mais urgente
+     da lista e esconder atraso é o oposto do que um painel serve para fazer.
+
+     `period.end` é EXCLUSIVO (é o primeiro dia do próximo ciclo), daí o `<`.
+
+     E quando nada vence no ciclo, a lista cai para as próximas a vir. Uma seção
+     chamada "Próximos vencimentos" que renderiza vazia enquanto existe fatura
+     fechada a caminho mente por omissão — foi o caso medido aqui: a única fatura
+     aberta fechou em julho e vence em 5 de agosto. */
+  const doCiclo = emAberto.filter(inv => inv.due < period.end);
+  const vencemNoMes = doCiclo.length ? doCiclo : emAberto.slice(0, 3);
+  const soAdiante = doCiclo.length === 0 && emAberto.length > 0;
 
   const goals = DB.all('goals').filter(g => !g.done);
   const avgPct = goals.length
@@ -1106,14 +1208,19 @@ function renderInicio(period) {
     </div>`;
   }
 
+  /* Cada linha mostra o que FALTA pagar, não o total da fatura — é o número que
+     vai sair da conta. Numa fatura parcial os dois aparecem, senão a linha
+     contradiria o histórico: quem pagou R$ 700 de R$ 1.000 precisa ver que faltam
+     R$ 300 sem perder de vista de quanto era a fatura. */
   let venc = '';
-  for (const inv of upcoming.slice(0, 3)) {
+  for (const inv of vencemNoMes) {
     venc += `<div class="invoice-row">
       <span>💳 ${esc(inv.card.name)}</span>
       <span class="badge ${inv.status.toLowerCase()}">${inv.status}</span>
       <span style="flex:1"></span>
       <span class="muted">vence ${fmtDate(inv.due)}</span>
-      <span class="num">${fmtShort(inv.total)}</span>
+      <span class="num">${fmtShort(inv.falta)}${inv.pago > 0.005
+        ? ` <small class="muted">de ${fmtShort(inv.total)}</small>` : ''}</span>
     </div>`;
   }
 
@@ -1283,7 +1390,9 @@ function renderInicio(period) {
     ${adviceCard}
     <div class="kpi-grid">
       <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
-      <div class="card kpi"><span class="kpi-ico t-danger" data-ico="invoice"></span><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmt(openInvoices)}</div><div class="kpi-label">Faturas em aberto</div><div class="kpi-sub">${upcoming.length} fatura(s)</div></div>
+      <div class="card kpi"><span class="kpi-ico t-danger" data-ico="invoice"></span><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmt(openInvoices)}</div><div class="kpi-label">Faturas em aberto</div><div class="kpi-sub">${emAberto.length} fatura(s)${
+        doCiclo.length && doCiclo.length !== emAberto.length
+          ? ` · ${doCiclo.length} até o fim do mês` : ''}</div></div>
       <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmt(saldo)}</div><div class="kpi-label">Saldo em contas</div><div class="kpi-sub">${contas.length} conta(s)</div></div>
       <div class="card kpi"><span class="kpi-ico t-info" data-ico="target"></span><div class="kpi-value">${avgPct}%</div><div class="kpi-label">Metas (média)</div><div class="kpi-sub">${goals.length} em andamento</div></div>
     </div>
@@ -1328,7 +1437,9 @@ function renderInicio(period) {
         </div>` : ''}
       </div>
     </div>
-    ${venc ? `<p class="section-title">Próximos vencimentos</p>${venc}` : ''}
+    ${venc ? `<p class="section-title">Próximos vencimentos <span class="muted">— ${soAdiante
+      ? 'nada vence neste ciclo, estas são as próximas'
+      : 'tudo que vence até o fim do ciclo, e o que já venceu'}</span></p>${venc}` : ''}
     <button class="btn ghost" id="go-reports" style="display:flex;align-items:center;justify-content:center;gap:8px"><span data-ico="pie"></span>Ver relatórios completos</button>
   `;
 }
