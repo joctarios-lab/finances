@@ -43,6 +43,16 @@ funciona — mas sem a garantia contra perda de registro.
 - Comentários e mensagens de commit em português, explicando o PORQUÊ.
 - Confirme o push consultando o servidor (git ls-remote), não só o git status.
 
+## Permissões — já estão configuradas, não peça de novo
+As regras de execução estão em .claude/settings.local.json (fora do git, é
+config pessoal desta máquina). Estão por PADRÃO: node, git, grep, sed, cat,
+curl, npx serve e os scripts temporários em .claude/jobs/ rodam sem perguntar.
+Só é negado o que não tem volta: rm -rf, push --force, reset --hard, git clean.
+
+Se ainda assim aparecer um pedido, é porque o comando não casa com nenhum
+padrão — me diga qual foi e eu acrescento a regra, em vez de você aprovar na
+mão toda vez.
+
 ## Armadilhas de ferramenta que já me pegaram
 - js/app.js e tests/smoke.js usam CRLF; js/sync.js e js/graficos.js usam LF.
   Casar padrão com o fim de linha errado falha silenciosamente.
@@ -67,6 +77,28 @@ funciona — mas sem a garantia contra perda de registro.
 ```
 
 ---
+
+## Sobre as permissões
+
+`.claude/settings.local.json` é **gitignored** — é config desta máquina, não do
+projeto. Numa máquina nova ele não existe, e os pedidos voltam.
+
+O arquivo tinha 96 regras, **82 delas literais**: comandos exatos como
+`sed -i "s/const VERSAO = '29'/..."`, que só valem para aquele comando e nunca
+mais casam. Por isso o pedido reaparecia mesmo com "tudo autorizado". Foram
+substituídas por padrões (`Bash(node:*)`, `Bash(git push:*)`, …), que cobrem as
+variações.
+
+O que ficou negado, de propósito: `rm -rf`, `git push --force`, `git reset --hard`,
+`git clean`. Com `node:*` liberado dá para rodar qualquer script, então o limite
+precisa estar onde o estrago não tem volta.
+
+Backup do arquivo antigo, caso queira conferir algo:
+`C:\Users\joctamr\.claude\jobs\f1445160\tmp\settings.local.backup.json`
+
+**Nota honesta:** texto no prompt não desliga pedido de permissão — quem decide é
+o Claude Code, lendo esse arquivo. As alternativas, se quiser zero atrito, são
+`/permissions` dentro da sessão ou iniciar com `--permission-mode acceptEdits`.
 
 ## Contexto que não cabe no prompt, mas está nos commits
 
