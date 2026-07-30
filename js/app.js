@@ -748,8 +748,39 @@ function verLancamentosDaTag(tag) {
   render();
 }
 
-/* Barras horizontais com nome e valor — para rankings (categoria, membro, método).
-   Ordenadas do maior para o menor: em ranking a posição já é metade da resposta.
+/* Cor de texto legível sobre um fundo, escolhida por CONTRASTE MEDIDO.
+
+   Necessária porque o valor passou a ser escrito DENTRO da barra: branco sobre o
+   verde-limão ou o âmbar da paleta dá ~1,9:1, que é texto invisível. Calcula a
+   luminância relativa (WCAG) e devolve o lado que contrasta mais. */
+function corDeTextoSobre(hex) {
+  const canal = c => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  const L = 0.2126 * canal((n >> 16) & 255) + 0.7152 * canal((n >> 8) & 255) + 0.0722 * canal(n & 255);
+  const contra = outro => {
+    const m = parseInt(outro.replace('#', ''), 16);
+    const L2 = 0.2126 * canal((m >> 16) & 255) + 0.7152 * canal((m >> 8) & 255) + 0.0722 * canal(m & 255);
+    const [a, b] = L > L2 ? [L, L2] : [L2, L];
+    return (a + 0.05) / (b + 0.05);
+  };
+  return contra('#ffffff') >= contra('#181c32') ? '#ffffff' : '#181c32';
+}
+
+/* Barras horizontais com nome e valor — para rankings (categoria, membro, método,
+   origem da receita). Ordenadas do maior para o menor: em ranking a posição já é
+   metade da resposta.
+
+   Segue o Charts Widget 27 do demo25 (website-analytics), que é exatamente esta
+   forma — poucas barras horizontais, uma cor por linha, valor escrito na própria
+   barra. O que veio dele: canto de 8, barra generosa em px (não em %), rótulo
+   DENTRO da barra a partir da base, e grade só na vertical.
+
+   A grade vertical é o detalhe que mais rende: numa barra horizontal as linhas
+   perpendiculares funcionam como régua de comprimento. Horizontais seriam apenas
+   riscos entre as barras, medindo nada.
 
    `opts.aoClicar(nome)` liga a barra a uma ação (ver os lançamentos daquela
    etiqueta, por exemplo). Vem por evento do gráfico, não por <button> no rótulo:
@@ -757,13 +788,34 @@ function verLancamentosDaTag(tag) {
 function svgRanking(entries, cores, opts = {}) {
   if (!entries.length) return '<div class="empty">Sem dados no período.</div>';
   const total = entries.reduce((s, e) => s + (Number(e[1]) || 0), 0);
-  const alt = Math.max(160, entries.length * 34 + 30);
+  const maior = Math.max(...entries.map(e => Number(e[1]) || 0), 1);
+  const paleta = entries.map((e, i) => (cores && cores[i % cores.length]) || PALETTE[i % PALETTE.length]);
+
+  /* Passo de 48px por linha com barra de 34px — a mesma proporção do widget 27
+     (70px de passo para 50px de barra, ~71%), em escala de celular. O que faz o
+     gráfico deles parecer desenhado é a barra generosa; 34px de altura era filete. */
+  const PASSO = 48;
+  const alt = Math.max(150, entries.length * PASSO + 34);
+
+  /* Cor do rótulo por BARRA, e não uma só para todas. Duas razões:
+
+     1. O rótulo fica dentro da barra, então precisa contrastar com a cor DELA —
+        branco sobre âmbar é invisível.
+     2. Barra curta não tem largura para conter o rótulo, que transborda para o
+        fundo do cartão. Aí a cor tem de ser a tinta escura, não a da barra.
+        O corte de 30% é onde o texto (~8 dígitos) deixa de caber. */
+  const coresRotulo = entries.map((e, i) => {
+    const fatia = (Number(e[1]) || 0) / maior;
+    return fatia < 0.3 ? Graficos.cor.tintaFraca : corDeTextoSobre(paleta[i]);
+  });
+
   const eventos = opts.aoClicar
     ? { events: { dataPointSelection: (_e, _c, { dataPointIndex }) => {
         const linha = entries[dataPointIndex];
         if (linha) opts.aoClicar(linha[0]);
       } } }
     : {};
+
   return Graficos.novo({
     ...Graficos.base(alt, {
       chart: { type: 'bar', ...eventos },
@@ -776,7 +828,10 @@ function svgRanking(entries, cores, opts = {}) {
          um array do formatter faz a lib desenhar uma linha por item, que é a
          forma dela de quebrar texto. */
       yaxis: {
-        labels: { style: { colors: Graficos.cor.tinta, fontSize: Graficos.fonte.eixo }, maxWidth: 150, formatter: quebrarRotulo },
+        labels: {
+          style: { colors: Graficos.cor.tinta, fontSize: Graficos.fonte.eixo, fontWeight: 600 },
+          maxWidth: 150, offsetY: 2, formatter: quebrarRotulo,
+        },
       },
       tooltip: {
         y: {
@@ -785,17 +840,29 @@ function svgRanking(entries, cores, opts = {}) {
       },
     }),
     series: [{ name: 'total', data: entries.map(e => Math.round(Number(e[1]) || 0)) }],
-    colors: entries.map((e, i) => (cores && cores[i % cores.length]) || PALETTE[i % PALETTE.length]),
+    colors: paleta,
     plotOptions: {
-      bar: { horizontal: true, distributed: true, barHeight: '56%', borderRadius: 4, borderRadiusApplication: 'end' },
+      bar: {
+        horizontal: true, distributed: true, barHeight: 34,
+        borderRadius: 8, borderRadiusApplication: 'end',
+        dataLabels: { position: 'bottom' },       // dentro da barra, na base dela
+      },
     },
-    // Valor direto na ponta da barra: em ranking curto o rótulo dispensa o eixo
+    // Valor escrito na própria barra: em ranking curto ele dispensa ler o eixo
     dataLabels: {
-      enabled: true, textAnchor: 'start', offsetX: 6,
+      enabled: true, textAnchor: 'start', offsetX: 12,
       formatter: v => fmtShort(v).replace('R$', '').trim(),
-      style: { fontSize: Graficos.fonte.valor, fontWeight: 600, colors: [Graficos.cor.tintaFraca] },
+      style: { fontSize: Graficos.fonte.valor, fontWeight: 600, colors: coresRotulo },
     },
-    grid: { show: false, padding: { left: 0, right: 24, top: 0, bottom: 0 } },
+    /* Grade só na vertical: em barra horizontal ela cruza as barras e serve de
+       régua de comprimento. Linha horizontal aqui seria risco entre barras,
+       medindo nada. */
+    grid: {
+      borderColor: Graficos.cor.linha, strokeDashArray: 4,
+      xaxis: { lines: { show: true } },
+      yaxis: { lines: { show: false } },
+      padding: { left: 0, right: 12, top: 0, bottom: 0 },
+    },
   }, alt, 'ranking');
 }
 

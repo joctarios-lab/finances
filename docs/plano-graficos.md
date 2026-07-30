@@ -135,6 +135,50 @@ comparando com ele que o erro apareceu.
 `vendor/apexcharts.css` (13 KB) entra **antes** do nosso `styles.css`, para o
 nosso poder sobrepor, e vai para o cache do service worker junto.
 
+## Rankings: o Charts Widget 27 do demo25
+
+Os rankings — "De onde vem o dinheiro", categoria, membro, forma de pagamento,
+etiqueta e o detalhe do envelope — seguem o `#kt_charts_widget_27` da página
+`dashboards/website-analytics.html`. Ele é exatamente esta forma: poucas barras
+horizontais, uma cor por linha, valor escrito na própria barra.
+
+O que veio dele:
+
+| | valor | por quê |
+|---|---|---|
+| `borderRadius` | 8 | canto generoso; a barra é espessa e aguenta |
+| `barHeight` | 34px (não `%`) | passo de 48px, ~71% — a proporção dele (70/50) |
+| `dataLabels.position` | `bottom` | o valor nasce **dentro** da barra, na base |
+| grade | vertical sim, horizontal não | em barra horizontal a perpendicular é régua de comprimento; a horizontal seria risco entre barras, medindo nada |
+
+A barra generosa é o que mais rende: as linhas de 34px de passo eram filete, e é
+disso que vem a impressão de gráfico desenhado em vez de encaixado.
+
+### A divergência necessária: a cor do rótulo é calculada
+
+No widget 27 o rótulo dentro da barra é **branco fixo** — funciona porque a paleta
+do demo é escura. Na nossa não: medido, branco sobre o âmbar `#ffc700` dá
+**1,56:1**, texto presente no HTML e invisível na tela. **Seis dos dez tons da
+paleta reprovariam.**
+
+Então `corDeTextoSobre()` calcula a luminância relativa (WCAG) e devolve o lado que
+contrasta mais. Com isso os dez tons passam em AA (≥ 4,5:1) — o pior fica em 4,55.
+No ApexCharts isso é possível porque, em barra **distribuída**, ele indexa
+`dataLabels.style.colors` por ponto e não por série (verificado no fonte da lib).
+
+Há um segundo caso que o widget 27 não tem: **barra curta**. Abaixo de 30% da
+maior, o rótulo não cabe dentro e transborda para o fundo do cartão — aí a cor da
+barra não serve, e o rótulo vai na tinta escura.
+
+### O que NÃO foi copiado
+
+- **Vertical (`svgBars`)** continua com canto 5. Raio tem de ser proporcional à
+  espessura: 8 numa coluna de 24px de largura viraria pastilha.
+- **`svgComposicao`** também fica em 4 — a barra dela tem ~24px de altura, e 8
+  comeria um terço.
+- **A paleta** é a nossa. A do demo (`#3E97FF`, `#FFC700`…) trocaria a identidade
+  de cor que o app já usa em toda parte.
+
 ## Acabamento medido contra o Metronic
 
 | | Metronic | nosso, depois |

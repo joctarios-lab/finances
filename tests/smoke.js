@@ -87,9 +87,9 @@ eval(appSrc + `; Object.assign(global, {
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
-  serieDeSaldo, sparkArea,
+  serieDeSaldo, sparkArea, PALETTE,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  Rel, relProximosMeses, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo,
+  Rel, relProximosMeses, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -861,9 +861,91 @@ try {
   check('com os nomes no eixo', cRk.xaxis.categories.join(','), 'Mercado,Uber');
   // Cor por linha: em ranking cada item é uma identidade, não uma série única
   check('ranking: cada linha tem a própria cor', cRk.plotOptions.bar.distributed, true);
-  check('e o valor vem direto na ponta da barra', cRk.dataLabels.enabled, true);
+  check('e o valor vem escrito na própria barra', cRk.dataLabels.enabled, true);
   check('a dica traz o percentual do total', cRk.tooltip.y.formatter(800).includes('80%'), true);
   check('ranking vazio não quebra', svgRanking([]).includes('Sem dados'), true);
+
+  /* ---- Acabamento vindo do Charts Widget 27 do demo25 ----
+     Ele é exatamente esta forma: poucas barras horizontais, uma cor por linha,
+     valor escrito na barra. O que veio dele está travado aqui. */
+  check('canto de 8, como no widget 27', cRk.plotOptions.bar.borderRadius, 8);
+  check('e só na ponta, não no pé', cRk.plotOptions.bar.borderRadiusApplication, 'end');
+  /* Barra em PX, não em %: o que faz o gráfico deles parecer desenhado é a barra
+     generosa, e 34px de altura de linha era filete. Proporção do widget 27: 70px
+     de passo para 50px de barra, ~71%. */
+  check('barra medida em px, não em porcentagem', typeof cRk.plotOptions.bar.barHeight, 'number');
+  /* A proporção se mede com itens suficientes para o passo governar: com dois, o
+     piso de altura entra e infla o passo (um gráfico de 130px pareceria quebrado,
+     então o piso é de propósito). */
+  zeraFila();
+  svgRanking([['a', 5], ['b', 4], ['c', 3], ['d', 2], ['e', 1]]);
+  const cCinco = cfgDo();
+  const passoRk = (cCinco.chart.height - 34) / 5;
+  check('e ocupa cerca de 70% do passo da linha, como lá',
+    Math.abs(cCinco.plotOptions.bar.barHeight / passoRk - 0.71) < 0.03, true);
+  check('a altura cresce com o número de linhas', cCinco.chart.height > cRk.chart.height, true);
+  // Piso de altura: gráfico de uma linha só não pode virar um filete de 80px
+  check('mas há piso, para o gráfico curto não achatar',
+    (() => { zeraFila(); svgRanking([['só', 1]]); return cfgDo().chart.height; })(), 150);
+  // Rótulo DENTRO da barra, a partir da base dela
+  check('o rótulo nasce dentro da barra', cRk.plotOptions.bar.dataLabels.position, 'bottom');
+  check('e corre da esquerda para a direita', cRk.dataLabels.textAnchor, 'start');
+  /* GRADE SÓ NA VERTICAL. Em barra horizontal as linhas perpendiculares são régua
+     de comprimento; horizontais seriam riscos entre as barras, medindo nada. */
+  check('grade vertical, que mede o comprimento', cRk.grid.xaxis.lines.show, true);
+  check('e nenhuma horizontal, que não mediria nada', cRk.grid.yaxis.lines.show, false);
+  check('tracejada, como a do resto', cRk.grid.strokeDashArray, 4);
+
+  /* COR DO RÓTULO POR BARRA, calculada por contraste. É a divergência necessária
+     do widget 27: lá o rótulo é branco fixo, porque a paleta do demo é escura. Na
+     nossa, branco sobre o âmbar dá 1,56:1 — texto presente no HTML e invisível na
+     tela. Seis dos dez tons reprovariam. */
+  check('a cor do rótulo é uma por barra, não uma para todas',
+    Array.isArray(cRk.dataLabels.style.colors) && cRk.dataLabels.style.colors.length, 2);
+  const canalT = c => { const x = c / 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); };
+  const lumT = h => { const n = parseInt(h.replace('#', ''), 16);
+    return 0.2126 * canalT((n >> 16) & 255) + 0.7152 * canalT((n >> 8) & 255) + 0.0722 * canalT(n & 255); };
+  const razaoT = (a, b) => { const [x, y] = lumT(a) > lumT(b) ? [lumT(a), lumT(b)] : [lumT(b), lumT(a)];
+    return (x + 0.05) / (y + 0.05); };
+  // Toda a paleta, não só as duas do fixture: é ela que aparece em uso real
+  const piorDaPaleta = Math.min(...PALETTE.map(c => razaoT(c, corDeTextoSobre(c))));
+  check('todo tom da paleta passa em AA com a cor escolhida', piorDaPaleta >= 4.5, true);
+  check('e branco fixo reprovaria, que é por isso que se calcula',
+    Math.min(...PALETTE.map(c => razaoT(c, '#ffffff'))) < 3, true);
+  check('escolhe branco em fundo escuro', corDeTextoSobre('#7239ea'), '#ffffff');
+  check('e tinta escura em fundo claro', corDeTextoSobre('#ffc700'), '#181c32');
+
+  /* Barra curta não tem largura para conter o rótulo, que transborda para o fundo
+     do cartão — e aí a cor da barra não serve. Abaixo de 30% do maior, tinta. */
+  zeraFila();
+  svgRanking([['Grande', 1000], ['Minúsculo', 50]]);
+  const cCurta = cfgDo();
+  check('barra curta usa tinta, porque o rótulo vaza para fora',
+    cCurta.dataLabels.style.colors[1], Graficos.cor.tintaFraca);
+  check('e a barra longa usa a cor que contrasta com ela',
+    cCurta.dataLabels.style.colors[0], corDeTextoSobre(PALETTE[0]));
+
+  /* TODOS os rankings da tela têm de pegar esse acabamento, não só a função
+     isolada. São cinco: origem da receita ("De onde vem o dinheiro"), categoria,
+     membro, forma de pagamento e etiqueta. */
+  zeraFila();
+  renderRelatorios();
+  const rks = Graficos.fila.filter(f => f.nome === 'ranking');
+  check('a tela de relatórios traz vários rankings', rks.length >= 3, true);
+  check('e todos com o acabamento do widget 27',
+    rks.every(f => f.opts.plotOptions.bar.borderRadius === 8
+      && f.opts.plotOptions.bar.dataLabels.position === 'bottom'
+      && f.opts.grid.xaxis.lines.show === true
+      && f.opts.grid.yaxis.lines.show === false
+      && Array.isArray(f.opts.dataLabels.style.colors)), true);
+  /* "De onde vem o dinheiro" é um deles, e é o que foi pedido por nome. Confere no
+     MESMO HTML que o cartão dele é seguido pelo div do ranking — em duas chamadas
+     separadas os índices não se comparam. */
+  const relRk = renderRelatorios();
+  const iTitulo = relRk.indexOf('De onde vem o dinheiro');
+  check('"De onde vem o dinheiro" existe', iTitulo >= 0, true);
+  check('e o ranking vem dentro do cartão dele',
+    /De onde vem o dinheiro[\s\S]{0,600}data-g="ranking"/.test(relRk), true);
 
   zeraFila();
   const burn = svgBurnup(p, 3000);
