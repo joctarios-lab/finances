@@ -4312,6 +4312,33 @@ console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
     swG.includes("'vendor/apexcharts.css?v=' + VERSAO")
     && swG.includes("'vendor/apexcharts.min.js?v=' + VERSAO"), true);
 
+  /* TAMANHO DO TEXTO ANCORADO NO LAYOUT. Medido: o texto que fica ao lado dos
+     gráficos é 13,5px na legenda da rosca e 13px nas tabelas de relatório. Os
+     eixos estavam em 11px — o menor texto da vizinhança, e era isso que fazia o
+     gráfico parecer de outro layout. O eixo casa com a tabela, que é o análogo
+     mais próximo: uma grade de rótulos de dado. */
+  const tabela = (cssG.match(/\.rep-table \{[^}]*font-size:\s*([\d.]+)px/) || [])[1];
+  check('o eixo tem o tamanho da tabela de relatório', Graficos.fonte.eixo, tabela + 'px');
+  check('e não é o menor texto da vizinhança',
+    parseFloat(Graficos.fonte.eixo) >= 13, true);
+  /* A anotação recua um passo: renda, média e "previsto" são referência, não dado.
+     Se empatasse com o eixo, as duas leituras teriam o mesmo peso. */
+  check('a anotação fica um passo abaixo do eixo',
+    parseFloat(Graficos.fonte.ref) < parseFloat(Graficos.fonte.eixo), true);
+  check('e o valor sobre a marca fica no meio',
+    parseFloat(Graficos.fonte.valor) > parseFloat(Graficos.fonte.ref)
+    && parseFloat(Graficos.fonte.valor) <= parseFloat(Graficos.fonte.eixo), true);
+  /* Tamanho literal espalhado pelos gráficos é como o desalinhamento voltaria sem
+     ninguém notar: a escala tem de ser o único lugar onde o número aparece. */
+  const apFonte = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  check('nenhum gráfico crava o tamanho na mão',
+    (apFonte.match(/fontSize: '\d[\d.]*px'/g) || []).length, 0);
+  check('todos os eixos saem da escala',
+    fila.every(f => {
+      const x = f.opts.xaxis && f.opts.xaxis.labels && f.opts.xaxis.labels.style;
+      return !x || !x.fontSize || x.fontSize === Graficos.fonte.eixo;
+    }), true);
+
   check('o texto do gráfico usa a fonte do app', /\.apx text \{[^}]*font-family: inherit/.test(cssG), true);
   check('e o div encolhe em vez de estourar o cartão',
     /\.apx, \.apx > div \{[^}]*min-width: 0/.test(cssG), true);
@@ -5458,9 +5485,10 @@ try {
   check('saldo negativo desce abaixo do zero, não é cortado',
     pontosDe(cfgDo().series[2]).includes(-2000), true);
 
-  // Rótulo herdado do tema e sem giro: nome de mês virado é mais difícil de ler
+  // Rótulo no tamanho da escala do tema e sem giro: nome de mês virado é mais
+  // difícil de ler, e tamanho solto sai do alinhamento com o resto do layout
   check('os rótulos não colidem nem giram',
-    c.xaxis.labels.style.fontSize === '11px' && c.chart.toolbar.show === false, true);
+    c.xaxis.labels.style.fontSize === Graficos.fonte.eixo && c.chart.toolbar.show === false, true);
   check('e a curva é suavizada', c.stroke.curve, 'smooth');
 
   // Um mês só não desenha nada em vez de quebrar

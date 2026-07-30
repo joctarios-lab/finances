@@ -322,7 +322,7 @@ function svgBars(series, refLine, opts = {}) {
       label: {
         text: 'média ' + fmtShort(media).replace('R$', '').trim(),
         position: 'right', textAnchor: 'end', borderWidth: 0,
-        style: { color: Graficos.cor.tintaFraca, background: 'transparent', fontSize: '10px', fontWeight: 600 },
+        style: { color: Graficos.cor.tintaFraca, background: 'transparent', fontSize: Graficos.fonte.ref, fontWeight: 600 },
       },
     });
   }
@@ -332,7 +332,7 @@ function svgBars(series, refLine, opts = {}) {
       label: {
         text: 'renda ' + fmtShort(refLine).replace('R$', '').trim(),
         position: 'right', textAnchor: 'end', borderWidth: 0,
-        style: { color: Graficos.cor.verde, background: 'transparent', fontSize: '10px', fontWeight: 600 },
+        style: { color: Graficos.cor.verde, background: 'transparent', fontSize: Graficos.fonte.ref, fontWeight: 600 },
       },
     });
   }
@@ -417,7 +417,7 @@ function svgCascata(passos, opts = {}) {
     fill: { opacity: [0, 1, 1, 1] },
     plotOptions: { bar: { columnWidth: '52%', borderRadius: 4, borderRadiusApplication: 'end' } },
     legend: {
-      show: true, position: 'top', horizontalAlign: 'left', fontSize: '11px',
+      show: true, position: 'top', horizontalAlign: 'left', fontSize: Graficos.fonte.valor,
       markers: { radius: 6 }, itemMargin: { horizontal: 8 },
       /* Lista explícita, sem o pedestal: ele é andaime, não série. Um formatter
          devolvendo vazio apagaria o texto mas deixaria a bolinha dele lá,
@@ -480,7 +480,7 @@ function svgComposicao(grupos, opts = {}) {
         categories: grupos.map(g => g.rot),
         labels: { formatter: v => fmtShort(v).replace('R$', '').trim() },
       },
-      yaxis: { labels: { style: { colors: Graficos.cor.tinta, fontSize: '12px', fontWeight: 600 } } },
+      yaxis: { labels: { style: { colors: Graficos.cor.tinta, fontSize: Graficos.fonte.eixo, fontWeight: 600 } } },
       tooltip: {
         /* Dica própria, não a nativa: um segmento sozinho não diz composição.
            Ela lista TODOS os itens do envelope com seus percentuais e só destaca
@@ -578,7 +578,7 @@ function svgFluxoSaldo(meses, opts = {}) {
         seriesName: 'entrou',
         labels: {
           formatter: v => fmtShort(v).replace('R$', '').trim(),
-          style: { colors: Graficos.cor.tintaFraca, fontSize: '11px' },
+          style: { colors: Graficos.cor.tintaFraca, fontSize: Graficos.fonte.eixo },
         },
       },
       { seriesName: 'entrou', show: false },
@@ -586,12 +586,12 @@ function svgFluxoSaldo(meses, opts = {}) {
         seriesName: 'saldo', opposite: true,
         labels: {
           formatter: v => fmtShort(v).replace('R$', '').trim(),
-          style: { colors: Graficos.cor.azul, fontSize: '11px' },
+          style: { colors: Graficos.cor.azul, fontSize: Graficos.fonte.eixo },
         },
       },
     ],
     legend: {
-      show: true, position: 'top', horizontalAlign: 'left', fontSize: '11px',
+      show: true, position: 'top', horizontalAlign: 'left', fontSize: Graficos.fonte.valor,
       markers: { radius: 6 }, itemMargin: { horizontal: 8, vertical: 4 },
     },
   };
@@ -608,7 +608,7 @@ function svgFluxoSaldo(meses, opts = {}) {
         fillColor: '#f1f3f8', opacity: 0.55,
         label: {
           text: 'previsto', position: 'top', orientation: 'horizontal', borderWidth: 0,
-          style: { background: 'transparent', color: Graficos.cor.tintaFraca, fontSize: '10px', fontWeight: 700 },
+          style: { background: 'transparent', color: Graficos.cor.tintaFraca, fontSize: Graficos.fonte.ref, fontWeight: 700 },
         },
       }],
     };
@@ -640,7 +640,7 @@ function svgLinhaFaixa(serie, opts = {}) {
       fillColor: '#eef6fd', opacity: 0.9, borderWidth: 0,
       label: {
         text: 'faixa normal', position: 'left', textAnchor: 'start', borderWidth: 0,
-        style: { background: 'transparent', color: Graficos.cor.tintaFraca, fontSize: '10px', fontWeight: 600 },
+        style: { background: 'transparent', color: Graficos.cor.tintaFraca, fontSize: Graficos.fonte.ref, fontWeight: 600 },
       },
     });
     anot.push({ y: med, borderColor: Graficos.cor.cinza, strokeDashArray: 0, strokeWidth: 1 });
@@ -776,7 +776,7 @@ function svgRanking(entries, cores, opts = {}) {
          um array do formatter faz a lib desenhar uma linha por item, que é a
          forma dela de quebrar texto. */
       yaxis: {
-        labels: { style: { colors: Graficos.cor.tinta, fontSize: '12px' }, maxWidth: 150, formatter: quebrarRotulo },
+        labels: { style: { colors: Graficos.cor.tinta, fontSize: Graficos.fonte.eixo }, maxWidth: 150, formatter: quebrarRotulo },
       },
       tooltip: {
         y: {
@@ -793,7 +793,7 @@ function svgRanking(entries, cores, opts = {}) {
     dataLabels: {
       enabled: true, textAnchor: 'start', offsetX: 6,
       formatter: v => fmtShort(v).replace('R$', '').trim(),
-      style: { fontSize: '11px', fontWeight: 600, colors: [Graficos.cor.tintaFraca] },
+      style: { fontSize: Graficos.fonte.valor, fontWeight: 600, colors: [Graficos.cor.tintaFraca] },
     },
     grid: { show: false, padding: { left: 0, right: 24, top: 0, bottom: 0 } },
   }, alt, 'ranking');
@@ -860,7 +860,7 @@ function svgBurnup(period, refLimit) {
       }] : [],
     },
     legend: refLimit > 0
-      ? { show: true, position: 'top', horizontalAlign: 'left', fontSize: '11px', markers: { radius: 6 } }
+      ? { show: true, position: 'top', horizontalAlign: 'left', fontSize: Graficos.fonte.valor, markers: { radius: 6 } }
       : { show: false },
   }, alt, 'burnup');
 }
@@ -1475,7 +1475,7 @@ function sparkArea(vals, dias, porDia) {
       ? { yaxis: [{ y: 0, borderColor: '#c4cad4', strokeDashArray: 0 }] }
       : {},
     tooltip: {
-      style: { fontSize: '12px', fontFamily: 'inherit' },
+      style: { fontSize: Graficos.fonte.dica, fontFamily: 'inherit' },
       custom({ dataPointIndex }) {
         const iso = rotulos[dataPointIndex];
         const d = new Date(iso + 'T12:00:00');

@@ -27,6 +27,23 @@ const Graficos = {
     tinta: '#181c32', tintaFraca: '#6b6f85', linha: '#eff2f5',
   },
 
+  /* Tamanhos de texto dos gráficos, num lugar só e ancorados no layout.
+
+     Medido no styles.css: o texto que fica AO LADO dos gráficos é 13,5px na
+     legenda da rosca e 13px nas tabelas de relatório. Os eixos estavam em 11px —
+     o menor texto da vizinhança, dois pontos e meio abaixo da legenda que fica
+     encostada neles, e era isso que fazia o gráfico parecer de outro layout.
+
+     `eixo` casa com a tabela de relatório, que é o análogo mais próximo (uma
+     grade de rótulos de dado). `ref` fica um passo abaixo de propósito: renda,
+     média e "previsto" são anotação, não dado, e têm de recuar. */
+  fonte: {
+    eixo: '13px',    // nome de mês, categoria, valor de escala
+    valor: '12px',   // número escrito sobre a própria marca
+    ref: '11px',     // rótulo de linha de referência e de faixa
+    dica: '12px',    // conteúdo do balão
+  },
+
   /* Registra um gráfico e devolve o div onde ele vai nascer.
 
      `nome` diz o que o gráfico É (cascata, fluxo-saldo), não como foi desenhado.
@@ -111,16 +128,16 @@ const Graficos = {
       // Rótulos no cinza de texto secundário: eles são referência, não dado
       xaxis: {
         axisBorder: { show: false }, axisTicks: { show: false },
-        labels: { style: { colors: this.cor.tintaFraca, fontSize: '11px', fontWeight: 600 } },
+        labels: { style: { colors: this.cor.tintaFraca, fontSize: this.fonte.eixo, fontWeight: 600 } },
         crosshairs: { show: false },
         ...(extra.xaxis || {}),
       },
       yaxis: {
-        labels: { style: { colors: this.cor.tintaFraca, fontSize: '11px' } },
+        labels: { style: { colors: this.cor.tintaFraca, fontSize: this.fonte.eixo } },
         ...(extra.yaxis || {}),
       },
       tooltip: {
-        style: { fontSize: '12px', fontFamily: 'inherit' },
+        style: { fontSize: this.fonte.dica, fontFamily: 'inherit' },
         ...(extra.tooltip || {}),
       },
       legend: { show: false },
