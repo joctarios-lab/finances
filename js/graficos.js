@@ -207,6 +207,45 @@ const Graficos = {
     };
   },
 
+  /* Eixo de valor OCULTO, mas com as linhas de grade de pé.
+
+     O eixo de valor é uma coluna de números que ninguém lê dígito por dígito: ele
+     serve para estimar altura, e a grade sozinha já faz isso. Tirá-lo devolve a
+     largura inteira ao desenho — num cartão de celular a coluna comia uns 15%.
+
+     A condição para tirar é o valor estar em outro lugar: escrito na própria marca
+     ou no rodapé do cartão. Sem isso o gráfico fica mudo, e aí a economia de tinta
+     custa a informação. Cada gráfico que usa isto tem essa garantia.
+
+     É o que os widgets do Metronic fazem — medido no widgets.bundle.js deles:
+     `yaxis: { labels: { show: false } }` com `yaxis: { lines: { show: true } }` na
+     grade. O padding negativo recupera o vão que o eixo deixou.
+
+     RECEBE a config e devolve uma cópia, como `linha()`. Devolver um fragmento
+     para ser espalhado ao lado substituiria o eixo e a grade inteiros — foi
+     exatamente esse o defeito que a primeira versão de `linha()` teve. */
+  semEixoDeValor(cfg, orientacao = 'y') {
+    const nomeEixo = orientacao === 'y' ? 'yaxis' : 'xaxis';
+    const atual = cfg[nomeEixo] || {};
+    // Array de eixos (o fluxo tem dois) esconde cada um deles
+    const escondido = Array.isArray(atual)
+      ? atual.map(e => ({ ...e, labels: { ...(e.labels || {}), show: false } }))
+      : { ...atual, labels: { ...(atual.labels || {}), show: false } };
+    const g = cfg.grid || {};
+    return {
+      ...cfg,
+      [nomeEixo]: escondido,
+      grid: {
+        ...g,
+        padding: {
+          ...(g.padding || {}),
+          // Recupera o vão que a coluna de números ocupava
+          ...(orientacao === 'y' ? { left: -8 } : { bottom: -14 }),
+        },
+      },
+    };
+  },
+
   // Formatador de moeda para eixos e dicas — sempre em pt-BR, sempre compacto
   brl(v, compacto) {
     const n = Number(v) || 0;

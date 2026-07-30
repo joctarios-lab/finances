@@ -225,6 +225,56 @@ barra não serve, e o rótulo vai na tinta escura.
 - **A paleta** é a nossa. A do demo (`#3E97FF`, `#FFC700`…) trocaria a identidade
   de cor que o app já usa em toda parte.
 
+## Eixo de valor oculto
+
+O eixo de valor é uma coluna de números que ninguém lê dígito por dígito: ele serve
+para estimar altura, e a grade sozinha já faz isso. Tirá-lo devolve a largura ao
+desenho — num cartão de celular a coluna comia uns 15%. É o que os widgets do
+Metronic fazem: `yaxis: { labels: { show: false } }` com as linhas de grade de pé.
+
+Cinco funções passaram por `Graficos.semEixoDeValor()`, cobrindo os oito cartões:
+
+| cartão | função | onde o número ficou |
+|---|---|---|
+| Evolução dos gastos | `svgBars` | rótulo no topo da coluna |
+| Ritmo do mês | `svgBurnup` | rótulo no ponto de hoje |
+| O caminho do dinheiro | `svgCascata` | rótulo em cada bloco |
+| Isso é normal para vocês? | `svgLinhaFaixa` | rodapé do cartão |
+| Saldo projetado | `svgLinhaFaixa` | rodapé do cartão |
+| Quem gastou / Como pagou / Por etiqueta | `svgRanking` | dentro da barra |
+
+**A condição para tirar o eixo é o número estar em outro lugar.** Três dos oito
+não tinham: nas colunas de evolução, no burn-up e na cascata o eixo era a única
+fonte numérica. O valor foi para cima da marca **antes** de o eixo sair — que é a
+substituição correta (rótulo direto no lugar da coluna de números), e não por
+acaso é o que a versão desenhada à mão fazia antes da conversão para a biblioteca.
+
+**A grade fica.** Ela é a régua que permite comparar alturas entre si; tirar as
+linhas junto com os números deixaria o gráfico sem referência nenhuma.
+
+O rótulo é **seletivo onde a forma importa mais que os números** e **completo onde
+os números são a conta**:
+
+- `svgBars`: só o período atual e o maior. Seis números lado a lado viram uma
+  segunda linha de texto e o olho para de ver a forma.
+- `svgBurnup`: só o ponto de hoje, e nada na trilha ideal — marcar uma referência
+  calculada como se fosse dinheiro gasto seria a pior leitura possível.
+- `svgCascata`: em todos os blocos, porque ali cada número é uma parcela da conta
+  sendo feita ("entrou 8.500, saiu 5.200, sobrou 1.200"). Menos no **pedestal**,
+  que tem valor e não é dinheiro.
+
+### Os dois que mantiveram o eixo
+
+"Envelope por dentro" (`svgComposicao`) e "De onde vim, para onde vou"
+(`svgFluxoSaldo`) não estavam no pedido, e nenhum dos dois escreve valor na marca
+nem no rodapé — tirar o eixo deles deixaria o gráfico mudo. Há teste garantindo que
+os dois **continuam** com eixo, para que uma mudança geral no futuro não os inclua
+por engano.
+
+Também há um teste de rede: em cada tela, nenhum gráfico pode ficar **sem eixo e
+sem rótulo** ao mesmo tempo. A única exceção é a faixa de normalidade, e ela é
+verificada pelo outro lado — que o rodapé do cartão traz os números.
+
 ## Acabamento medido contra o Metronic
 
 | | Metronic | nosso, depois |

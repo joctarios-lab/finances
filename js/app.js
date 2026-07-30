@@ -337,8 +337,13 @@ function svgBars(series, refLine, opts = {}) {
     });
   }
 
+  const iMax = valores.indexOf(Math.max(...valores));
+
   const alt = opts.height || 250;
-  return Graficos.novo({
+  /* Sem eixo de valor. Aqui ele era a ÚNICA fonte do número, então o valor foi
+     para cima da coluna antes de o eixo sair — é a substituição correta: rótulo
+     direto no lugar da coluna de números, e não a perda da informação. */
+  return Graficos.novo(Graficos.semEixoDeValor({
     ...Graficos.base(alt, {
       chart: { type: 'bar' },
       xaxis: { categories: series.map(s => s.label) },
@@ -355,8 +360,19 @@ function svgBars(series, refLine, opts = {}) {
         borderRadius: 5, borderRadiusApplication: 'end',
       },
     },
+    /* Rótulo SÓ no período atual e no maior valor — nunca em toda coluna. Seis
+       números lado a lado viram uma segunda linha de texto e o olho para de ver a
+       forma, que é o que o gráfico existe para mostrar. Estes dois são as duas
+       perguntas reais: "quanto foi agora" e "qual foi o pior". */
+    dataLabels: {
+      enabled: true, offsetY: -20,
+      formatter: (v, { dataPointIndex }) => (
+        (dataPointIndex === iAtual || dataPointIndex === iMax) && v > 0
+          ? fmtShort(v).replace('R$', '').trim() : ''),
+      style: { fontSize: Graficos.fonte.valor, fontWeight: 700, colors: [Graficos.cor.tinta] },
+    },
     annotations: { yaxis: refs },
-  }, alt, 'barras');
+  }), alt, 'barras');
 }
 
 // Arredonda o topo da escala para um número redondo — deixa a grade legível
@@ -396,7 +412,12 @@ function svgCascata(passos, opts = {}) {
   const serieDe = tipo => barras.map(b => (b.tipo === tipo ? b.valor : null));
 
   const alt = opts.height || 260;
-  return Graficos.novo({
+  /* Sem eixo de valor. Numa cascata o número de CADA bloco é a conta que está
+     sendo feita — "entrou 8.500, saiu 5.200, sobrou 1.200" —, então o rótulo vai
+     em todos, e não só em alguns como nas colunas de evolução. Com o valor sobre
+     cada bloco a coluna de números do eixo só repetiria a mesma informação numa
+     escala que ninguém lê dígito por dígito. */
+  return Graficos.novo(Graficos.semEixoDeValor({
     ...Graficos.base(alt, {
       chart: { type: 'bar', stacked: true },
       xaxis: { categories: barras.map(b => b.rot) },
@@ -424,7 +445,16 @@ function svgCascata(passos, opts = {}) {
          convidando o leitor a procurar um bloco que não é dinheiro nenhum. */
       customLegendItems: ['entrou', 'saiu', 'sobrou'],
     },
-  }, alt, 'cascata');
+    /* Valor sobre cada bloco. O `null` das séries que não têm valor naquela coluna
+       já não desenha rótulo; o cuidado é o PEDESTAL, que tem valor e não é dinheiro
+       — mostrá-lo faria o leitor somar um degrau invisível. */
+    dataLabels: {
+      enabled: true, offsetY: -20,
+      formatter: (v, { seriesIndex }) => (
+        seriesIndex === 0 || v == null || v <= 0 ? '' : fmtShort(v).replace('R$', '').trim()),
+      style: { fontSize: Graficos.fonte.valor, fontWeight: 700, colors: [Graficos.cor.tinta] },
+    },
+  }), alt, 'cascata');
 }
 
 /* Clareia uma cor na direção do branco.
@@ -651,7 +681,12 @@ function svgLinhaFaixa(serie, opts = {}) {
   const destaque = [...new Set([0, serie.length - 1, iMax])];
 
   const alt = opts.height || 230;
-  return Graficos.novo({
+  /* Sem eixo de valor: os dois cartões que usam esta forma — "Isso é normal para
+     vocês?" e "Saldo projetado" — escrevem os números que importam no rodapé
+     (mediana, mês atual, menor ponto, fechamento). O eixo repetia a mesma escala
+     numa coluna que ninguém lê dígito por dígito, e a grade sozinha já dá a
+     altura. A faixa de normalidade também continua rotulada. */
+  return Graficos.novo(Graficos.semEixoDeValor({
     // Acabamento de linha do widget 29, compartilhado com os outros de linha
     ...Graficos.linha(Graficos.base(alt, {
       chart: { type: 'area' },
@@ -680,7 +715,7 @@ function svgLinhaFaixa(serie, opts = {}) {
       })),
     },
     annotations: { yaxis: anot },
-  }, alt, 'faixa-normal');
+  }), alt, 'faixa-normal');
 }
 
 /* Rosca em SVG à mão. É o ÚNICO gráfico que não passou para a biblioteca, e o
@@ -818,7 +853,10 @@ function svgRanking(entries, cores, opts = {}) {
       } } }
     : {};
 
-  return Graficos.novo({
+  /* Sem eixo de valor: numa barra horizontal ele é a régua embaixo, e o valor já
+     está escrito na própria barra. Duas cópias do mesmo número é tinta que não é
+     dado — e a que fica é a que está ao lado da coisa medida. */
+  return Graficos.novo(Graficos.semEixoDeValor({
     ...Graficos.base(alt, {
       chart: { type: 'bar', ...eventos },
       xaxis: {
@@ -865,7 +903,7 @@ function svgRanking(entries, cores, opts = {}) {
       yaxis: { lines: { show: false } },
       padding: { left: 0, right: 12, top: 0, bottom: 0 },
     },
-  }, alt, 'ranking');
+  }, 'x'), alt, 'ranking');
 }
 
 /* Burn-up do mês: gasto acumulado dia a dia contra a trilha ideal do orçamento.
@@ -906,7 +944,11 @@ function svgBurnup(period, refLimit) {
   }
 
   const alt = 240;
-  return Graficos.novo({
+  /* Sem eixo de valor: o número que responde a pergunta do cartão — quanto já se
+     gastou até hoje — vai escrito no ponto de hoje, junto do marcador. Era o que a
+     versão desenhada à mão fazia. O eixo repetia a escala inteira para dar um
+     número só, e a trilha ideal já mostra onde o limite fica. */
+  return Graficos.novo(Graficos.semEixoDeValor({
     // O acabamento de linha do widget 29 envolve a base: mira, hover e marcador
     ...Graficos.linha(Graficos.base(alt, {
       chart: { type: 'area' },
@@ -956,10 +998,21 @@ function svgBurnup(period, refLimit) {
         fillColor: '#ffffff', strokeColor: corLinha, strokeWidth: 3,
       }] : [],
     },
+    /* Rótulo SÓ no ponto de hoje, e só na série do gasto. Um número em cada dia
+       viraria uma faixa de texto sobre a curva; e rótulo na trilha ideal seria
+       marcar uma referência calculada como se fosse dinheiro gasto. */
+    dataLabels: {
+      enabled: true, offsetY: -12,
+      formatter: (v, { seriesIndex, dataPointIndex }) => (
+        seriesIndex === 0 && dataPointIndex === decorridos - 1 && v != null
+          ? fmtShort(v).replace('R$', '').trim() : ''),
+      style: { fontSize: Graficos.fonte.valor, fontWeight: 700, colors: [Graficos.cor.tinta] },
+      background: { enabled: false },
+    },
     legend: temTrilha
       ? { show: true, position: 'top', horizontalAlign: 'left', fontSize: Graficos.fonte.valor, markers: { radius: 6 } }
       : { show: false },
-  }, alt, 'burnup');
+  }), alt, 'burnup');
 }
 
 /* ---------- Situação financeira (conceitos: disponível real, run-rate, 50/30/20, reserva) ---------- */

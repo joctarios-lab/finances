@@ -89,7 +89,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  Rel, relProximosMeses, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
+  Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -4498,6 +4498,110 @@ console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
   check('e o formatter do eixo formata em moeda',
     (() => { zeraFila(); svgRanking([['Mercado', 800]]);
       return cfgDo().xaxis.labels.formatter(1500); })(), fmtShort(1500).replace('R$', '').trim());
+
+  /* ---- Eixo de valor oculto ----
+     O eixo de valor é uma coluna de números que ninguém lê dígito por dígito: ele
+     serve para estimar altura, e a grade sozinha já faz isso. Tirá-lo devolve a
+     largura ao desenho — num cartão de celular a coluna comia uns 15%.
+
+     A CONDIÇÃO para tirar é o número estar em outro lugar. Onde o eixo era a única
+     fonte, o valor foi para cima da marca ANTES de ele sair; onde o cartão já
+     escreve os números no rodapé, não precisou de nada. É essa condição que os
+     testes abaixo verificam — sem ela, tirar o eixo é perder informação. */
+  const eixoDeValor = o => {
+    // Nos horizontais o eixo de valor é o X; nos demais, o Y
+    const horiz = o.plotOptions && o.plotOptions.bar && o.plotOptions.bar.horizontal;
+    return horiz ? o.xaxis : o.yaxis;
+  };
+  const semEixo = o => ((eixoDeValor(o) || {}).labels || {}).show === false;
+
+  const p29 = DB.monthPeriod(new Date());
+  const casos = [
+    ['barras', () => svgBars([{ label: 'jan', value: 100 }, { label: 'fev', value: 250, hint: '#009ef7' }], 300), true],
+    ['burnup', () => svgBurnup(p29, 3000), true],
+    ['cascata', () => svgCascata([{ rot: 'E', valor: 1000, tipo: 'entra' },
+      { rot: 'S', valor: 400, tipo: 'sai' }, { rot: 'R', valor: 0, tipo: 'total' }]), true],
+    ['faixa-normal', () => svgLinhaFaixa([{ rot: 'jan', valor: 100 }, { rot: 'fev', valor: 200 }]), false],
+    ['ranking', () => svgRanking([['Mercado', 800], ['Uber', 200]]), true],
+  ];
+  for (const [nome, montar, precisaRotulo] of casos) {
+    zeraFila(); montar();
+    const c = cfgDo();
+    check(nome + ': o eixo de valor está oculto', semEixo(c), true);
+    /* A GRADE FICA. Ela é a régua que permite comparar alturas; tirar as linhas
+       junto com os números deixaria o gráfico sem referência nenhuma. */
+    check(nome + ': mas as linhas de grade ficam, que são a régua',
+      c.grid.show !== false, true);
+    // Onde o eixo era a única fonte do número, o valor foi para a marca
+    check(nome + ': o número ' + (precisaRotulo ? 'está na marca' : 'vem do rodapé do cartão'),
+      (c.dataLabels || {}).enabled === true, precisaRotulo);
+  }
+
+  /* Rótulo SELETIVO nas colunas de evolução: só o período atual e o maior. Seis
+     números lado a lado viram uma segunda linha de texto e o olho para de ver a
+     forma, que é o que o gráfico existe para mostrar. */
+  zeraFila();
+  svgBars([{ label: 'jan', value: 100 }, { label: 'fev', value: 900 },
+    { label: 'mar', value: 250, hint: '#009ef7' }], 0);
+  const fmtB = cfgDo().dataLabels.formatter;
+  check('coluna do meio (nem atual nem maior) não leva rótulo', fmtB(100, { dataPointIndex: 0 }), '');
+  check('a maior leva', fmtB(900, { dataPointIndex: 1 }) !== '', true);
+  check('e a do período atual também', fmtB(250, { dataPointIndex: 2 }) !== '', true);
+
+  /* Na cascata o rótulo vai em TODOS os blocos, porque ali cada número é uma
+     parcela da conta que está sendo feita. Menos no pedestal: ele tem valor e não
+     é dinheiro, e mostrá-lo faria o leitor somar um degrau invisível. */
+  zeraFila();
+  svgCascata([{ rot: 'E', valor: 8500, tipo: 'entra' }, { rot: 'S', valor: 5200, tipo: 'sai' },
+    { rot: 'R', valor: 0, tipo: 'total' }]);
+  const fmtC = cfgDo().dataLabels.formatter;
+  check('o pedestal nunca leva rótulo', fmtC(8500, { seriesIndex: 0 }), '');
+  check('mas a entrada leva', fmtC(8500, { seriesIndex: 1 }) !== '', true);
+  check('a saída também', fmtC(5200, { seriesIndex: 2 }) !== '', true);
+  check('e o resultado também', fmtC(1200, { seriesIndex: 3 }) !== '', true);
+
+  /* No burn-up, só o ponto de hoje: um número em cada dia viraria uma faixa de
+     texto sobre a curva. E nada na trilha ideal — marcar uma referência calculada
+     como se fosse dinheiro gasto seria a pior leitura possível. */
+  zeraFila();
+  svgBurnup(p29, 3000);
+  const fmtU = cfgDo().dataLabels.formatter;
+  const hoje29 = DB.elapsedDays(p29) - 1;
+  check('o burn-up rotula o ponto de hoje', fmtU(500, { seriesIndex: 0, dataPointIndex: hoje29 }) !== '', true);
+  check('e nenhum outro dia', fmtU(400, { seriesIndex: 0, dataPointIndex: 0 }), '');
+  check('nem a trilha ideal, que é referência e não gasto',
+    fmtU(3000, { seriesIndex: 1, dataPointIndex: hoje29 }), '');
+
+  /* Os DOIS que mantêm o eixo, de propósito: "Envelope por dentro" e "De onde vim,
+     para onde vou" não estavam no pedido, e nenhum dos dois escreve valor na marca
+     nem no rodapé — tirar o eixo deles deixaria o gráfico mudo. */
+  zeraFila();
+  svgComposicao([{ id: 'x', rot: 'Env', total: 100, partes: [{ rot: 'p', valor: 100 }] }]);
+  check('o envelope por dentro mantém o eixo', semEixo(cfgDo()), false);
+  zeraFila();
+  svgFluxoSaldo(DB.fluxoMensal(6, 6));
+  check('e o fluxo de saldo também', (cfgDo().yaxis || []).some(e => (e.labels || {}).show !== false), true);
+
+  /* NAS TELAS DE VERDADE, não só nas funções isoladas. E a garantia que importa:
+     nenhum gráfico fica sem eixo E sem rótulo ao mesmo tempo — isso seria um
+     gráfico mudo, onde só o toque revela qualquer número. */
+  for (const [tela, montar] of [['painel', () => renderInicio(p29)], ['relatórios', () => renderRelatorios()]]) {
+    zeraFila(); montar();
+    const mudos = Graficos.fila.filter(f =>
+      semEixo(f.opts) && (f.opts.dataLabels || {}).enabled !== true
+      && !['faixa-normal'].includes(f.nome));
+    check(tela + ': nenhum gráfico fica sem eixo e sem número', mudos.map(f => f.nome).join(','), '');
+  }
+  /* A exceção é a faixa de normalidade, e ela é justificada: os dois cartões que a
+     usam escrevem os números no rodapé. Se esse rodapé sair, o gráfico emudece —
+     então é ele que se verifica aqui. */
+  const relFaixa = renderRelatorios();
+  check('a faixa vive sem rótulo porque o cartão traz os números',
+    /Isso é normal para vocês\?[\s\S]{0,2000}chart-foot[\s\S]{0,400}Seu normal/.test(relFaixa), true);
+  check('e o saldo projetado também', (() => {
+    const c = projecaoCard(p29);
+    return /chart-foot/.test(c) && /Hoje/.test(c) && /Fecha em/.test(c);
+  })(), true);
 
   check('o texto do gráfico usa a fonte do app', /\.apx text \{[^}]*font-family: inherit/.test(cssG), true);
   check('e o div encolhe em vez de estourar o cartão',
