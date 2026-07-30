@@ -1,18 +1,40 @@
 /* Finanças Família — sincronização com Supabase via REST (sem SDK)
-   Estratégia: local-first; push de registros dirty, pull incremental por updated_at; last-write-wins. */
+   Estratégia: local-first; push de registros dirty, pull incremental por server_at (carimbo do banco);
+   conflito resolvido por updated_at (last-write-wins). */
 'use strict';
 
-/* Quanto a janela do pull RECUA a cada sincronização.
+/* O MARCADOR DO PULL é `server_at`, não `updated_at`.
 
-   `updated_at` é a hora da edição no aparelho de origem, não a da chegada ao
-   servidor. Um aparelho offline envia, ao voltar, registros com timestamp de horas
-   atrás — e quem já sincronizou nesse intervalo pede `> lastSync` e nunca mais os
-   busca. Sete dias cobrem uma viagem sem sinal com folga.
+   `updated_at` é gravado por quem CRIA o registro, com o relógio do aparelho —
+   e isso o torna inútil como marcador de sincronização. Um aparelho offline envia,
+   ao voltar, registros com timestamp de horas atrás; qualquer outro que já tenha
+   sincronizado nesse intervalo pede `> lastSync` e nunca mais os busca. Aconteceu:
+   um lançamento existia no servidor e não na tela.
 
-   O custo é baixar de novo uma semana de alterações a cada sincronização, e ele é
-   pequeno: o pull é filtrado por família e o merge é por id, então reprocessar não
-   duplica nem sujeita nada. Perder um lançamento custa muito mais. */
-const JANELA_MS = 7 * 24 * 60 * 60 * 1000;
+   `server_at` é escrito pelo BANCO a cada gravação (trigger com
+   clock_timestamp()), e o cliente não tem como influenciá-lo. A pergunta do pull
+   passa a ser "o que chegou aqui depois de X?" — que depende de um relógio só.
+
+   `updated_at` continua existindo e continua sendo do cliente: ele resolve
+   CONFLITO (quem editou por último vence). Os dois respondem perguntas diferentes.
+
+   MARGEM PEQUENA, mesmo assim. Duas gravações concorrentes podem receber
+   `clock_timestamp()` em ordem e commitar fora de ordem — uma linha com carimbo
+   menor fica visível depois de outra maior. Cinco minutos cobrem qualquer
+   transação real com folga enorme, e reprocessar é inofensivo: o merge é por id. */
+const MARGEM_MS = 5 * 60 * 1000;
+
+/* De quanto em quanto tempo o pull relê TUDO, ignorando o marcador.
+
+   É a rede de segurança: se o carimbo falhar por qualquer motivo — uma tabela sem
+   o trigger, um registro migrado à mão —, a divergência se fecha sozinha em no
+   máximo uma semana, sem depender de alguém notar que um lançamento sumiu. */
+const RELEITURA_MS = 7 * 24 * 60 * 60 * 1000;
+
+/* A janela do caminho ANTIGO, usada só enquanto o carimbo do servidor não existe.
+   Sete dias porque ali o marcador é a hora da edição, e um aparelho pode voltar
+   de dias sem sinal — ver o comentário de MARGEM_MS. */
+const JANELA_LARGA_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Tamanho da página do pull. Menor que o limite do PostgREST, para a paginação
 // ser exercitada de verdade em bases grandes em vez de só existir no papel.
@@ -111,6 +133,12 @@ const Sync = {
   ESPERA_APOS_EDICAO: 1200, // agrupa edições seguidas num envio só
   GIRO_MINIMO: 600,        // tempo mínimo do ícone girando, para não piscar
   _timer: null, _debounce: null, _retry: 0, _ultimoErro: null, _girando: false,
+
+  /* O banco tem a coluna server_at? null = ainda não se sabe.
+     Detectado na primeira sincronização; enquanto for false, o pull usa o caminho
+     antigo. Não é persistido de propósito: se o SQL for rodado, basta reabrir o
+     app para ele voltar a tentar. */
+  temServerAt: null,
 
   /* Já baixamos tudo o que a família tem, nesta sessão?
 
@@ -407,64 +435,88 @@ const Sync = {
         }
       }
 
-      /* PULL: incremental por updated_at (inclui deletados para propagar remoções).
+      /* PULL: incremental por server_at (inclui deletados para propagar remoções).
 
-         A JANELA RECUA. `updated_at` é a hora da EDIÇÃO no aparelho de origem, não
-         a da chegada ao servidor — quem grava o campo é quem cria o registro. Um
-         aparelho que ficou offline envia, ao voltar, registros com timestamp de
-         horas atrás; qualquer outro aparelho que já tenha sincronizado nesse
-         intervalo pede `> lastSync` e NUNCA MAIS os busca.
+         O marcador é o carimbo do SERVIDOR, não a hora da edição — ver o comentário
+         de MARGEM_MS no topo. A pergunta passa a ser "o que chegou aqui depois de
+         X?", que depende de um relógio só, em vez de "o que foi editado depois de
+         X?", que dependia do relógio de cada aparelho da família.
 
-         Aconteceu de verdade: um lançamento gravado às 04:43 sumiu da base local
-         de um aparelho cujo lastSync era de 15:00. Estava no servidor e não na
-         tela — o pior tipo de perda, porque é silenciosa.
-
-         Recuar a janela não é gambiarra: reprocessar é inofensivo (o merge é por
-         id, e o próprio bloco abaixo pula o que não mudou), e o custo é baixar de
-         novo alguns dias de alterações. A correção definitiva seria um carimbo do
-         SERVIDOR — uma coluna preenchida por `default now()` —, mas ela exige
-         mexer no esquema de oito tabelas, e a janela cobre o caso real. */
-      /* RECONCILIAÇÃO COMPLETA de tempos em tempos: uma vez por semana o pull
-         ignora o marcador e relê tudo.
-
-         A janela de 7 dias cobre o aparelho que ficou offline alguns dias, mas não
-         um buraco mais antigo — e buraco antigo é o que ninguém descobre, porque o
-         dado simplesmente não está lá para ser procurado. Com a releitura completa,
-         qualquer divergência se fecha sozinha em no máximo uma semana, sem
-         depender de alguém notar.
-
-         O custo é uma sincronização mais pesada a cada sete dias. Para a base de
-         uma família isso são centenas de linhas, não milhares. */
+         RELEITURA COMPLETA periódica como rede de segurança: se o carimbo falhar
+         por qualquer motivo — uma tabela sem o trigger, um registro migrado à mão —,
+         a divergência se fecha sozinha em no máximo uma semana, sem depender de
+         alguém notar que um lançamento sumiu. */
       const ultimoFull = DB.data.meta.lastFull;
       const precisaFull = !ultimoFull
-        || (Date.now() - new Date(ultimoFull).getTime()) > JANELA_MS;
-      const since = (!precisaFull && DB.data.meta.lastSync)
-        ? new Date(new Date(DB.data.meta.lastSync).getTime() - JANELA_MS).toISOString()
-        : '1970-01-01T00:00:00Z';
+        || (Date.now() - new Date(ultimoFull).getTime()) > RELEITURA_MS;
+      /* O marcador guardado é um valor que VEIO DO SERVIDOR (`meta.serverAt`), não
+         uma leitura de relógio local. É isso que elimina a dependência de relógio:
+         mesmo que este aparelho esteja com a hora errada, ele pede a partir de um
+         instante que o próprio banco carimbou.
+
+         `lastSync` continua sendo gravado, mas só para a tela dizer "sincronizado
+         há X" — não manda mais em nada. */
+      /* TRANSIÇÃO SEGURA. `server_at` depende de um SQL que pode não ter sido
+         rodado ainda — num aparelho da família, num banco recém-criado, ou entre o
+         deploy do app e a execução da migração. Pedir por uma coluna inexistente
+         derruba o pull inteiro, e aí o remédio seria pior que a doença.
+
+         Então o campo é DETECTADO: na primeira falha por coluna ausente, o pull
+         cai para `updated_at` com a janela larga — o comportamento anterior, que
+         funciona, só que sem a garantia. Uma vez detectado, vale para a sessão. */
+      let campo = this.temServerAt === false ? 'updated_at' : 'server_at';
+      const marcadorDe = qual => {
+        const recuo = qual === 'server_at' ? MARGEM_MS : JANELA_LARGA_MS;
+        const base = qual === 'server_at' ? DB.data.meta.serverAt : DB.data.meta.lastSync;
+        return (!precisaFull && base)
+          ? new Date(new Date(base).getTime() - recuo).toISOString()
+          : '1970-01-01T00:00:00Z';
+      };
+      let maiorServerAt = DB.data.meta.serverAt || '';
       for (const table of Object.keys(SYNC_TABLES)) {
         /* PAGINADO. Sem isto, uma tabela com mais alterações que o limite trazia só
            a primeira página e o marcador avançava como se tudo tivesse vindo — o
            resto ficava invisível para sempre, pelo mesmo mecanismo. */
         let rows = [];
         try {
-          let cursor = since;
+          let cursor = marcadorDe(campo);
           for (let pagina = 0; pagina < 50; pagina++) {
-            const lote = await this.rest(
-              `${table}?family_id=eq.${fid}&updated_at=gt.${encodeURIComponent(cursor)}`
-              + `&order=updated_at.asc&limit=${PAGINA}`,
-              { method: 'GET' });
+            let lote;
+            try {
+              lote = await this.rest(
+                `${table}?family_id=eq.${fid}&${campo}=gt.${encodeURIComponent(cursor)}`
+                + `&order=${campo}.asc&limit=${PAGINA}`,
+                { method: 'GET' });
+            } catch (erro) {
+              /* Coluna ausente: passa para o caminho antigo e REFAZ esta tabela do
+                 zero, sem recursão — chamar syncAll de novo aqui não funcionaria,
+                 porque o guard de `busy` devolveria null e a sincronização terminaria
+                 sem ter lido nada. As tabelas seguintes já saem pelo caminho antigo,
+                 porque `campo` é reatribuído. */
+              if (campo === 'server_at'
+                  && /server_at|does not exist|schema cache/i.test(erro.message)) {
+                this.temServerAt = false;
+                campo = 'updated_at';
+                cursor = marcadorDe(campo);
+                rows = [];
+                continue;
+              }
+              throw erro;
+            }
             if (!lote || !lote.length) break;
             rows = rows.concat(lote);
             if (lote.length < PAGINA) break;          // última página
-            const ultimo = lote[lote.length - 1].updated_at;
+            const ultimo = lote[lote.length - 1][campo];
             // Sem avanço não há próxima página a pedir: todas as linhas do lote
             // têm o mesmo instante, e insistir repetiria o mesmo pedido para sempre
             if (!ultimo || ultimo === cursor) break;
             cursor = ultimo;
           }
+          if (campo === 'server_at' && rows.length) this.temServerAt = true;
         } catch (e) { falhas.push(e.message); continue; }
         if (!DB.data[table]) DB.data[table] = [];      // mesma proteção do push
         for (const remote of rows || []) {
+          if (remote.server_at && remote.server_at > maiorServerAt) maiorServerAt = remote.server_at;
           const i = DB.data[table].findIndex(r => r.id === remote.id);
           const local = i >= 0 ? DB.data[table][i] : null;
           if (local && local.dirty && local.updated_at > remote.updated_at) continue; // local mais novo
@@ -480,6 +532,12 @@ const Sync = {
       // tabela nunca mais serem buscadas: a próxima consulta já as ignoraria.
       // Leitura completa das oito tabelas: agora dá para confiar no que está aqui
       if (!falhas.length) {
+        /* O MARCADOR é o maior carimbo recebido — um valor que veio do servidor.
+           Guardar o relógio local aqui seria refazer o defeito por outro caminho:
+           a hora desta máquina não tem relação nenhuma com a ordem em que as
+           gravações chegaram ao banco. */
+        if (maiorServerAt) DB.data.meta.serverAt = maiorServerAt;
+        // `lastSync` continua, mas só para a tela dizer "sincronizado há X"
         DB.data.meta.lastSync = DB.now();
         // Só marca a releitura completa quando ela DE FATO aconteceu sem falha —
         // marcar antes adiaria a próxima em uma semana sem ter reconciliado nada

@@ -1,5 +1,10 @@
 # Visão de futuro nas telas
 
+> **Sincronização — leia antes de mexer:** o marcador do pull é `server_at`, um
+> carimbo escrito pelo BANCO. `updated_at` é do cliente e serve só para resolver
+> conflito. Trocar um pelo outro reintroduz perda silenciosa de dados — ver
+> `docs/plano-sync.md`.
+
 Como Painel, Extrato e Relatórios mostram um mês que ainda não chegou.
 
 ## O problema

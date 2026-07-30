@@ -4861,14 +4861,19 @@ check('função is_member definida antes das policies', schema.indexOf('function
   
       /* O SERVIDOR falso guarda um lançamento com timestamp ANTIGO — foi criado num
          aparelho que estava offline e só agora enviou. */
+      /* O CENÁRIO: o registro foi EDITADO às 04:43 num aparelho offline e só
+         CHEGOU ao servidor às 16:00. Com o marcador antigo (`updated_at`) ele caía
+         fora da janela de quem já tinha sincronizado às 15:00 e sumia para sempre.
+         Com o carimbo do servidor ele é recente, porque recente é o que ele é. */
       const ANTIGO = '2026-07-30T04:43:22.352+00:00';
       const RECENTE = '2026-07-30T15:22:32.167+00:00';
+      const CHEGOU_AGORA = '2026-07-30T16:00:00.000+00:00';
       const noServidor = {
         transactions: [
-          { id: 'tx-antigo', family_id: 'fam-1', updated_at: ANTIGO, deleted: false,
+          { id: 'tx-antigo', family_id: 'fam-1', updated_at: ANTIGO, server_at: CHEGOU_AGORA, deleted: false,
             description: 'Aluguel do aparelho offline', amount: 3500, date: '2026-08-10',
             type: 'Despesa', status: 'A Pagar', scope: 'Família', method: 'PIX' },
-          { id: 'tx-recente', family_id: 'fam-1', updated_at: RECENTE, deleted: false,
+          { id: 'tx-recente', family_id: 'fam-1', updated_at: RECENTE, server_at: CHEGOU_AGORA, deleted: false,
             description: 'Energia', amount: 400, date: '2026-08-10',
             type: 'Despesa', status: 'A Pagar', scope: 'Família', method: 'PIX' },
         ],
@@ -4878,15 +4883,16 @@ check('função is_member definida antes das policies', schema.indexOf('function
         const u = String(url);
         if ((opts || {}).method === 'POST') return { ok: true, status: 201, json: async () => [], text: async () => '' };
         const tabela = (u.match(/\/rest\/v1\/([a-z_]+)/) || [])[1];
-        const desde = decodeURIComponent((u.match(/updated_at=gt\.([^&]+)/) || [])[1] || '');
+        // O pull filtra por server_at — o carimbo do banco, não a hora da edição
+        const desde = decodeURIComponent((u.match(/server_at=gt\.([^&]+)/) || [])[1] || '');
         if (tabela === 'transactions') pedidos.push(desde);
-        const linhas = (noServidor[tabela] || []).filter(r => r.updated_at > desde);
+        const linhas = (noServidor[tabela] || []).filter(r => (r.server_at || r.updated_at) > desde);
         return { ok: true, status: 200, json: async () => linhas, text: async () => '' };
       };
   
       // A base local está vazia, e o marcador é POSTERIOR ao registro antigo —
       // exatamente o estado do aparelho que perdeu o aluguel
-      DB.data = { meta: { lastSync: '2026-07-30T15:00:00.000Z' } };
+      DB.data = { meta: { serverAt: '2026-07-30T15:00:00.000Z' } };
       for (const t of ['transactions', 'accounts', 'categories', 'cards', 'goals',
         'goal_entries', 'invoice_status', 'recurrences', 'family_settings']) DB.data[t] = [];
   
@@ -4894,17 +4900,46 @@ check('função is_member definida antes das policies', schema.indexOf('function
       clearTimeout(S._debounce);
   
       const veio = id => (DB.data.transactions || []).some(r => r.id === id);
-      check('a janela do pull recua antes do último marcador',
-        pedidos.length > 0 && pedidos[0] < '2026-07-30T15:00:00.000Z', true);
+      /* O PULL PERGUNTA POR server_at. É a mudança de fundo: "o que chegou aqui
+         depois de X?" depende de um relógio só — o do banco —, enquanto "o que foi
+         editado depois de X?" dependia do relógio de cada aparelho da família. */
+      check('o pull filtra pelo carimbo do servidor', pedidos.length > 0, true);
       check('o registro do aparelho offline é recuperado', veio('tx-antigo'), true);
       check('e o recente continua vindo', veio('tx-recente'), true);
-  
-      /* Sem o recuo, o mesmo cenário perde o registro — é o que prova que a janela
-         está fazendo trabalho, e não só existindo. */
-      const sem = (noServidor.transactions || [])
+
+      /* A PROVA de que o carimbo é o que salva: pela hora da EDIÇÃO esse registro
+         ficaria fora da janela e sumiria; pela hora da CHEGADA, ele entra. */
+      const porEdicao = (noServidor.transactions || [])
         .filter(r => r.updated_at > '2026-07-30T15:00:00.000Z');
-      check('com o marcador cru, o antigo ficaria de fora',
-        sem.some(r => r.id === 'tx-antigo'), false);
+      const porChegada = (noServidor.transactions || [])
+        .filter(r => r.server_at > '2026-07-30T15:00:00.000Z');
+      check('pela hora da edição, o registro ficaria de fora',
+        porEdicao.some(r => r.id === 'tx-antigo'), false);
+      check('pela hora da chegada, ele entra',
+        porChegada.some(r => r.id === 'tx-antigo'), true);
+      // E o marcador guardado é um valor que VEIO do servidor, não o relógio local
+      check('o marcador guardado vem do servidor', DB.data.meta.serverAt, CHEGOU_AGORA);
+      check('e não é uma leitura do relógio desta máquina',
+        DB.data.meta.serverAt === DB.data.meta.lastSync, false);
+      // Detectada a presença do carimbo, a sessão inteira usa o caminho novo
+      check('a presença do carimbo fica registrada', S.temServerAt, true);
+      /* MARGEM DE SEGURANÇA no marcador. Duas gravações concorrentes podem receber
+         clock_timestamp() em ordem e commitar fora de ordem — a linha com carimbo
+         menor aparece depois da maior. Sem recuo, ela cairia no mesmo buraco que
+         esta correção existe para fechar. */
+      /* Precisa de `lastFull` recente: sem ele o pull relê tudo do epoch e a margem
+         não aparece no pedido. O primeiro cenário deste bloco não tinha, e o teste
+         media o marcador da releitura completa em vez do incremental. */
+      pedidos.length = 0;
+      DB.data.meta.serverAt = '2026-07-30T15:00:00.000Z';
+      DB.data.meta.lastFull = new Date().toISOString();
+      await S.syncAll(false).catch(() => {});
+      clearTimeout(S._debounce);
+      const pedidoFeito = pedidos[0];
+      check('o pull recua antes do marcador guardado',
+        pedidoFeito < '2026-07-30T15:00:00.000Z', true);
+      check('mas só alguns minutos, não dias',
+        new Date('2026-07-30T15:00:00.000Z') - new Date(pedidoFeito) <= 10 * 60 * 1000, true);
   
       /* PAGINAÇÃO: sem ela, uma tabela com mais alterações que o limite trazia só a
          primeira página e o marcador avançava como se tudo tivesse vindo — o resto
@@ -4913,6 +4948,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
       for (let i = 0; i < 2300; i++) {
         const ms = new Date('2026-07-25T00:00:00.000Z').getTime() + i * 1000;
         muitos.push({ id: 'tx-' + i, family_id: 'fam-1', updated_at: new Date(ms).toISOString(),
+          server_at: new Date(ms).toISOString(),
           deleted: false, description: 'Linha ' + i, amount: 10, date: '2026-08-01',
           type: 'Despesa', status: 'A Pagar', scope: 'Família', method: 'PIX' });
       }
@@ -4921,11 +4957,12 @@ check('função is_member definida antes das policies', schema.indexOf('function
         const u = String(url);
         if ((opts || {}).method === 'POST') return { ok: true, status: 201, json: async () => [], text: async () => '' };
         const tabela = (u.match(/\/rest\/v1\/([a-z_]+)/) || [])[1];
-        const desde = decodeURIComponent((u.match(/updated_at=gt\.([^&]+)/) || [])[1] || '');
+        const desde = decodeURIComponent((u.match(/server_at=gt\.([^&]+)/) || [])[1] || '');
         const limite = Number((u.match(/limit=(\d+)/) || [])[1] || 1000);
         const linhas = (noServidor[tabela] || [])
-          .filter(r => r.updated_at > desde)
-          .sort((a, b) => String(a.updated_at).localeCompare(String(b.updated_at)))
+          .filter(r => (r.server_at || r.updated_at) > desde)
+          .sort((a, b) => String(a.server_at || a.updated_at)
+            .localeCompare(String(b.server_at || b.updated_at)))
           .slice(0, limite);
         return { ok: true, status: 200, json: async () => linhas, text: async () => '' };
       };
@@ -4943,6 +4980,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
          Uma vez por semana o pull relê tudo, e a divergência se fecha sozinha. */
       noServidor.transactions = [
         { id: 'tx-muito-antigo', family_id: 'fam-1', updated_at: '2026-01-05T10:00:00.000Z',
+          server_at: '2026-01-05T10:00:00.000Z',
           deleted: false, description: 'Some há meses', amount: 99, date: '2026-08-15',
           type: 'Despesa', status: 'A Pagar', scope: 'Família', method: 'PIX' },
       ];
@@ -4952,13 +4990,13 @@ check('função is_member definida antes das policies', schema.indexOf('function
           'goal_entries', 'invoice_status', 'recurrences', 'family_settings']) DB.data[t] = [];
       };
       // Releitura recente: a janela de 7 dias não alcança um registro de janeiro
-      zerar({ lastSync: '2026-07-30T15:00:00.000Z', lastFull: '2026-07-29T00:00:00.000Z' });
+      zerar({ serverAt: '2026-07-30T15:00:00.000Z', lastFull: '2026-07-29T00:00:00.000Z' });
       await S.syncAll(false).catch(() => {});
       clearTimeout(S._debounce);
       check('com releitura recente, o registro antigo fica fora da janela',
         (DB.data.transactions || []).length, 0);
       // Releitura vencida: o pull relê tudo e o registro volta
-      zerar({ lastSync: '2026-07-30T15:00:00.000Z', lastFull: '2026-06-01T00:00:00.000Z' });
+      zerar({ serverAt: '2026-07-30T15:00:00.000Z', lastFull: '2026-06-01T00:00:00.000Z' });
       await S.syncAll(false).catch(() => {});
       clearTimeout(S._debounce);
       check('com a releitura vencida, ele é recuperado',
@@ -4966,11 +5004,51 @@ check('função is_member definida antes das policies', schema.indexOf('function
       check('e a releitura fica registrada para não repetir toda hora',
         !!DB.data.meta.lastFull && DB.data.meta.lastFull > '2026-06-01', true);
       // Sem marcador nenhum (instalação nova, ou app atualizado) também relê tudo
-      zerar({ lastSync: '2026-07-30T15:00:00.000Z' });
+      zerar({ serverAt: '2026-07-30T15:00:00.000Z' });
       await S.syncAll(false).catch(() => {});
       clearTimeout(S._debounce);
       check('aparelho sem releitura registrada lê tudo',
         (DB.data.transactions || []).some(r => r.id === 'tx-muito-antigo'), true);
+
+      /* ---- TRANSIÇÃO: banco AINDA SEM a coluna server_at ----
+         O carimbo depende de um SQL que pode não ter sido rodado — num banco
+         recém-criado, ou entre publicar o app e executar a migração. Pedir por uma
+         coluna inexistente derrubaria o pull inteiro, e aí o remédio seria pior que
+         a doença: o app pararia de sincronizar por causa da correção. */
+      const pedidosSemColuna = [];
+      global.fetch = async (url, opts) => {
+        const u = String(url);
+        if ((opts || {}).method === 'POST') return { ok: true, status: 201, json: async () => [], text: async () => '' };
+        pedidosSemColuna.push(u);
+        if (/server_at/.test(u)) {
+          return { ok: false, status: 400, text: async () => JSON.stringify({
+            code: '42703', message: 'column transactions.server_at does not exist' }) };
+        }
+        const tabela = (u.match(/\/rest\/v1\/([a-z_]+)/) || [])[1];
+        const desde = decodeURIComponent((u.match(/updated_at=gt\.([^&]+)/) || [])[1] || '');
+        const linhas = tabela === 'transactions'
+          ? [{ id: 'tx-legado', family_id: 'fam-1', updated_at: '2026-07-30T12:00:00.000Z',
+            deleted: false, description: 'Sem carimbo', amount: 55, date: '2026-08-01',
+            type: 'Despesa', status: 'A Pagar', scope: 'Família', method: 'PIX' }]
+            .filter(r => r.updated_at > desde)
+          : [];
+        return { ok: true, status: 200, json: async () => linhas, text: async () => '' };
+      };
+      S.temServerAt = null;
+      zerar({});
+      await S.syncAll(false).catch(() => {});
+      clearTimeout(S._debounce);
+      check('sem a coluna, o pull não estoura', S.temServerAt, false);
+      check('ele tenta o carimbo primeiro',
+        pedidosSemColuna.some(u => /server_at=gt/.test(u)), true);
+      check('e cai para o caminho antigo',
+        pedidosSemColuna.some(u => /updated_at=gt/.test(u)), true);
+      check('trazendo os dados assim mesmo',
+        (DB.data.transactions || []).some(r => r.id === 'tx-legado'), true);
+      // Uma vez detectado, não insiste a cada tabela — seria um pedido perdido por tabela
+      const tentativas = pedidosSemColuna.filter(u => /server_at=gt/.test(u)).length;
+      check('e não repete a tentativa em todas as tabelas', tentativas <= 2, true);
+      S.temServerAt = null;
     } catch (e) {
       console.log(` FALHA | pull: ${e.message}`); fail++;
     } finally {

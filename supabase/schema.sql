@@ -210,6 +210,72 @@ alter table transactions add column if not exists adjustment boolean not null de
 alter table transactions add column if not exists to_account uuid;
 alter table transactions add column if not exists tags jsonb not null default '[]'::jsonb;
 
+-- ---------------------------------------------------------------------------
+-- CARIMBO DO SERVIDOR (server_at) — o marcador confiável para sincronizar
+--
+-- `updated_at` é gravado por QUEM CRIA o registro, com o relógio do aparelho.
+-- Isso o torna inútil como marcador de sincronização: um aparelho que ficou
+-- offline envia, ao voltar, registros com timestamp de horas atrás, e qualquer
+-- outro aparelho que já sincronizou nesse intervalo pede `> lastSync` e nunca
+-- mais os busca. Aconteceu: um lançamento existia no servidor e não na tela.
+--
+-- `server_at` é escrito SEMPRE pelo banco, no instante da escrita. O cliente não
+-- tem como influenciá-lo — o trigger sobrescreve o que vier. Assim o pull passa
+-- a perguntar "o que chegou aqui depois de X?", que é a pergunta certa, em vez
+-- de "o que foi editado depois de X?", que depende de nove relógios diferentes.
+--
+-- `updated_at` continua existindo e continua sendo do cliente: ele resolve
+-- CONFLITO (quem editou por último vence), que é outro problema. Os dois campos
+-- respondem perguntas diferentes e por isso convivem.
+--
+-- clock_timestamp(), não now(): now() devolve o início da TRANSAÇÃO, então duas
+-- gravações concorrentes podem receber o mesmo instante e sair na ordem errada.
+-- clock_timestamp() é o relógio real no momento da linha.
+-- ---------------------------------------------------------------------------
+
+do $
+declare t text;
+begin
+  foreach t in array array['accounts','cards','categories','transactions','recurrences',
+                           'goals','goal_entries','invoice_status','family_settings']
+  loop
+    execute format(
+      'alter table %I add column if not exists server_at timestamptz not null default clock_timestamp()', t);
+    -- O pull filtra por família e ordena por server_at: sem o índice, cada
+    -- sincronização varreria a tabela inteira.
+    execute format(
+      'create index if not exists %I on %I (family_id, server_at)', t || '_family_server_idx', t);
+  end loop;
+end $;
+
+create or replace function marca_server_at()
+returns trigger language plpgsql as $
+begin
+  -- Sobrescreve sempre, inclusive no update: o cliente pode mandar qualquer
+  -- coisa nesta coluna e ela é ignorada. É isso que torna o campo confiável.
+  new.server_at := clock_timestamp();
+  return new;
+end $;
+
+do $
+declare t text;
+begin
+  foreach t in array array['accounts','cards','categories','transactions','recurrences',
+                           'goals','goal_entries','invoice_status','family_settings']
+  loop
+    execute format('drop trigger if exists trg_server_at on %I', t);
+    execute format(
+      'create trigger trg_server_at before insert or update on %I
+         for each row execute function marca_server_at()', t);
+  end loop;
+end $;
+
+-- Conferência do carimbo:
+--   select tablename, indexname from pg_indexes
+--    where schemaname='public' and indexname like '%_family_server_idx' order by tablename;
+--   select event_object_table, trigger_name from information_schema.triggers
+--    where trigger_name = 'trg_server_at' order by event_object_table;
+
 -- Inscrições de push (um registro por navegador/aparelho)
 create table if not exists push_subscriptions (
   id uuid primary key,
