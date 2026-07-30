@@ -94,10 +94,45 @@ A alternativa (dois painéis empilhados) foi tentada e recusada três vezes por
 quem usa. O formato combinado foi decisão consciente de quem usa o app, com a
 mitigação acima.
 
+## O CSS da biblioteca — o erro que a comparação com o Metronic revelou
+
+Na primeira entrega eu vendorizei só o `apexcharts.min.js`. **Errado: o `.min.js`
+não injeta o CSS da biblioteca.** Verificado procurando as assinaturas do
+stylesheet dentro do arquivo — nenhuma está lá.
+
+Sem `apexcharts.css` a dica de valor perde a caixa e, pior, perde o
+`.apexcharts-canvas { position: relative }` que a ancora: a dica é
+`position: absolute` e voaria para o canto da página em vez de ficar sobre o
+gráfico. O Metronic traz esse CSS embutido no `plugins.bundle.css`, e foi
+comparando com ele que o erro apareceu.
+
+`vendor/apexcharts.css` (13 KB) entra **antes** do nosso `styles.css`, para o
+nosso poder sobrepor, e vai para o cache do service worker junto.
+
+## Acabamento medido contra o Metronic
+
+| | Metronic | nosso, depois |
+|---|---|---|
+| grade | tracejada, `strokeDashArray: 4` | igual |
+| degradê de área | `.4 → 0`, stops `[0, 80, 100]` | igual |
+| anel do marcador | 3px | igual |
+| dica | clara (`--bs-body-bg`) | **escura**, como as demais dicas do app |
+| eixo Y | escondido na maioria dos widgets | **visível** — aqui se leem valores |
+
+A grade tracejada foi a mudança de maior efeito: linha sólida tem presença de
+dado, e a grade é régua. Isso obrigou a inverter a referência — renda, média e
+mediana passaram a ser **sólidas coloridas**, porque antes a grade era sólida e a
+referência tracejada, e as duas competiam pela mesma leitura. Agora cinza
+tracejado é régua e colorido sólido é limite, e cada uma diz o que é sem legenda.
+
+As duas últimas linhas da tabela são divergências deliberadas: a dica escura
+segue a linguagem que o app já tinha, e esconder o eixo Y ficaria bonito mas
+tiraria justamente o número que se vem conferir num app de finanças.
+
 ## Custos aceitos
 
-**Peso: 627 KB → 1.147 KB (+82%).** A lib é 527 KB minificada (136 KB em gzip),
-licença MIT. É **vendorizada em `vendor/`, não de CDN**: o app é offline-first, e
+**Peso: 627 KB → 1.160 KB (+85%).** A lib é 527 KB de JS mais 13 KB de CSS
+(136 KB em gzip no JS), licença MIT. É **vendorizada em `vendor/`, não de CDN**: o app é offline-first, e
 um `<script src="https://…">` deixaria todos os gráficos em branco justamente
 quando o app mais tem valor. Entra no `sw.js`, então é download único por
 aparelho e continua funcionando sem rede.

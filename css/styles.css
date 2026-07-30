@@ -992,8 +992,9 @@ body {
    faltava. Gráfico espremido entre textos parece encaixado às pressas; gráfico
    generoso parece desenhado. */
 .res-graf { height: 130px; }
-/* O sparkline sangra até a borda de baixo do cartão, herdando o raio dele: é o
-   que separa um gráfico desenhado de um gráfico encaixotado. */
+/* O sparkline sangra até a borda de baixo do cartão. Não precisa de raio próprio
+   no SVG (é o que o Metronic faz no .card-rounded-bottom) porque `.res` já tem
+   overflow: hidden com o raio do cartão, e isso recorta o filho. */
 .res-graf .apx { margin-top: 0; }
 
 /* Conteúdo da dica do saldo diário. O balão em si é da biblioteca (posição,

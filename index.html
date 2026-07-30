@@ -14,6 +14,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!-- CSS da propria ApexCharts. O .min.js NAO o injeta: sem ele a dica de valor
+     perde a caixa e o ancoramento (.apexcharts-canvas{position:relative}) e voa
+     para o canto da pagina. Vem ANTES do nosso, para o nosso poder sobrepor. -->
+<link rel="stylesheet" href="vendor/apexcharts.css?v=80">
 <link rel="stylesheet" href="css/styles.css?v=80">
 </head>
 <body>

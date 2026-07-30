@@ -7,6 +7,7 @@ const SHELL = [
   './',
   'index.html',
   'css/styles.css?v=' + VERSAO,
+  'vendor/apexcharts.css?v=' + VERSAO,
   'vendor/apexcharts.min.js?v=' + VERSAO,
   'js/config.js?v=' + VERSAO,
   'js/icons.js?v=' + VERSAO,

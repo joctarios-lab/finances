@@ -318,7 +318,7 @@ function svgBars(series, refLine, opts = {}) {
   const refs = [];
   if (media > 0) {
     refs.push({
-      y: media, borderColor: Graficos.cor.cinza, strokeDashArray: 4,
+      y: media, borderColor: Graficos.cor.cinza, strokeDashArray: 0, strokeWidth: 1,
       label: {
         text: 'média ' + fmtShort(media).replace('R$', '').trim(),
         position: 'right', textAnchor: 'end', borderWidth: 0,
@@ -328,7 +328,7 @@ function svgBars(series, refLine, opts = {}) {
   }
   if (refLine > 0) {
     refs.push({
-      y: refLine, borderColor: Graficos.cor.verde, strokeDashArray: 4,
+      y: refLine, borderColor: Graficos.cor.verde, strokeDashArray: 0, strokeWidth: 2,
       label: {
         text: 'renda ' + fmtShort(refLine).replace('R$', '').trim(),
         position: 'right', textAnchor: 'end', borderWidth: 0,
@@ -570,7 +570,7 @@ function svgFluxoSaldo(meses, opts = {}) {
     fill: {
       type: ['solid', 'solid', 'gradient'],
       opacity: [1, 1, 0.35],
-      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 90, 100] },
+      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0, stops: [0, 80, 100] },
     },
     markers: { size: 0, hover: { size: 6 } },
     yaxis: [
@@ -643,7 +643,7 @@ function svgLinhaFaixa(serie, opts = {}) {
         style: { background: 'transparent', color: Graficos.cor.tintaFraca, fontSize: '10px', fontWeight: 600 },
       },
     });
-    anot.push({ y: med, borderColor: Graficos.cor.cinza, strokeDashArray: 3 });
+    anot.push({ y: med, borderColor: Graficos.cor.cinza, strokeDashArray: 0, strokeWidth: 1 });
   }
 
   // Marcador só nas pontas e no extremo: um ponto em cada mês vira ruído
@@ -668,13 +668,13 @@ function svgLinhaFaixa(serie, opts = {}) {
     stroke: { curve: 'smooth', width: 3 },
     fill: {
       type: 'gradient',
-      gradient: { shadeIntensity: 1, opacityFrom: 0.32, opacityTo: 0.02, stops: [0, 95, 100] },
+      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0, stops: [0, 80, 100] },
     },
     markers: {
       size: 0, hover: { size: 6 },
       discrete: destaque.map(i => ({
         seriesIndex: 0, dataPointIndex: i, size: 5,
-        fillColor: '#ffffff', strokeColor: Graficos.cor.azul, strokeWidth: 2,
+        fillColor: '#ffffff', strokeColor: Graficos.cor.azul, strokeWidth: 3,
       })),
     },
     annotations: { yaxis: anot },
@@ -865,14 +865,14 @@ function svgBurnup(period, refLimit) {
     stroke: { curve: ['smooth', 'straight'], width: [3, 2], dashArray: [0, 5] },
     fill: {
       type: ['gradient', 'solid'], opacity: [1, 0],
-      gradient: { shadeIntensity: 1, opacityFrom: 0.3, opacityTo: 0.02, stops: [0, 95, 100] },
+      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0, stops: [0, 80, 100] },
     },
     markers: {
       size: 0, hover: { size: 6 },
       // Só o ponto de hoje: ele é a resposta do gráfico
       discrete: decorridos > 0 ? [{
         seriesIndex: 0, dataPointIndex: decorridos - 1, size: 5,
-        fillColor: '#ffffff', strokeColor: corLinha, strokeWidth: 2,
+        fillColor: '#ffffff', strokeColor: corLinha, strokeWidth: 3,
       }] : [],
     },
     legend: refLimit > 0
@@ -1481,7 +1481,7 @@ function sparkArea(vals, dias, porDia) {
        que faz o gráfico assentar em vez de flutuar. */
     fill: {
       type: 'gradient',
-      gradient: { shadeIntensity: 1, opacityFrom: 0.28, opacityTo: 0, stops: [0, 100] },
+      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0, stops: [0, 80, 100] },
     },
     dataLabels: { enabled: false },
     markers: { size: 0, hover: { size: 5 } },

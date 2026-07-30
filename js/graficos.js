@@ -94,8 +94,16 @@ const Graficos = {
         ...(extra.chart || {}),
       },
       dataLabels: { enabled: false },
+      /* Grade TRACEJADA e cinza-claro. Linha sólida tem presença de dado; a grade
+         é régua, e régua tem de recuar. Medido contra o Metronic: era a diferença
+         que mais fazia os gráficos deles respirarem em comparação aos nossos.
+
+         Isso libera o SÓLIDO COLORIDO para as linhas de referência (renda, média,
+         trilha ideal): antes a grade era sólida e a referência tracejada, e as
+         duas competiam pela mesma leitura. Agora cinza tracejado é régua, colorido
+         sólido é limite — e cada uma diz o que é sem legenda. */
       grid: {
-        borderColor: this.cor.linha, strokeDashArray: 0,
+        borderColor: this.cor.linha, strokeDashArray: 4,
         xaxis: { lines: { show: false } },
         yaxis: { lines: { show: true } },
         padding: { left: 6, right: 6, top: 0, bottom: 0 },

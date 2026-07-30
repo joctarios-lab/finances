@@ -776,8 +776,14 @@ try {
   const refs = cBar.annotations.yaxis;
   check('barras: a renda vira linha de referência', refs.some(r => r.y === 300), true);
   check('e a média do período também', refs.some(r => /^média/.test(r.label.text)), true);
-  check('as duas são tracejadas, para não competir com o dado',
-    refs.every(r => r.strokeDashArray > 0), true);
+  /* Cinza tracejado é régua, colorido sólido é limite. A grade ficou tracejada
+     (é o que faz ela recuar), então a referência precisou virar sólida colorida —
+     senão as duas contariam a mesma coisa e nenhuma diria o que é. */
+  check('a referência é sólida, já que a grade é tracejada',
+    refs.every(r => r.strokeDashArray === 0), true);
+  check('e a grade é que recua, tracejada', cBar.grid.strokeDashArray, 4);
+  check('a referência não vira série',
+    cBar.series.length === 1 && refs.length === 2, true);
   check('barras sem dado não quebra', svgBars([], 0).includes('Sem dados'), true);
   check('escala arredonda para número redondo', niceCeil(2340), 2500);
   check('escala funciona com valores pequenos', niceCeil(37), 40);
@@ -4226,6 +4232,24 @@ console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
   check('e nenhum nome se repete', new Set(fila.map(f => f.nome)).size, 8);
   check('todos reservam altura', fila.every(f => f.opts.chart.height > 0), true);
   // O CSS que costura a lib ao tema
+  /* O CSS DA PRÓPRIA BIBLIOTECA. O apexcharts.min.js NÃO o injeta — descobri isso
+     comparando com o Metronic, que o traz no plugins.bundle.css. Sem ele a dica de
+     valor perde a caixa e, pior, perde o `.apexcharts-canvas{position:relative}`
+     que a ancora: ela é `position:absolute` e voaria para o canto da página. */
+  const idxG = fs.readFileSync(BASE + 'index.html', 'utf8');
+  check('o CSS da biblioteca está no repositório',
+    fs.existsSync(BASE + 'vendor/apexcharts.css'), true);
+  check('e é carregado', idxG.includes('vendor/apexcharts.css'), true);
+  const libCss = fs.readFileSync(BASE + 'vendor/apexcharts.css', 'utf8');
+  check('ele traz a âncora da dica', /\.apexcharts-canvas \{[^}]*position: relative/.test(libCss), true);
+  // Antes do nosso, senão nossas regras perderiam para as dele por ordem
+  check('e vem antes do nosso, para o nosso poder sobrepor',
+    idxG.indexOf('vendor/apexcharts.css') < idxG.indexOf('css/styles.css'), true);
+  const swG = fs.readFileSync(BASE + 'sw.js', 'utf8');
+  check('o service worker guarda os dois arquivos da lib',
+    swG.includes("'vendor/apexcharts.css?v=' + VERSAO")
+    && swG.includes("'vendor/apexcharts.min.js?v=' + VERSAO"), true);
+
   check('o texto do gráfico usa a fonte do app', /\.apx text \{[^}]*font-family: inherit/.test(cssG), true);
   check('e o div encolhe em vez de estourar o cartão',
     /\.apx, \.apx > div \{[^}]*min-width: 0/.test(cssG), true);
