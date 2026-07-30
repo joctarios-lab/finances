@@ -1089,6 +1089,33 @@ function svgBurnup(period, refLimit) {
   }), alt, 'burnup');
 }
 
+/* O rodapé do "Disponível para usar": o que já está planejado para o MÊS SEGUINTE.
+
+   Antes esta linha dizia "além disso, R$ X vencem depois deste mês" — um total sem
+   teto, que somava o próximo mês, o seguinte e o IPVA de janeiro num número só.
+   Ele não batia com nada: quem ia conferir nas Saídas de agosto via outro valor, e
+   não tinha como descobrir por quê.
+
+   Agora é o resumo de UM mês — o próximo —, com entra, sai e resultado. Cada
+   número aqui casa exatamente com o que o Painel e o Extrato de agosto mostram, o
+   que é o ponto: um número que não se confere em outra tela não serve para decidir
+   nada. O horizonte deixou de precisar ser explicado porque virou "o mês seguinte".
+
+   Some quando não há nada previsto: uma linha dizendo "R$ 0,00 previstos" ocuparia
+   espaço para não informar nada. */
+function resumoDoProximoMes() {
+  const prox = DB.monthPeriod(new Date(), 1);
+  const pv = DB.previsaoDoMes(prox);
+  if (!pv.itens.length) return '';
+  const mes = prox.start.toLocaleDateString('pt-BR', { month: 'long' });
+  const sobra = pv.resultado;
+  return `<p class="hero-depois">Em <b>${esc(mes)}</b>, já há <b>${fmt(pv.sai)}</b> a pagar${
+    pv.entra > 0.005 ? ` e <b>${fmt(pv.entra)}</b> a receber` : ''} — ${
+    pv.entra > 0.005
+      ? `${sobra >= 0 ? 'sobrariam' : 'faltariam'} <b>${fmt(Math.abs(sobra))}</b>`
+      : 'ainda sem receita prevista'}. <span class="muted">${pv.itens.length} item(ns) já conhecido(s); gasto variável não entra.</span></p>`;
+}
+
 /* O que já se sabe sobre um mês que ainda não chegou.
 
    Um número sozinho não dá para decidir nada: quem vê "vai sobrar R$ 800" precisa
@@ -1451,8 +1478,7 @@ function renderInicio(period) {
           guardadoReserva > 0.005 ? ` <i>reserva ${fmtShort(guardadoReserva)}</i>` : ''}</span><b>${fmt(guardado)}</b></div>` : ''}
         <div class="hc-l hc-total"><span>= Livre para usar</span><b>${fmt(available)}</b></div>
       </div>
-      ${DB.committedDepois() > 0.005
-        ? `<p class="hero-depois">Além disso, <b>${fmt(DB.committedDepois())}</b> vencem depois deste mês.</p>` : ''}
+      ${resumoDoProximoMes()}
     </div>`;
 
   return `

@@ -315,6 +315,131 @@ try {
     comAmbos.itens.find(i => i.titulo === 'Aluguel FUT').origem, 'prevista');
   DB.remove('recurrences', contratoDup);
 
+  /* ---- Contrato criado A PARTIR de um lançamento que já existe ----
+     Encontrado nos dados reais: das 11 recorrências cadastradas, NENHUMA tinha
+     transação com `recurrence_id` apontando para ela. O vínculo só nasce no que o
+     gerador cria — o lançamento que deu origem ao contrato nunca o recebe.
+
+     Com o contrato começando na mesma data desse lançamento, o mês contava o
+     compromisso DUAS vezes: uma como "lançado", outra como "prevista". No caso
+     real eram R$ 780 de uma parcela de carro, e foi assim que a frase do painel
+     deixou de bater com as saídas do mês seguinte. */
+  const ctaSemVinc = DB.all('accounts')[0];
+  const dataDup = DB.somarDiasISO(DB.inicioISO(DB.monthPeriod(new Date(), 1)), 19);
+  const lancSemVinculo = DB.upsert('transactions', {
+    description: 'Parcela SV', amount: 780, date: dataDup, type: 'Despesa', status: 'A Pagar',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: ctaSemVinc.id,
+  });
+  const contratoSemVinc = DB.upsert('recurrences', {
+    description: 'Parcela SV', valor: 780, valor_tipo: 'fixo', type: 'Despesa',
+    periodicidade: 'mensal', dia: 20, inicio: dataDup, fim_tipo: 'sempre',
+    status: 'ativa', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto',
+    account_id: ctaSemVinc.id,
+  });
+  check('o lançamento de origem não tem vínculo com o contrato',
+    !!DB.get('transactions', lancSemVinculo).recurrence_id, false);
+  const mesDup = DB.previsaoDoMes(DB.monthPeriod(new Date(), 1));
+  check('mesmo sem vínculo, o compromisso conta uma vez só',
+    mesDup.itens.filter(i => i.titulo === 'Parcela SV').length, 1);
+  check('e como lançamento, porque o que existe manda',
+    mesDup.itens.find(i => i.titulo === 'Parcela SV').origem, 'lançado');
+  check('as saídas do mês não são infladas',
+    mesDup.itens.filter(i => i.titulo === 'Parcela SV')
+      .reduce((s, i) => s + i.valor, 0), 780);
+
+  /* A dedupe olha o mês inteiro, não só o que está "A Pagar". Quem paga a conta
+     adiantado é o caso mais comum de todos, e um filtro por status faria a
+     previsão somar por cima de um pagamento que já aconteceu. */
+  const idJaPago = DB.upsert('transactions', {
+    description: 'Parcela SV', amount: 780,
+    date: DB.somarDiasISO(DB.inicioISO(DB.monthPeriod(new Date(), 3)), 19),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Boleto', account_id: ctaSemVinc.id,
+  });
+  const mesPagoAntes = DB.previsaoDoMes(DB.monthPeriod(new Date(), 3));
+  check('conta paga adiantado não é projetada de novo',
+    mesPagoAntes.itens.filter(i => i.titulo === 'Parcela SV').length, 0);
+  check('e o mês não conta esse valor duas vezes',
+    mesPagoAntes.itens.some(i => i.titulo === 'Parcela SV'), false);
+  DB.remove('transactions', idJaPago);
+  check('removido o pagamento, a previsão volta',
+    DB.previsaoDoMes(DB.monthPeriod(new Date(), 3)).itens
+      .filter(i => i.titulo === 'Parcela SV').length, 1);
+
+  /* Mas a dedupe por NOME não pode esconder repetição LEGÍTIMA: o mesmo contrato
+     no mês seguinte é outro compromisso, e some-lo uma vez só por mês é o ponto. */
+  const mesSeguinte = DB.previsaoDoMes(DB.monthPeriod(new Date(), 2));
+  check('no mês seguinte a repetição continua aparecendo',
+    mesSeguinte.itens.filter(i => i.titulo === 'Parcela SV').length, 1);
+  check('agora como previsão, porque ali não há lançamento',
+    mesSeguinte.itens.find(i => i.titulo === 'Parcela SV').origem, 'prevista');
+  /* E a IDENTIDADE que o usuário viu quebrada: a frase "vencem depois deste mês"
+     tem de bater com as saídas do próximo mês quando não há nada além dele. */
+  /* A IDENTIDADE que estava quebrada na tela: a frase "vencem depois deste mês"
+     tem de fechar com a soma das saídas dos meses que ela cobre.
+
+     Ela ignorava contrato e custo fixo, então ficava MENOR que as saídas do mês
+     seguinte — um aluguel que se repete aparecia lá e sumia dela. Agora conta as
+     três coisas: lançado, fatura e o que ainda vai virar lançamento.
+
+     O HORIZONTE é o que torna o número somável: uma recorrência "até eu cancelar"
+     não tem total finito, e "tudo daqui pra frente" seria um número que não existe.
+     Seis meses é o mesmo horizonte que as telas navegam. */
+  const saidas6 = [1, 2, 3, 4, 5, 6]
+    .map(i => DB.previsaoDoMes(DB.monthPeriod(new Date(), i)).sai)
+    .reduce((a, b) => a + b, 0);
+  check('a frase do painel fecha com as saídas dos 6 meses seguintes',
+    Math.round(DB.committedDepois() * 100) / 100, Math.round(saidas6 * 100) / 100);
+  check('e nunca fica menor que as saídas do próximo mês só',
+    DB.committedDepois() >= DB.previsaoDoMes(DB.monthPeriod(new Date(), 1)).sai - 0.005, true);
+  /* O RODAPÉ DO HERO é o resumo de UM mês — o próximo —, não um total sem teto.
+     Antes ele somava agosto, setembro e o IPVA de janeiro num número só, que não
+     batia com nada: quem fosse conferir nas Saídas de agosto via outro valor.
+     Cada número dele tem de casar com o que o Painel de agosto mostra. */
+  const paHoje = renderInicio(DB.monthPeriod(new Date()));
+  const pvProx = DB.previsaoDoMes(DB.monthPeriod(new Date(), 1));
+  const nomeProx = DB.monthPeriod(new Date(), 1).start
+    .toLocaleDateString('pt-BR', { month: 'long' });
+  check('o rodapé resume o mês seguinte pelo nome', paHoje.includes(nomeProx), true);
+  check('e traz o total a pagar dele', paHoje.includes(fmt(pvProx.sai)), true);
+  check('que é o mesmo número das saídas daquele mês',
+    pvProx.sai, DB.previsaoDoMes(DB.monthPeriod(new Date(), 1)).sai);
+  check('diz quantos itens já são conhecidos',
+    paHoje.includes(`${pvProx.itens.length} item(ns)`), true);
+  // E avisa o que NÃO está na conta, senão o número parece uma promessa
+  check('e avisa que gasto variável não entra',
+    paHoje.includes('gasto variável não entra'), true);
+  check('o total sem teto saiu da tela',
+    /vencem depois deste mês/.test(paHoje), false);
+  /* Sem nada previsto a linha some: "Em agosto já há R$ 0,00 a pagar" ocuparia
+     espaço para não informar nada, e ainda soaria como afirmação — quando o certo
+     é "ainda não há nada cadastrado". */
+  const guardaTx = DB.data.transactions;
+  const guardaRec = DB.data.recurrences;
+  const guardaCards = DB.data.cards;
+  DB.data.transactions = DB.data.transactions.filter(t => !t.recurring
+    && String(t.date) < DB.fimISO(DB.monthPeriod(new Date())));
+  DB.data.recurrences = [];
+  DB.data.cards = [];
+  check('sem nada previsto, a linha não aparece',
+    /hero-depois/.test(renderInicio(DB.monthPeriod(new Date()))), false);
+  DB.data.transactions = guardaTx;
+  DB.data.recurrences = guardaRec;
+  DB.data.cards = guardaCards;
+  check('e volta quando há previsão',
+    /hero-depois/.test(renderInicio(DB.monthPeriod(new Date()))), true);
+  /* E o horizonte tem de LIMITAR de verdade. Com uma recorrência sem prazo, alargar
+     a janela sempre aumenta o total — é isso que prova que o corte existe; sem ele,
+     "tudo daqui pra frente" não teria soma finita. */
+  const em6 = DB.committedDepois(undefined, 6);
+  const em12 = DB.committedDepois(undefined, 12);
+  check('dobrar o horizonte aumenta o total, porque a recorrência não tem prazo',
+    em12 > em6 + 0.005, true);
+  check('e o padrão é o de 6 meses, o mesmo que as telas navegam',
+    Math.round(DB.committedDepois() * 100), Math.round(em6 * 100));
+  DB.remove('recurrences', contratoSemVinc);
+  DB.remove('transactions', lancSemVinculo);
+
   // O que as telas somam por cima do que existe exclui o já lançado e a fatura
   const soPrevisto = DB.previstosNaoLancados(DB.monthPeriod(new Date(), 2));
   check('a lista para as telas traz só o que não existe ainda',

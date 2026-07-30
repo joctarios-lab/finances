@@ -902,12 +902,36 @@ const DB = {
 
   // O que vence DEPOIS do horizonte — sai do comprometido, mas não do mundo:
   // aparece à parte para ninguém ser pego de surpresa
-  committedDepois(ateISO) {
+  /* O que vence DEPOIS do ciclo atual, dentro do horizonte de projeção.
+
+     O HORIZONTE não é detalhe: uma recorrência "até eu cancelar" não tem soma
+     finita, então "tudo daqui pra frente" é um número que não existe. Seis meses é
+     o mesmo horizonte que as telas navegam — o que o app afirma conhecer.
+
+     Conta três coisas: lançamentos "A Pagar", faturas em aberto e o que ainda vai
+     virar lançamento (contrato e custo fixo). A terceira faltava, e por isso o
+     número da frase do painel ficava MENOR que as saídas do mês seguinte: um
+     aluguel que se repete aparecia lá e sumia daqui. */
+  committedDepois(ateISO, mesesHorizonte = 6) {
     const limite = ateISO || this.fimISO(this.monthPeriod(new Date()));
     let total = this.all('transactions')
       .filter(t => t.status === 'A Pagar' && !t.card_id && this.isExpense(t) && !this.isNeutral(t)
         && String(t.date) >= limite)
       .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
+    /* Contrato e custo fixo que ainda não viraram lançamento, ciclo a ciclo.
+
+       Quem limita o horizonte é o próprio laço: `previstosNaoLancados(p)` só
+       devolve itens de dentro do ciclo `p`, então um teto por data seria uma
+       segunda trava que nunca dispara — código que parece proteger e não protege é
+       pior que código nenhum, porque quem lê confia nele. */
+    for (let i = 0; i <= mesesHorizonte; i++) {
+      for (const it of this.previstosNaoLancados(this.monthPeriod(new Date(), i))) {
+        if (it.receita) continue;              // aqui só o que SAI
+        if (String(it.data) < limite) continue;
+        total += Number(it.valor) || 0;
+      }
+    }
     /* Faturas também. Sem isto, tirar a fatura do comprometido do mês a faria
        desaparecer das DUAS contas — e uma fatura invisível é o pior lugar
        possível para uma dívida existir. */
@@ -1327,6 +1351,20 @@ const DB = {
     /* Lançado com data futura: parcelas de cartão e contas agendadas. Vem antes
        das recorrências porque é o que já existe — e o que existe manda. */
     const materializado = new Set();
+    /* Nomes já presentes no mês, em QUALQUER situação — pago inclusive. É a
+       segunda chave de deduplicação, e ela existe porque a primeira falha no caso
+       mais comum: o contrato criado a partir de um lançamento que já existe.
+
+       Medido nos dados reais: das 11 recorrências cadastradas, NENHUMA tinha
+       transação com `recurrence_id` apontando para ela — o vínculo só nasce no que
+       o gerador cria, e o lançamento que deu origem ao contrato não o recebe. Com
+       o contrato começando na mesma data do lançamento (o Fiat, dia 20/08), o mês
+       contava os R$ 780 duas vezes e a previsão saía inflada. */
+    const nomesNoMes = new Set(
+      this.all('transactions')
+        .filter(t => !this.isNeutral(t) && String(t.date) >= de && String(t.date) < ate)
+        .map(t => String(t.description).trim().toLowerCase()),
+    );
     for (const t of this.all('transactions')) {
       if (t.status !== 'A Pagar' || this.isNeutral(t)) continue;
       const d = String(t.date);
@@ -1344,8 +1382,13 @@ const DB = {
         if (data >= ate) break;
         if (this.recorrenciaEncerrada(r, data, n)) break;
         if (data < de) continue;
-        // Já materializada: contar de novo somaria o mesmo compromisso duas vezes
+        /* Já materializada: contar de novo somaria o mesmo compromisso duas vezes.
+           Duas chaves, porque uma só não basta: pelo VÍNCULO (o que o gerador
+           criou) e pelo NOME (o lançamento que deu origem ao contrato, que nunca
+           recebe vínculo). Sem a segunda, criar o contrato a partir de uma conta já
+           lançada fazia o mês contá-la duas vezes. */
         if (materializado.has(`${r.id}|${data}`)) continue;
+        if (nomesNoMes.has(String(r.description).trim().toLowerCase())) continue;
         add(r.description, this.valorDaRecorrencia(r), r.type === 'Receita', data, 'prevista', r);
       }
     }
