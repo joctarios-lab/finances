@@ -1,15 +1,17 @@
 /* Finanças da Família — service worker: app shell offline-first */
 'use strict';
 
-const VERSAO = '78';
+const VERSAO = '80';
 const CACHE = 'financas-' + VERSAO;
 const SHELL = [
   './',
   'index.html',
   'css/styles.css?v=' + VERSAO,
+  'vendor/apexcharts.min.js?v=' + VERSAO,
   'js/config.js?v=' + VERSAO,
   'js/icons.js?v=' + VERSAO,
   'js/ui.js?v=' + VERSAO,
+  'js/graficos.js?v=' + VERSAO,
   'js/ofx.js?v=' + VERSAO,
   'js/db.js?v=' + VERSAO,
   'js/sync.js?v=' + VERSAO,

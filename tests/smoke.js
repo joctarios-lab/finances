@@ -62,6 +62,23 @@ global.Notification = undefined;
 // ---- carrega os módulos reais ----
 eval(fs.readFileSync(BASE + 'js/db.js', 'utf8') + '; global.DB = DB;');
 eval(fs.readFileSync(BASE + 'js/ofx.js', 'utf8') + '; global.OFX = OFX;');
+/* Graficos vem antes do app, que o usa ao montar cada tela. Sem ApexCharts no
+   ambiente headless, montar() é no-op de propósito: o que continua sob teste é a
+   configuração que cada gráfico produz — a matemática do dinheiro — não o pixel. */
+eval(fs.readFileSync(BASE + 'js/graficos.js', 'utf8') + '; global.Graficos = Graficos;');
+
+/* Com ApexCharts o gráfico não é mais HTML inspecionável: a função devolve um
+   <div> vazio e enfileira a CONFIGURAÇÃO. Então é a configuração que os testes
+   olham daqui em diante, e isso é um ganho — antes eles conferiam coordenada de
+   path, que é detalhe de como o desenho foi feito; agora conferem a intenção:
+   qual forma para qual dado, qual série, qual escala, qual cor. */
+global.cfgDo = html => { const f = Graficos.fila; return (f[f.length - 1] || {}).opts; };
+global.cfgsDe = html => Graficos.fila.map(f => f.opts);
+global.zeraFila = () => { Graficos.fila = []; };
+// Achata a série numa lista de números, aceitando [n] ou [{x,y}]
+// Nomes dos gráficos na fila, na ordem em que aparecem na tela
+global.nomesDe = () => Graficos.fila.map(f => f.nome);
+global.pontosDe = s => (s.data || []).map(p => (p && typeof p === 'object' ? p.y : p));
 const appSrc = fs.readFileSync(BASE + 'js/app.js', 'utf8').split('/* ---------- Boot ---------- */')[0];
 eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
@@ -70,9 +87,9 @@ eval(appSrc + `; Object.assign(global, {
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
-  serieDeSaldo, sparkArea, ligarGrafico, caminhoSuave,
+  serieDeSaldo, sparkArea,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  Rel, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, fatiaEm, ligarComposicao,
+  Rel, relProximosMeses, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -403,9 +420,11 @@ try {
   check('e esconde os campos de envelope', /id="wrap-envelope" hidden/.test(modal()), true);
   openCategoryEditor(alimento, null);
   check('editor de envelope com filhas não oferece virar filha', modal().includes('não pode virar subcategoria'), true);
+  Graficos.vivos.clear();
   openEnvelopeDetail(alimento.id);
-  check('detalhe do envelope abre com o ranking', els['#sheet'].innerHTML.includes('rank-row'), true);
-  check('e nomeia as subcategorias gastas', els['#sheet'].innerHTML.includes('Mercado'), true);
+  const cEnv = Graficos.montadas().slice(-1)[0].opts;
+  check('detalhe do envelope abre com o ranking', cEnv.plotOptions.bar.horizontal, true);
+  check('e nomeia as subcategorias gastas', cEnv.xaxis.categories.includes('Mercado'), true);
 
   /* Migração de quem já usava o app: a base antiga é plana e o seed não roda de
      novo, então as subcategorias precisam poder ser preenchidas depois. */
@@ -736,32 +755,91 @@ try {
 
 console.log('\n=== Gráficos ===');
 try {
+  /* Cada gráfico devolve o div e enfileira a config; é a config que se testa.
+     zeraFila() antes de cada um para o cfgDo() não pegar sobra do anterior. */
+  zeraFila();
   const barras = svgBars([{ label: 'jan', value: 100 }, { label: 'fev', value: 250, hint: '#009ef7' }], 300);
-  /* O texto saiu de dentro do SVG: com viewBox de 760 num cartão de 307px a
-     escala é 0,40, e um rótulo de 11px sairia a 4,4px na tela. Agora o SVG
-     guarda só a geometria e o texto vem no overlay, no tamanho real. */
-  check('barras: geometria no SVG, texto fora', barras.startsWith('<div class="g-wrap') && barras.includes('ch-grid'), true);
-  check('e o rótulo do mês aparece no overlay', /class="g-t g-t-rot[^"]*"[^>]*>fev</.test(barras), true);
-  check('sem texto dentro do SVG escalado', /<svg[\s\S]*?<text/.test(barras), false);
-  check('o eixo também saiu para o overlay', barras.includes('g-t-eixo'), true);
-  check('barras: linha de renda desenhada', barras.includes('ch-ref-line'), true);
+  const cBar = cfgDo(barras);
+  check('barras: o div é o ponto de montagem', /^<div class="apx[^"]*" id="apx-\d+"/.test(barras), true);
+  check('e reserva altura para o cartão não pular', /min-height:\d+px/.test(barras), true);
+  check('barras: é gráfico de coluna', cBar.chart.type, 'bar');
+  check('e os valores viraram a série', pontosDe(cBar.series[0]).join(','), '100,250');
+  check('e os meses viraram as categorias', cBar.xaxis.categories.join(','), 'jan,fev');
+  /* Ponta arredondada, pé reto: o topo é o dado e ganha o arredondamento; a base
+     encosta no zero, e arredondá-la faria a coluna parecer flutuar. */
+  check('a ponta da coluna é arredondada', cBar.plotOptions.bar.borderRadius > 0, true);
+  check('mas só a ponta, não o pé', cBar.plotOptions.bar.borderRadiusApplication, 'end');
+  // Marca fina: coluna que preenche a faixa lê como bloco, não como valor
+  check('a coluna não preenche a faixa', parseInt(cBar.plotOptions.bar.columnWidth, 10) <= 60, true);
+  /* Renda e média entram como REFERÊNCIA (linha anotada), não como série: como
+     série elas entrariam na legenda e no tooltip como se fossem gasto medido. */
+  const refs = cBar.annotations.yaxis;
+  check('barras: a renda vira linha de referência', refs.some(r => r.y === 300), true);
+  check('e a média do período também', refs.some(r => /^média/.test(r.label.text)), true);
+  check('as duas são tracejadas, para não competir com o dado',
+    refs.every(r => r.strokeDashArray > 0), true);
+  check('barras sem dado não quebra', svgBars([], 0).includes('Sem dados'), true);
   check('escala arredonda para número redondo', niceCeil(2340), 2500);
   check('escala funciona com valores pequenos', niceCeil(37), 40);
 
+  zeraFila();
   const d = svgDonut([{ label: 'Casa', value: 60, color: '#009ef7' }, { label: 'Comida', value: 40, color: '#50cd89' }], 100);
-  check('donut: dois arcos desenhados', (d.match(/<circle/g) || []).length, 3);   // 2 fatias + trilho
-  check('donut: mostra o total no centro', d.includes('dn-total'), true);
-  check('donut: legenda acessível por title', d.includes('Casa: '), true);
+  const cDon = cfgDo(d);
+  check('donut: é rosca, não pizza', cDon.chart.type, 'donut');
+  check('e tem as duas fatias', cDon.series.join(','), '60,40');
+  check('com os nomes na legenda', cDon.labels.join(','), 'Casa,Comida');
+  check('e a cor que veio da fatia', cDon.colors[0], '#009ef7');
+  // O buraco do meio é onde mora o total — não é enfeite
+  check('donut: o total aparece no centro', cDon.plotOptions.pie.donut.labels.total.show, true);
+  check('e está sempre visível, não só no hover',
+    cDon.plotOptions.pie.donut.labels.total.showAlways, true);
+  check('e é o total que foi passado, não a soma das fatias',
+    cDon.plotOptions.pie.donut.labels.total.formatter().includes('100'), true);
+  // 2px na cor da superfície: separa as fatias sem desenhar contorno
+  check('donut: fatias separadas por vão, não por borda',
+    cDon.stroke.width === 2 && cDon.stroke.colors[0] === '#ffffff', true);
+  check('a dica mostra valor e percentual', cDon.tooltip.y.formatter(60, { seriesIndex: 0 }).includes('60%'), true);
+  check('donut vazio não quebra', svgDonut([], 0).includes('Sem gastos'), true);
 
+  zeraFila();
   const r = svgRanking([['Mercado', 800], ['Uber', 200]]);
-  check('ranking: barras proporcionais', r.includes('width:100.0%') && r.includes('rank-row'), true);
-  check('ranking: mostra percentual do total', r.includes('80%'), true);
+  const cRk = cfgDo(r);
+  check('ranking: barra horizontal', cRk.plotOptions.bar.horizontal, true);
+  check('e os valores na ordem que chegaram', pontosDe(cRk.series[0]).join(','), '800,200');
+  check('com os nomes no eixo', cRk.xaxis.categories.join(','), 'Mercado,Uber');
+  // Cor por linha: em ranking cada item é uma identidade, não uma série única
+  check('ranking: cada linha tem a própria cor', cRk.plotOptions.bar.distributed, true);
+  check('e o valor vem direto na ponta da barra', cRk.dataLabels.enabled, true);
+  check('a dica traz o percentual do total', cRk.tooltip.y.formatter(800).includes('80%'), true);
   check('ranking vazio não quebra', svgRanking([]).includes('Sem dados'), true);
 
+  zeraFila();
   const burn = svgBurnup(p, 3000);
-  check('burn-up: área e linha desenhadas', burn.includes('gArea') && burn.includes('<path'), true);
-  check('painel usa o donut novo', renderInicio(p).includes('donut-svg'), true);
-  check('relatórios trazem os gráficos novos', renderRelatorios().includes('rank-row') && renderRelatorios().includes('donut-svg'), true);
+  const cBu = cfgDo(burn);
+  check('burn-up: gasto acumulado é área', cBu.series[0].type, 'area');
+  check('e a trilha ideal é linha', cBu.series[1].type, 'line');
+  // Tracejada: a trilha é referência calculada, não gasto que aconteceu
+  check('a trilha é tracejada, o gasto não', cBu.stroke.dashArray.join(','), '0,5');
+  /* Depois de hoje a série é null, não zero: zero afirmaria "não gastou nada no
+     dia 20" num mês que ainda não chegou lá. */
+  check('burn-up: o futuro do mês é null, não zero',
+    cBu.series[0].data.slice(-1)[0] === null || DB.elapsedDays(p) >= DB.periodDays(p), true);
+  check('sem orçamento, não desenha trilha nem legenda',
+    (() => { zeraFila(); svgBurnup(p, 0); const c = cfgDo(); return c.series.length === 1 && c.legend.show === false; })(), true);
+
+  zeraFila();
+  const inicio = renderInicio(p);
+  check('painel monta a rosca via ApexCharts',
+    cfgsDe().some(c => c.chart.type === 'donut'), true);
+  zeraFila();
+  const rels = renderRelatorios();
+  const tiposRel = cfgsDe().map(c => c.chart.type);
+  check('relatórios trazem rosca, colunas e área',
+    tiposRel.includes('donut') && tiposRel.includes('bar') && tiposRel.includes('area'), true);
+  /* Todo gráfico herda a fonte do app. É o detalhe que mais delata gráfico de
+     biblioteca colado num layout: sem isso o ApexCharts usa Helvetica. */
+  check('e todos herdam a fonte do app',
+    cfgsDe().length > 0 && cfgsDe().every(c => c.chart.fontFamily === 'inherit'), true);
 } catch (e) { console.log(` FALHA | gráficos: ${e.message}`); fail++; }
 
 console.log('\n=== Sincronização automática ===');
@@ -1181,7 +1259,18 @@ try {
   check('etiqueta atravessa categorias', porTag.lazer, 600);
   const rel = renderRelatorios(DB.monthPeriod(new Date()));
   check('relatório mostra o total por etiqueta', rel.includes('Por etiqueta'), true);
-  check('e leva aos lançamentos dela', rel.includes('data-ver-tag="viagem"'), true);
+  /* Clicar na barra leva aos lançamentos da etiqueta. Vem por evento do gráfico,
+     não por <button> no rótulo: o eixo do ApexCharts é SVG e não aceita HTML. */
+  const cTag = Graficos.fila.find(f => f.nome === 'ranking'
+    && f.opts.xaxis.categories.includes('#viagem'));
+  check('e leva aos lançamentos dela', !!cTag, true);
+  check('o clique na barra é ligado a uma ação',
+    typeof cTag.opts.chart.events.dataPointSelection, 'function');
+  // O "#" é enfeite do rótulo: o filtro tem de receber a etiqueta sem ele
+  const iTag = cTag.opts.xaxis.categories.indexOf('#viagem');
+  cTag.opts.chart.events.dataPointSelection(null, null, { dataPointIndex: iTag });
+  check('e filtra o extrato pela etiqueta, sem o #', state.filtros.tags.join(','), 'viagem');
+  state.filtros = filtrosVazios();
 
   // OFX: uma etiqueta para o lote, não um campo por linha
   const ap2 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
@@ -1395,9 +1484,10 @@ try {
   const extMes = renderExtrato(p2);
   state.filtros.de = dias[meio + 1]; state.filtros.ate = dias[dias.length - 1];
   const extMetade = renderExtrato(p2);
-  // O saldo anterior agora é o ponto de partida da linha, escrito no pé dela
-  // O saldo anterior é o ponto de partida da série, guardado no próprio gráfico
-  const antes = html => (html.match(/res-graf[^>]*data-antes="([^"]+)"/) || [])[1];
+  /* O saldo anterior é o ponto de partida da série — não uma marca no desenho:
+     sparkline em constante é decoração. Ele vive na descrição do gráfico, que é
+     também como quem usa leitor de tela recebe as duas pontas da curva. */
+  const antes = html => (html.match(/aria-label="Saldo dia a dia[^"]*, de ([\d.,]+) a/) || [])[1];
   check('o saldo anterior muda com o recorte', antes(extMes) !== antes(extMetade), true);
   check('e é o saldo real na data de início do recorte',
     antes(extMetade), fmtSemMoeda(DB.saldoNaData(null, dias[meio + 1])));
@@ -1513,7 +1603,7 @@ try {
   const recolhido = renderExtrato(p2);
   check('recolher esconde só a explicação', recolhido.includes('card res fechado'), true);
   check('o saldo e o gráfico continuam à vista',
-    recolhido.includes('spark-area') && recolhido.includes('res-rot'), true);
+    recolhido.includes('data-g="saldo-dia"') && recolhido.includes('res-rot'), true);
   /* O cabeçalho inteiro é o botão. Um botão próprio embaixo custava 36px de
      altura para dizer o que a seta já diz — e altura aqui é lista a menos. */
   check('o cabeçalho é o que abre a explicação',
@@ -1591,40 +1681,55 @@ try {
   const cssF0 = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
   check('o resumo virou cartão com gráfico', cabecalho.includes('class="card res'), true);
   check('nem voltou o grid de quatro cartões', cabecalho.includes('stat-2x2'), false);
-  check('o saldo tem área de evolução', cabecalho.includes('class="spark-area"'), true);
+  check('o saldo tem área de evolução', cabecalho.includes('data-g="saldo-dia"'), true);
   /* Um gráfico só, generoso — não três espremidos. A elegância do Mixed Widget
      10 vem da contenção: título e valor no mesmo corpo, o gráfico levando o
      peso visual. Era o inverso disto que fazia a versão anterior parecer
      amadora: número de 22px e gráfico de 40px. */
-  check('há um gráfico só, não três', (cabecalho.match(/<svg/g) || []).length, 1);
+  check('há um gráfico só, não três',
+    (cabecalho.match(/data-g="saldo-dia"/g) || []).length, 1);
   check('e ele é generoso, não um filete',
     /\.res-graf \{[^}]*height: 130px/.test(cssF0), true);
   check('o valor não é maior que o título',
     /\.res-rot > b \{[^}]*font-size: 16px/.test(cssF0) && /\.res-dir > b \{[^}]*font-size: 16px/.test(cssF0), true);
-  /* Saldo anterior NÃO virou gráfico: é uma constante, e sparkline em constante
-     é decoração. Ele é o ponto de partida da série. */
-  check('o saldo anterior é o ponto de partida', /data-antes="[\d.,]+"/.test(cabecalho), true);
 
   /* Entrou e saiu ganharam linha própria: espremidos ao lado da data eles
      quebravam e empurravam o valor da direita para baixo em tela estreita. */
   check('entrou e saiu têm linha só deles', cabecalho.includes('class="res-fluxo"'), true);
   check('e ficam fora da linha do saldo',
     cabecalho.indexOf('res-fluxo') > cabecalho.indexOf('res-dir'), true);
-  // Tooltip com os três números do dia
-  check('o gráfico leva o movimento de cada dia',
-    /data-ent="[\d.,]*"/.test(cabecalho) && /data-sai="[\d.,]*"/.test(cabecalho), true);
-  check('e tem onde desenhar o balão', cabecalho.includes('id="res-tip"'), true);
-  const apTip = fs.readFileSync(BASE + 'js/app.js', 'utf8');
-  // Fatia até a PRÓXIMA função, não até ligarPilulas: entre as duas passou a
-  // existir ligarComposicao, e ela tem tooltip próprio com regras diferentes
-  const corpoTip = apTip.slice(apTip.indexOf('function ligarGrafico'), apTip.indexOf('function ligarComposicao'));
+
+  /* A DICA DO GRÁFICO QUE O EXTRATO REALMENTE MONTA. Testar sparkArea com os
+     argumentos na mão não prova nada sobre a tela: sem os dias e o movimento, a
+     dica cairia para índice numérico e perderia o entrou/saiu, e o teste direto
+     continuaria passando. */
+  zeraFila();
+  renderExtrato(pD);
+  const cReal = Graficos.fila.find(f => f.nome === 'saldo-dia');
+  check('o extrato entrega os dias e o movimento ao gráfico', !!cReal, true);
+  const balReal = cReal.opts.tooltip.custom({ dataPointIndex: 1 });
+  check('e a dica nomeia um dia de verdade, não um índice',
+    /\d{2} de |\d{2}\/|jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/.test(balReal), true);
+  check('e mostra o saldo daquele dia', balReal.includes('saldo'), true);
+
+  /* A DICA responde três coisas de uma vez. A nativa mostraria só a série
+     desenhada, que é o saldo — e saldo sem o movimento do dia não explica o
+     degrau. Por isso ela é própria, e é o conteúdo dela que se testa. */
+  zeraFila();
+  sparkArea([1000, 1200, 900], ['2026-07-01', '2026-07-02', '2026-07-03'],
+    { '2026-07-02': { entrou: 200, saiu: 0 }, '2026-07-03': { entrou: 0, saiu: 300 } });
+  const cSp = cfgDo();
+  check('o gráfico leva o movimento de cada dia', typeof cSp.tooltip.custom, 'function');
+  const bal = cSp.tooltip.custom({ dataPointIndex: 1 });
   check('o balão mostra saldo, entrou e saiu',
-    ["linha('saldo'", "linha('entrou'", "linha('saiu'"].every(x => corpoTip.includes(x)), true);
-  /* Preso no alto e correndo só na horizontal: no celular o dedo está sobre a
-     linha, e um balão que segue os dois eixos nasce debaixo do próprio dedo. */
-  check('o balão não segue o dedo na vertical',
-    corpoTip.includes("tip.style.left") && !corpoTip.includes('tip.style.top'), true);
-  check('e não vaza do cartão', corpoTip.includes('Math.min(r.width - larg - 6'), true);
+    bal.includes('saldo') && bal.includes('entrou') && bal.includes(fmtSemMoeda(200)), true);
+  check('e nomeia o dia por extenso', /jul/.test(bal), true);
+  // Linha só quando há movimento: "saiu R$ 0" é ruído, não informação
+  check('dia sem saída não mostra linha de saída', bal.includes('saiu'), false);
+  check('e o dia com saída mostra', cSp.tooltip.custom({ dataPointIndex: 2 }).includes('saiu'), true);
+  /* Sparkline: sem eixo, sem grade, sangrando na borda. É o que separa um gráfico
+     desenhado de um gráfico encaixotado (card-body p-0 do Metronic). */
+  check('é sparkline, sem eixos nem grade', cSp.chart.sparkline.enabled, true);
   check('a variação vem com seta além da cor', /res-selo (ok|ruim)"><i class="pt pt-(up|dn)/.test(cabecalho), true);
   check('e diz o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(cabecalho), true);
 
@@ -1636,14 +1741,24 @@ try {
      valor frouxo em corpo grande. Tabular só onde há colunas a alinhar. */
   check('o número grande não usa tabular-nums',
     /\.res-rot b \{[^}]*tabular-nums/.test(cssF), false);
-  // Traço de 2px que não engorda quando o SVG é esticado na largura
-  check('a linha não engorda ao esticar',
-    /\.spark-linha \{[^}]*vector-effect: non-scaling-stroke/.test(cssF), true);
   /* Degradê que apaga para baixo, como nos widgets do Metronic: lavagem chapada
-     vira bloco e briga com a linha. A opacidade máxima fica em 20%. */
-  check('a área usa degradê, não bloco chapado', /\.spark-fill \{ fill: url\(#grad-saldo\)/.test(cssF), true);
-  check('e o degradê apaga até o transparente',
-    /stop-opacity="\.2"[\s\S]*?stop-opacity="0"/.test(apF), true);
+     vira bloco e briga com a linha. */
+  check('a área usa degradê, não bloco chapado', cSp.fill.type, 'gradient');
+  check('e o degradê apaga até o transparente', cSp.fill.gradient.opacityTo, 0);
+  check('a linha é curva, não poligonal', cSp.stroke.curve, 'smooth');
+  /* Escala pelo intervalo dos dados, não do zero: com saldo de R$ 14 mil, ancorar
+     no zero achataria a linha num traço reto e a variação sumiria. É o padrão do
+     sparkline — não há yaxis forçando o zero. */
+  check('a escala não é forçada ao zero', cSp.yaxis === undefined, true);
+  // A régua do zero só quando a série de fato cruza: senão é tinta sem dado
+  zeraFila();
+  sparkArea([500, -200], ['2026-07-01', '2026-07-02'], {});
+  check('série que cruza o zero ganha a régua', cfgDo().annotations.yaxis.length, 1);
+  zeraFila();
+  sparkArea([500, 800], ['2026-07-01', '2026-07-02'], {});
+  check('e série sempre positiva não ganha', !cfgDo().annotations.yaxis, true);
+  check('duas medidas já desenham', sparkArea([1, 2], ['a', 'b'], {}).includes('apx'), true);
+  check('uma medida só não desenha nada', sparkArea([1], ['a'], {}), '');
   /* O gráfico sangra até a borda e herda o raio do cartão — é o que separa um
      gráfico desenhado de um gráfico encaixotado (card-p-0 + rounded-bottom). */
   check('o cartão zera o padding para o gráfico encostar',
@@ -1667,49 +1782,11 @@ try {
   // Conciliação conta no saldo, como em saldoNaData — senão as pontas divergem
   check('a série segue as mesmas regras do saldo', corpoSerie.includes("t.status !== 'Pago'"), true);
 
-  // Um único dia de recorte não pode gerar SVG quebrado
-  check('série de um dia não desenha área', sparkArea([500]), '');
-  check('duas medidas já desenham', sparkArea([500, 600]).includes('spark-linha'), true);
-  // Régua do zero só quando a série realmente cruza o zero
-  check('série toda positiva não desenha o zero', sparkArea([100, 200]).includes('spark-zero'), false);
-  check('série que cruza o zero ganha a régua', sparkArea([-100, 200]).includes('spark-zero'), true);
-  // Série sem variação nenhuma (dias parados) não pode dividir por zero
-  check('série parada não quebra', sparkArea([500, 500, 500]).includes('spark-linha'), true);
-
-  /* ---- Linha suavizada ----
-     A trava dos pontos de controle não e capricho: sem ela a Bézier ultrapassa
-     os dados entre dois dias, e num gráfico de saldo isso desenha o dinheiro
-     caindo abaixo do que realmente caiu. Suavizar arredonda o caminho; não pode
-     inventar valor que não existiu. */
-  check('a linha virou curva', sparkArea([100, 300, 200]).includes(' C'), true);
-  const pico = caminhoSuave([[0, 50], [100, 10], [200, 50]]);
-  const ys = [...pico.matchAll(/[\d.]+ ([\d.]+)/g)].map(m => Number(m[1]));
-  check('nenhum controle passa acima do ponto mais alto', Math.min(...ys) >= 10, true);
-  check('nem abaixo do mais baixo', Math.max(...ys) <= 50, true);
-  // Um vale fundo entre dois picos é onde a curva livre estouraria
-  const vale = caminhoSuave([[0, 10], [50, 10], [100, 90], [150, 10], [200, 10]]);
-  const ysVale = [...vale.matchAll(/[\d.]+ ([\d.]+)/g)].map(m => Number(m[1]));
-  check('vale fundo não faz a curva estourar', Math.max(...ysVale) <= 90 && Math.min(...ysVale) >= 10, true);
-  check('dois pontos ainda desenham', caminhoSuave([[0, 0], [10, 10]]).startsWith('M0.0 0.0 C'), true);
-  check('um ponto só não desenha nada', caminhoSuave([[0, 0]]), '');
-
-  /* A prova de verdade: amostrar a própria curva. Checar ponto de controle testa
-     o mecanismo; amostrar testa a propriedade — que a curva desenhada nunca
-     mostra um saldo que não existiu em dia nenhum. */
-  const zigue = [[0, 60], [75, 20], [150, 80], [225, 15], [300, 55]];
-  const segmentos = [...caminhoSuave(zigue).matchAll(/C([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+)/g)];
-  let estouro = 0;
-  segmentos.forEach((m, i) => {
-    const [, , c1y, , c2y, , py] = [null, ...m.slice(1).map(Number)];
-    const y0 = zigue[i][1];
-    const baixo = Math.min(y0, py), alto = Math.max(y0, py);
-    for (let t = 0; t <= 1; t += 0.02) {
-      const u = 1 - t;
-      const y = u * u * u * y0 + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * py;
-      estouro = Math.max(estouro, baixo - y, y - alto);
-    }
-  });
-  check('a curva amostrada nunca sai da faixa dos dados', estouro <= 0.001, true);
+  /* Suavização: a curva nunca pode mostrar um saldo que não existiu em dia
+     nenhum. Antes isso era geometria nossa — Catmull-Rom com controle travado —
+     e cada mudança pedia amostrar a Bézier para provar que ela não estourava a
+     faixa dos dados. Agora é a curva "smooth" da biblioteca, e o que resta
+     verificar é que pedimos curva e não poligonal (feito acima). */
   check('KPIs do painel também', !/kpi-value[^"]*">\$\{fmtShort\(/.test(apF), true);
   check('e o hero do painel', /<span>Em contas<\/span><b>\$\{fmt\(saldo\)\}/.test(apF), true);
 
@@ -1764,7 +1841,7 @@ try {
   // Na tela
   state.filtros = { ...filtrosVazios(), contas: [cM] };
   const tela = renderExtrato(mesAtual);
-  check('o extrato mostra o saldo anterior', /data-antes="[\d.,]+"/.test(tela), true);
+  check('o extrato mostra o saldo anterior', /aria-label="Saldo dia a dia[^"]*, de [\d.,]+ a/.test(tela), true);
   check('com o valor que veio do mês passado', tela.includes(fmtSemMoeda(1000)), true);
   check('e o saldo do mês fechando', tela.includes(fmtSemMoeda(700)), true);
 
@@ -1804,7 +1881,7 @@ try {
   check('a visão geral também tem saldo anterior', typeof geral, 'number');
   check('e o geral inclui esta conta', geral !== 0 || somaContas === 0, true);
   const telaGeral = renderExtrato(mesAtual);
-  check('a visão geral mostra o saldo anterior', /data-antes="[\d.,]+"/.test(telaGeral), true);
+  check('a visão geral mostra o saldo anterior', /aria-label="Saldo dia a dia[^"]*, de [\d.,]+ a/.test(telaGeral), true);
   check('e explica o que sobrou ou faltou', /Sobrou <b|Faltou <b/.test(telaGeral), true);
 
   for (const t of DB.all('transactions').filter(t => /passado$|atual$|futuro$/.test(t.description))) DB.remove('transactions', t.id);
@@ -2354,13 +2431,27 @@ console.log('\n=== Nome do lançamento nunca é cortado ===');
     return m ? m[1] : '';
   };
   // Classes que carregam texto que identifica o lançamento ou a categoria
-  for (const sel of ['.tx-name', '.tx-meta', '.ofx-main b', '.legend-name', '.rank-name']) {
+  for (const sel of ['.tx-name', '.tx-meta', '.ofx-main b', '.legend-name']) {
     const r = regra(sel);
     check(`${sel}: existe no CSS`, r.length > 0, true);
     check(`${sel}: não corta com reticências`, /text-overflow/.test(r), false);
     check(`${sel}: pode quebrar linha`, /nowrap/.test(r), false);
     check(`${sel}: quebra palavra sem espaço`, /overflow-wrap:\s*anywhere/.test(r), true);
   }
+  /* O nome no eixo do gráfico corre o MESMO risco, por outro mecanismo: o
+     ApexCharts trunca no maxWidth. Devolver array do formatter é como a lib
+     desenha várias linhas — é a versão SVG de "quebra em vez de cortar". */
+  check('nome curto no eixo fica em uma linha', quebrarRotulo('Uber'), 'Uber');
+  const quebrado = quebrarRotulo('Serviços e Taxas do Banco');
+  check('nome longo quebra em linhas, não em reticências', Array.isArray(quebrado), true);
+  check('em duas linhas no máximo, senão o eixo domina', quebrado.length <= 2, true);
+  check('e nenhuma palavra se perde na quebra', quebrado.join(' '), 'Serviços e Taxas do Banco');
+  check('nada de reticências', quebrado.join('').includes('…'), false);
+  // Uma palavra só, longa, transborda inteira: nome comprido é melhor que irreconhecível
+  check('palavra sem espaço vai inteira', quebrarRotulo('Supercalifragilistico'), 'Supercalifragilistico');
+  check('e o ranking usa essa quebra no eixo',
+    (() => { zeraFila(); svgRanking([['Serviços e Taxas do Banco', 10]]);
+      return cfgDo().yaxis.labels.formatter === quebrarRotulo; })(), true);
   // O valor não pode encolher agora que o nome ocupa mais espaço
   check('.tx-amount não é espremido', /flex:\s*none/.test(regra('.tx-amount')), true);
 
@@ -3720,10 +3811,12 @@ try {
     anterior = i;
   }
   check('as seis perguntas aparecem na ordem da explicação', foraDeOrdem, '');
+  /* Cada gráfico se identifica pelo que É no data-g do div, não pela classe de
+     um SVG desenhado à mão — e é assim que se confere qual está em qual lugar. */
   check('abre com a frase, não com números soltos',
-    rel.indexOf('rel-frase') < rel.indexOf('g-cascata'), true);
-  check('a cascata mostra o caminho do dinheiro', rel.includes('g-cascata'), true);
-  check('e a faixa de normalidade aparece', rel.includes('g-faixa-svg'), true);
+    rel.indexOf('rel-frase') < rel.indexOf('data-g="cascata"'), true);
+  check('a cascata mostra o caminho do dinheiro', rel.includes('data-g="cascata"'), true);
+  check('e a faixa de normalidade aparece', rel.includes('data-g="faixa-normal"'), true);
 
   /* Mediana e desvio mediano, não média: uma compra grande num mês puxa a média
      e infla o desvio, e aí NADA parece anormal depois. */
@@ -3755,39 +3848,47 @@ try {
   check('e para baixo também', DB.anormalidade(700, regular).rotulo.includes('abaixo'), true);
 
   // A cascata soma: cada bloco começa onde o anterior parou
-  const casc = svgCascata([
+  zeraFila();
+  svgCascata([
     { rot: 'Entrou', valor: 1000, tipo: 'entra' },
     { rot: 'Saiu', valor: 400, tipo: 'sai' },
     { rot: 'Sobrou', valor: 0, tipo: 'total' },
   ]);
-  check('a cascata desenha um bloco por passo', (casc.match(/<rect/g) || []).length, 3);
-  check('com conector entre eles', casc.includes('g-liga'), true);
-  check('e o total fecha na diferença', casc.includes(fmtShort(600)), true);
+  const cCasc = cfgDo();
+  check('a cascata é barra empilhada', cCasc.chart.stacked, true);
+  check('com um passo por coluna', cCasc.xaxis.categories.join(','), 'Entrou,Saiu,Sobrou');
+  check('e o total fecha na diferença', pontosDe(cCasc.series[3])[2], 600);
 
   /* A propriedade que define uma cascata: cada bloco COMEÇA onde o anterior
-     parou. Se isso quebrar, viram colunas soltas e a soma deixa de ser a forma —
-     o gráfico perde exatamente o que ele existe para mostrar. */
-  const barras = [...svgCascata([
+     parou. Aqui isso vive na série "pedestal" — o degrau invisível que levanta
+     cada bloco. Se ela quebrar, viram colunas soltas e a soma deixa de ser a
+     forma, que é exatamente o que o gráfico existe para mostrar. */
+  zeraFila();
+  svgCascata([
     { rot: 'Entrou', valor: 8500, tipo: 'entra' },
     { rot: 'Necessidades', valor: 5200, tipo: 'sai' },
     { rot: 'Desejos', valor: 2100, tipo: 'sai' },
     { rot: 'Sobrou', valor: 0, tipo: 'total' },
-  ]).matchAll(/<rect x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/g)]
-    .map(m => ({ y: +m[1], h: +m[2] }));
-  check('a segunda barra parte do topo da primeira', barras[1].y.toFixed(1), barras[0].y.toFixed(1));
-  check('e a terceira começa onde a segunda parou',
-    barras[2].y.toFixed(1), (barras[1].y + barras[1].h).toFixed(1));
-  check('o total começa onde a última saída parou',
-    barras[3].y.toFixed(1), (barras[2].y + barras[2].h).toFixed(1));
-  check('e o total fecha no valor certo (8500 − 5200 − 2100)',
-    svgCascata([
-      { rot: 'E', valor: 8500, tipo: 'entra' }, { rot: 'N', valor: 5200, tipo: 'sai' },
-      { rot: 'D', valor: 2100, tipo: 'sai' }, { rot: 'S', valor: 0, tipo: 'total' },
-    ]).includes(fmtShort(1200)), true);
+  ]);
+  const cW = cfgDo();
+  const pedestal = pontosDe(cW.series[0]);
+  const entrou = pontosDe(cW.series[1]), saiu = pontosDe(cW.series[2]), total = pontosDe(cW.series[3]);
+  check('a receita nasce do chão', pedestal[0], 0);
+  check('a primeira saída pende do topo da receita', pedestal[1] + saiu[1], 8500);
+  check('e a segunda começa onde a primeira parou', pedestal[2] + saiu[2], pedestal[1]);
+  check('o total nasce do chão, para ser lido como resultado', pedestal[3], 0);
+  check('e fecha no valor certo (8500 − 5200 − 2100)', total[3], 1200);
+  /* O pedestal é andaime: precisa ser invisível no desenho E na legenda. Se
+     aparecesse, o leitor contaria um bloco que não é dinheiro nenhum. */
+  check('o pedestal é transparente', cW.colors[0], 'transparent');
+  /* Fora da legenda por lista explícita, não por formatter vazio: o formatter
+     apagaria o texto mas deixaria a bolinha dele, convidando o leitor a procurar
+     um bloco que não é dinheiro nenhum. */
+  check('e some da legenda', cW.legend.customLegendItems.includes('pedestal'), false);
+  check('mas as séries reais ficam', cW.legend.customLegendItems.join(','), 'entrou,saiu,sobrou');
   // Marca fina: nunca preenche a faixa inteira, senão o gráfico lê como bloco
-  check('a barra não preenche a faixa', /<rect x="[\d.]+" y="[\d.]+" width="(56|[1-5]?\d(\.\d)?)"/.test(casc), true);
-  // Grade sólida: tracejada leria como projeção, e aqui é só régua
-  check('a grade é hairline sólida', /class="g-grid"/.test(casc) && !/g-grid[^>]*dasharray/.test(casc), true);
+  check('a coluna não preenche a faixa', parseInt(cW.plotOptions.bar.columnWidth, 10) <= 60, true);
+  check('cascata vazia não quebra', svgCascata([]).includes('Sem dados'), true);
 
   /* Empréstimo entra na conta mas NÃO é ganho. Um relatório que soma empréstimo
      à receita e anuncia "sobrou" diz a maior mentira possível num app assim. */
@@ -3803,11 +3904,23 @@ try {
   check('e usa seis meses de histórico', /i <= 6/.test(corpoCat), true);
   check('variação pequena não vira notícia', corpoCat.includes('Math.max(20, l.med * 0.15)'), true);
 
-  // Sem biblioteca de gráficos: o app é offline-first e o service worker cacheia tudo
+  /* A biblioteca de gráficos é VENDORIZADA, não puxada de CDN. O app é
+     offline-first: um <script src="https://…"> deixaria todos os gráficos em
+     branco justamente quando o app mais tem valor, sem rede. */
   const indexHtml = fs.readFileSync(BASE + 'index.html', 'utf8');
-  check('nenhuma lib de chart foi puxada',
-    /apexcharts|chart\.js|highcharts|d3\.min/i.test(indexHtml), false);
+  check('a lib de gráficos está no repositório', indexHtml.includes('vendor/apexcharts.min.js'), true);
   check('e nada vem de CDN', /src="https?:\/\//.test(indexHtml), false);
+  check('o arquivo existe de verdade', fs.existsSync(BASE + 'vendor/apexcharts.min.js'), true);
+  // Sem entrar no service worker, o primeiro acesso offline abriria sem gráfico
+  const swJs = fs.readFileSync(BASE + 'sw.js', 'utf8');
+  check('e o service worker a guarda para o modo offline',
+    swJs.includes("'vendor/apexcharts.min.js?v=' + VERSAO"), true);
+  check('graficos.js também entra no cache', swJs.includes("'js/graficos.js?v=' + VERSAO"), true);
+  /* Ordem importa: app.js chama Graficos.novo() ao montar a tela, e Graficos
+     usa ApexCharts ao montar. Fora de ordem, a primeira tela abre sem gráfico. */
+  check('a lib vem antes de quem a usa',
+    indexHtml.indexOf('vendor/apexcharts.min.js') < indexHtml.indexOf('js/graficos.js')
+    && indexHtml.indexOf('js/graficos.js') < indexHtml.indexOf('js/app.js'), true);
 } catch (e) { console.log(` FALHA | relatórios: ${e.message}`); fail++; }
 
 /* ---- Filtros nos relatórios ----
@@ -3964,23 +4077,40 @@ try {
 
   const relS = renderRelatorios();
   check('o relatório mostra o envelope por dentro', relS.includes('Envelope por dentro'), true);
-  check('com uma barra segmentada', relS.includes('class="comp-barra"'), true);
-  /* Sem `title`: o tooltip nativo demora a aparecer, não existe no toque e
-     mostraria um item isolado — e um segmento sozinho não diz composição. Os
-     dados da composição inteira viajam na própria linha. */
-  check('não usa o tooltip nativo do navegador', /class="comp-barra"[^>]*>\s*<i[^>]*title=/.test(relS), false);
-  check('e a linha carrega a composição inteira',
-    relS.includes('data-partes=') && relS.includes('Filha A') && relS.includes('Filha B'), true);
-  check('dizendo qual é a maior parte', /maior parte <b>Filha A<\/b>/.test(relS), true);
+  check('com uma barra segmentada', relS.includes('data-g="composicao"'), true);
+
+  /* A DICA É PRÓPRIA, não a nativa do navegador: a nativa demora a aparecer, não
+     existe no toque e mostraria um segmento isolado — e um segmento sozinho não
+     diz composição. Esta lista TODOS os itens do envelope com seus percentuais e
+     só destaca o que está sob o cursor. */
+  zeraFila();
+  svgComposicao([{ id: 'x', rot: 'Env', total: 1000, partes: [
+    { rot: 'Filha A', valor: 600 }, { rot: 'Filha B', valor: 400 }] }]);
+  const cComp = cfgDo();
+  check('a composição usa dica própria, não a nativa', typeof cComp.tooltip.custom, 'function');
+  const dica = cComp.tooltip.custom({ dataPointIndex: 0, seriesIndex: 1 });
+  check('a dica traz a composição inteira, não só o item apontado',
+    dica.includes('Filha A') && dica.includes('Filha B'), true);
+  check('com o percentual de cada parte', dica.includes('60%') && dica.includes('40%'), true);
+  check('e o total do envelope no cabeçalho', dica.includes('Env'), true);
+  // Ênfase no apontado sem esconder o resto: é a diferença entre saber um número
+  // e entender do que o envelope é feito
+  check('destacando só o que está sob o cursor',
+    (dica.match(/apx-tip-l on/g) || []).length, 1);
 
   /* Cor hierárquica: o matiz identifica o envelope, o tom identifica a
      subcategoria. 75 folhas não caberiam em matizes distintos — acima de ~8 eles
      ficam indistinguíveis até para quem vê bem. */
   check('clarear caminha para o branco', clarear('#009ef7', 1), '#ffffff');
   check('e a fração zero devolve a cor original', clarear('#009ef7', 0), '#009ef7');
-  const comp = svgComposicao([{ id: 'x', rot: 'Env', total: 100, partes: [
+  /* A cor vem em cada PONTO, não na série: no ApexCharts a cor normalmente é da
+     série, mas "slot 2" do envelope Casa não tem relação com "slot 2" de
+     Transporte. Sem cor por ponto, a hierarquia de tons não existiria. */
+  zeraFila();
+  svgComposicao([{ id: 'x', rot: 'Env', total: 100, partes: [
     { rot: 'p1', valor: 60 }, { rot: 'p2', valor: 40 }] }]);
-  const tons = [...comp.matchAll(/background:(#[0-9a-f]{6})/g)].map(m => m[1]);
+  const cTons = cfgDo();
+  const tons = cTons.series.map(s => s.data[0].fillColor);
   check('duas subcategorias, dois tons', new Set(tons).size, 2);
   /* Compara luminosidade canal a canal, não o hex como inteiro: 0x50cd89 é maior
      que 0x009ef7 sem ser mais claro, e foi assim que uma sabotagem trocando os
@@ -4057,48 +4187,50 @@ console.log('\n=== Dropdown do filtro com a página rolada ===');
   void iPanel;
 }
 
-/* ---- Nitidez dos gráficos ----
-   Medido: viewBox de 720 num cartão de 307px dá escala 0,43 — rótulo de 11px saía
-   a 4,7px na tela, hairline de 1px a 0,43px, e o mesmo gráfico mudava de tamanho
-   conforme a largura do cartão (15,9px num card cheio de desktop). */
-console.log('\n=== Gráficos: texto fora do SVG escalado ===');
+/* ---- Legibilidade dos gráficos ----
+   Este era o problema que motivou a biblioteca. Antes, com SVG à mão: viewBox de
+   720 num cartão de 307px dava escala 0,43 — rótulo de 11px saía a 4,7px na tela,
+   hairline de 1px a 0,43px, e o mesmo gráfico mudava de tamanho conforme a
+   largura do cartão. A gambiarra era manter todo o texto num overlay HTML.
+
+   O ApexCharts desenha o texto em px reais do aparelho, então o problema deixa de
+   existir na origem. O que passa a ser verificável é o encaixe no tema. */
+console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
 {
   const cssG = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
-  const cascata = svgCascata([
-    { rot: 'Entrou', valor: 1000, tipo: 'entra' },
-    { rot: 'Saiu', valor: 400, tipo: 'sai' },
-    { rot: 'Sobrou', valor: 0, tipo: 'total' },
-  ]);
-  /* Nenhum <text> dentro do SVG: é a regra que garante a nitidez, porque texto em
-     unidade de viewBox encolhe junto com a escala. */
-  check('a cascata não tem texto dentro do SVG', /<svg[\s\S]*?<text/.test(cascata), false);
-  check('e traz o texto em overlay HTML', cascata.includes('class="g-textos"'), true);
-  check('posicionado em % para casar com a geometria', /class="g-t g-t-val" style="left:[\d.]+%/.test(cascata), true);
-
-  const faixa = svgLinhaFaixa([
-    { rot: 'jan', valor: 100 }, { rot: 'fev', valor: 200 }, { rot: 'mar', valor: 150 },
-  ]);
-  check('a faixa também não tem texto no SVG', /<svg[\s\S]*?<text/.test(faixa), false);
-  /* Ponto como div, não <circle>: o SVG é esticado sem preservar proporção para o
-     overlay casar, e círculo esticado vira elipse. */
-  check('e o ponto é div, não circle', faixa.includes('class="g-bola'), true);
-  check('sem <circle> esticável', faixa.includes('<circle'), false);
-  check('o div fica redondo por border-radius',
-    /\.g-bola \{[^}]*border-radius: 50%/.test(cssG), true);
-
-  // Traço com espessura real, não escalada
-  check('a linha usa espessura não escalável',
-    /\.g-linha \{[^}]*vector-effect: non-scaling-stroke/.test(cssG), true);
-  check('o burnup também', fs.readFileSync(BASE + 'js/app.js', 'utf8')
-    .includes('vector-effect="non-scaling-stroke"'), true);
-
-  /* Altura fixa em px, não aspect-ratio: com o texto fora do SVG, o contêiner
-     manda na altura e o desenho preenche. É o que dá o mesmo tamanho de fonte em
-     qualquer largura de cartão. */
-  check('o contêiner define a altura', /\.g-wrap \{[^}]*height: 200px/.test(cssG), true);
-  check('e encolhe em tela estreita', /max-width: 560px\)[^}]*\.g-wrap \{ height: 175px/.test(cssG), true);
-  // O overlay não pode roubar o toque do que está embaixo
-  check('o overlay não intercepta toque', /\.g-textos \{[^}]*pointer-events: none/.test(cssG), true);
+  const todos = () => {
+    zeraFila();
+    svgBars([{ label: 'jan', value: 100 }, { label: 'fev', value: 250, hint: '#009ef7' }], 300);
+    svgCascata([{ rot: 'E', valor: 1000, tipo: 'entra' }, { rot: 'S', valor: 400, tipo: 'sai' },
+      { rot: 'R', valor: 0, tipo: 'total' }]);
+    svgLinhaFaixa([{ rot: 'jan', valor: 100 }, { rot: 'fev', valor: 200 }, { rot: 'mar', valor: 150 }]);
+    svgBurnup(DB.monthPeriod(new Date()), 3000);
+    svgDonut([{ label: 'a', value: 60, color: '#009ef7' }], 60);
+    svgRanking([['Mercado', 800]]);
+    svgComposicao([{ id: 'x', rot: 'Env', total: 100, partes: [{ rot: 'p', valor: 100 }] }]);
+    svgFluxoSaldo(DB.fluxoMensal(6, 6));
+    return Graficos.fila;
+  };
+  const fila = todos();
+  check('todos os gráficos passaram pela biblioteca', fila.length, 8);
+  /* Fonte herdada em TODOS. É o detalhe que mais delata gráfico de biblioteca
+     colado num layout: sem isso o ApexCharts usa a Helvetica dele. */
+  check('todos herdam a fonte do app',
+    fila.every(f => f.opts.chart.fontFamily === 'inherit'), true);
+  // Barra de ferramentas do ApexCharts (zoom, download) não cabe num app de bolso
+  check('nenhum mostra a barra de ferramentas da lib',
+    fila.every(f => f.opts.chart.toolbar.show === false), true);
+  // Cada um se identifica pelo que É, e reserva altura para o cartão não pular
+  check('cada gráfico se identifica no div',
+    fila.every(f => !!f.nome), true);
+  check('e nenhum nome se repete', new Set(fila.map(f => f.nome)).size, 8);
+  check('todos reservam altura', fila.every(f => f.opts.chart.height > 0), true);
+  // O CSS que costura a lib ao tema
+  check('o texto do gráfico usa a fonte do app', /\.apx text \{[^}]*font-family: inherit/.test(cssG), true);
+  check('e o div encolhe em vez de estourar o cartão',
+    /\.apx, \.apx > div \{[^}]*min-width: 0/.test(cssG), true);
+  check('a dica vem repintada no tema escuro do app',
+    /\.apx \.apexcharts-tooltip \{[^}]*background: rgba\(24, 28, 50/.test(cssG), true);
 }
 
 /* ---- Peso e variação na tabela por categoria ----
@@ -4165,53 +4297,51 @@ console.log('\n=== Tabela por categoria: peso e variação ===');
   check('e diz o que a tabela responde', relT.includes('Detalhe por categoria'), true);
 }
 
-/* ---- Tooltip da composição ----
+/* ---- Dica do envelope por dentro ----
    Um segmento sozinho não responde nada: "delivery R$ 400" só quer dizer algo ao
    lado de "mercado R$ 900". Por isso a lista vem completa e o realce diz onde o
-   dedo está, em vez de esconder o resto. */
-console.log('\n=== Tooltip do envelope por dentro ===');
-{
-  // A fatia sob o ponteiro — é aqui que mora o bug de fronteira
-  const v = [60, 30, 10];
-  check('início da barra cai na primeira fatia', fatiaEm(v, 0), 0);
-  check('meio da primeira continua nela', fatiaEm(v, 0.3), 0);
-  check('a borda exata pertence à fatia que termina ali', fatiaEm(v, 0.6), 0);
-  check('logo depois já é a seguinte', fatiaEm(v, 0.601), 1);
-  check('e o fim da barra cai na última', fatiaEm(v, 1), 2);
-  /* Resíduo de arredondamento: somando frações, o acumulado pode fechar em
-     0,99999 e o toque na ponta cairia fora da lista. */
-  check('fração acima de 1 não escapa da lista', fatiaEm(v, 1.4), 2);
-  check('fração negativa também não', fatiaEm(v, -0.2), 0);
-  check('lista de valor zero não quebra', fatiaEm([0, 0], 0.5), 0);
-  check('uma fatia só sempre é ela', fatiaEm([100], 0.7), 0);
+   dedo está, em vez de esconder o resto.
 
-  const apC = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+   A biblioteca resolveu o posicionamento, o toque e o recorte pelo cartão — que
+   antes exigiam handler próprio no body. O que continua sendo decisão nossa é o
+   CONTEÚDO da dica, e é isso que se testa aqui. */
+console.log('\n=== Dica do envelope por dentro ===');
+{
   const cssC = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
-  const corpoC = apC.slice(apC.indexOf('function ligarComposicao'), apC.indexOf('function ligarPilulas'));
+  zeraFila();
+  svgComposicao([
+    { id: 'a', rot: 'Casa', total: 1000, partes: [
+      { rot: 'Mercado', valor: 600 }, { rot: 'Delivery', valor: 300 }, { rot: 'Padaria', valor: 100 }] },
+    { id: 'b', rot: 'Transporte', total: 500, partes: [{ rot: 'Uber', valor: 500 }] },
+  ]);
+  const cC = cfgDo();
+  const tip = cC.tooltip.custom({ dataPointIndex: 0, seriesIndex: 1 });
+
   // A lista inteira, com destaque — não só o item apontado
-  check('o tooltip lista todas as partes', corpoC.includes('partes.map((p, i) =>'), true);
-  check('e marca só a apontada', corpoC.includes("i === alvo ? ' on' : ''"), true);
-  check('mostrando o percentual de cada uma', corpoC.includes('p[1] / soma * 100'), true);
+  check('a dica lista todas as partes',
+    ['Mercado', 'Delivery', 'Padaria'].every(n => tip.includes(n)), true);
+  check('e marca só a apontada', (tip.match(/apx-tip-l on/g) || []).length, 1);
+  check('mostrando o percentual de cada uma',
+    tip.includes('60%') && tip.includes('30%') && tip.includes('10%'), true);
+  check('e o nome do envelope no cabeçalho', tip.includes('Casa'), true);
+  // Percentual DENTRO do envelope, não sobre o total geral: a pergunta da dica é
+  // "do que este envelope é feito", e 600 de 1000 é 60% mesmo havendo 1500 no mês
+  check('o percentual é dentro do envelope, não do total geral', tip.includes('40%'), false);
+  // Cada envelope tem a própria composição: apontar o segundo não mostra o primeiro
+  const tip2 = cC.tooltip.custom({ dataPointIndex: 1, seriesIndex: 0 });
+  check('cada envelope mostra a composição dele',
+    tip2.includes('Uber') && !tip2.includes('Mercado'), true);
+  // Índice fora da lista acontece na borda do gráfico e não pode estourar
+  check('apontar fora da lista não quebra', cC.tooltip.custom({ dataPointIndex: 9, seriesIndex: 0 }), '');
+
   /* Sem destaque o item recua, em vez de sumir: é o contraste que diz onde o dedo
      está, sem esconder a composição. */
-  check('o não apontado recua, não some', /\.comp-tip-l \{[^}]*opacity: \.58/.test(cssC), true);
-  check('e o apontado ganha fundo', /\.comp-tip-l\.on \{[^}]*background/.test(cssC), true);
-  // A cor no tooltip é a mesma do segmento, senão não dá para casar os dois
-  check('a bolinha usa o tom do próprio segmento', corpoC.includes('clarear(base, Math.min(0.45, i * 0.12))'), true);
-
-  /* Área de toque maior que a marca: a barra tem 9px de altura e um segmento pode
-     ter 2% da largura — acertar a marca no celular seria impossível. */
-  check('a barra inteira é a área de toque', corpoC.includes("linha.querySelector('.comp-barra')"), true);
-  check('com folga vertical invisível', /\.comp-barra::after \{[^}]*top: -9px/.test(cssC), true);
-  /* No toque o tooltip permanece depois de soltar: é uma lista para ler, e sumir
-     ao levantar o dedo daria meio segundo de leitura. */
-  check('no toque ele não some ao levantar o dedo',
-    /onpointerup = e => \{ if \(e\.pointerType !== 'touch'\) esconder\(\)/.test(corpoC), true);
-  check('mas some ao tocar fora', corpoC.includes("closest('.comp-barra')"), true);
-  // Fixo no body: dentro da linha, o overflow do cartão o cortaria
-  check('o tooltip é fixo no viewport', /\.comp-tip \{[^}]*position: fixed/.test(cssC), true);
-  check('e não intercepta o toque', /\.comp-tip \{[^}]*pointer-events: none/.test(cssC), true);
-  check('o handler de documento é registrado uma vez só', corpoC.includes('ligarComposicao._doc'), true);
+  check('o não apontado recua, não some', /\.apx-tip-l \{[^}]*opacity: \.62/.test(cssC), true);
+  check('e o apontado ganha fundo', /\.apx-tip-l\.on \{[^}]*background/.test(cssC), true);
+  // A cor na dica é a mesma do segmento, senão não dá para casar os dois
+  const tomNaDica = (tip.match(/background:(#[0-9a-f]{6})/) || [])[1];
+  check('a bolinha usa o tom do próprio segmento',
+    tomNaDica, cC.series[0].data[0].fillColor);
 }
 
 /* ---- Fase 1: o disponível honesto ----
@@ -4664,41 +4794,66 @@ DB.data.cards = DB.data.cards.filter(c => c.name !== 'Cartao Pendencia');
 DB.data.accounts = DB.data.accounts.filter(a => a.name !== 'Conta Pendencia');
 DB.save();
 
-/* ---- Nitidez: nenhum texto dentro de SVG esticado ----
-   Medido: viewBox de 760 num cartão de 307px dá escala 0,40 — um rótulo de 11px
-   sai a 4,4px na tela, e o mesmo gráfico muda de tamanho conforme o cartão. */
-console.log('\n=== Nitidez de todos os gráficos ===');
+/* ---- Ciclo de vida dos gráficos ----
+   O risco que a biblioteca traz e o SVG à mão não tinha: cada gráfico é um objeto
+   com listeners de resize. O innerHTML da próxima tela apaga o elemento mas NÃO
+   destrói o objeto — sem limpeza, o app acumula gráficos órfãos e fica mais lento
+   a cada navegação. */
+console.log('\n=== Ciclo de vida dos gráficos ===');
 {
   const apN = fs.readFileSync(BASE + 'js/app.js', 'utf8');
-  const cssN = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
-  const semTexto = (nome, html) => {
-    check(`${nome}: sem texto dentro do SVG`, /<svg[\s\S]*?<text/.test(html), false);
-    check(`${nome}: texto no overlay`, html.includes('class="g-textos"'), true);
-  };
-  semTexto('barras', svgBars([{ label: 'jan', value: 100 }, { label: 'fev', value: 250, hint: '#009ef7' }], 300));
-  semTexto('cascata', svgCascata([
-    { rot: 'E', valor: 1000, tipo: 'entra' }, { rot: 'S', valor: 400, tipo: 'sai' },
-    { rot: 'R', valor: 0, tipo: 'total' }]));
-  semTexto('faixa', svgLinhaFaixa([{ rot: 'jan', valor: 100 }, { rot: 'fev', valor: 200 }]));
-  semTexto('burnup', svgBurnup(DB.monthPeriod(new Date()), 3000));
+  const gN = fs.readFileSync(BASE + 'js/graficos.js', 'utf8');
 
-  /* O donut é a exceção legítima: quadrado, com proporção preservada e escala
-     entre 0,79 e 1,04 — o texto dele renderiza no tamanho certo. Esticá-lo
-     deformaria o anel, que é o oposto do que se quer. */
-  const donut = svgDonut([{ label: 'a', value: 60, color: '#009ef7' }], 60);
-  check('donut mantém o texto dentro, e pode', donut.includes('dn-total'), true);
-  check('porque ele preserva a proporção', donut.includes('preserveAspectRatio="none"'), false);
-  check('e é dimensionado perto de 1:1', /\.donut-svg \{ width: clamp\(190px, 46%, 250px\)/.test(cssN), true);
+  /* Ordem obrigatória: o div só existe depois do innerHTML, e a lib precisa medir
+     o elemento para desenhar. Montar antes deixaria a tela sem gráfico nenhum. */
+  const iView = apN.indexOf("$('#view').innerHTML");
+  const corpoRender = apN.slice(iView, apN.indexOf('\r\n}', iView));
+  check('a tela monta os gráficos', corpoRender.includes('Graficos.montar()'), true);
+  check('e monta depois de ela ir para o DOM',
+    corpoRender.includes('Graficos.montar()')
+    && corpoRender.indexOf('innerHTML') < corpoRender.indexOf('Graficos.montar()'), true);
+  check('e a folha também monta os dela',
+    /UI\.enhance\(sheet\);[\s\S]{0,200}Graficos\.montar\(\)/.test(apN), true);
+  /* limpar() antes de montar: derruba os da tela anterior, que já saíram do DOM.
+     Confere a PRESENÇA antes da ordem — indexOf devolve -1 quando a chamada não
+     existe, e -1 é menor que qualquer índice, então só comparar posições daria
+     aprovado justamente no caso em que a limpeza foi removida. */
+  check('a tela limpa os gráficos órfãos', corpoRender.includes('Graficos.limpar()'), true);
+  check('e a limpeza vem antes da montagem',
+    corpoRender.includes('Graficos.limpar()')
+    && corpoRender.indexOf('Graficos.limpar()') < corpoRender.indexOf('Graficos.montar()'), true);
 
-  // Todo gráfico esticado precisa de traço com espessura real
-  const esticados = (apN.match(/preserveAspectRatio="none"/g) || []).length;
-  check('há gráficos esticados', esticados >= 4, true);
-  check('e todos usam traço não escalável',
-    (apN.match(/vector-effect="non-scaling-stroke"/g) || []).length
-    + (cssN.match(/vector-effect: non-scaling-stroke/g) || []).length >= esticados, true);
-  // A altura vem do contêiner, não do aspecto: é o que dá fonte igual em qualquer largura
-  check('as barras têm altura própria', /\.g-wrap-bars \{ height: 250px/.test(cssN), true);
-  check('e encolhem em tela estreita', /max-width: 560px\)[^}]*\.g-wrap-bars \{ height: 215px/.test(cssN), true);
+  // Redesenhar o mesmo id destrói a instância antiga primeiro
+  check('redesenhar destrói a instância anterior',
+    /antigo && antigo\.chart[\s\S]{0,80}antigo\.chart\.destroy\(\)/.test(gN), true);
+  // E a limpeza só derruba o que saiu do DOM, não o que está na tela
+  check('a limpeza só derruba o que saiu da tela',
+    /if \(!document\.getElementById\(id\)\)[\s\S]{0,120}this\.vivos\.delete\(id\)/.test(gN), true);
+
+  /* Comportamento real: montar, trocar de tela, limpar. O que saiu do DOM tem de
+     sair do registro; o que continua na tela, ficar. */
+  Graficos.vivos.clear();
+  zeraFila();
+  svgRanking([['a', 1]]);
+  const idVivo = Graficos.fila[0].id;
+  Graficos.montar();
+  check('montar registra o gráfico', Graficos.vivos.size, 1);
+  check('e a fila fica vazia depois', Graficos.fila.length, 0);
+  // Simula a troca de tela: o elemento do gráfico deixa de existir
+  const getBk = document.getElementById;
+  document.getElementById = id => (id === idVivo ? null : getBk(id));
+  Graficos.limpar();
+  document.getElementById = getBk;
+  check('trocar de tela derruba o gráfico órfão', Graficos.vivos.size, 0);
+
+  /* Sem a biblioteca carregada, montar() não estoura — só não desenha. É o que
+     permite a suíte rodar headless exercitando toda a montagem das telas. */
+  zeraFila();
+  svgRanking([['b', 2]]);
+  check('sem a lib, montar não quebra', typeof Graficos.montar(), 'number');
+  check('e a configuração fica registrada de todo jeito',
+    Graficos.montadas().slice(-1)[0].opts.series[0].data[0], 2);
+  Graficos.vivos.clear();
 }
 
 /* ---- Quatro correções vindas do teste em uso real ---- */
@@ -5036,7 +5191,7 @@ try {
   /* A identidade que o usuário conferiu na mão: anterior + entrou − saiu = final.
      É o teste de que o extrato não esconde nem inventa movimento. */
   const num = re => { const m = htmlL.match(re); return m ? Number(m[1].replace(/\./g, '').replace(',', '.')) : null; };
-  const antes = num(/data-antes="([\d.,]+)"/);
+  const antes = num(/aria-label="Saldo dia a dia[^"]*, de ([\d.,]+) a/);
   const entrou = num(/pt pt-up"><\/i>([\d.,]+) <small>/);
   const saiu = num(/pt pt-dn"><\/i>([\d.,]+) <small>/);
   const fim = num(/res-dir">\s*<b[^>]*>R\$\s*([\d.,]+)/);
@@ -5139,96 +5294,88 @@ try {
     Math.round(meses[8].saldo * 100) / 100,
     Math.round((meses[7].saldo + DB.previsaoDoMes(meses[8].period).resultado) * 100) / 100);
 
+  zeraFila();
   const svg = svgFluxoSaldo(meses);
+  const c = cfgDo(svg);
   const cssFl = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
   const apFl = fs.readFileSync(BASE + 'js/app.js', 'utf8');
 
-  // Combinado: um painel só, barras e área juntas
-  check('é um painel só', (svg.match(/<svg /g) || []).length, 1);
-  check('com barras de entrada e saída', svg.includes('class="fl-in"') && svg.includes('class="fl-out"'), true);
-  check('e a área do saldo', svg.includes('class="fl-area"'), true);
+  // Combinado num painel só: barras para o movimento, área para o nível
+  check('é um gráfico só, combinado', c.series.length, 3);
+  check('com barras de entrada e saída',
+    c.series[0].type === 'column' && c.series[1].type === 'column', true);
+  check('e a área do saldo', c.series[2].type, 'area');
+  check('as barras são verde e vermelha, a área azul',
+    c.colors.join(','), '#50cd89,#f1416c,#009ef7');
+  check('e os treze meses viraram categorias', c.xaxis.categories.length, 13);
+  check('com os valores que vieram do fluxo mensal',
+    pontosDe(c.series[2]).join(','), meses.map(m => Math.round(m.saldo)).join(','));
 
-  /* A MITIGAÇÃO que torna o eixo duplo defensável: as duas escalas compartilham o
-     ZERO e o TOPO. Sem isso, o ponto em que a área cruza as barras não significa
-     nada — e é isso que faz gráfico combinado mentir. */
-  const corpoFl = apFl.slice(apFl.indexOf('function svgFluxoSaldo'), apFl.indexOf('/* ---------- Linha com faixa'));
-  check('as duas escalas partem do mesmo zero',
-    /const base = H - padB - espacoNeg;/.test(corpoFl)
-    && /yFluxo = v => base -/.test(corpoFl) && /ySaldo = v => \(v >= 0\s*\?\s*base -/.test(corpoFl), true);
-  check('e sobem até a mesma borda',
-    (corpoFl.match(/\* alturaPos/g) || []).length >= 2, true);
-  check('e a nota explica as duas escalas', svg.includes('O zero é o mesmo para as duas'), true);
+  /* Duas escalas, porque não há como fugir: fluxo mensal vive nos milhares e
+     saldo acumulado nas dezenas de milhares. O que dá para fazer é não esconder
+     isso — cada eixo rotulado, o do saldo NA COR da própria série, para ninguém
+     ler o cruzamento entre a linha e as barras como significado. */
+  check('há dois eixos, não um forçado', c.yaxis.length, 3);
+  check('o eixo do saldo fica do lado oposto', c.yaxis[2].opposite, true);
+  check('e leva a cor da própria série, para não confundir escala',
+    c.yaxis[2].labels.style.colors, '#009ef7');
+  check('as duas colunas dividem o mesmo eixo',
+    c.yaxis[0].seriesName === 'entrou' && c.yaxis[1].seriesName === 'entrou', true);
+  check('e a nota do cartão avisa que são duas unidades',
+    relProximosMeses().includes('onde a linha cruza as barras não significa nada'), true);
 
-  /* A área fica ATRÁS das barras: ela é o nível, elas são o movimento. Com o mesmo
-     peso visual, as duas competiriam e nenhuma seria lida. */
-  check('a área vem antes das barras no desenho',
-    svg.indexOf('class="fl-area"') < svg.indexOf('class="fl-in"'), true);
-  check('e é lavada, não chapada', /\.fl-area \{ fill: url\(#grad-fl\)/.test(cssFl), true);
+  /* A área vem por cima (a linha precisa disso para não desaparecer atrás das
+     barras) mas LAVADA: se tivesse o mesmo peso visual, as duas competiriam. */
+  check('a área é lavada, não chapada', c.fill.opacity[2] <= 0.4, true);
+  check('e se dissolve para baixo', c.fill.gradient.opacityTo < c.fill.gradient.opacityFrom, true);
+  check('a linha do saldo tem traço, as barras não',
+    c.stroke.width.join(','), '0,0,3');
+  check('e a barra não ganha contorno, que seria tinta sem dado',
+    c.stroke.colors[0] === 'transparent' && c.stroke.colors[1] === 'transparent', true);
 
   /* Ponta arredondada, pé reto: o topo é o dado; a base encosta no zero, e
      arredondá-la faria a barra parecer flutuar. */
-  check('a barra tem ponta arredondada', /Q[\d.]+ [\d.]+ [\d.]+ [\d.]+/.test(svg), true);
-  check('e fecha reta na base', /V[\d.]+ Z/.test(svg), true);
+  check('a barra tem ponta arredondada', c.plotOptions.bar.borderRadius > 0, true);
+  check('e fecha reta na base', c.plotOptions.bar.borderRadiusApplication, 'end');
 
-  /* A FRONTEIRA DE HOJE aparece de quatro formas — divisória, rótulo, barra
-     esmaecida e área hachurada. Confundir previsão com fato é o pior engano
+  /* A FRONTEIRA DE HOJE aparece de três formas — faixa sombreada, rótulo
+     "previsto" e trecho tracejado. Confundir previsão com fato é o pior engano
      possível num app de finanças, e uma marca só é fácil de não notar. */
-  check('há divisória de hoje', svg.includes('class="fl-hoje"'), true);
-  check('com rótulo dizendo hoje', svg.includes('class="fl-marca-hoje"'), true);
-  const sinteticos = [0, 1, 2, 3].map(i => ({
-    period: DB.monthPeriod(new Date(), i - 2),
-    entra: 5000, sai: 3000, saldo: 10000 + i * 1000, futuro: i >= 2,
-  }));
-  const svgS = svgFluxoSaldo(sinteticos);
-  check('a barra futura é esmaecida', svgS.includes('fl-in prev') && svgS.includes('fl-out prev'), true);
-  check('e a realizada é cheia', /class="fl-in"/.test(svgS), true);
-  check('a área futura é hachurada', svgS.includes('fl-area prev'), true);
-  check('com a hachura definida', /\.fl-area\.prev \{ fill: url\(#hach-fl\)/.test(cssFl), true);
-  /* A borda da área tem geometria nas duas metades — um path vazio com a classe
-     certa passaria pela verificação e deixaria metade da curva invisível. */
-  const dPrev = (svgS.match(/<path d="([^"]*)" class="fl-borda prev"/) || [])[1] || '';
-  const dReal = (svgS.match(/<path d="([^"]*)" class="fl-borda"/) || [])[1] || '';
-  check('a borda prevista é desenhada', /^M[\d.]+ [\d.]+ C/.test(dPrev), true);
-  check('e a realizada também', /^M[\d.]+ [\d.]+ C/.test(dReal), true);
-  check('e as duas se encontram no ponto de hoje',
-    dPrev.slice(0, dPrev.indexOf(' C')),
-    'M' + dReal.split(' C').pop().trim().split(' ').slice(-2).join(' '));
-  check('a borda prevista é tracejada', /\.fl-borda\.prev \{[^}]*stroke-dasharray/.test(cssFl), true);
+  const nFut = meses.filter(m => m.futuro).length;
+  check('o trecho previsto é tracejado', c.forecastDataPoints.dashArray > 0, true);
+  check('e o tracejado cobre exatamente os meses futuros', c.forecastDataPoints.count, nFut);
+  check('a faixa do futuro está sombreada', c.annotations.xaxis.length, 1);
+  check('e começa no primeiro mês previsto',
+    c.annotations.xaxis[0].x, c.xaxis.categories[meses.findIndex(m => m.futuro)]);
+  check('com rótulo dizendo previsto', c.annotations.xaxis[0].label.text, 'previsto');
+  // A dica também diz, por escrito, quando o mês é estimativa
+  const iFut = meses.findIndex(m => m.futuro);
+  check('e a dica do mês futuro diz previsto',
+    c.tooltip.x.formatter(null, { dataPointIndex: iFut }).includes('previsto'), true);
+  check('a do mês realizado não diz',
+    c.tooltip.x.formatter(null, { dataPointIndex: 0 }).includes('previsto'), false);
 
-  /* Saldo negativo desce abaixo da MESMA linha onde as barras nascem — é o que a
-     ancoragem do zero garante, e o que faz o vermelho significar algo. */
+  /* O saldo é UMA série só, não duas emendadas na fronteira. Partir em duas
+     abriria uma costura visível e faria a área contar dois níveis onde há um. */
+  check('o saldo é uma série contínua, sem emenda',
+    c.series.filter(s => s.type === 'area').length, 1);
+  check('sem buraco no meio da série',
+    pontosDe(c.series[2]).every(v => typeof v === 'number'), true);
+
+  // Saldo negativo é dado, não erro: a série leva o número como ele é
   const comNegativo = [0, 1, 2].map(i => ({
     period: DB.monthPeriod(new Date(), i - 1),
     entra: 3000, sai: 5000, saldo: i === 2 ? -2000 : 4000, futuro: i >= 2,
   }));
-  const svgN = svgFluxoSaldo(comNegativo);
-  check('saldo negativo abre espaço abaixo do zero', /espacoNeg = minSaldo < 0 \? 40 : 0/.test(corpoFl), true);
-  check('e o ponto negativo se marca em vermelho', svgN.includes('fl-pt prev neg') || svgN.includes('fl-pt neg'), true);
+  zeraFila();
+  svgFluxoSaldo(comNegativo);
+  check('saldo negativo desce abaixo do zero, não é cortado',
+    pontosDe(cfgDo().series[2]).includes(-2000), true);
 
-  /* MEDE A GEOMETRIA, não só o comentário: a base das barras e a base da área têm
-     de cair na mesma coordenada da linha do zero. É essa coincidência que faz o
-     gráfico combinado parar de ser arbitrário — sem ela, o ponto onde a área
-     cruza as barras não significaria nada. */
-  const zeroComum = svgAlvo => {
-    const mb = svgAlvo.match(/y1="([\d.]+)" y2="[\d.]+" class="fl-base"/);
-    if (!mb) return false;
-    const base = Number(mb[1]);
-    const basesBarra = [...svgAlvo.matchAll(/<path d="M[\d.]+ ([\d.]+) V/g)].map(m => Number(m[1]));
-    const basesArea = [...svgAlvo.matchAll(/L[\d.]+ ([\d.]+) Z" class="fl-area/g)].map(m => Number(m[1]));
-    return basesBarra.length > 0 && basesArea.length > 0
-      && basesBarra.every(v => Math.abs(v - base) < 0.2)
-      && basesArea.every(v => Math.abs(v - base) < 0.2);
-  };
-  check('barras e área partem da mesma linha do zero', zeroComum(svgS), true);
-  check('e continuam partindo dela quando o saldo fica negativo', zeroComum(svgN), true);
-
-  // Texto fora do SVG esticado, como em todos os outros gráficos
-  check('sem texto dentro do SVG', /<svg[\s\S]*?<text/.test(svg), false);
-  check('e o traço não engorda ao esticar',
-    /\.fl-borda \{[^}]*vector-effect: non-scaling-stroke/.test(cssFl), true);
-  // Rótulo a cada dois meses: treze nomes lado a lado colidem no celular
-  const rots = (svg.match(/class="g-t g-t-rot/g) || []).length;
-  check('os rótulos são espaçados para não colidir', rots > 3 && rots <= 8, true);
+  // Rótulo herdado do tema e sem giro: nome de mês virado é mais difícil de ler
+  check('os rótulos não colidem nem giram',
+    c.xaxis.labels.style.fontSize === '11px' && c.chart.toolbar.show === false, true);
+  check('e a curva é suavizada', c.stroke.curve, 'smooth');
 
   // Um mês só não desenha nada em vez de quebrar
   check('série curta não quebra', svgFluxoSaldo([meses[0]]).includes('empty'), true);

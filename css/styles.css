@@ -155,64 +155,20 @@ body {
    mensal vive nos milhares e saldo acumulado nas dezenas de milhares, e sobrepor
    os dois exigiria alinhar duas escalas — o que é arbitrário e faz o gráfico
    insinuar uma correlação que não está no dado. */
-.fl { margin-top: 4px; }
-.fl-topo { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 6px; }
-.fl-leg { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--paper-dim); font-weight: 600; }
-.fl-k { width: 9px; height: 9px; border-radius: 2px; flex: none; }
-.fl-k.in { background: var(--green); }
-.fl-k.out { background: var(--red); }
-.fl-k.line { height: 2px; border-radius: 1px; background: var(--gold); }
 /* A legenda do previsto usa a mesma marca vazada das barras futuras, para o olho
    casar legenda e gráfico sem precisar de explicação */
-.fl-k.prev { background: repeating-linear-gradient(45deg, #c4cad4 0 2px, transparent 2px 4px); border: 1px solid #c4cad4; }
-.fl-combo { height: 210px; }
 @media (max-width: 560px) { .fl-combo { height: 190px; } }
 
 /* Barras na FRENTE: elas são o movimento, o dado que se compara mês a mês */
-.fl-in { fill: var(--green); }
-.fl-out { fill: var(--red); }
 /* Futuro esmaecido: é estimativa, e preenchimento cheio o faria pesar igual ao fato */
-.fl-in.prev { fill: rgba(80, 205, 137, .34); }
-.fl-out.prev { fill: rgba(241, 65, 108, .3); }
 
 /* Área ATRÁS, lavada: ela é o nível, não o movimento. Com o mesmo peso visual das
    barras, as duas competiriam e nenhuma seria lida. */
-.fl-area { fill: url(#grad-fl); stroke: none; }
-.fl-area.prev { fill: url(#hach-fl); opacity: .5; }
-.fl-hach { stroke: #009ef7; stroke-width: 1.4; opacity: .3; }
-.fl-borda {
-  fill: none; stroke: var(--gold); stroke-width: 2;
-  stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke;
-}
 /* Tracejado é o que diz "daqui para frente é estimativa" sem precisar de rótulo */
-.fl-borda.prev { stroke-dasharray: 5 4; opacity: .8; }
-.fl-base { stroke: #c4cad4; stroke-width: 1; vector-effect: non-scaling-stroke; }
 /* A fronteira de hoje: à esquerda é fato conciliado, à direita é estimativa */
-.fl-hoje { stroke: var(--paper-dim); stroke-width: 1; stroke-dasharray: 3 3; opacity: .5; vector-effect: non-scaling-stroke; }
-.fl-marca-hoje {
-  position: absolute; top: 0; transform: translateX(-50%);
-  font-size: 9.5px; font-weight: 700; color: var(--paper-dim);
-  background: var(--ink-2); padding: 0 4px; letter-spacing: .04em; text-transform: uppercase;
-}
-.fl-pt {
-  position: absolute; width: 9px; height: 9px; border-radius: 50%;
-  transform: translate(-50%, -50%);
-  background: var(--gold); border: 2px solid #fff; box-sizing: border-box; z-index: 1;
-}
-.fl-pt.prev { background: #fff; border-color: var(--gold); }
-.fl-pt.neg { background: var(--red); border-color: #fff; }
 /* Fundo próprio no rótulo do saldo: ele pousa sobre as barras, e sem o fundo o
    número se perderia no meio delas */
-.g-t-saldo {
-  transform: translate(-50%, -100%);
-  font-size: 11px; font-weight: 700; color: #0072b8;
-  background: var(--ink-2); padding: 1px 4px; border-radius: 4px;
-}
-.g-t-saldo.ruim { color: var(--red); }
-.g-t-eixo.dir { padding-left: 3px; padding-right: 0; }
 .fl-nota { margin-top: 8px; font-size: 11px; color: var(--paper-dim); line-height: 1.45; }
-.fl-k.area { background: linear-gradient(to bottom, rgba(0, 158, 247, .45), rgba(0, 158, 247, .05)); border-top: 2px solid var(--gold); }
-.fl-k.prev { background: repeating-linear-gradient(45deg, rgba(0, 158, 247, .35) 0 2px, transparent 2px 4px); }
 
 /* Linha prevista no extrato (fatura que ainda vai vencer): tracejada e recuada,
    para não se confundir com movimento que já aconteceu.
@@ -335,60 +291,15 @@ body {
    A hierarquia vem no encadeamento das cores: o matiz identifica o envelope, o
    tom identifica a subcategoria dentro dele. 75 folhas não caberiam em matizes
    distintos — acima de ~8 eles ficam indistinguíveis mesmo para quem vê bem. */
-.comp { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
-.comp-cab { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
-.comp-rot { font-size: 12.5px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.comp-val { font-size: 12.5px; font-weight: 700; white-space: nowrap; }
 /* A barra do envelope é proporcional ao MAIOR envelope, então a largura compara
    entre grupos; os segmentos dentro dela comparam dentro do grupo */
-.comp-barra {
-  display: flex; height: 9px; border-radius: 5px; overflow: hidden;
-  margin-top: 5px;
-  /* O vão de 2px é o que separa dois tons vizinhos — borda em volta de cada
-     segmento adicionaria tinta que não é dado. Como tons vizinhos ficam a ~1,15
-     de contraste entre si, o vão precisa ser mais escuro que a superfície do
-     cartão, senão desaparece justamente nos segmentos claros. */
-  background: #dde3e9;
-  gap: 2px;
-}
-.comp-barra i { display: block; min-width: 2px; }
 /* Área de toque maior que a marca: a barra tem 9px, e um segmento pode ter 2% da
    largura — acertar a marca no celular seria impossível. O padding invisível dá
    folga vertical sem mudar o desenho. */
-.comp-barra { position: relative; cursor: pointer; touch-action: pan-y; }
-.comp-barra::after { content: ''; position: absolute; left: 0; right: 0; top: -9px; bottom: -9px; }
 
 /* Tooltip da composição: o envelope inteiro, com a parte apontada em destaque.
    Um segmento sozinho não responde nada — "delivery R$ 400" só quer dizer algo
    ao lado de "mercado R$ 900". */
-.comp-tip {
-  position: fixed; z-index: 70; pointer-events: none;
-  min-width: 208px; max-width: min(90vw, 300px);
-  padding: 9px 11px; border-radius: 10px;
-  background: var(--paper); color: #fff;
-  box-shadow: 0 10px 30px rgba(24, 28, 50, .28);
-  font-size: 12px; line-height: 1.5;
-}
-.comp-tip-cab {
-  display: flex; justify-content: space-between; gap: 12px;
-  padding-bottom: 6px; margin-bottom: 5px;
-  border-bottom: 1px solid rgba(255, 255, 255, .16);
-  font-weight: 700;
-}
-.comp-tip-l {
-  display: grid; grid-template-columns: 9px 1fr auto auto; align-items: center; gap: 8px;
-  padding: 3px 5px; margin: 0 -5px; border-radius: 5px;
-  /* Sem destaque, o item recua: é o contraste que diz onde o dedo está, sem
-     esconder o resto da composição */
-  opacity: .58;
-}
-.comp-tip-l.on { opacity: 1; background: rgba(255, 255, 255, .13); }
-.comp-tip-l i { width: 9px; height: 9px; border-radius: 3px; }
-.comp-tip-l span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.comp-tip-l em { font-style: normal; font-size: 11px; opacity: .75; font-variant-numeric: tabular-nums; }
-.comp-tip-l b { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.comp-pe { margin-top: 5px; font-size: 11px; color: var(--paper-dim); }
-.comp-pe b { color: var(--paper); font-weight: 700; }
 
 /* Linhas de subcategoria na tabela */
 .rep-raiz.abre { cursor: pointer; }
@@ -423,63 +334,27 @@ body {
    texto e pontos vêm num overlay HTML posicionado em %. Assim o texto renderiza
    sempre no tamanho real do dispositivo, idêntico em qualquer contexto, e círculo
    continua redondo mesmo com o SVG esticado. */
-.g-wrap { position: relative; margin-top: 6px; height: 200px; }
-.g-wrap-linha { height: 170px; }
 @media (max-width: 560px) { .g-wrap { height: 175px; } .g-wrap-linha { height: 150px; } }
-.g-wrap > svg { display: block; width: 100%; height: 100%; }
 /* O overlay não intercepta toque: quem manda no clique é o que está embaixo */
-.g-textos { position: absolute; inset: 0; pointer-events: none; }
-.g-t {
-  position: absolute; transform: translateX(-50%);
-  white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums;
-}
-.g-t-val { font-size: 11.5px; font-weight: 700; color: var(--paper); transform: translate(-50%, -100%); }
-.g-t-rot { bottom: 0; font-size: 11px; color: var(--paper-dim); }
 /* O período atual em destaque: a barra dele já tem tom próprio, e o rótulo
    acompanha para a leitura casar de cima a baixo */
-.g-t-rot.on { color: var(--gold); font-weight: 700; }
 
 /* Barras: mais alto que a linha, porque doze colunas precisam de espaço para o
    rótulo de cada mês caber embaixo sem colidir */
-.g-wrap-bars { height: 250px; }
 @media (max-width: 560px) { .g-wrap-bars { height: 215px; } }
 /* Eixo à esquerda e referências à direita, ancorados na própria altura da linha */
-.g-t-eixo {
-  left: 0; font-size: 10.5px; color: var(--paper-dim);
-  transform: translateY(-50%); background: var(--ink-2); padding-right: 3px;
-}
-.g-t-ref { font-size: 10.5px; font-weight: 700; color: var(--paper-dim); transform: translateY(-100%); }
-.g-t-ref.renda { color: var(--red); }
 /* Div com border-radius em vez de <circle>: o SVG é esticado sem preservar
    proporção para o overlay casar, e círculo esticado vira elipse */
-.g-bola {
-  position: absolute; width: 9px; height: 9px; border-radius: 50%;
-  transform: translate(-50%, -50%);
-  background: #fff; border: 2px solid var(--gold); box-sizing: border-box;
-}
-.g-bola.agora { background: var(--gold); }
-.g-bola.ruim { background: var(--red); border-color: var(--red); }
 /* Rótulo do valor perto da borda: encolhe o deslocamento para não vazar */
-.g-wrap .g-t-val { max-width: 46%; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- Cascata ---------- */
-.g-cascata .c-entra { fill: var(--green); }
-.g-cascata .c-sai { fill: var(--red); opacity: .85; }
-.g-cascata .c-saldo { fill: var(--gold); }
-.g-cascata .c-neg { fill: var(--red); }
 /* Hairline sólida e recessiva: grade tracejada lê como projeção ou limite, e
    aqui é só régua */
-.g-grid { stroke: var(--line); stroke-width: 1; }
 /* O conector é o que faz a leitura fluir de um bloco ao seguinte */
-.g-liga { stroke: #c4cad4; stroke-width: 1; stroke-dasharray: 3 3; }
 
 /* ---------- Faixa de normalidade ----------
    A faixa é o que "normal" significa PARA ESTA FAMÍLIA. Sem ela toda subida
    parece alarme, e o leitor aprende a ignorar o gráfico. */
-.g-faixa { fill: rgba(0, 158, 247, .09); }
-.g-mediana { stroke: var(--gold); stroke-width: 1; stroke-dasharray: 4 4; opacity: .6; vector-effect: non-scaling-stroke; }
-.g-area { fill: rgba(0, 158, 247, .07); }
-.g-linha { fill: none; stroke: var(--gold); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 
 /* Cabeçalho de seção com ações à direita (padrão card-header + card-toolbar do
    Metronic). Nomeia a seção e ancora as ações dela, no lugar de botões de
@@ -587,27 +462,61 @@ body {
 .tip-amber { border-color: var(--amber); background: rgba(246, 166, 9, .07); }
 .tip-green { border-color: var(--green); background: rgba(80, 205, 137, .08); }
 
-/* Gráficos SVG */
-.chart-svg { width: 100%; height: auto; display: block; overflow: visible; }
-.ch-lbl { font-size: 11.5px; fill: var(--paper-dim); font-family: var(--font-body); font-weight: 500; }
-.ch-lbl-on { fill: var(--paper); font-weight: 700; }
-.ch-val { font-size: 11.5px; font-weight: 700; fill: var(--paper); font-family: var(--font-body); }
-.ch-axis { font-size: 10.5px; fill: #a1a5b7; font-family: var(--font-body); }
-.ch-grid { stroke: var(--line); stroke-width: 1; }          /* hairline sólida, recessiva */
-.ch-base { stroke: #dfe4ec; stroke-width: 1; }
-.ch-ref-line { stroke: #f1416c; stroke-width: 1.5; opacity: .8; }
-.ch-ref-pill { fill: #f1416c; opacity: .1; }
-.ch-ref { font-size: 10px; font-weight: 700; fill: #d9214e; font-family: var(--font-body); }
-.ch-avg { stroke: #a1a5b7; stroke-width: 1; opacity: .7; }
-.ch-avg-lbl { font-size: 10px; font-weight: 600; fill: #a1a5b7; font-family: var(--font-body); }
+/* ---------- Gráficos (ApexCharts) ----------
+   A biblioteca traz o próprio CSS embutido, com fontes e cores dela. O que este
+   bloco faz é encaixá-la no tema: o gráfico tem de parecer parte do app, não um
+   componente colado dentro dele. */
 
-/* Série única com ênfase por TOM: histórico recessivo, período atual em destaque */
-.ch-bar { fill: #a9d8f5; transition: fill .18s ease; }
-.ch-bar-on { fill: #0072b8; }                                /* contraste ≥ 3:1 na superfície */
-.ch-hit { cursor: default; }
-.ch-hit:hover ~ .ch-bar { fill: #a9d8f5; }
-svg:hover .ch-bar { fill: #8ecbf0; }
-svg:hover .ch-bar-on { fill: #005a92; }
+/* O div de montagem. A altura vem inline (Graficos.novo) para o cartão não pular
+   no instante entre o HTML entrar na tela e o gráfico ser desenhado. */
+.apx { margin-top: 6px; }
+/* A lib mede a largura do pai; sem isso um flex-item estoura em vez de encolher */
+.apx, .apx > div { min-width: 0; max-width: 100%; }
+/* Nome de mês e valor de eixo herdam a tipografia do app, não a da biblioteca */
+.apx text { font-family: inherit !important; }
+/* Cursor de mão só onde o clique leva a algum lugar */
+.apx-ranking .apexcharts-bar-area { cursor: pointer; }
+
+/* Dica padrão da lib, repintada no tema escuro das nossas dicas */
+.apx .apexcharts-tooltip {
+  border: none !important; border-radius: 8px !important;
+  background: rgba(24, 28, 50, .96) !important;
+  box-shadow: 0 8px 24px rgba(24, 28, 50, .22) !important;
+  color: #fff !important;
+}
+.apx .apexcharts-tooltip-title {
+  background: transparent !important; border-bottom: 1px solid rgba(255, 255, 255, .14) !important;
+  font-weight: 700 !important; font-size: 12px !important; margin-bottom: 2px !important;
+}
+.apx .apexcharts-tooltip-series-group { padding: 3px 10px !important; }
+.apx .apexcharts-tooltip-text-y-value { font-variant-numeric: tabular-nums; }
+/* Rótulo de anotação ("previsto", "média", "renda") não leva caixa: ele é
+   referência sobre o gráfico, e uma caixa competiria com o dado */
+.apx .apexcharts-xaxis-annotation-label,
+.apx .apexcharts-yaxis-annotation-label { fill: var(--paper-dim); }
+
+/* Dica da composição: lista o envelope INTEIRO com percentuais e destaca só o
+   item apontado. Um segmento sozinho não diz composição — por isso ela é própria
+   e não a nativa da biblioteca. */
+.apx-tip { min-width: 190px; max-width: 260px; padding: 8px 2px 6px; font-size: 12px; }
+.apx-tip-cab {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 0 10px 6px; margin-bottom: 4px; font-weight: 700;
+  border-bottom: 1px solid rgba(255, 255, 255, .14);
+}
+.apx-tip-l {
+  display: grid; grid-template-columns: 9px minmax(0, 1fr) auto auto;
+  align-items: center; gap: 8px; padding: 3px 10px; opacity: .62;
+}
+/* Ênfase por opacidade e realce, sem esconder o resto: o valor da dica está
+   justamente em mostrar o item apontado NO MEIO dos outros */
+.apx-tip-l.on { opacity: 1; background: rgba(255, 255, 255, .13); }
+.apx-tip-l i { width: 9px; height: 9px; border-radius: 3px; }
+.apx-tip-r { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apx-tip-l b { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.apx-tip-l small { font-size: 11px; opacity: .75; font-variant-numeric: tabular-nums; }
+
+.fl-nota { margin-top: 8px; font-size: 11px; color: var(--paper-dim); line-height: 1.45; }
 .chart-foot {
   display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 14px; padding-top: 12px;
   border-top: 1px dashed var(--line); font-size: 12px; color: var(--paper-dim);
@@ -618,32 +527,6 @@ svg:hover .ch-bar-on { fill: #005a92; }
 .budget-scroll { flex: 1; max-height: 300px; overflow-y: auto; scrollbar-width: thin; }
 .budget-scroll::-webkit-scrollbar { width: 5px; }
 .budget-scroll::-webkit-scrollbar-thumb { background: #d8e3ea; border-radius: 3px; }
-
-/* Ranking em barras horizontais */
-.rank { display: flex; flex-direction: column; gap: 11px; }
-.rank-row { display: flex; align-items: center; gap: 12px; font-size: 13px; }
-/* Quebra em duas linhas em vez de cortar: as barras continuam alinhadas entre si,
-   só a altura da linha cresce. "Serviços & Taxas" não caberia em uma linha. */
-.rank-name {
-  width: 140px; flex: none; overflow-wrap: anywhere; line-height: 1.3;
-  color: var(--paper); font-weight: 600;
-}
-.rank-bar { flex: 1; min-width: 0; height: 10px; border-radius: 5px; background: var(--ink-3); overflow: hidden; }
-.rank-bar > i { display: block; height: 100%; border-radius: 5px; transition: width .5s ease; }
-.rank-val { width: 96px; flex: none; text-align: right; font-weight: 700; white-space: nowrap; }
-.rank-val small { color: var(--paper-dim); font-weight: 500; margin-left: 6px; }
-/* No celular o nome sobe para a própria linha e usa a largura toda; a barra e o
-   valor descem juntos. Nome em coluna de 84px não servia para nome nenhum. */
-@media (max-width: 480px) {
-  .rank-row {
-    display: grid; grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-areas: "nome nome" "barra valor";
-    gap: 5px 10px;
-  }
-  .rank-name { grid-area: nome; width: auto; }
-  .rank-bar { grid-area: barra; }
-  .rank-val { grid-area: valor; width: auto; font-size: 12px; }
-}
 
 /* Tabelas de relatório */
 .table-wrap { overflow-x: auto; }
@@ -714,12 +597,6 @@ svg:hover .ch-bar-on { fill: #005a92; }
 
 /* Donut em SVG — anel espesso, fatias separadas, cresce com o card */
 .donut-wrap { display: flex; gap: 26px; align-items: center; flex-wrap: wrap; }
-.donut-svg { width: clamp(190px, 46%, 250px); height: auto; flex: none; }
-.dn-arc { transition: stroke-width .18s ease; }
-.dn-arc:hover { stroke-width: 35; }
-.dn-total { font-size: 27px; font-weight: 800; fill: var(--paper); font-family: var(--font-body); letter-spacing: -.02em; }
-.dn-cap { font-size: 11px; fill: var(--paper-dim); font-family: var(--font-body); }
-.dn-sub { font-size: 10px; fill: #b5bcc9; font-family: var(--font-body); }
 .legend { display: flex; flex-direction: column; gap: 10px; flex: 1 1 200px; min-width: 0; }
 .legend-row { display: flex; align-items: flex-start; gap: 10px; font-size: 13.5px; }
 .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; margin-top: 5px; }
@@ -1114,19 +991,15 @@ svg:hover .ch-bar-on { fill: #005a92; }
 /* 130px, não 40: os gráficos do Metronic têm 150–200px, e era essa proporção que
    faltava. Gráfico espremido entre textos parece encaixado às pressas; gráfico
    generoso parece desenhado. */
-.res-graf { position: relative; height: 130px; touch-action: pan-y; cursor: crosshair; }
-.spark-area { display: block; width: 100%; height: 130px; }
+.res-graf { height: 130px; }
+/* O sparkline sangra até a borda de baixo do cartão, herdando o raio dele: é o
+   que separa um gráfico desenhado de um gráfico encaixotado. */
+.res-graf .apx { margin-top: 0; }
 
-/* Balão preso no alto do gráfico, correndo só na horizontal: no celular o dedo
-   está sobre a linha, e um balão que segue o toque nos dois eixos nasce debaixo
-   do próprio dedo. */
-.res-tip {
-  position: absolute; top: 6px; z-index: 2; pointer-events: none;
-  min-width: 118px; padding: 7px 9px; border-radius: 8px;
-  background: var(--paper); color: #fff;
-  box-shadow: 0 6px 20px rgba(24, 28, 50, .22);
-  font-size: 11.5px; line-height: 1.5;
-}
+/* Conteúdo da dica do saldo diário. O balão em si é da biblioteca (posição,
+   toque e recorte pelo cartão vêm dela); estas regras são o miolo — saldo do dia,
+   quanto entrou e quanto saiu, que a dica nativa não saberia montar. */
+.res-tip-in { min-width: 118px; padding: 7px 9px; font-size: 11.5px; line-height: 1.5; }
 .res-tip-d { display: block; font-weight: 700; opacity: .75; margin-bottom: 2px; text-transform: capitalize; }
 .res-tip-l { display: flex; justify-content: space-between; gap: 12px; }
 .res-tip-l i { font-style: normal; opacity: .7; }
@@ -1134,12 +1007,6 @@ svg:hover .ch-bar-on { fill: #005a92; }
 /* Dentro do balão escuro as cores do app não teriam contraste; aqui elas clareiam */
 .res-tip-l b.txt-green { color: #7ee2ab; }
 .res-tip-l b.txt-red { color: #ff8fa8; }
-/* Traço de 2px que não engorda quando o SVG é esticado na largura */
-.spark-linha { fill: none; stroke: var(--gold); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
-/* Lavagem, nunca bloco saturado: a área dá o volume sem competir com a linha */
-.spark-fill { fill: url(#grad-saldo); stroke: none; }
-.spark-zero { stroke: #d8e0e8; stroke-width: 1; vector-effect: non-scaling-stroke; }
-.spark-cursor { stroke: var(--gold); stroke-width: 1; opacity: .5; vector-effect: non-scaling-stroke; }
 .res-nota { padding: 0 16px 12px; margin: 0; font-size: 11.5px; }
 .res.fechado .res-nota,
 .res.fechado .res-graf { display: none; }
@@ -1184,8 +1051,6 @@ svg:hover .ch-bar-on { fill: #005a92; }
 /* Fixar etiqueta é decisão deliberada, então o estado ligado precisa ser óbvio */
 .chip-fixa { font-size: 12.5px; border-style: dashed; }
 .chip-fixa.active { border-style: solid; background: rgba(0, 158, 247, .1); color: var(--gold); border-color: var(--gold); }
-.rank-clicavel { cursor: pointer; }
-.rank-clicavel:hover .rank-name { color: var(--gold); }
 
 .filter-lbl {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
@@ -1607,10 +1472,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 /* Barras e anéis crescem a partir do zero — o dado "chega" */
 .bar > i { animation: barGrow .55s cubic-bezier(.22, 1, .36, 1); }
 @keyframes barGrow { from { width: 0 !important; } }
-.rank-bar > i { animation: barGrow .55s cubic-bezier(.22, 1, .36, 1) backwards; }
-.dn-arc { animation: arcIn .7s cubic-bezier(.22, 1, .36, 1) backwards; }
 @keyframes arcIn { from { opacity: 0; stroke-width: 0; } }
-.ch-bar { animation: colGrow .5s cubic-bezier(.22, 1, .36, 1) backwards; transform-origin: center bottom; }
 @keyframes colGrow { from { transform: scaleY(0); opacity: .3; } }
 
 /* Resposta ao toque: o elemento reage antes de a ação acontecer */

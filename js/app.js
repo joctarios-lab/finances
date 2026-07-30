@@ -278,470 +278,548 @@ function render() {
   $('#view').innerHTML = views[state.tab](period);
   paintIcons($('#view'));
   if (typeof UI !== 'undefined') UI.enhance($('#view'));
+  /* Os gráficos entram DEPOIS do innerHTML: ApexCharts mede o elemento para
+     desenhar, e um div fora do DOM não tem largura. limpar() antes derruba as
+     instâncias da tela anterior, que morreram com o innerHTML mas continuariam
+     vivas na memória escutando resize. */
+  if (typeof Graficos !== 'undefined') { Graficos.limpar(); Graficos.montar(); }
   bindView();
   persistUI();
 }
 
-/* ---------- Gráficos SVG (sem bibliotecas, funcionam offline) ---------- */
-// Barras verticais com rótulos: series = [{label, value, hint?}], refLine opcional (ex: renda).
-/* Colunas de evolução no tempo. Série única: sem legenda (o título já diz o que é),
-   ênfase no período atual por TOM (não por opacidade) e rótulos só onde contam. */
-function svgBars(series, refLine, opts = {}) {
-  const W = 760, H = opts.height || 250;
-  const padT = 34, padB = 34, padL = 46, padR = 12;
-  const plotW = W - padL - padR, plotH = H - padT - padB;
-  const valores = series.map(s => s.value);
-  const max = niceCeil(Math.max(refLine || 0, ...valores, 1));
-  const banda = plotW / series.length;
-  const larg = Math.min(24, banda - 10);          // marca fina: nunca preenche a faixa
-  const y = v => padT + plotH - (v / max) * plotH;
+/* ---------- Gráficos (ApexCharts) ----------
 
+   As funções abaixo não desenham: montam a configuração e devolvem o <div> onde
+   o gráfico vai nascer, via Graficos.novo(). Quem instancia é Graficos.montar(),
+   chamado depois de a tela ir para o DOM — ApexCharts precisa medir o elemento.
+
+   O que a biblioteca resolveu e o SVG à mão não resolvia: rótulo de eixo no
+   tamanho real do aparelho (o viewBox escalado encolhia texto de 11px para
+   ~5px), dica de valor no toque, e curva/arredondamento sem geometria manual.
+   O que continua sendo decisão nossa e está codificado aqui: qual forma usa
+   qual dado, a paleta, e onde entra referência em vez de mais tinta. */
+
+/* Colunas de evolução no tempo. Série única: sem legenda (o título já diz o que
+   é), ênfase no período atual por TOM e referências como linha, não como barra.
+
+   `distributed: true` é o que permite pintar uma coluna diferente das outras.
+   Com série única não há agrupamento para quebrar, então é seguro aqui — em
+   gráfico de várias séries ele bagunçaria a identidade das cores. */
+function svgBars(series, refLine, opts = {}) {
+  if (!series.length) return '<div class="empty">Sem dados no período.</div>';
+  const valores = series.map(s => Number(s.value) || 0);
+  const iAtual = series.findIndex(s => s.hint === '#009ef7');
   const comGasto = valores.filter(v => v > 0);
   const media = comGasto.length ? comGasto.reduce((a, b) => a + b, 0) / comGasto.length : 0;
-  const iMax = valores.indexOf(Math.max(...valores));
-  const iAtual = series.findIndex(s => s.hint === '#009ef7');
 
-  /* Texto FORA do SVG, no overlay em HTML.
+  // O período atual em azul cheio; os outros no cinza-azulado que recua
+  const cores = series.map((s, i) => (i === iAtual ? Graficos.cor.azul : '#e4e6ef'));
 
-     Medido nos outros gráficos: viewBox de 760 num cartão de 307px dá escala
-     0,40 — um rótulo de 11px sairia a 4,4px na tela, e o mesmo gráfico mudaria
-     de tamanho conforme a largura do cartão. Aqui o SVG guarda só a geometria e
-     o texto renderiza no tamanho real do aparelho, igual em qualquer contexto. */
-  const px = v => (v / W * 100).toFixed(2);
-  const py = v => (v / H * 100).toFixed(2);
-  let textos = '';
-
-  // Grade: hairline sólida, recessiva, com os valores à esquerda
-  let grid = '';
-  for (let i = 0; i <= 4; i++) {
-    const v = max * i / 4, gy = y(v);
-    grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '" class="ch-grid"/>';
-    textos += '<span class="g-t g-t-eixo" style="left:0;top:' + py(gy) + '%">' +
-      (v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(v)) + '</span>';
-  }
-
-  // Referências: renda (teto) e média do período — linhas finas e sólidas
-  let refs = '';
+  const refs = [];
   if (media > 0) {
-    const my = y(media);
-    refs += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + my.toFixed(1) + '" y2="' + my.toFixed(1) + '" class="ch-avg"/>';
-    textos += '<span class="g-t g-t-ref" style="right:0;top:' + py(my - 4) + '%">média ' + fmtShort(media).replace('R$', '').trim() + '</span>';
+    refs.push({
+      y: media, borderColor: Graficos.cor.cinza, strokeDashArray: 4,
+      label: {
+        text: 'média ' + fmtShort(media).replace('R$', '').trim(),
+        position: 'right', textAnchor: 'end', borderWidth: 0,
+        style: { color: Graficos.cor.tintaFraca, background: 'transparent', fontSize: '10px', fontWeight: 600 },
+      },
+    });
   }
-  if (refLine > 0 && refLine <= max) {
-    const ry = y(refLine);
-    refs += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + ry.toFixed(1) + '" y2="' + ry.toFixed(1) + '" class="ch-ref-line"/>';
-    textos += '<span class="g-t g-t-ref renda" style="right:0;top:' + py(ry - 4) + '%">renda ' + fmtShort(refLine).replace('R$', '').trim() + '</span>';
+  if (refLine > 0) {
+    refs.push({
+      y: refLine, borderColor: Graficos.cor.verde, strokeDashArray: 4,
+      label: {
+        text: 'renda ' + fmtShort(refLine).replace('R$', '').trim(),
+        position: 'right', textAnchor: 'end', borderWidth: 0,
+        style: { color: Graficos.cor.verde, background: 'transparent', fontSize: '10px', fontWeight: 600 },
+      },
+    });
   }
 
-  let marcas = '', hits = '';
-  series.forEach((s, i) => {
-    const cx = padL + i * banda + banda / 2;
-    const topo = s.value > 0 ? y(s.value) : y(0);
-    const base = y(0);
-    const alt = Math.max(0, base - topo);
-    const atual = i === iAtual;
-    /* Raio menor que nos outros gráficos: com o SVG esticado na horizontal para
-       o overlay casar, um canto de 4 vira elíptico. Em 2,5 a distorção some. */
-    const x = cx - larg / 2, r = Math.min(2.5, alt);
-
-    if (alt > 0) {
-      marcas += '<path d="M' + x.toFixed(1) + ' ' + base.toFixed(1) +
-        ' V' + (topo + r).toFixed(1) + ' Q' + x.toFixed(1) + ' ' + topo.toFixed(1) + ' ' + (x + r).toFixed(1) + ' ' + topo.toFixed(1) +
-        ' H' + (x + larg - r).toFixed(1) + ' Q' + (x + larg).toFixed(1) + ' ' + topo.toFixed(1) + ' ' + (x + larg).toFixed(1) + ' ' + (topo + r).toFixed(1) +
-        ' V' + base.toFixed(1) + ' Z" class="ch-bar' + (atual ? ' ch-bar-on' : '') + '"/>';
-    }
-
-    // Rótulo só no período atual e no maior valor — nunca em toda barra
-    if (s.value > 0 && (atual || i === iMax)) {
-      textos += '<span class="g-t g-t-val" style="left:' + px(cx) + '%;top:' + py(topo - 3) + '%">' +
-        fmtShort(s.value).replace('R$', '').trim() + '</span>';
-    }
-    textos += '<span class="g-t g-t-rot' + (atual ? ' on' : '') + '" style="left:' + px(cx) + '%">' + esc(s.label) + '</span>';
-
-    // Alvo de hover maior que a marca, cobrindo a faixa inteira
-    hits += '<rect x="' + (padL + i * banda).toFixed(1) + '" y="' + padT + '" width="' + banda.toFixed(1) + '" height="' + plotH +
-      '" fill="transparent" class="ch-hit"><title>' + esc(s.label) + ': ' + fmt(s.value) + '</title></rect>';
-  });
-
-  const baseline = '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + y(0).toFixed(1) + '" y2="' + y(0).toFixed(1) + '" class="ch-base"/>';
-  return '<div class="g-wrap g-wrap-bars">' +
-    '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none"' +
-    ' role="img" aria-label="Evolução dos gastos por período">' +
-    grid + refs + baseline + marcas + hits + '</svg>' +
-    '<div class="g-textos">' + textos + '</div></div>';
+  const alt = opts.height || 250;
+  return Graficos.novo({
+    ...Graficos.base(alt, {
+      chart: { type: 'bar' },
+      xaxis: { categories: series.map(s => s.label) },
+      yaxis: { labels: { formatter: v => fmtShort(v).replace('R$', '').trim() } },
+      tooltip: { y: { formatter: v => fmt(v) } },
+    }),
+    series: [{ name: 'gasto', data: valores }],
+    colors: cores,
+    plotOptions: {
+      bar: {
+        distributed: true, columnWidth: '46%',
+        // Ponta arredondada, pé reto: o topo é o dado; arredondar a base faria a
+        // coluna parecer flutuar acima do zero
+        borderRadius: 5, borderRadiusApplication: 'end',
+      },
+    },
+    annotations: { yaxis: refs },
+  }, alt, 'barras');
 }
 
 // Arredonda o topo da escala para um número redondo — deixa a grade legível
-/* ---------- Cascata: o caminho do dinheiro ----------
-   Cada barra começa onde a anterior parou, então a soma É a forma: dá para
-   VER a receita sendo consumida bloco a bloco até o que sobrou. Uma pizza
-   responde "qual a maior fatia"; a cascata responde "por que sobrou tão pouco",
-   que é a pergunta de quem abre um relatório financeiro.
-
-   passos = [{ rot, valor, tipo }] — tipo 'entra' | 'sai' | 'total'. */
-function svgCascata(passos, opts = {}) {
-  const W = 720, H = opts.height || 250;
-  const padT = 26, padB = 44, padL = 8, padR = 8;
-  const plotH = H - padT - padB, plotW = W - padL - padR;
-
-  // Acumula para achar a escala e o piso de cada barra
-  let acum = 0;
-  const barras = passos.map(p => {
-    const v = Number(p.valor) || 0;
-    if (p.tipo === 'total') return { ...p, de: 0, ate: acum, valor: acum };
-    const de = acum;
-    acum += p.tipo === 'entra' ? v : -v;
-    return { ...p, de, ate: acum, valor: v };
-  });
-  const teto = niceCeil(Math.max(...barras.map(b => Math.max(b.de, b.ate)), 1));
-  const y = v => padT + plotH - (v / teto) * plotH;
-  const banda = plotW / barras.length;
-  const larg = Math.min(56, banda - 18);          // marca fina: nunca preenche a faixa
-
-  let grade = '';
-  for (let i = 0; i <= 3; i++) {
-    const gy = y(teto * i / 3);
-    grade += `<line x1="${padL}" y1="${gy.toFixed(1)}" x2="${W - padR}" y2="${gy.toFixed(1)}" class="g-grid"/>`;
-  }
-
-  let marcas = '', textos = '';
-  barras.forEach((b, i) => {
-    const cx = padL + banda * i + banda / 2;
-    const topo = Math.min(y(b.de), y(b.ate));
-    const alt = Math.max(2, Math.abs(y(b.de) - y(b.ate)));
-    const cls = b.tipo === 'total' ? (b.ate >= 0 ? 'c-saldo' : 'c-neg') : b.tipo === 'entra' ? 'c-entra' : 'c-sai';
-    /* Conector até a barra seguinte: é ele que faz a leitura fluir e mostra que
-       um bloco começa onde o outro parou. Sem ele, viram colunas soltas. */
-    if (i < barras.length - 1 && b.tipo !== 'total') {
-      const px = padL + banda * (i + 1) + banda / 2;
-      marcas += `<line x1="${(cx + larg / 2).toFixed(1)}" y1="${y(b.ate).toFixed(1)}" x2="${(px - larg / 2).toFixed(1)}" y2="${y(b.ate).toFixed(1)}" class="g-liga"/>`;
-    }
-    marcas += `<rect x="${(cx - larg / 2).toFixed(1)}" y="${topo.toFixed(1)}" width="${larg.toFixed(1)}" height="${alt.toFixed(1)}" rx="4" class="${cls}"/>`;
-    /* Texto em HTML sobreposto, NÃO dentro do SVG.
-
-       Medido: com viewBox de 720 num cartão de 307px, a escala é 0,43 — um rótulo
-       de 11px saía a 4,7px na tela, ilegível, e o mesmo gráfico mudava de tamanho
-       conforme a largura do cartão. Em HTML o texto renderiza sempre no tamanho
-       real do dispositivo, igual em qualquer contexto. */
-    textos += `<span class="g-t g-t-val" style="left:${(cx / W * 100).toFixed(2)}%;top:${((topo - 4) / H * 100).toFixed(2)}%">${fmtShort(b.valor)}</span>`
-      + `<span class="g-t g-t-rot" style="left:${(cx / W * 100).toFixed(2)}%">${esc(b.rot)}</span>`;
-  });
-
-  return `<div class="g-wrap" style="--g-ar:${(H / W * 100).toFixed(2)}%">
-    <svg class="g-cascata" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
-      role="img" aria-label="${esc(opts.alt || 'Caminho do dinheiro no período')}">
-      ${grade}${marcas}
-    </svg>
-    <div class="g-textos">${textos}</div>
-  </div>`;
-}
-
-/* Clareia um hex em direção ao branco. Serve para dar às subcategorias tons do
-   matiz do próprio envelope — 75 folhas não caberiam em matizes distintos, e
-   acima de ~8 matizes eles ficam indistinguíveis mesmo para quem vê bem. */
-function clarear(hex, fracao) {
-  const n = parseInt(String(hex).replace('#', ''), 16);
-  const mistura = c => Math.round(c + (255 - c) * fracao);
-  const r = mistura((n >> 16) & 255), g = mistura((n >> 8) & 255), b = mistura(n & 255);
-  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
-}
-
-/* ---------- Composição: envelope por dentro ----------
-   Uma barra por envelope, dividida nas subcategorias dele. Responde "onde DENTRO
-   de Alimentação?" para todos os envelopes de uma vez, sem precisar tocar em
-   nada — que é a pergunta acionável: mercado e delivery pedem decisões
-   diferentes, e o total do envelope esconde as duas.
-
-   A hierarquia vem no encadeamento das cores: o matiz identifica o envelope, o
-   tom identifica a subcategoria dentro dele. Assim a leitura funciona nos dois
-   níveis sem inventar 75 cores.
-
-   grupos = [{ rot, total, partes: [{ rot, valor }] }] */
-function svgComposicao(grupos, opts = {}) {
-  if (!grupos.length) return '<div class="empty">Sem gastos no período.</div>';
-  const maior = Math.max(...grupos.map(g => g.total), 1);
-  return `<div class="comp">${grupos.map((g, i) => {
-    const base = PALETTE[i % PALETTE.length];
-    const larguraDoGrupo = (g.total / maior) * 100;
-    /* Gap de 2px na cor da superfície entre segmentos: é o que separa dois tons
-       vizinhos sem desenhar borda em volta deles — borda adiciona tinta que não
-       é dado. */
-    const segs = g.partes.map((p, j) => {
-      /* Clareia no máximo 45%, medido: até 62% o último segmento chegava a 1,12
-         de contraste contra o fundo do cartão — presente no HTML e invisível na
-         tela. As partes vêm ordenadas da maior para a menor, então o tom mais
-         claro cai justamente no segmento mais estreito, que é o que menos pesa. */
-      const tom = clarear(base, Math.min(0.45, j * 0.12));
-      const pctNoGrupo = g.total > 0 ? (p.valor / g.total) * 100 : 0;
-      // Sem `title`: o tooltip nativo demora a aparecer, não existe no toque e
-      // mostraria um item isolado — e um segmento sozinho não diz composição
-      return `<i style="width:${pctNoGrupo.toFixed(2)}%;background:${tom}"></i>`;
-    }).join('');
-    // Rótulo só na maior parte, e só quando ela domina: nome em cada segmento
-    // vira ruído numa barra de 8px de altura
-    const dona = g.partes[0];
-    const fatiaDona = g.total > 0 && dona ? dona.valor / g.total : 0;
-    return `<div class="comp-linha" data-comp="${esc(g.id || '')}"
-      data-cor="${base}" data-rot="${esc(g.rot)}"
-      data-partes="${esc(JSON.stringify(g.partes.map(p => [p.rot, p.valor])))}">
-      <div class="comp-cab">
-        <span class="comp-rot">${esc(g.rot)}</span>
-        <span class="comp-val">${fmtShort(g.total)}</span>
-      </div>
-      <div class="comp-barra" style="width:${Math.max(4, larguraDoGrupo).toFixed(1)}%">${segs}</div>
-      <div class="comp-pe">${dona && g.partes.length > 1
-        ? `maior parte <b>${esc(dona.rot)}</b> · ${Math.round(fatiaDona * 100)}%${
-            g.partes.length > 2 ? ` · e ${g.partes.length - 1} outras` : ''}`
-        : dona ? esc(dona.rot) : ''}</div>
-    </div>`;
-  }).join('')}</div>`;
-}
-
-/* ---------- Fluxo e saldo: doze meses, duas escalas honestas ----------
-   Barras em cima (o que entrou e saiu em cada mês), saldo embaixo (a posição
-   acumulada). DOIS PAINÉIS, não dois eixos no mesmo painel.
-
-   O motivo é o erro mais comum em gráfico financeiro: fluxo mensal vive na casa
-   dos milhares e saldo acumulado nas dezenas de milhares. Sobrepor os dois exige
-   dois eixos Y, e alinhar dois eixos é arbitrário — o gráfico passa a insinuar
-   uma correlação que não está no dado. Compartilhando só o eixo do TEMPO, cada
-   painel guarda a própria escala e os dois se leem juntos sem mentir.
-
-   A fronteira de hoje é a informação mais importante da tela: à esquerda é fato
-   conciliado, à direita é estimativa. Por isso ela aparece três vezes — divisória
-   marcada, barra vazada e linha tracejada. */
-function svgFluxoSaldo(meses, opts = {}) {
-  if (meses.length < 2) return '<div class="empty">Sem histórico suficiente.</div>';
-  const W = 720, H = 210;
-  const padL = 8, padR = 8, padT = 16, padB = 26;
-  const plotW = W - padL - padR;
-  const banda = plotW / meses.length;
-  const iHoje = meses.findIndex(m => m.futuro) - 1;   // último mês realizado
-  const corte = Math.max(0, iHoje);
-
-  const saldos = meses.map(m => m.saldo);
-  const maxFluxo = niceCeil(Math.max(...meses.flatMap(m => [m.entra, m.sai]), 1));
-  const maxSaldo = niceCeil(Math.max(...saldos, 1));
-  const minSaldo = Math.min(...saldos, 0);
-
-  /* DUAS ESCALAS, ANCORADAS NO ZERO E NO TOPO.
-
-     Combinar fluxo mensal (milhares) com saldo acumulado (dezenas de milhares)
-     exige duas escalas — não há como fugir disso. O que dá para eliminar é a
-     parte arbitrária: aqui o ZERO das duas cai na mesma linha e o TOPO das duas é
-     a mesma borda. Assim a única liberdade que sobra é a de unidade, e nenhuma
-     das duas séries pode "parecer" cruzar a outra num ponto que não significa
-     nada. Saldo negativo desce abaixo da mesma linha onde as barras nascem. */
-  const espacoNeg = minSaldo < 0 ? 40 : 0;
-  const base = H - padB - espacoNeg;                  // o zero, comum às duas
-  const alturaPos = base - padT;
-  const yFluxo = v => base - (v / maxFluxo) * alturaPos;
-  const ySaldo = v => (v >= 0
-    ? base - (v / maxSaldo) * alturaPos
-    : base + (Math.abs(v) / Math.abs(minSaldo || 1)) * espacoNeg);
-
-  const xs = i => padL + banda * i + banda / 2;
-
-  // Grade recessiva: hairline sólida, três linhas — mais que isso vira gaiola
-  let grade = '';
-  for (let i = 1; i <= 3; i++) {
-    const gy = yFluxo(maxFluxo * i / 3);
-    grade += `<line x1="${padL}" x2="${W - padR}" y1="${gy.toFixed(1)}" y2="${gy.toFixed(1)}" class="ch-grid"/>`;
-  }
-  grade += `<line x1="${padL}" x2="${W - padR}" y1="${base.toFixed(1)}" y2="${base.toFixed(1)}" class="fl-base"/>`;
-
-  /* --- a ÁREA do saldo, ATRÁS das barras ---
-     Ela é o nível, não o movimento: fica como fundo lavado com degradê, e as
-     barras vêm na frente. Se a área tivesse o mesmo peso visual das barras, as
-     duas competiriam e nenhuma seria lida. */
-  const pts = saldos.map((v, i) => [xs(i), ySaldo(v)]);
-  const curvaToda = caminhoSuave(pts);
-  const curvaReal = caminhoSuave(pts.slice(0, corte + 1));
-  const curvaPrev = caminhoSuave(pts.slice(corte));
-  const areaReal = corte > 0
-    ? `${curvaReal} L${xs(corte).toFixed(1)} ${base.toFixed(1)} L${xs(0).toFixed(1)} ${base.toFixed(1)} Z` : '';
-  const areaPrev = `${curvaPrev} L${xs(meses.length - 1).toFixed(1)} ${base.toFixed(1)} L${xs(corte).toFixed(1)} ${base.toFixed(1)} Z`;
-
-  /* --- as BARRAS, na frente ---
-     Ponta arredondada, pé reto: o topo é o dado e ganha o arredondamento; a base
-     encosta no zero, e arredondá-la faria a barra parecer flutuar. */
-  const larg = Math.min(10, Math.max(3, (banda - 7) / 2));
-  const barra = (x, topo, cls) => {
-    const alt = Math.max(0, base - topo);
-    if (alt < 0.6) return '';
-    const r = Math.min(3, alt, larg / 2);
-    return `<path d="M${x.toFixed(1)} ${base.toFixed(1)} V${(topo + r).toFixed(1)}`
-      + ` Q${x.toFixed(1)} ${topo.toFixed(1)} ${(x + r).toFixed(1)} ${topo.toFixed(1)}`
-      + ` H${(x + larg - r).toFixed(1)} Q${(x + larg).toFixed(1)} ${topo.toFixed(1)} ${(x + larg).toFixed(1)} ${(topo + r).toFixed(1)}`
-      + ` V${base.toFixed(1)} Z" class="${cls}"/>`;
-  };
-  let barras = '';
-  meses.forEach((m, i) => {
-    const cx = xs(i);
-    // Vão de 2px entre o par: separa sem desenhar borda, que somaria tinta que não é dado
-    barras += barra(cx - larg - 1, yFluxo(m.entra), `fl-in${m.futuro ? ' prev' : ''}`);
-    barras += barra(cx + 1, yFluxo(m.sai), `fl-out${m.futuro ? ' prev' : ''}`);
-  });
-
-  const xHoje = padL + banda * (iHoje + 1);
-  const pctX = v => (v / W * 100).toFixed(2);
-  const pctY = v => (v / H * 100).toFixed(2);
-
-  const rotulos = meses.map((m, i) => {
-    // Um rótulo a cada dois meses: treze nomes lado a lado colidem no celular
-    if (i % 2 !== 0 && i !== meses.length - 1) return '';
-    const nome = m.period.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
-    return `<span class="g-t g-t-rot${i === iHoje ? ' on' : ''}" style="left:${pctX(xs(i))}%">${esc(nome)}</span>`;
-  }).join('');
-
-  const iMenor = saldos.indexOf(Math.min(...saldos));
-  const marcas = [corte, meses.length - 1, iMenor].filter((v, i, a) => a.indexOf(v) === i);
-
-  return `
-    <div class="fl">
-      <div class="fl-topo">
-        <span class="fl-leg"><i class="fl-k in"></i>entrou</span>
-        <span class="fl-leg"><i class="fl-k out"></i>saiu</span>
-        <span class="fl-leg"><i class="fl-k area"></i>saldo</span>
-        <span class="fl-leg"><i class="fl-k prev"></i>previsto</span>
-      </div>
-      <div class="g-wrap fl-combo">
-        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
-          aria-label="${esc(opts.alt || 'Entradas, saídas e saldo mês a mês')}">
-          <defs>
-            <linearGradient id="grad-fl" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stop-color="#009ef7" stop-opacity=".26"/>
-              <stop offset="100%" stop-color="#009ef7" stop-opacity="0"/>
-            </linearGradient>
-            <!-- Hachura para a metade prevista: diz "estimativa" mesmo em
-                 impressão e para quem não distingue as cores -->
-            <pattern id="hach-fl" width="6" height="6" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
-              <line x1="0" y1="0" x2="0" y2="6" class="fl-hach"/>
-            </pattern>
-          </defs>
-          ${grade}
-          ${areaReal ? `<path d="${areaReal}" class="fl-area"/>` : ''}
-          <path d="${areaPrev}" class="fl-area prev"/>
-          <path d="${curvaReal}" class="fl-borda"/>
-          <path d="${curvaPrev}" class="fl-borda prev"/>
-          ${barras}
-          <line x1="${xHoje.toFixed(1)}" x2="${xHoje.toFixed(1)}" y1="${padT - 8}" y2="${H - padB}" class="fl-hoje"/>
-        </svg>
-        <div class="g-textos">
-          <span class="g-t g-t-eixo" style="left:0;top:${pctY(yFluxo(maxFluxo))}%">${fmtShort(maxFluxo)}</span>
-          <span class="g-t g-t-eixo dir" style="right:0;top:${pctY(ySaldo(maxSaldo))}%">${fmtShort(maxSaldo)}</span>
-          ${marcas.map(i => `<span class="fl-pt${meses[i].futuro ? ' prev' : ''}${saldos[i] < 0 ? ' neg' : ''}"
-            style="left:${pctX(pts[i][0])}%;top:${pctY(pts[i][1])}%"></span>`).join('')}
-          <span class="g-t g-t-saldo" style="left:${pctX(pts[corte][0])}%;top:${pctY(pts[corte][1] - 6)}%">${fmtShort(saldos[corte])}</span>
-          <span class="g-t g-t-saldo ${saldos[saldos.length - 1] < 0 ? 'ruim' : ''}"
-            style="left:${pctX(pts[pts.length - 1][0])}%;top:${pctY(pts[pts.length - 1][1] - 6)}%">${fmtShort(saldos[saldos.length - 1])}</span>
-          <span class="fl-marca-hoje" style="left:${pctX(xHoje)}%">hoje</span>
-          ${rotulos}
-        </div>
-      </div>
-      <p class="fl-nota">Barras: o que entrou e saiu em cada mês (escala à esquerda). Área: o saldo acumulado (escala à direita). O zero é o mesmo para as duas.</p>
-    </div>`;
-}
-
-/* ---------- Linha com faixa de normalidade ----------
-   A faixa é mediana ± desvio mediano: o que "normal" significa PARA ESTA
-   FAMÍLIA, medido no próprio histórico dela. Ponto dentro da faixa é rotina;
-   fora, é notícia — e é isso que separa um gráfico que informa de um que só
-   desenha. Sem a faixa, toda subida parece alarme e o leitor aprende a ignorar. */
-function svgLinhaFaixa(serie, opts = {}) {
-  const W = 720, H = opts.height || 210;
-  const padT = 18, padB = 30, padL = 8, padR = 8;
-  const plotH = H - padT - padB, plotW = W - padL - padR;
-  const vals = serie.map(s => s.valor);
-  const positivos = vals.filter(v => v > 0);
-  const med = DB.mediana(positivos);
-  const mad = DB.desvioMediano(positivos) || med * 0.1;
-  const teto = niceCeil(Math.max(...vals, med + mad, 1));
-  const y = v => padT + plotH - (Math.max(0, v) / teto) * plotH;
-  const x = i => padL + (serie.length <= 1 ? plotW / 2 : (i / (serie.length - 1)) * plotW);
-
-  const faixa = positivos.length >= 3 ? `
-    <rect x="${padL}" y="${y(med + mad).toFixed(1)}" width="${plotW}"
-      height="${Math.max(2, y(Math.max(0, med - mad)) - y(med + mad)).toFixed(1)}" class="g-faixa"/>
-    <line x1="${padL}" y1="${y(med).toFixed(1)}" x2="${W - padR}" y2="${y(med).toFixed(1)}" class="g-mediana"/>` : '';
-
-  const pts = serie.map((s, i) => [x(i), y(s.valor)]);
-  const linha = caminhoSuave(pts);
-  const area = positivos.length ? `<path d="${linha} L${x(serie.length - 1).toFixed(1)} ${H - padB} L${padL} ${H - padB} Z" class="g-area"/>` : '';
-
-  /* Só as pontas e o extremo recebem marcador: um ponto em cada mês vira ruído.
-
-     Em HTML, não como <circle>: o SVG é esticado sem preservar proporção para o
-     overlay de texto casar, e círculo esticado vira elipse. Um div com
-     border-radius fica redondo em qualquer largura. */
-  const iMax = vals.indexOf(Math.max(...vals));
-  const destaque = [0, serie.length - 1, iMax];
-  const bolas = pts.map(([px, py], i) => (destaque.includes(i)
-    ? `<span class="g-bola${i === serie.length - 1 ? ' agora' : ''}"
-        style="left:${(px / W * 100).toFixed(2)}%;top:${(py / H * 100).toFixed(2)}%"></span>` : '')).join('');
-
-  // Rótulos em HTML sobreposto: dentro do SVG escalado eles saíam a ~5px
-  const rotulos = serie.map((s, i) => (i % Math.ceil(serie.length / 6) === 0 || i === serie.length - 1
-    ? `<span class="g-t g-t-rot" style="left:${(x(i) / W * 100).toFixed(2)}%">${esc(s.rot)}</span>` : '')).join('');
-
-  return `<div class="g-wrap g-wrap-linha">
-    <svg class="g-faixa-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
-      role="img" aria-label="${esc(opts.alt || 'Evolução mensal com faixa de normalidade')}">
-      ${faixa}${area}<path d="${linha}" class="g-linha"/>
-    </svg>
-    <div class="g-textos">${bolas}${rotulos}</div>
-  </div>`;
-}
-
 function niceCeil(v) {
   if (v <= 0) return 1;
   const exp = Math.pow(10, Math.floor(Math.log10(v)));
   return Math.ceil(v / (exp / 2)) * (exp / 2);
 }
 
-/* Donut em SVG: anel espesso com separação entre fatias, rótulo central e legenda. */
-function svgDonut(fatias, total, opts = {}) {
-  const S = 240, R = 96, W = 30, cx = S / 2, cy = S / 2;   // raio e espessura do anel
-  const circ = 2 * Math.PI * R;
-  const gap = fatias.length > 1 ? 2.5 : 0;                  // respiro entre fatias
-  let offset = 0, aneis = '';
-  for (const f of fatias) {
-    const frac = total > 0 ? f.value / total : 0;
-    const comp = Math.max(0, frac * circ - gap);
-    aneis += `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${f.color}" stroke-width="${W}"
-      stroke-dasharray="${comp.toFixed(2)} ${(circ - comp).toFixed(2)}"
-      stroke-dashoffset="${(-offset).toFixed(2)}" stroke-linecap="round" class="dn-arc">
-      <title>${esc(f.label)}: ${fmt(f.value)} (${Math.round(frac * 100)}%)</title></circle>`;
-    offset += frac * circ;
+/* ---------- Cascata: o caminho do dinheiro ----------
+   Cada barra começa onde a anterior parou, então a soma É a forma: dá para VER
+   a receita sendo consumida bloco a bloco até o que sobrou. Uma pizza responde
+   "qual a maior fatia"; a cascata responde "por que sobrou tão pouco", que é a
+   pergunta de quem abre um relatório financeiro.
+
+   ApexCharts não tem cascata nativa. A receita padrão é barra EMPILHADA com uma
+   série invisível embaixo servindo de pedestal — é ela que levanta cada bloco
+   até onde o anterior parou. As séries visíveis vêm separadas por tipo porque
+   cor no ApexCharts é por série, não por ponto: cada uma só tem valor na sua
+   própria coluna e null nas outras.
+
+   passos = [{ rot, valor, tipo }] — tipo 'entra' | 'sai' | 'total'. */
+function svgCascata(passos, opts = {}) {
+  if (!passos.length) return '<div class="empty">Sem dados no período.</div>';
+
+  let acum = 0;
+  const barras = passos.map(p => {
+    const v = Number(p.valor) || 0;
+    if (p.tipo === 'total') return { ...p, pe: 0, valor: acum };
+    const pe = acum;
+    acum += p.tipo === 'entra' ? v : -v;
+    // O bloco de saída pende do topo anterior para baixo: o pé é onde ele acaba
+    return { ...p, pe: p.tipo === 'entra' ? pe : acum, valor: v };
+  });
+
+  const nulos = barras.map(() => null);
+  const serieDe = tipo => barras.map(b => (b.tipo === tipo ? b.valor : null));
+
+  const alt = opts.height || 260;
+  return Graficos.novo({
+    ...Graficos.base(alt, {
+      chart: { type: 'bar', stacked: true },
+      xaxis: { categories: barras.map(b => b.rot) },
+      yaxis: { labels: { formatter: v => fmtShort(v).replace('R$', '').trim() } },
+      tooltip: {
+        shared: false, intersect: true,
+        // A série do pedestal não é dado: mostrá-la confundiria o leitor
+        y: { formatter: v => (v == null ? '' : fmt(v)) },
+      },
+    }),
+    series: [
+      { name: 'pedestal', data: barras.map(b => b.pe) },
+      { name: 'entrou', data: serieDe('entra') },
+      { name: 'saiu', data: serieDe('sai') },
+      { name: 'sobrou', data: serieDe('total') },
+    ],
+    colors: ['transparent', Graficos.cor.verde, Graficos.cor.vermelho, Graficos.cor.azul],
+    fill: { opacity: [0, 1, 1, 1] },
+    plotOptions: { bar: { columnWidth: '52%', borderRadius: 4, borderRadiusApplication: 'end' } },
+    legend: {
+      show: true, position: 'top', horizontalAlign: 'left', fontSize: '11px',
+      markers: { radius: 6 }, itemMargin: { horizontal: 8 },
+      /* Lista explícita, sem o pedestal: ele é andaime, não série. Um formatter
+         devolvendo vazio apagaria o texto mas deixaria a bolinha dele lá,
+         convidando o leitor a procurar um bloco que não é dinheiro nenhum. */
+      customLegendItems: ['entrou', 'saiu', 'sobrou'],
+    },
+  }, alt, 'cascata');
+}
+
+/* Clareia uma cor na direção do branco.
+
+   É como as subcategorias herdam o matiz do próprio envelope — 75 folhas não
+   caberiam em matizes distintos, e acima de ~8 matizes eles ficam
+   indistinguíveis mesmo para quem vê bem. */
+function clarear(hex, fracao) {
+  const n = parseInt(String(hex).replace('#', ''), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const f = Math.max(0, Math.min(1, fracao));
+  const mix = c => Math.round(c + (255 - c) * f);
+  return '#' + [mix(r), mix(g), mix(b)].map(c => c.toString(16).padStart(2, '0')).join('');
+}
+
+/* ---------- Envelope por dentro: composição em dois níveis ----------
+   A hierarquia vem no encadeamento das cores: o matiz identifica o envelope, o
+   tom identifica a subcategoria dentro dele. Assim a leitura funciona nos dois
+   níveis sem inventar 75 cores.
+
+   Barra horizontal empilhada. O detalhe que faz funcionar é `fillColor` em cada
+   PONTO: no ApexCharts a cor normalmente é da série, mas as subcategorias são
+   diferentes em cada envelope — a subcategoria "slot 2" do envelope Casa não tem
+   nada a ver com a "slot 2" de Transporte. Cor por ponto resolve isso.
+
+   grupos = [{ rot, total, partes: [{ rot, valor }] }] */
+function svgComposicao(grupos, opts = {}) {
+  if (!grupos.length) return '<div class="empty">Sem gastos no período.</div>';
+
+  // Quantos segmentos o envelope mais fragmentado tem: define o nº de séries
+  const maxPartes = Math.max(...grupos.map(g => g.partes.length), 1);
+  const series = [];
+  for (let j = 0; j < maxPartes; j++) {
+    series.push({
+      name: 'parte ' + (j + 1),
+      data: grupos.map((g, i) => {
+        const p = g.partes[j];
+        const base = PALETTE[i % PALETTE.length];
+        /* Clareia no máximo 45%, medido: até 62% o último segmento chegava a
+           1,12 de contraste contra o fundo do cartão — presente no HTML e
+           invisível na tela. As partes vêm da maior para a menor, então o tom
+           mais claro cai no segmento mais estreito, que é o que menos pesa. */
+        return { x: g.rot, y: p ? Number(p.valor) || 0 : 0, fillColor: clarear(base, Math.min(0.45, j * 0.12)) };
+      }),
+    });
   }
-  return `<svg class="donut-svg" viewBox="0 0 ${S} ${S}" role="img">
-    <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="var(--ink-3)" stroke-width="${W}"/>
-    <g transform="rotate(-90 ${cx} ${cy})">${aneis}</g>
-    <text x="${cx}" y="${cy - 6}" text-anchor="middle" class="dn-total">${fmtShort(total).replace('R$', '').trim()}</text>
-    <text x="${cx}" y="${cy + 14}" text-anchor="middle" class="dn-cap">${esc(opts.caption || 'no período')}</text>
-    ${opts.sub ? `<text x="${cx}" y="${cy + 32}" text-anchor="middle" class="dn-sub">${esc(opts.sub)}</text>` : ''}
-  </svg>`;
+
+  const alt = Math.max(180, grupos.length * 42 + 40);
+  return Graficos.novo({
+    ...Graficos.base(alt, {
+      chart: { type: 'bar', stacked: true },
+      xaxis: {
+        categories: grupos.map(g => g.rot),
+        labels: { formatter: v => fmtShort(v).replace('R$', '').trim() },
+      },
+      yaxis: { labels: { style: { colors: Graficos.cor.tinta, fontSize: '12px', fontWeight: 600 } } },
+      tooltip: {
+        /* Dica própria, não a nativa: um segmento sozinho não diz composição.
+           Ela lista TODOS os itens do envelope com seus percentuais e só destaca
+           o que está sob o cursor — é a diferença entre saber quanto custou uma
+           subcategoria e entender do que o envelope é feito. */
+        custom({ dataPointIndex, seriesIndex }) {
+          const g = grupos[dataPointIndex];
+          if (!g) return '';
+          const linhas = g.partes.map((p, j) => {
+            const pct = g.total > 0 ? (p.valor / g.total) * 100 : 0;
+            const tom = clarear(PALETTE[dataPointIndex % PALETTE.length], Math.min(0.45, j * 0.12));
+            return `<div class="apx-tip-l${j === seriesIndex ? ' on' : ''}">
+              <i style="background:${tom}"></i>
+              <span class="apx-tip-r">${esc(p.rot)}</span>
+              <b>${fmtShort(p.valor)}</b>
+              <small>${pct.toFixed(0)}%</small></div>`;
+          }).join('');
+          return `<div class="apx-tip"><div class="apx-tip-cab">${esc(g.rot)}
+            <b>${fmtShort(g.total)}</b></div>${linhas}</div>`;
+        },
+      },
+    }),
+    series,
+    plotOptions: {
+      bar: { horizontal: true, barHeight: '58%', borderRadius: 4, borderRadiusApplication: 'end' },
+    },
+    // Vão de 2px na cor da superfície entre segmentos: separa dois tons vizinhos
+    // sem desenhar borda, que somaria tinta que não é dado
+    stroke: { show: true, width: 2, colors: ['#ffffff'] },
+    grid: { show: false, padding: { left: 0, right: 8, top: 0, bottom: 0 } },
+  }, alt, 'composicao');
 }
 
-// Barras horizontais com rótulo e valor — para rankings (categoria, membro, método)
-function svgRanking(entries, cores) {
+/* ---------- Fluxo e saldo: seis meses atrás, seis à frente ----------
+   Barras para o que entrou e saiu em cada mês; área para a posição do saldo.
+   A fronteira de hoje é a informação mais importante da tela — à esquerda é
+   fato conciliado, à direita é estimativa — e por isso aparece três vezes: faixa
+   sombreada, marca "hoje" e trecho da linha tracejado (`forecastDataPoints`).
+
+   Duas escalas: fluxo mensal vive na casa dos milhares, saldo acumulado nas
+   dezenas de milhares. Elas vão rotuladas nas cores das próprias séries, para
+   que ninguém leia um cruzamento entre a linha e as barras como significado —
+   ele é artefato das duas unidades, não dado. */
+function svgFluxoSaldo(meses, opts = {}) {
+  if (meses.length < 2) return '<div class="empty">Sem histórico suficiente.</div>';
+
+  const iPrimeiroFuturo = meses.findIndex(m => m.futuro);
+  const nFuturos = iPrimeiroFuturo < 0 ? 0 : meses.length - iPrimeiroFuturo;
+  const rot = m => m.period.start.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
+  const rotulos = meses.map(rot);
+
+  const alt = opts.height || 300;
+  const cfg = {
+    ...Graficos.base(alt, {
+      chart: { type: 'line', stacked: false },
+      xaxis: { categories: rotulos, tooltip: { enabled: false } },
+      tooltip: {
+        shared: true, intersect: false,
+        y: { formatter: v => (v == null ? '—' : fmt(v)) },
+        x: {
+          formatter: (_v, { dataPointIndex }) => {
+            const m = meses[dataPointIndex];
+            if (!m) return '';
+            const nome = m.period.start.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+            return nome + (m.futuro ? ' · previsto' : '');
+          },
+        },
+      },
+    }),
+    series: [
+      { name: 'entrou', type: 'column', data: meses.map(m => Math.round(Number(m.entra) || 0)) },
+      { name: 'saiu', type: 'column', data: meses.map(m => Math.round(Number(m.sai) || 0)) },
+      { name: 'saldo', type: 'area', data: meses.map(m => Math.round(Number(m.saldo) || 0)) },
+    ],
+    colors: [Graficos.cor.verde, Graficos.cor.vermelho, Graficos.cor.azul],
+    plotOptions: {
+      bar: { columnWidth: '38%', borderRadius: 5, borderRadiusApplication: 'end' },
+    },
+    /* Largura 0 nas colunas e 3 na linha do saldo. As duas primeiras cores são
+       'transparent' porque no ApexCharts o contorno da coluna também aceita
+       cor — e uma borda em volta da barra é tinta que não é dado. */
+    stroke: { show: true, width: [0, 0, 3], curve: 'smooth', colors: ['transparent', 'transparent', Graficos.cor.azul] },
+    /* A área é o NÍVEL, não o movimento. Ela vem por cima das barras — a linha
+       precisa disso para não ficar escondida atrás delas —, mas LAVADA: opacidade
+       baixa e degradê que se dissolve para baixo. Se tivesse o mesmo peso visual
+       das barras, as duas competiriam e nenhuma seria lida. */
+    fill: {
+      type: ['solid', 'solid', 'gradient'],
+      opacity: [1, 1, 0.35],
+      gradient: { shadeIntensity: 1, opacityFrom: 0.4, opacityTo: 0.05, stops: [0, 90, 100] },
+    },
+    markers: { size: 0, hover: { size: 6 } },
+    yaxis: [
+      {
+        seriesName: 'entrou',
+        labels: {
+          formatter: v => fmtShort(v).replace('R$', '').trim(),
+          style: { colors: Graficos.cor.tintaFraca, fontSize: '11px' },
+        },
+      },
+      { seriesName: 'entrou', show: false },
+      {
+        seriesName: 'saldo', opposite: true,
+        labels: {
+          formatter: v => fmtShort(v).replace('R$', '').trim(),
+          style: { colors: Graficos.cor.azul, fontSize: '11px' },
+        },
+      },
+    ],
+    legend: {
+      show: true, position: 'top', horizontalAlign: 'left', fontSize: '11px',
+      markers: { radius: 6 }, itemMargin: { horizontal: 8, vertical: 4 },
+    },
+  };
+
+  /* Tracejado no trecho previsto: `forecastDataPoints` faz isso na própria
+     série, sem partir o saldo em duas — o que abriria uma emenda visível na
+     fronteira e faria a área contar dois níveis onde há um. */
+  if (nFuturos > 0) {
+    cfg.forecastDataPoints = { count: nFuturos, dashArray: 5, fillOpacity: 0.12 };
+    cfg.annotations = {
+      xaxis: [{
+        x: rotulos[iPrimeiroFuturo],
+        x2: rotulos[meses.length - 1],
+        fillColor: '#f1f3f8', opacity: 0.55,
+        label: {
+          text: 'previsto', position: 'top', orientation: 'horizontal', borderWidth: 0,
+          style: { background: 'transparent', color: Graficos.cor.tintaFraca, fontSize: '10px', fontWeight: 700 },
+        },
+      }],
+    };
+  }
+
+  return Graficos.novo(cfg, alt, 'fluxo-saldo');
+}
+
+/* ---------- Linha com faixa de normalidade ----------
+   A faixa é mediana ± desvio mediano: o que "normal" significa PARA ESTA
+   FAMÍLIA, medido no próprio histórico dela. Ponto dentro da faixa é rotina;
+   fora, é notícia — e é isso que separa um gráfico que informa de um que só
+   desenha. Sem a faixa, toda subida parece alarme e o leitor aprende a ignorar.
+
+   A faixa vira anotação de eixo Y, não uma segunda série: como área ela
+   entraria na legenda e no tooltip como se fosse dado medido mês a mês, e ela
+   não é — é uma referência constante calculada sobre a série inteira. */
+function svgLinhaFaixa(serie, opts = {}) {
+  if (!serie.length) return '<div class="empty">Sem histórico no período.</div>';
+  const vals = serie.map(s => Number(s.valor) || 0);
+  const positivos = vals.filter(v => v > 0);
+  const med = DB.mediana(positivos);
+  const mad = DB.desvioMediano(positivos) || med * 0.1;
+
+  const anot = [];
+  if (positivos.length >= 3) {
+    anot.push({
+      y: Math.max(0, med - mad), y2: med + mad,
+      fillColor: '#eef6fd', opacity: 0.9, borderWidth: 0,
+      label: {
+        text: 'faixa normal', position: 'left', textAnchor: 'start', borderWidth: 0,
+        style: { background: 'transparent', color: Graficos.cor.tintaFraca, fontSize: '10px', fontWeight: 600 },
+      },
+    });
+    anot.push({ y: med, borderColor: Graficos.cor.cinza, strokeDashArray: 3 });
+  }
+
+  // Marcador só nas pontas e no extremo: um ponto em cada mês vira ruído
+  const iMax = vals.indexOf(Math.max(...vals));
+  const destaque = [...new Set([0, serie.length - 1, iMax])];
+
+  const alt = opts.height || 230;
+  return Graficos.novo({
+    ...Graficos.base(alt, {
+      chart: { type: 'area' },
+      xaxis: {
+        categories: serie.map(s => s.rot),
+        // Um rótulo a cada N: doze nomes lado a lado colidem no celular
+        labels: { rotate: 0, hideOverlappingLabels: true },
+        tooltip: { enabled: false },
+      },
+      yaxis: { labels: { formatter: v => fmtShort(v).replace('R$', '').trim() } },
+      tooltip: { y: { formatter: v => fmt(v) } },
+    }),
+    series: [{ name: opts.nome || 'valor', data: vals.map(v => Math.round(v)) }],
+    colors: [Graficos.cor.azul],
+    stroke: { curve: 'smooth', width: 3 },
+    fill: {
+      type: 'gradient',
+      gradient: { shadeIntensity: 1, opacityFrom: 0.32, opacityTo: 0.02, stops: [0, 95, 100] },
+    },
+    markers: {
+      size: 0, hover: { size: 6 },
+      discrete: destaque.map(i => ({
+        seriesIndex: 0, dataPointIndex: i, size: 5,
+        fillColor: '#ffffff', strokeColor: Graficos.cor.azul, strokeWidth: 2,
+      })),
+    },
+    annotations: { yaxis: anot },
+  }, alt, 'faixa-normal');
+}
+
+/* Rosca: anel espesso, respiro entre fatias e o total no centro.
+   O buraco do meio não é enfeite — é onde mora o número que responde a pergunta
+   do cartão, sem gastar uma linha de texto abaixo do gráfico. */
+function svgDonut(fatias, total, opts = {}) {
+  if (!fatias.length) return '<div class="empty">Sem gastos no período.</div>';
+  const alt = opts.height || 260;
+  return Graficos.novo({
+    chart: { type: 'donut', height: alt, fontFamily: 'inherit', toolbar: { show: false } },
+    series: fatias.map(f => Math.round(Number(f.value) || 0)),
+    labels: fatias.map(f => f.label),
+    colors: fatias.map((f, i) => f.color || PALETTE[i % PALETTE.length]),
+    dataLabels: { enabled: false },
+    // 2px na cor da superfície entre fatias: separa sem desenhar contorno
+    stroke: { show: true, width: 2, colors: ['#ffffff'] },
+    plotOptions: {
+      pie: {
+        donut: {
+          size: '72%',
+          labels: {
+            show: true,
+            value: {
+              show: true, fontSize: '20px', fontWeight: 700, color: Graficos.cor.tinta,
+              offsetY: 6, formatter: v => fmtShort(v).replace('R$', '').trim(),
+            },
+            name: { show: true, fontSize: '11px', color: Graficos.cor.tintaFraca, offsetY: 18 },
+            total: {
+              show: true, showAlways: true,
+              label: opts.caption || 'no período',
+              fontSize: '11px', fontWeight: 500, color: Graficos.cor.tintaFraca,
+              formatter: () => fmtShort(total).replace('R$', '').trim(),
+            },
+          },
+        },
+      },
+    },
+    legend: {
+      show: true, position: 'bottom', fontSize: '11px',
+      markers: { radius: 6 }, itemMargin: { horizontal: 6, vertical: 2 },
+      labels: { colors: Graficos.cor.tintaFraca },
+    },
+    tooltip: {
+      style: { fontSize: '12px', fontFamily: 'inherit' },
+      y: {
+        formatter: (v, { seriesIndex }) => {
+          const pct = total > 0 ? Math.round((v / total) * 100) : 0;
+          return fmt(v) + ' · ' + pct + '%';
+        },
+      },
+    },
+  }, alt, 'rosca');
+}
+
+/* Quebra um rótulo de eixo em até duas linhas, sem reticências.
+
+   Devolver array é como o ApexCharts desenha várias linhas num rótulo. Duas no
+   máximo: com três, o eixo domina o gráfico. Quando nem quebrando cabe (uma
+   palavra só, muito longa), a palavra vai inteira e transborda — melhor um nome
+   comprido que um nome irreconhecível. */
+function quebrarRotulo(txt, limite = 18) {
+  const s = String(txt == null ? '' : txt);
+  if (s.length <= limite) return s;
+  const palavras = s.split(' ');
+  const linhas = [''];
+  for (const p of palavras) {
+    const atual = linhas[linhas.length - 1];
+    if (!atual) { linhas[linhas.length - 1] = p; continue; }
+    if ((atual + ' ' + p).length <= limite) linhas[linhas.length - 1] = atual + ' ' + p;
+    else if (linhas.length < 2) linhas.push(p);
+    else linhas[1] = atual + ' ' + p;      // o resto se junta na segunda linha
+  }
+  // Uma linha só volta como texto: array de um item é ruído para quem lê a config
+  return linhas.length > 1 ? linhas : linhas[0];
+}
+
+/* Do relatório por etiqueta para os lançamentos dela. Vive fora do bindView
+   porque quem chama também é o clique na barra do gráfico, que não passa por
+   listener de DOM — o ApexCharts avisa por evento próprio. */
+function verLancamentosDaTag(tag) {
+  setTab('extrato');            // zera o resto dos filtros, então o alvo fica só a etiqueta
+  state.filtros.tags = [tag];
+  render();
+}
+
+/* Barras horizontais com nome e valor — para rankings (categoria, membro, método).
+   Ordenadas do maior para o menor: em ranking a posição já é metade da resposta.
+
+   `opts.aoClicar(nome)` liga a barra a uma ação (ver os lançamentos daquela
+   etiqueta, por exemplo). Vem por evento do gráfico, não por <button> no rótulo:
+   o eixo do ApexCharts é SVG e não aceita HTML dentro. */
+function svgRanking(entries, cores, opts = {}) {
   if (!entries.length) return '<div class="empty">Sem dados no período.</div>';
-  const max = Math.max(...entries.map(e => e[1]), 1);
-  const total = entries.reduce((s, e) => s + e[1], 0);
-  return '<div class="rank">' + entries.map(([nome, v], i) => {
-    const cor = (cores && cores[i % cores.length]) || PALETTE[i % PALETTE.length];
-    return '<div class="rank-row">' +
-      '<span class="rank-name" title="' + esc(nome) + '">' + esc(nome) + '</span>' +
-      '<span class="rank-bar"><i style="width:' + Math.max(2, v / max * 100).toFixed(1) + '%;background:' + cor + '"></i></span>' +
-      '<span class="rank-val">' + fmtShort(v) + '<small>' + (total ? Math.round(v / total * 100) : 0) + '%</small></span>' +
-      '</div>';
-  }).join('') + '</div>';
+  const total = entries.reduce((s, e) => s + (Number(e[1]) || 0), 0);
+  const alt = Math.max(160, entries.length * 34 + 30);
+  const eventos = opts.aoClicar
+    ? { events: { dataPointSelection: (_e, _c, { dataPointIndex }) => {
+        const linha = entries[dataPointIndex];
+        if (linha) opts.aoClicar(linha[0]);
+      } } }
+    : {};
+  return Graficos.novo({
+    ...Graficos.base(alt, {
+      chart: { type: 'bar', ...eventos },
+      xaxis: {
+        categories: entries.map(e => e[0]),
+        labels: { formatter: v => fmtShort(v).replace('R$', '').trim() },
+      },
+      /* Nome de categoria NUNCA é cortado com reticências. O ApexCharts trunca no
+         maxWidth por padrão, e "Serviços & Taxas" viraria "Serviços &…". Devolver
+         um array do formatter faz a lib desenhar uma linha por item, que é a
+         forma dela de quebrar texto. */
+      yaxis: {
+        labels: { style: { colors: Graficos.cor.tinta, fontSize: '12px' }, maxWidth: 150, formatter: quebrarRotulo },
+      },
+      tooltip: {
+        y: {
+          formatter: v => fmt(v) + (total > 0 ? ' · ' + Math.round((v / total) * 100) + '%' : ''),
+        },
+      },
+    }),
+    series: [{ name: 'total', data: entries.map(e => Math.round(Number(e[1]) || 0)) }],
+    colors: entries.map((e, i) => (cores && cores[i % cores.length]) || PALETTE[i % PALETTE.length]),
+    plotOptions: {
+      bar: { horizontal: true, distributed: true, barHeight: '56%', borderRadius: 4, borderRadiusApplication: 'end' },
+    },
+    // Valor direto na ponta da barra: em ranking curto o rótulo dispensa o eixo
+    dataLabels: {
+      enabled: true, textAnchor: 'start', offsetX: 6,
+      formatter: v => fmtShort(v).replace('R$', '').trim(),
+      style: { fontSize: '11px', fontWeight: 600, colors: [Graficos.cor.tintaFraca] },
+    },
+    grid: { show: false, padding: { left: 0, right: 24, top: 0, bottom: 0 } },
+  }, alt, 'ranking');
 }
 
-// Burn-up do mês: gasto acumulado dia a dia vs. trilha ideal do orçamento/renda.
+/* Burn-up do mês: gasto acumulado dia a dia contra a trilha ideal do orçamento.
+   A trilha é uma reta do zero ao limite ao longo do mês — o valor dela é dizer
+   se o gasto está adiantado, não se estourou. Estourar só se sabe no dia 31; a
+   trilha avisa no dia 9. */
 function svgBurnup(period, refLimit) {
-  const W = 720, H = 230, padB = 26, padT = 22, padL = 6, padR = 6;
-  const plotH = H - padB - padT;
   const totalDias = DB.periodDays(period), decorridos = DB.elapsedDays(period);
   const diario = new Array(totalDias).fill(0);
   for (const t of DB.expensesOf(period)) {
@@ -751,54 +829,56 @@ function svgBurnup(period, refLimit) {
   let acc = 0;
   const cum = diario.map(v => (acc += v));
   const gastoHoje = decorridos > 0 ? cum[decorridos - 1] : 0;
-  const max = niceCeil(Math.max(refLimit || 0, cum[totalDias - 1], 1));
-  const X = i => padL + (i / Math.max(1, totalDias - 1)) * (W - padL - padR);
-  const Y = v => padT + plotH - (v / max) * plotH;
+  // Depois de hoje a série é null, não zero: zero afirmaria "não gastou nada
+  // no dia 20" num mês que ainda não chegou lá
+  const realizado = cum.map((v, i) => (i < decorridos ? Math.round(v) : null));
+  const estourou = refLimit > 0 && gastoHoje > refLimit * (decorridos / Math.max(1, totalDias));
+  const corLinha = estourou ? Graficos.cor.vermelho : Graficos.cor.azul;
 
-  // Texto no overlay, como nos outros: aqui o SVG é esticado e um rótulo dentro
-  // dele sairia minúsculo e deformado
-  let grid = '', textos = '';
-  const pyB = v => (v / H * 100).toFixed(2);
-  for (let i = 0; i <= 4; i++) {
-    const gy = Y(max * i / 4);
-    grid += '<line x1="' + padL + '" x2="' + (W - padR) + '" y1="' + gy.toFixed(1) + '" y2="' + gy.toFixed(1) + '" class="ch-grid"/>';
-    if (i) textos += '<span class="g-t g-t-eixo" style="left:0;top:' + pyB(gy) + '%">' +
-      fmtShort(max * i / 4).replace('R$', '').trim() + '</span>';
-  }
-
-  const pts = [];
-  for (let i = 0; i < Math.max(1, decorridos); i++) pts.push(X(i).toFixed(1) + ',' + Y(cum[i]).toFixed(1));
-  const linha = 'M' + pts.join('L');
-  const area = pts.length > 1
-    ? linha + 'L' + X(decorridos - 1).toFixed(1) + ',' + Y(0).toFixed(1) + 'L' + X(0).toFixed(1) + ',' + Y(0).toFixed(1) + 'Z'
-    : '';
-
-  let ideal = '';
+  const series = [{ name: 'gasto acumulado', type: 'area', data: realizado }];
   if (refLimit > 0) {
-    ideal = '<line x1="' + X(0) + '" y1="' + Y(0).toFixed(1) + '" x2="' + X(totalDias - 1).toFixed(1) + '" y2="' + Y(refLimit).toFixed(1) + '" class="ch-ref-line"/>';
-    textos += '<span class="g-t g-t-ref renda" style="right:0;top:' + pyB(Y(refLimit) - 4) + '%">trilha ideal</span>';
+    series.push({
+      name: 'trilha ideal', type: 'line',
+      data: Array.from({ length: totalDias }, (_, i) => Math.round(refLimit * (i / Math.max(1, totalDias - 1)))),
+    });
   }
 
-  const dx = X(Math.max(0, decorridos - 1)), dy = Y(gastoHoje);
-  const estourou = refLimit > 0 && gastoHoje > refLimit * (decorridos / totalDias);
-  const pct = (v, ref) => (v / ref * 100).toFixed(2);
-  // Texto e ponto em HTML sobreposto, pelo mesmo motivo dos outros: dentro do
-  // viewBox escalado eles saíam a ~5px e mudavam de tamanho conforme o cartão
-  return '<div class="g-wrap g-wrap-linha">' +
-    '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Gasto acumulado dia a dia no mês">' +
-    '<defs><linearGradient id="gArea" x1="0" y1="0" x2="0" y2="1">' +
-    '<stop offset="0%" stop-color="#009ef7" stop-opacity=".28"/>' +
-    '<stop offset="100%" stop-color="#009ef7" stop-opacity="0"/></linearGradient></defs>' +
-    grid + ideal +
-    (area ? '<path d="' + area + '" fill="url(#gArea)"/>' : '') +
-    '<path d="' + linha + '" fill="none" stroke="' + (estourou ? '#f1416c' : '#009ef7') + '" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/>' +
-    '</svg>' +
-    '<div class="g-textos">' + textos +
-      '<span class="g-bola' + (estourou ? ' ruim' : ' agora') + '" style="left:' + pct(dx, W) + '%;top:' + pct(dy, H) + '%"></span>' +
-      '<span class="g-t g-t-val" style="left:' + pct(dx, W) + '%;top:' + pct(dy - 10, H) + '%">' + fmtShort(gastoHoje) + '</span>' +
-      '<span class="g-t g-t-rot" style="left:0;transform:none">dia 1</span>' +
-      '<span class="g-t g-t-rot" style="right:0;left:auto;transform:none">dia ' + totalDias + '</span>' +
-    '</div></div>';
+  const alt = 240;
+  return Graficos.novo({
+    ...Graficos.base(alt, {
+      chart: { type: 'line' },
+      xaxis: {
+        categories: Array.from({ length: totalDias }, (_, i) => String(i + 1)),
+        tickAmount: Math.min(8, totalDias),
+        labels: { hideOverlappingLabels: true },
+        tooltip: { enabled: false },
+      },
+      yaxis: { labels: { formatter: v => fmtShort(v).replace('R$', '').trim() } },
+      tooltip: {
+        shared: true, intersect: false,
+        y: { formatter: v => (v == null ? '—' : fmt(v)) },
+        x: { formatter: d => 'dia ' + d },
+      },
+    }),
+    series,
+    colors: [corLinha, Graficos.cor.cinza],
+    stroke: { curve: ['smooth', 'straight'], width: [3, 2], dashArray: [0, 5] },
+    fill: {
+      type: ['gradient', 'solid'], opacity: [1, 0],
+      gradient: { shadeIntensity: 1, opacityFrom: 0.3, opacityTo: 0.02, stops: [0, 95, 100] },
+    },
+    markers: {
+      size: 0, hover: { size: 6 },
+      // Só o ponto de hoje: ele é a resposta do gráfico
+      discrete: decorridos > 0 ? [{
+        seriesIndex: 0, dataPointIndex: decorridos - 1, size: 5,
+        fillColor: '#ffffff', strokeColor: corLinha, strokeWidth: 2,
+      }] : [],
+    },
+    legend: refLimit > 0
+      ? { show: true, position: 'top', horizontalAlign: 'left', fontSize: '11px', markers: { radius: 6 } }
+      : { show: false },
+  }, alt, 'burnup');
 }
 
 /* ---------- Situação financeira (conceitos: disponível real, run-rate, 50/30/20, reserva) ---------- */
@@ -1365,59 +1445,70 @@ function serieDeSaldo(contas, dias, anterior) {
   return dias.map(d => { acumulado += (delta[d] || 0); return acumulado; });
 }
 
-/* Área do saldo. Escala pelo intervalo dos dados, não a partir do zero: com
-   saldo de R$ 14 mil, ancorar no zero achataria a linha inteira num traço reto e
-   a variação — que é o que o gráfico existe para mostrar — sumiria. As duas
-   pontas vêm escritas por extenso logo acima e abaixo, então a forma nunca é a
-   única fonte do número. Quando a série cruza o zero, o zero aparece como régua. */
-/* Catmull-Rom convertido em cúbicas de Bézier, com cada ponto de controle preso
-   à faixa dos dois pontos que ele liga.
+/* Saldo dia a dia no resumo do extrato.
 
-   A trava não é capricho: sem ela a curva ultrapassa os dados entre dois dias, e
-   num gráfico de saldo isso desenha o dinheiro caindo abaixo do que realmente
-   caiu — ou subindo acima do que subiu. Suavizar pode arredondar o caminho;
-   não pode inventar valor que não existiu. */
-function caminhoSuave(pts) {
-  if (pts.length < 2) return '';
-  let d = `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[i - 1] || pts[i];
-    const p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
-    const baixo = Math.min(p1[1], p2[1]), alto = Math.max(p1[1], p2[1]);
-    const trava = y => Math.min(alto, Math.max(baixo, y));
-    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
-    const c1y = trava(p1[1] + (p2[1] - p0[1]) / 6);
-    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
-    const c2y = trava(p2[1] - (p3[1] - p1[1]) / 6);
-    d += ` C${c1x.toFixed(1)} ${c1y.toFixed(1)} ${c2x.toFixed(1)} ${c2y.toFixed(1)} ${p2[0].toFixed(1)} ${p2[1].toFixed(1)}`;
-  }
-  return d;
-}
+   Escala pelo intervalo dos dados, não a partir do zero: com saldo de R$ 14 mil,
+   ancorar no zero achataria a linha num traço reto e a variação — que é o que o
+   gráfico existe para mostrar — sumiria. É o padrão do sparkline, e é seguro aqui
+   porque as duas pontas vêm escritas por extenso logo acima.
 
-function sparkArea(vals) {
+   Sparkline: sem eixos, sem grade, sangrando até a borda do cartão. É o padrão do
+   Metronic (card-body p-0) e o que separa um gráfico desenhado de um gráfico
+   encaixotado — aqui o número não é o herói, quem carrega o peso visual é a curva.
+
+   A dica é própria porque tem de responder três coisas de uma vez: onde o saldo
+   estava naquele dia, quanto entrou e quanto saiu. A nativa mostraria só a série
+   desenhada, que é o saldo — e saldo sem o movimento do dia não explica o degrau. */
+function sparkArea(vals, dias, porDia) {
   const n = vals.length;
   if (n < 2) return '';
-  const W = 300, H = 100, padT = 12, padB = 8;
-  const max = Math.max(...vals), min = Math.min(...vals);
-  const amplitude = (max - min) || Math.abs(max) || 1;
-  const y = v => padT + (1 - (v - min) / amplitude) * (H - padT - padB);
-  const x = i => (i / (n - 1)) * W;
-  const linha = caminhoSuave(vals.map((v, i) => [x(i), y(v)]));
-  const zero = (min < 0 && max > 0)
-    ? `<line x1="0" y1="${y(0).toFixed(1)}" x2="${W}" y2="${y(0).toFixed(1)}" class="spark-zero"/>` : '';
-  /* Degradê que apaga para baixo, como nos widgets do Metronic. Lavagem chapada
-     vira bloco e briga com a linha; o degradê dá volume e devolve o branco do
-     cartão embaixo, que é o que faz o gráfico assentar em vez de flutuar. */
-  return `<svg class="spark-area" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
-    <defs><linearGradient id="grad-saldo" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#009ef7" stop-opacity=".2"/>
-      <stop offset="100%" stop-color="#009ef7" stop-opacity="0"/>
-    </linearGradient></defs>
-    <path d="${linha} L${W} ${H} L0 ${H} Z" class="spark-fill"/>
-    ${zero}
-    <path d="${linha}" class="spark-linha"/>
-    <line class="spark-cursor" x1="0" y1="0" x2="0" y2="${H}" hidden/>
-  </svg>`;
+  const rotulos = (dias || vals.map((_, i) => String(i + 1)));
+  const min = Math.min(...vals), max = Math.max(...vals);
+
+  const alt = 100;
+  return Graficos.novo({
+    chart: {
+      type: 'area', height: alt, fontFamily: 'inherit', toolbar: { show: false },
+      // sparkline apaga eixos, grade e as margens internas de uma vez
+      sparkline: { enabled: true },
+      animations: { enabled: true, easing: 'easeout', speed: 320 },
+    },
+    series: [{ name: 'saldo', data: vals.map(v => Math.round(Number(v) || 0)) }],
+    colors: [Graficos.cor.azul],
+    stroke: { curve: 'smooth', width: 2.5 },
+    /* Degradê que apaga para baixo. Lavagem chapada vira bloco e briga com a
+       linha; o degradê dá volume e devolve o branco do cartão embaixo, que é o
+       que faz o gráfico assentar em vez de flutuar. */
+    fill: {
+      type: 'gradient',
+      gradient: { shadeIntensity: 1, opacityFrom: 0.28, opacityTo: 0, stops: [0, 100] },
+    },
+    dataLabels: { enabled: false },
+    markers: { size: 0, hover: { size: 5 } },
+    xaxis: { categories: rotulos, crosshairs: { show: true, width: 1, opacity: 0.4 } },
+    // A linha do zero só aparece quando a série de fato cruza: senão é tinta sem dado
+    annotations: min < 0 && max > 0
+      ? { yaxis: [{ y: 0, borderColor: '#c4cad4', strokeDashArray: 0 }] }
+      : {},
+    tooltip: {
+      style: { fontSize: '12px', fontFamily: 'inherit' },
+      custom({ dataPointIndex }) {
+        const iso = rotulos[dataPointIndex];
+        const d = new Date(iso + 'T12:00:00');
+        const dia = isNaN(d) ? String(iso)
+          : d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' });
+        const mov = (porDia && porDia[iso]) || {};
+        // Linha só quando há movimento: "entrou R$ 0" é ruído, não informação
+        const linha = (rot, v, cls) => (v
+          ? `<span class="res-tip-l"><i>${rot}</i><b${cls ? ` class="${cls}"` : ''}>${fmtSemMoeda(v)}</b></span>` : '');
+        return `<div class="res-tip-in"><span class="res-tip-d">${esc(dia)}</span>`
+          + linha('saldo', vals[dataPointIndex])
+          + linha('entrou', mov.entrou || 0, 'txt-green')
+          + linha('saiu', mov.saiu || 0, 'txt-red')
+          + '</div>';
+      },
+    },
+  }, alt, 'saldo-dia');
 }
 
 function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSaiu, nota, dias, serie, porDia }) {
@@ -1460,13 +1551,9 @@ function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSa
       <!-- Sangra até a borda, com o raio de baixo do cartão. É o que separa um
            gráfico desenhado de um gráfico encaixotado, e é o padrão do Metronic
            (card-body p-0 + card-rounded-bottom). -->
-      <div class="res-graf" id="res-graf" data-dias="${esc(dias.join(','))}" data-vals="${esc(serie.join(','))}"
-        data-ent="${esc(dias.map(d => (porDia[d] || {}).entrou || 0).join(','))}"
-        data-sai="${esc(dias.map(d => (porDia[d] || {}).saiu || 0).join(','))}"
-        data-antes="${fmtSemMoeda(anterior)}"
+      <div class="res-graf" id="res-graf"
         role="img" aria-label="Saldo dia a dia de ${esc(intervalo)}, de ${fmtSemMoeda(anterior)} a ${fmtSemMoeda(saldo)}">
-        ${sparkArea(serie)}
-        <div class="res-tip" id="res-tip" hidden></div>
+        ${sparkArea(serie, dias, porDia)}
       </div>
     </div>`;
 }
@@ -2356,10 +2443,9 @@ function relCortes(period, txs, total) {
     ${porTag.length ? `<div class="card">
       <div class="card-head"><div><b>Por etiqueta</b>
         <small>assuntos que atravessam categorias — toque para ver os lançamentos</small></div></div>
-      <div class="rank">${porTag.map(([tag, v], i) => `<div class="rank-row">
-        <span class="rank-name"><button class="link-btn" data-ver-tag="${esc(tag)}">#${esc(tag)}</button></span>
-        <span class="rank-bar"><i style="width:${Math.max(2, v / porTag[0][1] * 100).toFixed(1)}%;background:${PALETTE[i % PALETTE.length]}"></i></span>
-        <span class="rank-val">${fmtShort(v)}</span></div>`).join('')}</div>
+      ${svgRanking(porTag.map(([tag, v]) => ['#' + tag, v]), null,
+        // Clique na barra abre os lançamentos da etiqueta — o "#" volta a sair aqui
+        { aoClicar: nome => verLancamentosDaTag(String(nome).replace(/^#/, '')) })}
     </div>` : ''}
     ${maiores.length ? `<div class="card">
       <div class="card-head"><div><b>Maiores gastos</b>
@@ -2457,10 +2543,10 @@ function relProximosMeses() {
         ${negativo ? `<span class="rel-selo ruim">aperto em ${esc(nomeMes(negativo.period))}</span>`
           : '<span class="rel-selo bom">no azul</span>'}
       </div>
-      ${svgFluxoSaldo(meses, {
-        altBarras: 'Entradas e saídas mês a mês, seis meses atrás e seis à frente',
-        altLinha: 'Saldo real até hoje e projetado daqui para frente',
-      })}
+      ${svgFluxoSaldo(meses)}
+      <p class="fl-nota">Barras: o que entrou e saiu em cada mês (escala à esquerda).
+        Área: o saldo acumulado (escala à direita, em azul). São duas unidades
+        diferentes — onde a linha cruza as barras não significa nada.</p>
       <div class="chart-foot">
         <span>Hoje <b>${fmtShort(hoje ? hoje.saldo : 0)}</b></span>
         <span>Em ${esc(nomeMes(fim.period))} <b class="${fim.saldo < 0 ? 'txt-red' : 'txt-green'}">${fmtShort(fim.saldo)}</b></span>
@@ -2544,8 +2630,6 @@ function bindView() {
     if (card) card.classList.toggle('fechado', !state.resumoAberto);
     resumoToggle.setAttribute('aria-expanded', String(state.resumoAberto));
   };
-  ligarGrafico();
-  ligarComposicao();
   const btnMassa = $('#btn-massa');
   if (btnMassa) btnMassa.onclick = () => openMassaModal(DB.monthPeriod(new Date(), state.monthOffset));
   // Fatura na lista do extrato leva direto para o pagamento
@@ -2633,12 +2717,8 @@ function bindView() {
     render();
   });
   // Do relatório por etiqueta direto para os lançamentos dela
-  v.querySelectorAll('[data-ver-tag]').forEach(el => el.onclick = () => {
-    const tag = el.dataset.verTag;
-    setTab('extrato');                    // zera o resto dos filtros, então o alvo fica só a etiqueta
-    state.filtros.tags = [tag];
-    render();
-  });
+  v.querySelectorAll('[data-ver-tag]').forEach(el =>
+    el.onclick = () => verLancamentosDaTag(el.dataset.verTag));
 
   // Custos fixos do mês em 1 clique: copia recorrentes que ainda não existem no período
   const recurBtn = $('#btn-recur');
@@ -2783,159 +2863,6 @@ function ligarRegua(period) {
   for (const el of [de, ate]) {
     el.oninput = pintar;
     el.onchange = aplicar;                 // dispara ao soltar o polegar
-  }
-}
-
-/* Arrastar o dedo sobre a área diz o saldo daquele dia.
-
-   Sem isso o gráfico é só silhueta: dá para ver que subiu, não dá para saber
-   quanto tinha no dia 12 — que é exatamente a pergunta de quem está conferindo
-   contra o extrato do banco. O valor aparece no pé, no lugar das datas, em vez
-   de numa bolha flutuante: no celular a bolha nasce debaixo do próprio dedo.
-
-   Nada fica refém do toque: as duas pontas continuam escritas, e a lista abaixo
-   traz o total de cada dia. */
-function ligarGrafico() {
-  const caixa = $('#res-graf');
-  const tip = $('#res-tip');
-  if (!caixa || !tip) return;
-  const lista = k => (caixa.dataset[k] || '').split(',').filter(x => x !== '');
-  const dias = lista('dias');
-  const vals = lista('vals').map(Number);
-  const ent = lista('ent').map(Number);
-  const sai = lista('sai').map(Number);
-  if (dias.length < 2 || vals.length !== dias.length) return;
-  const cursor = caixa.querySelector('.spark-cursor');
-
-  const mostrar = e => {
-    const r = caixa.getBoundingClientRect();
-    if (!r.width) return;
-    const i = Math.max(0, Math.min(dias.length - 1,
-      Math.round(((e.clientX - r.left) / r.width) * (dias.length - 1))));
-    const d = new Date(dias[i] + 'T12:00:00');
-    const linha = (rot, v, cls) => (v
-      ? `<span class="res-tip-l"><i>${rot}</i><b${cls ? ` class="${cls}"` : ''}>${fmtSemMoeda(v)}</b></span>` : '');
-    tip.innerHTML = `<span class="res-tip-d">${d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })}</span>`
-      + linha('saldo', vals[i])
-      + linha('entrou', ent[i] || 0, 'txt-green')
-      + linha('saiu', sai[i] || 0, 'txt-red');
-    tip.hidden = false;
-
-    /* O balão fica preso no ALTO do gráfico e só corre na horizontal: no celular
-       o dedo está sobre a linha, e um balão que segue o toque nos dois eixos
-       nasce debaixo do próprio dedo. Preso na borda para não vazar do cartão. */
-    const larg = tip.offsetWidth || 120;
-    const esq = Math.max(6, Math.min(r.width - larg - 6, (e.clientX - r.left) - larg / 2));
-    tip.style.left = Math.round(esq) + 'px';
-
-    if (cursor) {
-      const x = (i / (dias.length - 1)) * 300;
-      cursor.setAttribute('x1', x); cursor.setAttribute('x2', x);
-      cursor.hidden = false;
-    }
-  };
-  const soltar = () => { tip.hidden = true; if (cursor) cursor.hidden = true; };
-
-  caixa.onpointerdown = e => { caixa.setPointerCapture && caixa.setPointerCapture(e.pointerId); mostrar(e); };
-  caixa.onpointermove = e => { if (e.buttons || e.pointerType !== 'touch') mostrar(e); };
-  caixa.onpointerup = soltar;
-  caixa.onpointercancel = soltar;
-  caixa.onpointerleave = soltar;
-}
-
-/* Tooltip da composição: mostra o envelope INTEIRO, com a parte apontada em
-   destaque.
-
-   Um segmento sozinho não responde nada — "delivery: R$ 400" só quer dizer algo
-   ao lado de "mercado: R$ 900". Por isso a lista vem completa e o realce diz onde
-   o dedo está, em vez de esconder o resto.
-
-   A área de toque é a barra inteira, não o segmento: com 9px de altura e fatias
-   de 2% da largura, acertar um segmento seria impossível no celular. O índice sai
-   da posição do ponteiro sobre as larguras acumuladas. */
-/* Qual fatia cai numa fração da largura da barra.
-
-   Função à parte porque é onde mora o bug: erro de arredondamento na soma faz o
-   acumulado fechar em 0,9999 e o último toque cair fora, e ponteiro na borda
-   exata precisa pertencer a uma fatia só. Fora de um handler, dá para testar. */
-function fatiaEm(valores, frac) {
-  const soma = valores.reduce((s, v) => s + v, 0);
-  if (!(soma > 0)) return 0;
-  const f = Math.min(1, Math.max(0, frac));
-  let acc = 0;
-  for (let i = 0; i < valores.length; i++) {
-    acc += valores[i] / soma;
-    if (f <= acc) return i;
-  }
-  return valores.length - 1;      // resíduo de arredondamento cai na última
-}
-
-function ligarComposicao() {
-  const lista = document.querySelector('.comp');
-  let tip = document.getElementById('comp-tip');
-  if (!tip) {
-    tip = document.createElement('div');
-    tip.id = 'comp-tip';
-    tip.className = 'comp-tip';
-    document.body.appendChild(tip);
-  }
-  tip.hidden = true;
-  if (!lista) return;
-
-  const esconder = () => { tip.hidden = true; };
-
-  const mostrar = (linha, e) => {
-    let partes;
-    try { partes = JSON.parse(linha.dataset.partes || '[]'); } catch (_) { return; }
-    if (!partes.length) return;
-    const barra = linha.querySelector('.comp-barra');
-    const r = barra.getBoundingClientRect();
-    if (!r.width) return;
-    const soma = partes.reduce((s, p) => s + p[1], 0) || 1;
-
-    const frac = (e.clientX - r.left) / r.width;
-    const alvo = fatiaEm(partes.map(p => p[1]), frac);
-
-    const base = linha.dataset.cor || '#009ef7';
-    tip.innerHTML = `<div class="comp-tip-cab">${esc(linha.dataset.rot || '')}<b>${fmtShort(soma)}</b></div>`
-      + partes.map((p, i) => `<div class="comp-tip-l${i === alvo ? ' on' : ''}">
-          <i style="background:${clarear(base, Math.min(0.45, i * 0.12))}"></i>
-          <span>${esc(p[0])}</span>
-          <em>${Math.round(p[1] / soma * 100)}%</em>
-          <b>${fmtShort(p[1])}</b>
-        </div>`).join('');
-    tip.hidden = false;
-
-    // Preso ao viewport e dentro dele; acima da barra quando não couber embaixo
-    const cx = tip.offsetWidth, cy = tip.offsetHeight;
-    const larguraTela = window.innerWidth || 0;
-    let left = e.clientX - cx / 2;
-    left = Math.max(8, Math.min(larguraTela - cx - 8, left));
-    const cabeEmbaixo = r.bottom + cy + 12 < (window.innerHeight || 0);
-    tip.style.left = `${Math.round(left)}px`;
-    tip.style.top = `${Math.round(cabeEmbaixo ? r.bottom + 10 : r.top - cy - 10)}px`;
-  };
-
-  lista.querySelectorAll('.comp-linha').forEach(linha => {
-    const barra = linha.querySelector('.comp-barra');
-    if (!barra) return;
-    barra.onpointerdown = e => {
-      barra.setPointerCapture && barra.setPointerCapture(e.pointerId);
-      mostrar(linha, e);
-    };
-    barra.onpointermove = e => { if (e.buttons || e.pointerType !== 'touch') mostrar(linha, e); };
-    /* No toque o tooltip PERMANECE depois de soltar: é uma lista para ler, e
-       sumir ao levantar o dedo daria meio segundo de leitura. Some ao tocar
-       fora, tratado no clique do documento. */
-    barra.onpointerup = e => { if (e.pointerType !== 'touch') esconder(); };
-    barra.onpointerleave = e => { if (e.pointerType !== 'touch') esconder(); };
-  });
-
-  if (!ligarComposicao._doc) {
-    ligarComposicao._doc = true;
-    document.addEventListener('pointerdown', e => {
-      if (!e.target.closest || !e.target.closest('.comp-barra')) esconder();
-    }, true);
   }
 }
 
@@ -3830,6 +3757,8 @@ function openSheet(html) {
   sheet.hidden = false; $('#sheet-backdrop').hidden = false;
   paintIcons(sheet);
   if (typeof UI !== 'undefined') UI.enhance(sheet);
+  // A folha também injeta HTML de uma vez: o gráfico dela só existe depois disso
+  if (typeof Graficos !== 'undefined') Graficos.montar();
   // Teclado padrão de TODAS as folhas. Reatribuído a cada abertura e acionando o botão
   // do formulário atual (via click), para nunca sobrar handler de uma folha anterior.
   sheet.onkeydown = e => {
