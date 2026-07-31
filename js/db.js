@@ -1206,6 +1206,26 @@ const DB = {
     return vals.reduce((a, b) => a + b, 0) / vals.length;
   },
 
+  /* Custo de vida mensal para dimensionar a RESERVA.
+
+     A reserva responde "quantos meses eu aguento sem renda", e a régua disso é o
+     que se gasta para VIVER — não a média histórica crua. Os dois divergem quando
+     o histórico tem meses atípicos: medido nesta base, o gasto médio de junho e
+     julho era R$ 30.530 (um período de transição, com repasses classificados como
+     consumo), o que dava uma reserva-alvo de R$ 183 mil e uma cobertura de 0,0
+     meses — um número que só desanima e não orienta.
+
+     Quando há orçamento definido, ele é a melhor resposta: é o custo de vida que a
+     própria família planejou, e não inclui o investimento, que deixa de existir
+     justamente quando a renda para. Sem orçamento, cai na média histórica. */
+  custoDeVidaMensal() {
+    const orcado = this.budgetTotal();
+    const env = this.envelopeDeInvestimento();
+    const investimento = env ? this.budgetOf(env.id) : 0;
+    const semInvestir = orcado - investimento;
+    return semInvestir > 0 ? semInvestir : this.avgMonthlySpend();
+  },
+
   /* Ritmo de aportes de uma meta (média mensal dos últimos 90 dias).
      Só o que aconteceu: ritmo é uma medida do passado, e um aporte agendado para
      a semana que vem infla a média sem nada ter sido guardado — a projeção de
@@ -1217,6 +1237,46 @@ const DB = {
         && new Date(e.date + 'T12:00:00') >= cut)
       .reduce((s, e) => s + (Number(e.amount) || 0), 0);
     return recent / 3;
+  },
+
+  /* O horizonte: para onde o dinheiro vai nos próximos meses.
+
+     O app já sabia disso — `previsaoDoMes` responde mês a mês e o gráfico "De
+     onde vim, para onde vou" desenha —, mas o Painel não trazia nada disso nos
+     números do topo: os KPIs falavam só do presente, e a pergunta de quem planeja
+     ("dá para respirar?") ficava sem resposta na primeira tela.
+
+     O PIOR PONTO é o número que importa, não o saldo final. Um horizonte que
+     termina em R$ 59 mil parece confortável e pode passar por R$ 200 negativos em
+     setembro — e é em setembro que a conta não é paga. Mesma razão de existir do
+     `avisoDeAperto`, aqui na escala de meses.
+
+     Parte do saldo REAL de hoje e rola o resultado previsto de cada mês, que é a
+     mesma conta de `fluxoMensal` — dois números diferentes para a mesma pergunta
+     seriam pior que nenhum. */
+  horizonte(n = 6) {
+    let saldo = this.accountsTotal();
+    let entra = 0, sai = 0;
+    const meses = [];
+    for (let i = 1; i <= n; i++) {
+      const p = this.monthPeriod(new Date(), i);
+      const pv = this.previsaoDoMes(p);
+      saldo += pv.resultado;
+      entra += pv.entra; sai += pv.sai;
+      meses.push({ period: p, entra: pv.entra, sai: pv.sai, resultado: pv.resultado, saldo });
+    }
+    /* O pior ponto sai da LISTA pronta, não de um acumulador durante o laço.
+       Comparando contra o saldo de hoje enquanto rola, um horizonte que só sobe
+       nunca atualizava o mínimo e o rótulo mostrava o mês errado — medido: dizia
+       "pior ponto R$ 59.479 em agosto", que é o saldo do último mês. */
+    const menor = meses.reduce((m, x) => (x.saldo < m.saldo ? x : m), meses[0] || { saldo, period: null });
+    const temDados = meses.some(m => m.entra > 0.005 || m.sai > 0.005);
+    return {
+      meses, entra, sai, resultado: entra - sai, fim: saldo, temDados,
+      pior: menor.saldo,
+      piorMes: menor.period ? menor.period.label : '',
+      mediaSaida: meses.length ? sai / meses.length : 0,
+    };
   },
 
   /* ---------- Backup ---------- */
@@ -1671,6 +1731,30 @@ const DB = {
         Math.min(base.getDate(), ultimo)));
       if (quando < de || quando >= ate) continue;
       add(molde.description, Number(molde.amount) || 0, !this.isExpense(molde), quando, 'custo fixo', molde);
+    }
+
+    /* APORTE AGENDADO é compromisso do mês como qualquer outro: o dinheiro sai da
+       conta corrente na data marcada. Sem ele aqui, planejar guardar R$ 3.400 não
+       aparecia na previsão e o mês parecia ter mais folga do que tem.
+
+       Só entra o que ainda NÃO tem transferência correspondente no extrato — o
+       aporte feito pela folha cria as duas coisas, e contar as duas somaria o
+       mesmo movimento duas vezes. A chave é data + valor + contas, a mesma que
+       `pendencias` usa para casar os dois lados. */
+    for (const e of this.all('goal_entries')) {
+      if (this.aportePago(e)) continue;
+      const v = Number(e.amount) || 0;
+      if (v <= 0) continue;                        // resgate não é compromisso
+      const d = String(e.date);
+      if (d < de || d >= ate) continue;
+      const jaLancado = this.all('transactions').some(t => t.status === 'A Pagar' && this.isTransfer(t)
+        && String(t.date) === d && Math.abs(Number(t.amount) - v) < 0.005
+        && t.account_id === e.from_account && t.to_account === e.to_account);
+      if (jaLancado) continue;
+      const meta = this.get('goals', e.goal_id);
+      const env = this.envelopeDeInvestimento();
+      add(`Guardar em ${meta ? meta.name : 'meta'}`, v, false, d, 'aporte',
+        { account_id: e.from_account, category_id: meta ? this.categoriaDeAporte(meta) : (env ? env.id : null) });
     }
 
     /* Faturas que vencem neste mês.

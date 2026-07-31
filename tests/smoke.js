@@ -89,7 +89,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias,
+  cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
@@ -5433,6 +5433,90 @@ check('função is_member definida antes das policies', schema.indexOf('function
     adjustBalance(cOrigem.id, 500); adjustBalance(cDestino.id, -500);
     DB.save();
   } catch (e) { console.log(` FALHA | investimentos: ${e.message}`); fail++; }
+
+  console.log('\n=== O topo do Painel olha para a frente ===');
+  try {
+    /* Os quatro KPIs falavam só do presente — gasto, faturas, saldo, metas —
+       enquanto o app já sabia o saldo projetado de seis meses e não o mostrava na
+       primeira tela. Quem planeja abria o Painel e não achava resposta. */
+    const h = DB.horizonte(6);
+    check('o horizonte cobre seis meses', h.meses.length, 6);
+    /* O PIOR PONTO, não o saldo final: um horizonte que termina em 59 mil pode
+       passar por 200 negativos no meio, e é no meio que a conta não é paga.
+       Comparando contra o saldo de hoje durante o laço, um horizonte que só sobe
+       nunca atualizava o mínimo — medido, o rótulo dizia "pior ponto R$ 59.479 em
+       agosto", que era o saldo do ÚLTIMO mês. */
+    const menorSaldo = Math.min(...h.meses.map(m => m.saldo));
+    check('o pior ponto é o menor saldo da série', Math.round(h.pior), Math.round(menorSaldo));
+    check('  e o mês nomeado é o daquele saldo',
+      h.piorMes, (h.meses.find(m => Math.abs(m.saldo - menorSaldo) < 0.005) || {}).period.label);
+    // Série que só sobe: o pior ponto é o primeiro mês, não o último
+    check('numa série crescente, o pior ponto é o começo',
+      h.meses[0].saldo <= h.meses[h.meses.length - 1].saldo
+        ? Math.round(h.pior) === Math.round(h.meses[0].saldo) : true, true);
+
+    const offK = state.monthOffset; state.monthOffset = 0;
+    const telaK = renderInicio(DB.monthPeriod(new Date()));
+    check('o horizonte tem dados, senão o KPI não teria o que mostrar', h.temDados, true);
+    check('o KPI de saldo mostra o pior ponto à frente', /pior ponto/.test(telaK), true);
+    check('  com o mês nomeado, não só o valor', telaK.includes(`em ${h.piorMes}`), true);
+    /* "Metas (média)" saiu: a média de percentuais de metas com alvos diferentes
+       soma coisas que não se somam. O que mede segurança é a cobertura da reserva. */
+    check('o KPI de metas virou cobertura da reserva', /Reserva cobre/.test(telaK), true);
+    // Olha só os RÓTULOS renderizados: o texto solto acha o comentário no código
+    const rotulosKpi = (telaK.match(/kpi-label">([^<]+)</g) || []).map(x => x.replace(/.*">/, '').replace('<', ''));
+    check('  e não a média de percentuais', rotulosKpi.some(r => /Metas/.test(r)), false);
+    check('  são quatro cartões', rotulosKpi.length, 4);
+    state.monthOffset = offK;
+
+    /* CUSTO DE VIDA para dimensionar a reserva, não o gasto médio cru. Medido:
+       o histórico de transição dava média de R$ 30.530, alvo de R$ 183 mil e
+       cobertura de 0,0 meses — número que só desanima. */
+    const envI = DB.envelopeDeInvestimento();
+    check('o custo de vida sai do orçamento quando ele existe',
+      Math.round(DB.custoDeVidaMensal()),
+      Math.round(DB.budgetTotal() - (envI ? DB.budgetOf(envI.id) : 0)));
+    check('  e não inclui o investimento, que para quando a renda para',
+      DB.custoDeVidaMensal() < DB.budgetTotal(), !!envI && DB.budgetOf(envI.id) > 0);
+    /* E a TELA precisa usar esse número: o modelo certo com o Painel chamando
+       `avgMonthlySpend` deixaria a cobertura errada do mesmo jeito. Medido nesta
+       base, os dois divergem — é isso que torna a assertiva não-vazia. */
+    check('os dois números divergem, senão a assertiva é vazia',
+      Math.round(DB.custoDeVidaMensal()) !== Math.round(DB.avgMonthlySpend()), true);
+    const alvoNaTela = DB.custoDeVidaMensal() * 6;
+    check('o KPI da reserva usa o custo de vida', telaK.includes(fmtShort(alvoNaTela)), true);
+    check('  e não a média histórica crua', telaK.includes(fmtShort(DB.avgMonthlySpend() * 6)), false);
+
+    /* O RODAPÉ DO HERO separa o que vira patrimônio do que vira despesa. Juntos,
+       ele dizia "R$ 12.129 a pagar" quando R$ 3.400 daquilo é poupança. */
+    const proxP = DB.monthPeriod(new Date(), 1);
+    /* O cenário é CONSTRUÍDO aqui: sem um aporte previsto no próximo mês as
+       asserções não rodariam, e um teste que não roda passa por vazio — foi o que
+       a sabotagem revelou. */
+    const metaHero = DB.upsert('goals', { name: 'Meta Hero', icon: '🎯', kind: 'Objetivo', target_amount: 9000 });
+    const cHero = DB.all('accounts')[0], cHero2 = DB.all('accounts')[1];
+    DB.upsert('goal_entries', {
+      goal_id: metaHero, amount: 1500, description: 'Aporte HERO',
+      date: DB.inicioISO(proxP), from_account: cHero.id, to_account: cHero2.id, status: 'A Pagar',
+    });
+    // …e receita prevista: sem ela a frase para em "ainda sem receita prevista" e
+    // as asserções sobre a sobra nunca são exercitadas
+    const rendaHero = DB.upsert('transactions', {
+      description: 'Salário HERO', amount: 9000, date: DB.inicioISO(proxP), type: 'Receita',
+      status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: cHero.id,
+    });
+    const investProx = DB.investidoNoPeriodo(proxP);
+    check('o próximo mês tem investimento previsto, senão o teste é vazio', investProx > 0.005, true);
+    const frase = resumoDoProximoMes();
+    check('o rodapé do hero separa o que será guardado', /a guardar/.test(frase), true);
+    check('  e diz que a sobra é depois de guardar', /depois de guardar/.test(frase), true);
+    const saiProx = DB.previsaoDoMes(proxP).sai;
+    check('  o "a pagar" exclui o investimento',
+      frase.includes(fmt(saiProx - investProx)), true);
+    check('  e não mostra os dois somados', frase.includes(fmt(saiProx)), false);
+    for (const e of DB.all('goal_entries').filter(e => e.goal_id === metaHero)) DB.remove('goal_entries', e.id);
+    DB.remove('goals', metaHero); DB.remove('transactions', rendaHero);
+  } catch (e) { console.log(` FALHA | topo do painel: ${e.message}`); fail++; }
 
   console.log('\n=== Aporte agendado: plano não é fato ===');
   try {

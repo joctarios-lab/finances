@@ -1134,10 +1134,27 @@ function resumoDoProximoMes() {
   if (!pv.itens.length) return '';
   const mes = prox.start.toLocaleDateString('pt-BR', { month: 'long' });
   const sobra = pv.resultado;
-  return `<p class="hero-depois">Em <b>${esc(mes)}</b>, já há <b>${fmt(pv.sai)}</b> a pagar${
-    pv.entra > 0.005 ? ` e <b>${fmt(pv.entra)}</b> a receber` : ''} — ${
+  /* O INVESTIMENTO SAI DA CONTA DE "A PAGAR".
+
+     Guardar dinheiro pesa no caixa do mês como qualquer débito, e por isso está
+     dentro de `pv.sai` — mas juntá-lo às contas faz a frase dizer que o mês tem
+     R$ 12.129 de despesa quando R$ 3.400 daquilo vira patrimônio. São movimentos
+     de natureza oposta: um consome, o outro acumula.
+
+     Separado, a frase responde a pergunta certa — "quanto vai custar viver o mês"
+     — e ainda dá crédito pelo que está sendo construído. */
+  const investir = DB.investidoNoPeriodo(prox);
+  const aPagar = Math.max(0, pv.sai - investir);
+  const partes = [`já há <b>${fmt(aPagar)}</b> a pagar`];
+  if (investir > 0.005) partes.push(`<b>${fmt(investir)}</b> a guardar`);
+  if (pv.entra > 0.005) partes.push(`<b>${fmt(pv.entra)}</b> a receber`);
+  const lista = partes.length > 1
+    ? partes.slice(0, -1).join(', ') + ' e ' + partes[partes.length - 1]
+    : partes[0];
+  return `<p class="hero-depois">Em <b>${esc(mes)}</b>, ${lista} — ${
     pv.entra > 0.005
-      ? `${sobra >= 0 ? 'sobrariam' : 'faltariam'} <b>${fmt(Math.abs(sobra))}</b>`
+      ? `${sobra >= 0 ? 'sobrariam' : 'faltariam'} <b>${fmt(Math.abs(sobra))}</b>${
+        investir > 0.005 ? ' depois de guardar' : ''}`
       : 'ainda sem receita prevista'}. <span class="muted">${pv.itens.length} item(ns) já conhecido(s); gasto variável não entra.</span></p>`;
 }
 
@@ -1464,9 +1481,17 @@ function renderInicio(period) {
       </div>`;
   }
 
+  /* O horizonte de seis meses, para os KPIs. Calculado uma vez e reusado: são
+     seis chamadas a `previsaoDoMes`, e cada cartão pedindo a sua repetiria a
+     conta com risco de os números divergirem entre si na mesma tela. */
+  const futuro6 = DB.horizonte(6);
+
   // --- Reserva de emergência (cobertura em meses) ---
   const reserve = DB.reserveTotal();
-  const avgSpend = DB.avgMonthlySpend();
+  /* Custo de VIDA, não gasto médio cru: a reserva mede quantos meses se aguenta
+     sem renda, e o investimento — que entra na média — é a primeira coisa que
+     para nessa situação. Ver DB.custoDeVidaMensal. */
+  const avgSpend = DB.custoDeVidaMensal();
   const coverage = avgSpend > 0 ? reserve / avgSpend : 0;
   const covPct = Math.min(100, Math.round(coverage / 6 * 100));
   const reserveGoal = DB.reserveGoals()[0];
@@ -1635,13 +1660,34 @@ function renderInicio(period) {
     ${atual ? heroAtual : state.monthOffset > 0 ? heroFuturo : heroFechado}
     ${atual ? avisoDeAperto() : ''}
     ${adviceCard}
+    <!-- KPIs: cada um responde "como estou" E "para onde isso vai".
+
+         Os quatro falavam só do presente — gasto do mês, faturas, saldo, metas —
+         enquanto o app já sabia o saldo projetado de seis meses e não o mostrava
+         em lugar nenhum do Painel. Agora cada cartão traz a leitura de hoje no
+         número grande e o horizonte na linha de baixo, que é onde a decisão mora:
+         saldo de R$ 426 é uma informação; "no pior ponto dos próximos 6 meses,
+         R$ 6.128 em agosto" é outra.
+
+         Trocado "Metas (média)" por RESERVA EM MESES: a média de percentuais de
+         metas com alvos diferentes soma coisas que não se somam, e o número que
+         de fato mede segurança financeira é quantos meses a reserva cobre. As
+         metas continuam nos Relatórios, uma a uma. -->
     <div class="kpi-grid">
-      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${txs.length} lançamentos</div></div>
+      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${
+        futuro6.mediaSaida > 0
+          ? `${txs.length} lançamentos · ~${fmtShort(futuro6.mediaSaida)}/mês à frente`
+          : `${txs.length} lançamentos`}</div></div>
       <div class="card kpi"><span class="kpi-ico t-danger" data-ico="invoice"></span><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmt(openInvoices)}</div><div class="kpi-label">Faturas em aberto</div><div class="kpi-sub">${emAberto.length} fatura(s)${
         doCiclo.length && doCiclo.length !== emAberto.length
           ? ` · ${doCiclo.length} até o fim do mês` : ''}</div></div>
-      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value green">${fmt(saldo)}</div><div class="kpi-label">Saldo em contas</div><div class="kpi-sub">${contas.length} conta(s)</div></div>
-      <div class="card kpi"><span class="kpi-ico t-info" data-ico="target"></span><div class="kpi-value">${avgPct}%</div><div class="kpi-label">Metas (média)</div><div class="kpi-sub">${goals.length} em andamento</div></div>
+      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value ${saldo < 0 ? 'red' : 'green'}">${fmt(saldo)}</div><div class="kpi-label">Saldo em contas</div><div class="kpi-sub">${
+        futuro6.temDados
+          ? `pior ponto <b class="${futuro6.pior < 0 ? 'txt-red' : 'txt-green'}">${fmtShort(futuro6.pior)}</b> em ${esc(futuro6.piorMes)}`
+          : `${contas.length} conta(s)`}</div></div>
+      <div class="card kpi"><span class="kpi-ico t-info" data-ico="shield"></span><div class="kpi-value ${
+        coverage >= 6 ? 'green' : coverage >= 3 ? '' : 'red'}">${coverage > 0 ? `${coverage.toFixed(1)}` : '—'}<span style="font-size:14px;font-weight:600"> ${coverage > 0 ? 'meses' : ''}</span></div><div class="kpi-label">Reserva cobre</div><div class="kpi-sub">${
+        fmtShort(reserve)}${avgSpend > 0 ? ` de ${fmtShort(avgSpend * 6)} para 6 meses` : ''}</div></div>
     </div>
     <!-- Primeira linha: o que já está guardado, o que o mês vai fechar e como a
          renda se divide. As três perguntas de "estamos bem?", lado a lado — juntas
