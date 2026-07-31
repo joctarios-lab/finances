@@ -5626,6 +5626,39 @@ check('função is_member definida antes das policies', schema.indexOf('function
       resumoDoProximoMes().includes(fmt(pvProxHero.sai)), true);
     state.monthOffset = 1;
 
+    /* ---- O RODAPÉ DO ORÇAMENTO SOMA AS BARRAS QUE ESTÃO ACIMA DELE ----
+
+       Ele mostrava `total` (o gasto do mês), que não conta o investimento —
+       transferência não é despesa. Mas a barra de Investimentos está no card, com
+       o valor guardado. Medido em agosto: as barras somavam R$ 15.438 e o rodapé
+       dizia "Usado R$ 12.038".
+
+       O "Restante" era o pior: subtraía um usado SEM investimento de um orçado COM
+       investimento, e os R$ 3.472 liam como "sobra para gastar" quando a maior
+       parte era meta de poupança não cumprida. */
+    {
+      const somaDasBarras = DB.rootCategories('Despesa').reduce((s, c) => {
+        const usado = envI && c.id === envI.id
+          ? DB.investidoNoPeriodo(proxP) : (DB.spentByCategory(proxP)[c.id] || 0);
+        return (!DB.budgetOf(c.id, proxP) && !usado) ? s : s + usado;
+      }, 0);
+      const foot = (heroFut.match(/chart-foot">[\s\S]*?<\/div>/g) || [])
+        .find(f => f.includes('Orçado')) || '';
+      check('o rodapé do orçamento existe', !!foot, true);
+      check('  o "Usado" soma as barras do card', foot.includes(fmtShort(somaDasBarras)), true);
+      check('  e não o gasto do mês, que ignora o investimento',
+        foot.includes(fmtShort(DB.expensesOf(proxP).reduce((s, t) => s + (Number(t.amount) || 0), 0))), false);
+      check('  os dois divergem, senão a assertiva é vazia',
+        Math.round(somaDasBarras) !== Math.round(DB.expensesOf(proxP).reduce((s, t) => s + (Number(t.amount) || 0), 0)), true);
+      check('  e o restante sai da mesma conta',
+        foot.includes(fmtShort(DB.budgetTotal(proxP) - somaDasBarras)), true);
+      /* E o que falta GUARDAR é dito à parte: sem isso, o "Restante" convida a
+         gastar a meta de poupança do mês. */
+      const faltaGuardar = DB.budgetOf(envI.id, proxP) - DB.investidoNoPeriodo(proxP);
+      check('  quando falta cumprir a meta de investimento, a tela avisa',
+        /é a meta de investimento ainda não cumprida/.test(heroFut), faltaGuardar > 0.005);
+    }
+
     /* O GRÁFICO DE 12 MESES CONTA A MESMA HISTÓRIA que o hero e o extrato.
 
        Ele rolava `resultado`, que desconta o investimento — mas a metade passada

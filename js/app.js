@@ -1402,6 +1402,22 @@ function renderInicio(period) {
   // Tocar numa barra abre o detalhe: saber que "Alimentação" estourou só ajuda
   // quando dá para ver se foi mercado ou delivery.
   let budgets = '';
+  /* O RODAPÉ SOMA AS BARRAS, não o gasto do mês.
+
+     Ele mostrava `total` (o mesmo do KPI "Gasto do mês"), que não conta o
+     investimento — transferência não é despesa. Só que a barra de Investimentos
+     está logo acima, com o valor guardado. Medido em agosto: as barras somavam
+     R$ 15.438 e o rodapé dizia "Usado R$ 12.038", uma diferença de R$ 3.400 que
+     era exatamente a barra que o rodapé ignorava.
+
+     Pior era o "Restante": subtraía um usado SEM investimento de um orçado COM
+     investimento, e o resultado — R$ 3.472 — lia como "sobra para gastar" quando
+     a maior parte daquilo era meta de poupança ainda não cumprida.
+
+     Somando o que está na tela, o rodapé passa a ser conferível linha a linha.
+     Gasto sem categoria fica de fora porque não tem envelope nem orçamento: ele
+     aparece no KPI do mês, que é onde a pergunta é "quanto custou". */
+  let usadoNasBarras = 0;
   const envInvest = DB.envelopeDeInvestimento();
   /* INVESTIMENTO se mede pelo que foi GUARDADO, não pelo que foi gasto: o aporte é
      transferência, e transferência não entra em `spentByCategory`. Sem este
@@ -1420,6 +1436,7 @@ function renderInicio(period) {
     const limite = DB.budgetOf(c.id, period);
     const ajustado = !!DB.overrideDeOrcamento(c.id, period);
     if (!limite && !spent) continue;
+    usadoNasBarras += spent;          // o rodapé soma exatamente o que se vê aqui
     const pct = limite > 0 ? Math.round(spent / limite * 100) : 0;
     /* A COR SE INVERTE no investimento: 100% de um envelope de gasto é o teto
        estourando, 100% do investimento é a meta cumprida. Manter a régua padrão
@@ -1838,9 +1855,14 @@ function renderInicio(period) {
         <div class="budget-scroll">${budgets || '<div class="empty">Defina orçamentos em Configurações → Categorias.</div>'}</div>
         ${budgets ? `<div class="chart-foot">
           <span>Orçado <b>${fmtShort(budgetTotal)}</b></span>
-          <span>Usado <b>${fmtShort(total)}</b></span>
-          <span>Restante <b class="${budgetTotal - total >= 0 ? 'txt-green' : 'txt-red'}">${fmtShort(budgetTotal - total)}</b></span>
-        </div>` : ''}
+          <span>Usado <b>${fmtShort(usadoNasBarras)}</b></span>
+          <span>Restante <b class="${budgetTotal - usadoNasBarras >= 0 ? 'txt-green' : 'txt-red'}">${fmtShort(budgetTotal - usadoNasBarras)}</b></span>
+        </div>
+        <!-- O que ainda falta GUARDAR não é dinheiro para gastar. Sem esta linha,
+             o "Restante" convida a gastar a meta de poupança do mês. -->
+        ${envInvest && DB.budgetOf(envInvest.id, period) - usadoNoEnvelope(envInvest) > 0.005
+          ? `<p class="muted" style="margin-top:6px">Do restante, <b>${fmtShort(DB.budgetOf(envInvest.id, period) - usadoNoEnvelope(envInvest))}</b> é a meta de investimento ainda não cumprida — não é para gastar.</p>`
+          : ''}` : ''}
       </div>
     </div>
     ${secaoDoQueAindaVem(period, previsto)}
