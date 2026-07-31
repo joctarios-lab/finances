@@ -174,11 +174,18 @@ create table if not exists goal_entries (
   date date not null,
   from_account uuid,          -- conta de onde o dinheiro saiu (permite reverter)
   to_account uuid,            -- conta onde o dinheiro ficou guardado
+  -- 'Pago' | 'A Pagar', a mesma linguagem das transações. Aporte agendado é
+  -- PLANO: não mexe em saldo nem conta como guardado até acontecer. Sem isto,
+  -- programar um aporte para o dia 3 debitava a conta hoje e a reserva subia por
+  -- dinheiro que ainda não saiu.
+  -- Default 'Pago' porque todo registro anterior a esta coluna já aconteceu.
+  status text not null default 'Pago',
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );
 alter table goal_entries add column if not exists from_account uuid;
 alter table goal_entries add column if not exists to_account uuid;
+alter table goal_entries add column if not exists status text not null default 'Pago';
 
 create table if not exists invoice_status (
   id uuid primary key,

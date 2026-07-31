@@ -2518,6 +2518,9 @@ function renderMetas() {
     const total = DB.goalTotal(g.id);
     const pct = g.target_amount > 0 ? Math.round(total / g.target_amount * 100) : 0;
     const entries = DB.all('goal_entries').filter(e => e.goal_id === g.id).sort((a, b) => b.date.localeCompare(a.date));
+    const planejado = DB.goalPlanejado(g.id);
+    const proximo = entries.filter(e => !DB.aportePago(e) && Number(e.amount) > 0)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)))[0];
 
     // Preditivo: ritmo de aportes → previsão de conclusão; e quanto/mês para cumprir a data alvo.
     let forecast = '';
@@ -2545,13 +2548,19 @@ function renderMetas() {
         <span class="goal-pct">${pct}%</span></div>
       <div class="goal-nums"><span>Guardado: <b>${fmtShort(total)}</b></span><span>Meta: <b>${fmtShort(g.target_amount)}</b></span></div>
       <div class="bar ${pct >= 100 ? 'bar-green' : barClass(100 - pct) === 'bar-red' ? 'bar-amber' : 'bar-green'}"><i style="width:${Math.min(100, pct)}%"></i></div>
+      <!-- O PLANEJADO vem em linha própria, nunca somado ao guardado: são duas
+           perguntas diferentes — "quanto já tenho" e "quanto pretendo ter". Somar
+           daria uma barra cheia de dinheiro que ainda está na conta corrente. -->
+      ${planejado > 0.005 ? `<div class="muted" style="margin-top:6px">📅 Mais <b>${fmtShort(planejado)}</b> já agendado${
+        proximo ? ` — o próximo em ${fmtDay(proximo.date)}` : ''}. Ainda não entrou no guardado.</div>` : ''}
       ${forecast}
       <div class="btn-row">
         <button class="btn ghost" data-aporte="${g.id}">＋ Aporte</button>
         <button class="btn ghost" data-goal-detail="${g.id}">Ver histórico (${entries.length})</button>
       </div>
       ${entries.length ? `<p class="muted" style="margin-top:10px;font-weight:600">Últimos aportes</p>` : ''}
-      ${entries.slice(0, 2).map(e => `<div class="muted" style="margin-top:4px">· ${fmtDay(e.date)} — ${esc(e.description)} <b style="color:var(--paper)">${fmtShort(e.amount)}</b></div>`).join('')}
+      ${entries.slice(0, 2).map(e => `<div class="muted" style="margin-top:4px">· ${fmtDay(e.date)} — ${esc(e.description)} <b style="color:var(--paper)">${fmtShort(e.amount)}</b>${
+        DB.aportePago(e) ? '' : ' <span class="selo-ajuste">agendado</span>'}</div>`).join('')}
       ${entries.length > 2 ? `<div class="muted" style="margin-top:6px">e mais ${entries.length - 2} — toque em <b>Ver histórico</b> para ver todos</div>` : ''}
     </div>`;
   }
@@ -3232,6 +3241,24 @@ function bindView() {
   v.querySelectorAll('[data-pend-ok]').forEach(b => b.onclick = () => {
     const tipo = b.dataset.pendTipo;
     if (tipo === 'fatura') return openPagarFaturaSheet(b.dataset.pendOk);
+    /* APORTE: confirmar é quando o dinheiro se move de verdade — até aqui ele era
+       plano. A transferência que acompanha o aporte é encontrada pela data e pelo
+       valor, porque `goal_entries` não guarda o id dela; sem casar as duas, o
+       extrato ficaria com a linha "A Pagar" para sempre. */
+    if (tipo === 'aporte') {
+      const e = DB.get('goal_entries', b.dataset.pendOk);
+      if (!e) return;
+      DB.upsert('goal_entries', { ...e, status: 'Pago' });
+      if (e.from_account) adjustBalance(e.from_account, -Number(e.amount) || 0);
+      if (e.to_account) adjustBalance(e.to_account, Number(e.amount) || 0);
+      const irmã = DB.all('transactions').find(t => t.status === 'A Pagar' && DB.isTransfer(t)
+        && String(t.date) === String(e.date)
+        && Math.abs(Number(t.amount) - Number(e.amount)) < 0.005
+        && t.account_id === e.from_account && t.to_account === e.to_account);
+      if (irmã) DB.upsert('transactions', { ...irmã, status: 'Pago' });
+      Sync.autoSync(); render();
+      return toast('Guardado ✓');
+    }
     const t = DB.get('transactions', b.dataset.pendOk);
     if (!t) return;
     const pago = { ...t, status: 'Pago' };
@@ -3245,6 +3272,34 @@ function bindView() {
      continua existindo, e escondê-lo seria a forma mais rápida de o app perder a
      confiança de quem usa. */
   v.querySelectorAll('[data-pend-adiar]').forEach(b => b.onclick = () => {
+    // Aporte adiado é o caso mais comum de simulação: "esse mês não dá, empurro
+    // para o próximo". Só a data muda — o plano continua existindo.
+    if (b.dataset.pendTipo === 'aporte') {
+      const e = DB.get('goal_entries', b.dataset.pendAdiar);
+      if (!e) return;
+      const g = DB.get('goals', e.goal_id) || {};
+      openSheet(`
+        <div class="sheet-title">Adiar — guardar em ${esc(g.name || 'meta')}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+        <p class="muted" style="margin:-4px 0 12px">O plano continua de pé, só muda a data. Ele volta à fila no novo dia.</p>
+        <div class="field"><label>Nova data</label><input id="ad-data" type="date" value="${somarDias(DB.paraISO(new Date()), 1)}"></div>
+        <button class="btn" id="sh-save">Adiar</button>
+        <div class="btn-row"><button class="btn ghost t-danger" id="ad-cancelar">Não vou guardar — excluir</button></div>
+      `);
+      $('#sh-close').onclick = closeSheet;
+      $('#sh-save').onclick = () => {
+        const nova = $('#ad-data').value;
+        if (!nova) return toast('Escolha a nova data');
+        DB.upsert('goal_entries', { ...e, date: nova });
+        closeSheet(); Sync.autoSync(); render();
+        toast(`Adiado para ${fmtDate(new Date(nova + 'T12:00:00'))} ✓`);
+      };
+      $('#ad-cancelar').onclick = () => {
+        DB.remove('goal_entries', e.id);
+        closeSheet(); Sync.autoSync(); render();
+        toast('Plano removido');
+      };
+      return;
+    }
     const t = DB.get('transactions', b.dataset.pendAdiar);
     if (!t) return;
     openSheet(`
@@ -5418,10 +5473,13 @@ function filaDePendencias() {
     const quando = atrasado
       ? `${i.atraso} ${i.atraso === 1 ? 'dia' : 'dias'} de atraso`
       : 'vence hoje';
+    // "Guardei" e não "Paguei": guardar não é uma conta a pagar, e o app não deve
+    // tratar poupar com a mesma palavra de quitar dívida
     const acao = i.tipo === 'fatura' ? 'Pagar'
-      : i.tipo === 'receita' ? 'Recebi' : 'Paguei';
+      : i.tipo === 'receita' ? 'Recebi'
+      : i.tipo === 'aporte' ? 'Guardei' : 'Paguei';
     return `<div class="pend-item ${atrasado ? 'atraso' : ''}">
-      <span class="pend-ico">${i.tipo === 'fatura' ? '💳' : i.tipo === 'receita' ? '💰' : '📄'}</span>
+      <span class="pend-ico">${i.tipo === 'fatura' ? '💳' : i.tipo === 'receita' ? '💰' : i.tipo === 'aporte' ? '🏦' : '📄'}</span>
       <span class="pend-info">
         <b>${esc(i.titulo)}</b>
         <small>${quando} · ${fmtDate(new Date(i.data + 'T12:00:00'))}</small>
@@ -5429,7 +5487,7 @@ function filaDePendencias() {
       <span class="pend-val ${i.tipo === 'receita' ? 'txt-green' : ''}">${fmt(i.valor)}</span>
       <span class="pend-acoes">
         <button class="sec-btn" data-pend-ok="${esc(i.id)}" data-pend-tipo="${i.tipo}">${acao}</button>
-        ${i.tipo !== 'fatura' ? `<button class="sec-btn" data-pend-adiar="${esc(i.id)}">Adiar</button>` : ''}
+        ${i.tipo !== 'fatura' ? `<button class="sec-btn" data-pend-adiar="${esc(i.id)}" data-pend-tipo="${i.tipo}">Adiar</button>` : ''}
       </span>
     </div>`;
   };
@@ -5632,6 +5690,18 @@ function openAporteSheet(goalId, opcoes = {}) {
         ${DB.all('accounts').filter(a => a.active !== false).map(a =>
           `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}
       </select></div>
+    <!-- SITUAÇÃO, igual à de um lançamento. Um aporte agendado é PLANO: não mexe
+         em saldo, não conta como guardado e não abate o disponível — ele entra na
+         projeção do dia em que vai sair. É o que permite simular cenários
+         ("e se eu guardar 3.400 todo dia 5?") sem que o app trate a intenção como
+         fato consumado. -->
+    <div class="field"><label>Situação</label>
+      ${chipGroup('a-status', [
+        { value: 'Pago', label: 'Já aconteceu' },
+        { value: 'A Pagar', label: 'Agendado' },
+      ], 'Pago')}
+      <p class="muted" id="a-status-nota" style="margin-top:6px"></p>
+    </div>
     <p class="muted" id="a-aviso" style="margin-bottom:10px">${ehReserva
       ? '🛡️ Esta é a reserva de emergência: ela existe para não ser gasta. Resgatar aqui é legítimo numa emergência — só lembre de repor depois.'
       : 'Guardar tira o valor do seu disponível; resgatar devolve.'}</p>
@@ -5640,6 +5710,29 @@ function openAporteSheet(goalId, opcoes = {}) {
   initMoney('#a-amount');
   $('#sh-close').onclick = closeSheet;
   setTimeout(() => $('#a-amount').focus(), 80);
+
+  /* A situação SEGUE A DATA por padrão, e o texto diz o que vai acontecer.
+
+     Escolher uma data futura e deixar "já aconteceu" marcado é o erro que motivou
+     tudo isto: o saldo era debitado hoje por um movimento marcado para o dia 3.
+     Marcar sozinho evita o engano; o chip continua editável porque lançar um
+     aporte esquecido, com data de ontem, é legítimo. */
+  const notaStatus = () => {
+    const n = $('#a-status-nota');
+    if (!n) return;
+    n.textContent = chipValue('a-status') === 'A Pagar'
+      ? 'Fica no plano: não mexe no saldo nem na reserva até acontecer. Aparece na projeção do dia.'
+      : 'Move o saldo agora e entra na reserva.';
+  };
+  const seguirData = () => {
+    const d = $('#a-date').value;
+    if (!d) return;
+    selectChip('a-status', d > todayISO() ? 'A Pagar' : 'Pago');
+    notaStatus();
+  };
+  bindChips('a-status', notaStatus);
+  $('#a-date').addEventListener('change', seguirData);
+  notaStatus();
 
   /* Ao resgatar, os rótulos das contas TROCAM de sentido: o dinheiro sai da
      caixinha e volta para a conta do dia a dia. Sem inverter, quem resgata
@@ -5671,15 +5764,22 @@ function openAporteSheet(goalId, opcoes = {}) {
     if (resg && amount - saldoMeta > 0.005) return toast(`Só há ${fmt(saldoMeta)} guardado nesta meta`);
     const de = $('#a-account').value, para = $('#a-to').value;
     if (de && de === para) return toast('Origem e destino não podem ser a mesma conta');
+    const pago = chipValue('a-status') !== 'A Pagar';
     DB.upsert('goal_entries', {
       goal_id: goalId,
       amount: resg ? -amount : amount,     // resgate é o mesmo lançamento, com sinal
       description: $('#a-desc').value || (resg ? 'Resgate' : 'Aporte'),
       date: $('#a-date').value || todayISO(),
       from_account: de || null, to_account: para || null,   // guardado para poder reverter depois
+      status: pago ? 'Pago' : 'A Pagar',
     });
-    if (de) adjustBalance(de, -amount);      // sai de onde estava
-    if (para) adjustBalance(para, amount);   // entra onde vai ficar
+    /* SÓ MOVE SALDO SE JÁ ACONTECEU. Um aporte agendado é plano: o dinheiro ainda
+       está na conta, e debitá-lo hoje deixaria o disponível negativo por um
+       movimento que não ocorreu — foi exatamente o defeito relatado. */
+    if (pago) {
+      if (de) adjustBalance(de, -amount);      // sai de onde estava
+      if (para) adjustBalance(para, amount);   // entra onde vai ficar
+    }
     /* A MOVIMENTAÇÃO APARECE NO EXTRATO, categorizada em Investimentos.
 
        Antes, guardar dinheiro mexia nos saldos e não deixava rastro na lista: o
@@ -5694,7 +5794,9 @@ function openAporteSheet(goalId, opcoes = {}) {
       DB.upsert('transactions', {
         description: ($('#a-desc').value || `Guardado em ${g.name}`).slice(0, 60),
         amount, date: $('#a-date').value || todayISO(),
-        type: 'Transferência', status: 'Pago',
+        // O status acompanha o do aporte: uma transferência "Paga" com data futura
+        // seria contada pelo saldo como se já tivesse saído da conta.
+        type: 'Transferência', status: pago ? 'Pago' : 'A Pagar',
         scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência',
         account_id: de, to_account: para,
         category_id: DB.categoriaDeAporte(g),

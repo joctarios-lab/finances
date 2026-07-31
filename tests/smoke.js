@@ -89,7 +89,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet,
+  cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
@@ -5434,6 +5434,94 @@ check('função is_member definida antes das policies', schema.indexOf('function
     DB.save();
   } catch (e) { console.log(` FALHA | investimentos: ${e.message}`); fail++; }
 
+  console.log('\n=== Aporte agendado: plano não é fato ===');
+  try {
+    /* Aporte com data futura era tratado como já feito: o saldo era debitado
+       hoje, a reserva subia por dinheiro que ainda não tinha saído e o disponível
+       ficava negativo. Medido nos dados reais: um aporte de R$ 3.400 marcado para
+       03/08 deixava `available` em −3.108 no dia 31/07. */
+    const metaAg = DB.upsert('goals', { name: 'Meta Agendada', icon: '🎯', kind: 'Objetivo', target_amount: 10000 });
+    const cA = DB.all('accounts')[0], cB = DB.all('accounts')[1];
+    const amanha = somarDias(todayISO(), 1);
+
+    const guardadoAntes = DB.guardado();
+    const dispAntes = DB.available();
+    const saldoAntes = Number(DB.get('accounts', cA.id).balance) || 0;
+    const totalAntes = DB.accountsTotal();
+
+    /* Gravado direto, e não pelo clique na folha: o DOM falso não tem CSS, então
+       `chipValue` — que lê `.chip.active` via querySelectorAll — devolve sempre o
+       default e o formulário nunca conseguiria produzir "A Pagar" aqui. O que
+       importa neste bloco é o EFEITO do status nos números, não o caminho do
+       clique; a ligação entre o chip e a gravação é verificada logo abaixo, no
+       código-fonte. */
+    const reg = DB.get('goal_entries', DB.upsert('goal_entries', {
+      goal_id: metaAg, amount: 3400, description: 'Aporte AGENDADO TESTE',
+      date: amanha, from_account: cA.id, to_account: cB.id, status: 'A Pagar',
+    }));
+    DB.upsert('transactions', {
+      description: 'Aporte AGENDADO TESTE', amount: 3400, date: amanha,
+      type: 'Transferência', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM,
+      method: 'Transferência', account_id: cA.id, to_account: cB.id,
+      category_id: DB.categoriaDeAporte(DB.get('goals', metaAg)),
+    });
+    check('o aporte agendado é gravado', !!reg, true);
+    check('  com status A Pagar', reg.status, 'A Pagar');
+    /* A FOLHA precisa oferecer a escolha e respeitá-la: sem isto, o modelo estaria
+       certo e a tela continuaria gravando tudo como pago. */
+    const apAp = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+    check('a folha de aporte oferece a situação', /chipGroup\('a-status'/.test(apAp), true);
+    check('  e grava o que foi escolhido', /const pago = chipValue\('a-status'\) !== 'A Pagar'/.test(apAp), true);
+    check('  só movendo saldo quando já aconteceu', /if \(pago\) \{[\s\S]{0,200}adjustBalance/.test(apAp), true);
+    check('  e a data futura marca "agendado" sozinha',
+      /selectChip\('a-status', d > todayISO\(\) \? 'A Pagar' : 'Pago'\)/.test(apAp), true);
+    /* A transferência que acompanha o aporte HERDA o status. Uma transferência
+       "Paga" com data futura seria contada por `saldoNaData`, que parte do saldo
+       atual e desfaz o que veio depois — o extrato mostraria o dinheiro fora da
+       conta antes de ele sair. */
+    check('  e a transferência do extrato herda o status',
+      /type: 'Transferência', status: pago \? 'Pago' : 'A Pagar'/.test(apAp), true);
+    /* O QUE NÃO PODE ACONTECER — cada uma destas era um sintoma do defeito. */
+    check('não mexe no saldo da conta', Math.round(Number(DB.get('accounts', cA.id).balance)), Math.round(saldoAntes));
+    check('  nem no total em contas', Math.round(DB.accountsTotal()), Math.round(totalAntes));
+    check('não entra no guardado', Math.round(DB.guardado()), Math.round(guardadoAntes));
+    check('  nem derruba o disponível', Math.round(DB.available()), Math.round(dispAntes));
+    check('não conta na meta', Math.round(DB.goalTotal(metaAg)), 0);
+    check('  mas aparece como planejado', Math.round(DB.goalPlanejado(metaAg)), 3400);
+    // Ritmo é medida do passado: aporte agendado não pode inflar a média
+    check('não infla o ritmo de aportes', Math.round(DB.goalPace(metaAg)), 0);
+
+    /* O QUE PRECISA ACONTECER: ele existe como plano e pesa na projeção do dia em
+       que vai sair — é disso que serve para simular cenário. */
+    const serieAg = DB.projecaoSaldo(somarDias(todayISO(), 10));
+    const noDia = serieAg.find(x => x.data === amanha);
+    check('a projeção conhece o aporte agendado',
+      !!noDia && Math.round(serieAg[0].saldo - noDia.saldo) >= 3400, true);
+    // E a transferência no extrato acompanha o status, senão o saldo a contaria
+    const lancAg = DB.all('transactions').find(t => t.description === 'Aporte AGENDADO TESTE');
+    check('a transferência do extrato também fica A Pagar', (lancAg || {}).status, 'A Pagar');
+
+    /* CONFIRMAR é quando o dinheiro se move. Antes disso não havia caminho: um
+       aporte marcado para o dia 5 ficaria agendado para sempre. */
+    const pend = DB.pendencias(amanha).find(i => i.tipo === 'aporte' && i.id === reg.id);
+    check('chegada a data, ele entra na fila de pendências', !!pend, true);
+    check('  pedindo para confirmar, não para pagar', pend.titulo.includes('Guardar em'), true);
+
+    DB.upsert('goal_entries', { ...reg, status: 'Pago' });
+    adjustBalance(cA.id, -3400); adjustBalance(cB.id, 3400);
+    check('confirmado, entra na meta', Math.round(DB.goalTotal(metaAg)), 3400);
+    check('  e sai do planejado', Math.round(DB.goalPlanejado(metaAg)), 0);
+    check('  a soma dos saldos segue igual: é transferência',
+      Math.round(DB.accountsTotal()), Math.round(totalAntes));
+
+    // limpa
+    for (const e of DB.all('goal_entries').filter(e => e.goal_id === metaAg)) DB.remove('goal_entries', e.id);
+    if (lancAg) DB.remove('transactions', lancAg.id);
+    adjustBalance(cA.id, 3400); adjustBalance(cB.id, -3400);
+    DB.remove('goals', metaAg);
+    DB.save();
+  } catch (e) { console.log(` FALHA | aporte agendado: ${e.message}`); fail++; }
+
   console.log('\n=== Catálogo padrão e calibração pela renda ===');
   try {
     /* O CATÁLOGO É UM PLANO, não uma lista de nomes: os tetos foram calculados
@@ -6251,10 +6339,23 @@ console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
   const relFaixa = renderRelatorios();
   check('a faixa vive sem rótulo porque o cartão traz os números',
     /Isso é normal para vocês\?[\s\S]{0,2000}chart-foot[\s\S]{0,400}Seu normal/.test(relFaixa), true);
+  /* O cartão da projeção traz os números no rodapé — mas ele SÓ EXISTE quando há
+     dias pela frente. Rodando no último dia do ciclo, a série tem um ponto só e o
+     cartão vira "sem movimento previsto", legitimamente.
+
+     O teste rodava contra o mês corrente e passou meses sem falhar por sorte de
+     calendário: quebrou no dia 31. Agora ele monta um período com dias
+     garantidos, que é o cenário que a asserção quer exercitar. */
   check('e o saldo projetado também', (() => {
-    const c = projecaoCard(p29);
+    const daquiA30 = DB.paraISO(new Date(Date.now() + 30 * 86400000));
+    const serie = DB.projecaoSaldo(daquiA30);
+    if (serie.length < 2) return 'série curta: nada a projetar nem no horizonte de 30 dias';
+    const c = projecaoCard({ ...p29, end: new Date(daquiA30 + 'T12:00:00') });
     return /chart-foot/.test(c) && /Hoje/.test(c) && /Fecha em/.test(c);
   })(), true);
+  // E o caso oposto é comportamento, não falha: sem dias à frente, ele diz isso
+  check('sem dias pela frente, o cartão avisa em vez de desenhar reta',
+    projecaoCard({ ...p29, end: new Date(DB.hojeISO() + 'T12:00:00') }).includes('Sem movimento previsto'), true);
 
   check('o texto do gráfico usa a fonte do app', /\.apx text \{[^}]*font-family: inherit/.test(cssG), true);
   check('e o div encolhe em vez de estourar o cartão',

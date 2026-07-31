@@ -869,12 +869,19 @@ const DB = {
     return (achou || filhas[0] || env).id;
   },
 
+  /* Em período INTEIRAMENTE FUTURO, o aporte agendado conta: ali não existe
+     "realizado", e o previsto é a única informação que há — a mesma regra das
+     transações virtuais (ver docs/plano-visao-futuro.md). No mês corrente e no
+     passado, só o que aconteceu: misturar plano com fato faria a barra do
+     envelope dizer que se guardou dinheiro que ainda está na conta. */
   investidoNoPeriodo(period) {
     const de = this.inicioISO(period), ate = this.fimISO(period);
+    const contaPlanejado = de > this.hojeISO();
     let total = 0;
     for (const e of this.all('goal_entries')) {
       const d = String(e.date);
       if (d < de || d >= ate) continue;
+      if (!contaPlanejado && !this.aportePago(e)) continue;
       const v = Number(e.amount) || 0;
       if (v > 0) total += v;
     }
@@ -963,8 +970,32 @@ const DB = {
      Resgate é um lançamento de valor NEGATIVO na mesma tabela, não um campo à
      parte: assim o histórico fica em ordem cronológica e o total é sempre uma
      soma — não há como o saldo divergir do que está listado. */
+  /* ---------- Aporte: o que já aconteceu e o que está planejado ----------
+
+     Aporte tem status como qualquer lançamento — 'Pago' ou 'A Pagar'. Um aporte
+     agendado é PLANO: não mexe em saldo, não conta como guardado e não abate o
+     disponível. Sem isso, programar um aporte para o dia 3 debitava a conta hoje,
+     a reserva subia por dinheiro que ainda não tinha saído, e o disponível ficava
+     negativo — medido: um aporte de R$ 3.400 para 03/08 deixava `available` em
+     −3.108 no dia 31/07.
+
+     `aportePago` trata a AUSÊNCIA do campo como pago: todo registro anterior a
+     esta coluna já aconteceu, e o contrário faria a reserva inteira desaparecer
+     na primeira abertura do app depois da atualização. */
+  aportePago(e) { return !e || e.status !== 'A Pagar'; },
+
   goalTotal(goalId) {
-    return this.all('goal_entries').filter(e => e.goal_id === goalId)
+    return this.all('goal_entries')
+      .filter(e => e.goal_id === goalId && this.aportePago(e))
+      .reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  },
+
+  /* O que está PLANEJADO para uma meta e ainda não aconteceu. Serve para a tela
+     mostrar o plano sem misturá-lo com o saldo — são duas perguntas diferentes:
+     "quanto já tenho" e "quanto pretendo ter". */
+  goalPlanejado(goalId) {
+    return this.all('goal_entries')
+      .filter(e => e.goal_id === goalId && !this.aportePago(e))
       .reduce((s, e) => s + (Number(e.amount) || 0), 0);
   },
 
@@ -1175,11 +1206,15 @@ const DB = {
     return vals.reduce((a, b) => a + b, 0) / vals.length;
   },
 
-  // Ritmo de aportes de uma meta (média mensal dos últimos 90 dias).
+  /* Ritmo de aportes de uma meta (média mensal dos últimos 90 dias).
+     Só o que aconteceu: ritmo é uma medida do passado, e um aporte agendado para
+     a semana que vem infla a média sem nada ter sido guardado — a projeção de
+     "quando a meta fecha" ficaria otimista. */
   goalPace(goalId) {
     const cut = new Date(Date.now() - 90 * 86400000);
     const recent = this.all('goal_entries')
-      .filter(e => e.goal_id === goalId && new Date(e.date + 'T12:00:00') >= cut)
+      .filter(e => e.goal_id === goalId && this.aportePago(e)
+        && new Date(e.date + 'T12:00:00') >= cut)
       .reduce((s, e) => s + (Number(e.amount) || 0), 0);
     return recent / 3;
   },
@@ -1420,6 +1455,27 @@ const DB = {
       }
     }
 
+    /* Aporte agendado que chegou a hora entra na mesma fila.
+
+       Sem isto, um aporte marcado para o dia 5 ficaria agendado para sempre: não
+       há outra tela que pergunte "aquilo que você planejou guardar, guardou?". E
+       ele é justamente o compromisso mais fácil de deixar passar — ninguém cobra
+       quem não poupou. */
+    for (const e of this.all('goal_entries')) {
+      if (this.aportePago(e)) continue;
+      if (Number(e.amount) <= 0) continue;                  // resgate agendado não é cobrança
+      if (String(e.date) > hoje) continue;
+      const g = this.get('goals', e.goal_id);
+      if (!g || g.done) continue;
+      itens.push({
+        tipo: 'aporte',
+        id: e.id, data: String(e.date),
+        valor: Number(e.amount) || 0,
+        titulo: `Guardar em ${g.name}`,
+        atraso: this.diasEntre(String(e.date), hoje),
+      });
+    }
+
     // Mais atrasado primeiro: é a ordem em que o problema cresce
     return itens.sort((a, b) => b.atraso - a.atraso || b.valor - a.valor);
   },
@@ -1458,6 +1514,22 @@ const DB = {
         if (quando >= fim) continue;
         soma(quando, -inv.falta);
       }
+    }
+    /* APORTE AGENDADO pesa na projeção do dia em que sai.
+
+       A transferência que acompanha o aporte é neutra — não é gasto —, e por isso
+       o laço acima a ignora. Mas para quem está planejando, "guardar 3.400 no dia
+       3" é exatamente o tipo de movimento que decide se o mês fecha no azul: o
+       dinheiro sai da conta corrente naquele dia, ainda que continue sendo da
+       família. Só o que sai de uma conta conta aqui; aporte sem conta de origem é
+       registro contábil e não move caixa. */
+    for (const e of this.all('goal_entries')) {
+      if (this.aportePago(e) || !e.from_account) continue;
+      const v = Number(e.amount) || 0;
+      if (v <= 0) continue;                       // resgate agendado entra por outro caminho
+      const quando = String(e.date) < inicio ? inicio : String(e.date);
+      if (quando >= fim) continue;
+      soma(quando, -v);
     }
 
     let saldo = this.accountsTotal();
