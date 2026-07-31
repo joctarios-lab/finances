@@ -1737,20 +1737,18 @@ const DB = {
        conta corrente na data marcada. Sem ele aqui, planejar guardar R$ 3.400 não
        aparecia na previsão e o mês parecia ter mais folga do que tem.
 
-       Só entra o que ainda NÃO tem transferência correspondente no extrato — o
-       aporte feito pela folha cria as duas coisas, e contar as duas somaria o
-       mesmo movimento duas vezes. A chave é data + valor + contas, a mesma que
-       `pendencias` usa para casar os dois lados. */
+       NÃO se deduplica contra a transferência que acompanha o aporte: ela é
+       NEUTRA (`isNeutral`) e por isso nunca entrou no laço de "lançado" acima —
+       pular o aporte por causa dela apagava o compromisso da conta em vez de
+       evitar repetição. Medido: agosto somava R$ 12.129 de saídas sem os R$ 3.400
+       do aporte, e o rodapé do hero subtraía do total um valor que nunca esteve
+       lá, mostrando "R$ 8.729 a pagar" quando o correto era R$ 12.129. */
     for (const e of this.all('goal_entries')) {
       if (this.aportePago(e)) continue;
       const v = Number(e.amount) || 0;
       if (v <= 0) continue;                        // resgate não é compromisso
       const d = String(e.date);
       if (d < de || d >= ate) continue;
-      const jaLancado = this.all('transactions').some(t => t.status === 'A Pagar' && this.isTransfer(t)
-        && String(t.date) === d && Math.abs(Number(t.amount) - v) < 0.005
-        && t.account_id === e.from_account && t.to_account === e.to_account);
-      if (jaLancado) continue;
       const meta = this.get('goals', e.goal_id);
       const env = this.envelopeDeInvestimento();
       add(`Guardar em ${meta ? meta.name : 'meta'}`, v, false, d, 'aporte',

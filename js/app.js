@@ -1261,6 +1261,38 @@ function secaoDoQueAindaVem(period, previstoDoMes) {
     <div class="grid-3">${cards.join('')}</div>`;
 }
 
+/* QUANDO a reserva fica pronta.
+
+   "Faltam R$ 72.526" é um número que paralisa; "no ritmo atual, fevereiro de 2028"
+   é um plano — e a diferença entre os dois é o que faz alguém continuar guardando.
+
+   O ritmo vem dos aportes JÁ FEITOS (`goalPace`). O agendado entra como reforço,
+   dito à parte: contar um plano como se fosse ritmo daria uma data que ninguém
+   sustentou ainda. Sem histórico nenhum, a estimativa cai para o que o orçamento
+   prevê guardar — que é uma intenção declarada, e a frase diz isso. */
+function previsaoDaReserva(meta, falta) {
+  if (!meta || falta <= 0) return '';
+  const ritmo = DB.goalPace(meta.id);
+  const planejado = DB.goalPlanejado(meta.id);
+  if (ritmo > 0.005) {
+    const meses = Math.ceil(falta / ritmo);
+    const quando = new Date();
+    quando.setMonth(quando.getMonth() + meses);
+    const rotulo = quando.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    const reforco = planejado > 0.005
+      ? ` Há ${fmtShort(planejado)} já agendado, que antecipa isso.` : '';
+    return `<p class="muted">📈 No ritmo de <b>${fmtShort(ritmo)}/mês</b>, fica pronta em <b>${esc(rotulo)}</b> — ${meses} ${meses === 1 ? 'mês' : 'meses'}.${esc(reforco)}</p>`;
+  }
+  if (planejado > 0.005) {
+    return `<p class="muted">📅 <b>${fmtShort(planejado)}</b> já agendado. Ainda sem histórico de aportes para estimar a data.</p>`;
+  }
+  const env = DB.envelopeDeInvestimento();
+  const alvoMes = env ? DB.budgetOf(env.id) : 0;
+  return alvoMes > 0
+    ? `<p class="muted">📈 Guardando o previsto no orçamento (<b>${fmtShort(alvoMes)}/mês</b>), seriam <b>${Math.ceil(falta / alvoMes)} meses</b> até o objetivo.</p>`
+    : '<p class="muted">📈 Sem aportes ainda — o primeiro é o que transforma a meta em plano.</p>';
+}
+
 /* ---------- Situação financeira (conceitos: disponível real, run-rate, 50/30/20, reserva) ---------- */
 function healthOf(stats, refLimit, available) {
   if (available < 0) return { label: 'Crítico', cls: 'red', msg: 'Comprometido maior que o saldo — reveja as próximas contas.' };
@@ -1319,10 +1351,19 @@ function renderInicio(period) {
      botão de pagar. */
   const doCiclo = emAberto.filter(inv => inv.due < period.end);
 
+  /* METAS EM VALOR, não em média de percentuais.
+
+     A média de "50% de R$ 1.000" com "10% de R$ 100.000" dava 30% — um número que
+     não corresponde a nada: nem ao dinheiro guardado, nem ao caminho percorrido.
+     Somar reais responde as duas coisas de uma vez. */
   const goals = DB.all('goals').filter(g => !g.done);
-  const avgPct = goals.length
-    ? Math.round(goals.reduce((s, g) => s + Math.min(100, DB.goalTotal(g.id) / (g.target_amount || 1) * 100), 0) / goals.length)
-    : 0;
+  const guardadoMetas = goals.reduce((s, g) => s + Math.max(0, DB.goalTotal(g.id)), 0);
+  const alvoMetas = goals.reduce((s, g) => s + (Number(g.target_amount) || 0), 0);
+  // O quanto foi guardado NESTE mês, somando todas as metas: é o sinal de que o
+  // plano está vivo, e o único que muda de um mês para o outro
+  const aportadoMes = DB.all('goal_entries')
+    .filter(e => DB.aportePago(e) && DB.inPeriod(String(e.date), period) && Number(e.amount) > 0)
+    .reduce((s, e) => s + (Number(e.amount) || 0), 0);
 
   // Donut por categoria
   const byCat = DB.spentByCategory(period);
@@ -1509,7 +1550,8 @@ function renderInicio(period) {
         <div class="proj-row"><span>Guardado</span><b>${fmtShort(reserve)}</b></div>
         <div class="proj-row"><span>Cobre</span><b class="${coverage >= 6 ? 'txt-green' : coverage >= 3 ? 'txt-amber' : 'txt-red'}">${coverage.toFixed(1)} ${coverage === 1 ? 'mês' : 'meses'}</b></div>
         <div class="bar ${coverage >= 6 ? 'bar-green' : coverage >= 3 ? 'bar-amber' : 'bar-red'}" style="margin:8px 0 4px"><i style="width:${covPct}%"></i></div>
-        <p class="muted">Recomendação clássica: 3 a 6 meses do gasto médio (${fmtShort(avgSpend)}/mês)${faltaReserva > 0 ? ` — faltam <b>${fmtShort(faltaReserva)}</b>` : ' — objetivo alcançado 🎉'}.</p>
+        <p class="muted">Recomendação clássica: 3 a 6 meses do custo de vida (${fmtShort(avgSpend)}/mês)${faltaReserva > 0 ? ` — faltam <b>${fmtShort(faltaReserva)}</b>` : ' — objetivo alcançado 🎉'}.</p>
+        ${previsaoDaReserva(reserveGoal, faltaReserva)}
         <div class="btn-row">
           <button class="btn ghost" data-aporte="${reserveGoal.id}">＋ Guardar dinheiro</button>
           <button class="btn ghost" data-goal-detail="${reserveGoal.id}">Ver depósitos</button>
@@ -1685,9 +1727,15 @@ function renderInicio(period) {
         futuro6.temDados
           ? `pior ponto <b class="${futuro6.pior < 0 ? 'txt-red' : 'txt-green'}">${fmtShort(futuro6.pior)}</b> em ${esc(futuro6.piorMes)}`
           : `${contas.length} conta(s)`}</div></div>
-      <div class="card kpi"><span class="kpi-ico t-info" data-ico="shield"></span><div class="kpi-value ${
-        coverage >= 6 ? 'green' : coverage >= 3 ? '' : 'red'}">${coverage > 0 ? `${coverage.toFixed(1)}` : '—'}<span style="font-size:14px;font-weight:600"> ${coverage > 0 ? 'meses' : ''}</span></div><div class="kpi-label">Reserva cobre</div><div class="kpi-sub">${
-        fmtShort(reserve)}${avgSpend > 0 ? ` de ${fmtShort(avgSpend * 6)} para 6 meses` : ''}</div></div>
+      <!-- METAS em números absolutos, não em média de percentuais: metas com
+           alvos diferentes não se somam por porcentagem. "R$ 134 de R$ 100.000"
+           diz onde se está; "0%" não diz nada além de "no começo".
+           A cobertura da reserva saiu daqui porque ela tem card próprio logo
+           abaixo, agora com previsão de quando fica pronta. -->
+      <div class="card kpi"><span class="kpi-ico t-info" data-ico="target"></span><div class="kpi-value">${fmt(guardadoMetas)}</div><div class="kpi-label">Guardado em metas</div><div class="kpi-sub">${
+        alvoMetas > 0
+          ? `de ${fmtShort(alvoMetas)} · ${goals.length} meta(s)${aportadoMes > 0.005 ? ` · ${fmtShort(aportadoMes)} este mês` : ''}`
+          : `${goals.length} meta(s) em andamento`}</div></div>
     </div>
     <!-- Primeira linha: o que já está guardado, o que o mês vai fechar e como a
          renda se divide. As três perguntas de "estamos bem?", lado a lado — juntas

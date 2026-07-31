@@ -5483,9 +5483,18 @@ check('função is_member definida antes das policies', schema.indexOf('function
        base, os dois divergem — é isso que torna a assertiva não-vazia. */
     check('os dois números divergem, senão a assertiva é vazia',
       Math.round(DB.custoDeVidaMensal()) !== Math.round(DB.avgMonthlySpend()), true);
-    const alvoNaTela = DB.custoDeVidaMensal() * 6;
-    check('o KPI da reserva usa o custo de vida', telaK.includes(fmtShort(alvoNaTela)), true);
-    check('  e não a média histórica crua', telaK.includes(fmtShort(DB.avgMonthlySpend() * 6)), false);
+    /* A COBERTURA DA RESERVA saiu dos KPIs e ficou no card próprio dela, que agora
+       também diz QUANDO ela fica pronta — "faltam R$ 72.526" paralisa, "no ritmo
+       atual, fevereiro de 2028" é plano. O KPI liberado passou a mostrar as metas
+       em VALOR: a média de "50% de mil" com "10% de cem mil" dava 30%, que não
+       corresponde nem ao dinheiro nem ao caminho. */
+    check('o card da reserva usa o custo de vida', telaK.includes(fmtShort(DB.custoDeVidaMensal())), true);
+    check('  e não a média histórica crua',
+      telaK.includes(fmtShort(DB.avgMonthlySpend() * 6)), false);
+    check('o card da reserva diz quando ela fica pronta',
+      /No ritmo de|já agendado|Guardando o previsto|Sem aportes ainda/.test(telaK), true);
+    check('o KPI de metas mostra valor, não média de percentuais',
+      /Guardado em metas/.test(telaK), true);
 
     /* O RODAPÉ DO HERO separa o que vira patrimônio do que vira despesa. Juntos,
        ele dizia "R$ 12.129 a pagar" quando R$ 3.400 daquilo é poupança. */
@@ -5507,6 +5516,23 @@ check('função is_member definida antes das policies', schema.indexOf('function
     });
     const investProx = DB.investidoNoPeriodo(proxP);
     check('o próximo mês tem investimento previsto, senão o teste é vazio', investProx > 0.005, true);
+    /* A PREVISÃO PRECISA CONTER O APORTE. O rodapé subtrai o investimento do total
+       de saídas, então se ele não estiver lá o número sai menor do que a
+       realidade — foi o defeito medido: agosto somava R$ 12.129 sem os R$ 3.400 do
+       aporte, e o rodapé mostrava "R$ 8.729 a pagar" tirando de um total que nunca
+       os teve. A dedupe contra a transferência do aporte era a causa: ela é
+       NEUTRA e nunca entrou na soma. */
+    const pvProxHero = DB.previsaoDoMes(proxP);
+    check('o aporte agendado entra na previsão do mês',
+      pvProxHero.itens.some(i => i.origem === 'aporte'), true);
+    check('  e o total de saídas o inclui',
+      Math.round(pvProxHero.sai) >= Math.round(investProx), true);
+    check('  soma dos itens = total informado', Math.round(pvProxHero.sai),
+      Math.round(pvProxHero.itens.filter(i => !i.receita).reduce((s, i) => s + i.valor, 0)));
+    /* E a transferência que acompanha o aporte NÃO pode ser contada além dele: ela
+       é neutra por construção, mas se um dia deixar de ser, esta assertiva pega. */
+    check('  o aporte aparece uma vez só',
+      pvProxHero.itens.filter(i => Math.abs(i.valor - investProx) < 0.005 && !i.receita).length <= 1, true);
     const frase = resumoDoProximoMes();
     check('o rodapé do hero separa o que será guardado', /a guardar/.test(frase), true);
     check('  e diz que a sobra é depois de guardar', /depois de guardar/.test(frase), true);
