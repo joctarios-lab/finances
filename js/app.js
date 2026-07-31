@@ -1344,13 +1344,27 @@ function renderInicio(period) {
   // Tocar numa barra abre o detalhe: saber que "Alimentação" estourou só ajuda
   // quando dá para ver se foi mercado ou delivery.
   let budgets = '';
+  const envInvest = DB.envelopeDeInvestimento();
   for (const c of DB.rootCategories('Despesa').sort((a, b) => (byCat[b.id] || 0) - (byCat[a.id] || 0))) {
-    const spent = byCat[c.id] || 0;
+    /* INVESTIMENTO se mede pelo que foi GUARDADO, não pelo que foi gasto: o aporte
+       é transferência, e transferência não entra em `spentByCategory`. Sem este
+       desvio, a barra do envelope ficaria eternamente em 0% e o plano de poupar
+       seria a única linha do orçamento impossível de acompanhar. */
+    const ehInvest = !!envInvest && c.id === envInvest.id;
+    const spent = ehInvest ? DB.investidoNoPeriodo(period) : (byCat[c.id] || 0);
     const limite = DB.budgetOf(c.id, period);
     const ajustado = !!DB.overrideDeOrcamento(c.id, period);
     if (!limite && !spent) continue;
     const pct = limite > 0 ? Math.round(spent / limite * 100) : 0;
-    const detalhavel = spent > 0 && DB.subcategoriesOf(c.id).length > 0;
+    /* A COR SE INVERTE no investimento: 100% de um envelope de gasto é o teto
+       estourando, 100% do investimento é a meta cumprida. Manter a régua padrão
+       pintaria de vermelho justamente o mês em que se guardou tudo o que foi
+       planejado — o oposto do que o app existe para incentivar. */
+    const classeBarra = ehInvest
+      ? (pct >= 100 ? 'bar-green' : 'bar-amber')
+      : barClass(pct);
+    // Sem detalhe por subcategoria: o valor vem dos aportes, e abrir mostraria vazio
+    const detalhavel = !ehInvest && spent > 0 && DB.subcategoriesOf(c.id).length > 0;
     /* AQUI NÃO SE EDITA O ORÇAMENTO — de propósito.
 
        O painel existe para dizer como está o mês, e o orçamento é a régua dessa
@@ -1367,7 +1381,7 @@ function renderInicio(period) {
       <div class="budget-head"><b>${esc(c.icon)} ${esc(c.name)}${detalhavel ? ' <span class="chev-min" data-ico="chev"></span>' : ''}${
         ajustado ? ' <span class="selo-ajuste" title="orçamento ajustado neste mês">ajustado</span>' : ''}</b>
         <span class="num">${fmtShort(spent)}${limite ? ` <span class="muted">/ ${fmtShort(limite)} · ${pct}%</span>` : ''}</span></div>
-      <div class="bar ${barClass(pct)}"><i style="width:${Math.min(100, pct)}%"></i></div>
+      <div class="bar ${classeBarra}"><i style="width:${Math.min(100, pct)}%"></i></div>
     </div>`;
   }
 
@@ -5626,6 +5640,26 @@ function openAporteSheet(goalId, opcoes = {}) {
     });
     if (de) adjustBalance(de, -amount);      // sai de onde estava
     if (para) adjustBalance(para, amount);   // entra onde vai ficar
+    /* A MOVIMENTAÇÃO APARECE NO EXTRATO, categorizada em Investimentos.
+
+       Antes, guardar dinheiro mexia nos saldos e não deixava rastro na lista: o
+       extrato do mês fechava com uma diferença que nada explicava, e quem
+       conferisse contra o banco veria a transferência lá e não aqui.
+
+       É TRANSFERÊNCIA, não despesa — sai de uma conta e entra na outra, e por
+       isso continua neutra em toda análise de gasto. A categoria serve para dar
+       nome à linha; o quanto foi guardado se lê nos aportes
+       (`DB.investidoNoPeriodo`), que é o que alimenta a barra do envelope. */
+    if (de && para && !resg) {
+      DB.upsert('transactions', {
+        description: ($('#a-desc').value || `Guardado em ${g.name}`).slice(0, 60),
+        amount, date: $('#a-date').value || todayISO(),
+        type: 'Transferência', status: 'Pago',
+        scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência',
+        account_id: de, to_account: para,
+        category_id: DB.categoriaDeAporte(g),
+      });
+    }
     closeSheet(); render(); Sync.autoSync();
     if (opcoes.aoConcluir) opcoes.aoConcluir(amount);
     toast(resg
@@ -5905,13 +5939,33 @@ function openConfigSection(sec) {
     $('#md-back').onclick = openConfig;
     $('#md-save').onclick = () => {
       const members = $('#f-members').value.split('\n').map(x => x.trim()).filter(Boolean);
+      const rendaNova = moneyVal('#f-income');
+      const rendaAntes = Number(s.monthly_income) || 0;
       DB.upsert('family_settings', {
         ...s,
         family_name: ($('#f-famname').value || '').trim(),
         members,
         month_start_day: Math.min(28, Math.max(1, parseInt($('#f-start').value) || 1)),
-        monthly_income: moneyVal('#f-income'),
+        monthly_income: rendaNova,
       });
+      /* Informar a renda OFERECE calibrar os orçamentos na proporção dela.
+
+         Os tetos do catálogo foram calculados para uma renda de referência
+         (R$ 17.000). Sem escalar, quem ganha 5 mil abre o app com 15.510 orçados
+         e conclui, com razão, que o plano não é sobre a vida dele — e quem ganha
+         30 mil recebe um teto que não cabe no padrão de vida.
+
+         PERGUNTA em vez de aplicar: orçamento é decisão de quem vive com ele, e
+         reescrever quatorze tetos sem avisar é o tipo de ajuda que quebra a
+         confiança. Envelope já ajustado à mão fica intacto — `calibrarOrcamentos`
+         só toca no que ainda está com o valor de catálogo. */
+      if (rendaNova > 0 && rendaNova !== rendaAntes
+        && confirm(`Ajustar os orçamentos das categorias para uma renda de ${fmt(rendaNova)}?\n\n`
+          + 'Os valores sugeridos são recalculados na proporção. Envelopes que você já mudou à mão ficam como estão.')) {
+        const n = DB.calibrarOrcamentos(rendaNova, rendaAntes);
+        Sync.autoSync(); toast(n ? `Salvo — ${n} orçamento(s) recalculado(s) ✓` : 'Salvo'); openConfig();
+        return;
+      }
       Sync.autoSync(); toast('Salvo'); openConfig();
     };
   }

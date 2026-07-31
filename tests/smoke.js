@@ -89,7 +89,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista,
+  cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
@@ -1041,16 +1041,49 @@ try {
 
   // 50/30/20 herda do envelope
   const lazer = DB.rootCategories().find(c => c.name === 'Lazer');
-  const subLazer = DB.subcategoriesOf(lazer.id)[0];
+  /* A subcategoria de Viagem, explicitamente — e não "a primeira filha de Lazer".
+     A busca por "VIAGEM", mais abaixo, exige um lançamento classificado numa
+     categoria com esse nome; preso à ORDEM, o teste passava por acidente e quebrou
+     quando o catálogo foi reordenado. */
+  const subLazer = DB.subcategoriesOf(lazer.id).find(c => /Viagem/i.test(c.name)) || DB.subcategoriesOf(lazer.id)[0];
   const kindAntes = DB.spentByKind(p).Estilo;
   DB.upsert('transactions', { description: 'Cinema sábado', amount: 60, date: dia(14), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: conta, category_id: subLazer.id });
   check('subcategoria herda necessidade/desejo do envelope', DB.spentByKind(p).Estilo, kindAntes + 60);
 
-  // Nomes repetidos entre envelopes: o caminho é o que desfaz a ambiguidade
-  const comManutencao = DB.all('categories').filter(c => c.parent_id && c.name === 'Manutenção');
-  check('nome de folha pode repetir entre envelopes', comManutencao.length >= 2, true);
+  /* Nomes repetidos entre envelopes: o MODELO permite, e o caminho é o que desfaz
+     a ambiguidade. O catálogo padrão deixou de trazer repetições — "Manutenção"
+     virou "Reparos em casa" e "Oficina / Revisão", porque no seletor a folha
+     aparece sozinha e a palavra não dizia de qual envelope era. Mas quem cria
+     categoria à mão pode repetir, e aí o caminho tem de salvar. Por isso o par é
+     criado AQUI, em vez de depender do catálogo. */
+  const moradiaR = DB.rootCategories().find(c => c.name === 'Moradia');
+  const transpR = DB.rootCategories().find(c => c.name === 'Transporte');
+  const rep1 = DB.upsert('categories', { name: 'Reparo', icon: '🔧', parent_id: moradiaR.id, type: 'Despesa', monthly_budget: 0 });
+  const rep2 = DB.upsert('categories', { name: 'Reparo', icon: '🔧', parent_id: transpR.id, type: 'Despesa', monthly_budget: 0 });
+  const comRepetido = [DB.get('categories', rep1), DB.get('categories', rep2)];
+  check('nome de folha pode repetir entre envelopes', comRepetido.length >= 2, true);
   check('e os caminhos ficam diferentes',
-    new Set(comManutencao.map(c => DB.categoryPath(c.id))).size, comManutencao.length);
+    new Set(comRepetido.map(c => DB.categoryPath(c.id))).size, comRepetido.length);
+  /* E o catálogo padrão não usa essa liberdade: nome repetido entre envelopes é
+     confusão na hora de classificar, que foi o que motivou a revisão. */
+  {
+    const porNome = {};
+    for (const c of DB.all('categories')) {
+      if (!c.parent_id || c.id === rep1 || c.id === rep2) continue;
+      const k = `${DB.categoryType(DB.categoryRoot(c.id))}|${c.name.toLowerCase()}`;
+      porNome[k] = (porNome[k] || 0) + 1;
+    }
+    const repetidos = Object.entries(porNome).filter(([, n]) => n > 1).map(([k]) => k.split('|')[1]);
+    check('o catálogo padrão não repete nome de folha no mesmo lado',
+      repetidos.length ? repetidos.join(', ') : true, true);
+    // Nem usa nome de envelope como folha de outro ("Saúde" era envelope e filha de Filhos)
+    const envelopes = DB.all('categories').filter(c => !c.parent_id);
+    const colide = DB.all('categories').filter(c => c.parent_id && c.id !== rep1 && c.id !== rep2
+      && envelopes.some(e => e.name.toLowerCase() === c.name.toLowerCase() && e.id !== c.parent_id));
+    check('  nem repete nome de envelope numa folha',
+      colide.length ? colide.map(c => c.name).join(', ') : true, true);
+  }
+  DB.remove('categories', rep1); DB.remove('categories', rep2);
 
   // Apagar envelope leva as filhas: senão sobram órfãs vivas no banco
   const pets = DB.rootCategories().find(c => c.name === 'Pets');
@@ -1092,10 +1125,10 @@ try {
   check('a tela continua curta', (comUmAberto.match(/sub-linha/g) || []).length, DB.subcategoriesOf(alimento.id).length);
 
   // Abas separam os dois lados
-  check('a aba de saídas não mistura entradas', /Alimenta/.test(fechado) && !/Empréstimos/.test(fechado), true);
+  check('a aba de saídas não mistura entradas', /Alimenta/.test(fechado) && !/Aluguéis/.test(fechado), true);
   openCategoriesConfig({ lado: 'Receita' });
   const entradas = modal();
-  check('a aba de entradas mostra as origens', /Empréstimos/.test(entradas), true);
+  check('a aba de entradas mostra as origens', /Aluguéis/.test(entradas), true);
   check('e não mostra envelopes de gasto', /Alimenta/.test(entradas), false);
 
   // Busca encontra subcategoria sem precisar abrir o envelope certo
@@ -5203,6 +5236,143 @@ check('função is_member definida antes das policies', schema.indexOf('function
       DB.data = guardaDados;
     }
   })();
+
+  console.log('\n=== Investimentos: o envelope que não é gasto ===');
+  try {
+    const envInv = DB.envelopeDeInvestimento();
+    check('existe o envelope de Investimentos', !!envInv, true);
+    check('  e ele tem teto próprio', envInv.monthly_budget > 0, true);
+    const subs = DB.subcategoriesOf(envInv.id).map(c => c.name);
+    check('  com reserva e objetivos separados',
+      subs.some(n => /reserva/i.test(n)) && subs.some(n => /objetivo/i.test(n)), true);
+
+    /* Reserva e objetivo caem em subcategorias DIFERENTES: olhando para trás,
+       "guardei 24 mil no ano" não diz se foi para o colchão ou para a viagem. */
+    const nomeCatDe = g => (DB.get('categories', DB.categoriaDeAporte(g)) || {}).name || '';
+    const metaReserva = DB.all('goals').find(g => DB.isReserveGoal(g))
+      || DB.upsert('goals', { name: 'Reserva TESTE', icon: '🛡️', kind: 'Reserva', target_amount: 1000 });
+    const metaObjetivo = DB.all('goals').find(g => !DB.isReserveGoal(g))
+      || DB.upsert('goals', { name: 'Objetivo TESTE', icon: '🎯', kind: 'Objetivo', target_amount: 1000 });
+    check('aporte de reserva cai na subcategoria de reserva',
+      /reserva/i.test(nomeCatDe(typeof metaReserva === 'string' ? DB.get('goals', metaReserva) : metaReserva)), true);
+    check('  e o de um objetivo, na de objetivos',
+      /objetivo|meta/i.test(nomeCatDe(typeof metaObjetivo === 'string' ? DB.get('goals', metaObjetivo) : metaObjetivo)), true);
+    const metaInv = typeof metaReserva === 'string' ? DB.get('goals', metaReserva) : metaReserva;
+
+    /* O APORTE NÃO PODE CONTAR DUAS VEZES. Ele ajusta os saldos das contas E passa
+       a deixar a transferência no extrato; `saldoNaData` parte do saldo atual e
+       desfaz as transações a partir da data, então as duas coisas precisam
+       descrever o MESMO movimento — não somar. */
+    const cOrigem = DB.all('accounts')[0], cDestino = DB.all('accounts')[1];
+    const somaAntes = DB.accountsTotal();
+    const origemAntes = Number(DB.get('accounts', cOrigem.id).balance) || 0;
+    const destinoAntes = Number(DB.get('accounts', cDestino.id).balance) || 0;
+    const pInv = DB.monthPeriod(new Date());
+    const investidoAntes = DB.investidoNoPeriodo(pInv);
+    const saldoHojeAntes = DB.saldoNaData([cOrigem.id, cDestino.id], todayISO());
+
+    openAporteSheet(metaInv.id);
+    el('#a-amount').dataset.cents = '50000';        // R$ 500,00
+    el('#a-desc').value = 'Aporte TESTE INV';
+    el('#a-date').value = todayISO();
+    el('#a-account').value = cOrigem.id;
+    el('#a-to').value = cDestino.id;
+    el('#sh-save').click();
+
+    check('a soma dos saldos não muda: é transferência', Math.round(DB.accountsTotal()), Math.round(somaAntes));
+    check('  sai da conta de origem', Math.round(Number(DB.get('accounts', cOrigem.id).balance)), Math.round(origemAntes - 500));
+    check('  e entra na de destino', Math.round(Number(DB.get('accounts', cDestino.id).balance)), Math.round(destinoAntes + 500));
+    check('  e o saldo por data continua batendo',
+      Math.round(DB.saldoNaData([cOrigem.id, cDestino.id], todayISO())), Math.round(saldoHojeAntes));
+
+    const lanc = DB.all('transactions').find(t => t.description === 'Aporte TESTE INV');
+    check('a movimentação aparece no extrato', !!lanc, true);
+    check('  como transferência, não como gasto', DB.isTransfer(lanc), true);
+    check('  logo, neutra em toda análise', DB.isNeutral(lanc), true);
+    check('  com a categoria de investimento',
+      DB.categoryRootId(lanc.category_id), envInv.id);
+    /* E, sendo neutra, ela NÃO infla o gasto do mês: quem mede o investimento é o
+       aporte, senão o mesmo dinheiro apareceria como despesa e como patrimônio. */
+    check('o gasto do mês não cresce com o aporte',
+      DB.expensesOf(pInv).some(t => t.description === 'Aporte TESTE INV'), false);
+    check('mas o investido do mês cresce', Math.round(DB.investidoNoPeriodo(pInv)), Math.round(investidoAntes + 500));
+
+    /* A BARRA do envelope mede o guardado. Sem isto ela ficaria eternamente em 0%,
+       porque transferência não entra em spentByCategory. */
+    const offInv = state.monthOffset; state.monthOffset = 0;
+    const telaInv = renderInicio(pInv);
+    const linhaInv = (telaInv.match(new RegExp(`<div class="budget-head"><b>[^<]*${envInv.name}[\\s\\S]{0,300}?</div>`)) || [''])[0];
+    check('a barra de investimento mostra o guardado', linhaInv.includes(fmtShort(DB.investidoNoPeriodo(pInv))), true);
+    /* Cor invertida: 100% aqui é meta cumprida, não teto estourado. A classe é
+       lida da barra DESTA linha — pegar um pedaço solto do HTML alcançaria a
+       barra do envelope seguinte e o teste passaria por acidente. */
+    /* A linha é isolada primeiro: "Investimentos" é também o nome de um envelope
+       de RECEITA, então procurar o texto solto no HTML acha a ocorrência errada e
+       o teste passa por acidente — foi o que aconteceu na primeira versão.
+
+       E as duas faixas são exercitadas, porque no meio delas as duas réguas
+       COINCIDEM: com 74% do teto, `barClass` também devolve âmbar, e o teste
+       passava mesmo com a régua de gasto de volta. Só divergem embaixo (guardou
+       pouco: gasto diria verde) e em cima (guardou tudo: gasto diria vermelho). */
+    const classeDaBarraInv = () => {
+      const linhas = renderInicio(pInv).match(/<div class="budget-row[\s\S]*?<\/div>\s*<\/div>/g) || [];
+      const l = linhas.find(x => x.includes(`>${envInv.icon} ${envInv.name}`)) || '';
+      return (l.match(/class="bar ([a-z-]+)"/) || [])[1];
+    };
+    const guardado = DB.investidoNoPeriodo(pInv);
+    DB.ajustarOrcamento(envInv.id, pInv, guardado * 10);      // ~10% da meta
+    check('guardou pouco: âmbar, não o verde da régua de gasto', classeDaBarraInv(), 'bar-amber');
+    DB.ajustarOrcamento(envInv.id, pInv, Math.round(guardado / 2));  // 200% da meta
+    check('guardou o dobro: verde, não o vermelho de teto estourado', classeDaBarraInv(), 'bar-green');
+    DB.limparAjusteDeOrcamento(envInv.id, pInv);
+    state.monthOffset = offInv;
+
+    // limpa
+    DB.remove('transactions', lanc.id);
+    for (const e of DB.all('goal_entries').filter(e => e.description === 'Aporte TESTE INV')) DB.remove('goal_entries', e.id);
+    adjustBalance(cOrigem.id, 500); adjustBalance(cDestino.id, -500);
+    DB.save();
+  } catch (e) { console.log(` FALHA | investimentos: ${e.message}`); fail++; }
+
+  console.log('\n=== Catálogo padrão e calibração pela renda ===');
+  try {
+    /* O CATÁLOGO É UM PLANO, não uma lista de nomes: os tetos foram calculados
+       juntos para uma renda de referência, e as fatias precisam somar um
+       orçamento que sobra — não um que consome tudo. */
+    const somaCatalogo = DB.ARVORE_PADRAO.reduce((s, [[, , b]]) => s + (b || 0), 0);
+    check('o catálogo tem renda de referência declarada', DB.RENDA_DE_REFERENCIA > 0, true);
+    check('e o total orçado deixa folga sobre ela', somaCatalogo < DB.RENDA_DE_REFERENCIA, true);
+    check('  mas não é folga demais (o plano cobre o essencial)',
+      somaCatalogo > DB.RENDA_DE_REFERENCIA * 0.8, true);
+    // Investimento é a linha que garante o futuro: 20% é a régua clássica
+    const invCat = DB.ARVORE_PADRAO.find(([[n]]) => /investiment/i.test(n));
+    check('investimento vale ~20% da renda de referência',
+      Math.round(invCat[0][2] / DB.RENDA_DE_REFERENCIA * 100), 20);
+
+    /* CALIBRAR pela renda: um catálogo de números absolutos serve a uma renda e
+       desorienta as outras — quem ganha 5 mil veria 15 mil orçados. */
+    const alvoCal = DB.rootCategories('Despesa').find(c => c.name === 'Moradia');
+    const doCatalogo = DB.ARVORE_PADRAO.find(([[n]]) => n === 'Moradia')[0][2];
+    DB.upsert('categories', { ...alvoCal, monthly_budget: doCatalogo });   // volta ao valor de catálogo
+    DB.calibrarOrcamentos(DB.RENDA_DE_REFERENCIA / 2, DB.RENDA_DE_REFERENCIA);
+    check('metade da renda, metade do teto',
+      DB.get('categories', alvoCal.id).monthly_budget, Math.round(doCatalogo / 2 / 10) * 10);
+    check('  e o valor sai redondo, sem centavos de mentira',
+      DB.get('categories', alvoCal.id).monthly_budget % 10, 0);
+    /* Envelope já ajustado à mão NÃO é sobrescrito: a escolha de quem vive com o
+       orçamento vale mais que a proporção sugerida. */
+    const manual = DB.rootCategories('Despesa').find(c => c.name === 'Pets') || DB.rootCategories('Despesa').find(c => c.name === 'Presentes');
+    DB.upsert('categories', { ...manual, monthly_budget: 777 });
+    DB.calibrarOrcamentos(DB.RENDA_DE_REFERENCIA * 2, DB.RENDA_DE_REFERENCIA / 2);
+    check('o que foi ajustado à mão fica intacto', DB.get('categories', manual.id).monthly_budget, 777);
+    check('renda zero não recalcula nada', DB.calibrarOrcamentos(0, 17000), 0);
+    // devolve o catálogo ao estado original para não sujar os testes seguintes
+    for (const [[nome, , budget]] of DB.ARVORE_PADRAO) {
+      const c = DB.rootCategories('Despesa').find(x => x.name === nome);
+      if (c) DB.upsert('categories', { ...c, monthly_budget: budget });
+    }
+    DB.save();
+  } catch (e) { console.log(` FALHA | catálogo e calibração: ${e.message}`); fail++; }
 
   console.log('\n=== Orçamento flexível (ajuste por ciclo) ===');
   try {

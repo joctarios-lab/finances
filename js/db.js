@@ -836,6 +836,61 @@ const DB = {
     return this.rootCategories('Despesa').reduce((s, c) => s + this.budgetOf(c.id, period), 0);
   },
 
+  /* ---------- Investimentos: o envelope que não é gasto ----------
+
+     O aporte é TRANSFERÊNCIA, não despesa: o dinheiro sai da conta corrente e
+     aparece na de investimento. Tratá-lo como gasto faria o donut dizer "gastei
+     3.400 com investimento" e a taxa de poupança despencar justamente no mês em
+     que se poupou mais.
+
+     Mas o plano do mês precisa de um teto — "quanto pretendo guardar" é uma linha
+     de orçamento como qualquer outra. A saída é medir o USADO deste envelope
+     pelos APORTES, não pelo gasto: quem sabe quanto foi guardado é `goal_entries`.
+
+     Resgate não abate: guardar 2.000 e precisar tirar 500 no fim do mês são dois
+     fatos distintos, e compensá-los diria que se guardou 1.500 — apagando o
+     esforço e o imprevisto de uma vez. */
+  envelopeDeInvestimento() {
+    return this.rootCategories('Despesa').find(c => /investiment/i.test(c.name)) || null;
+  },
+
+  /* A subcategoria em que a movimentação de uma meta deve cair.
+
+     Reserva de emergência e objetivo são coisas diferentes na hora de olhar para
+     trás — "guardei 24 mil no ano" não diz se foi para o colchão ou para a
+     viagem. A separação existe no envelope, e é aqui que ela é escolhida sem que
+     ninguém precise lembrar de fazê-lo à mão. */
+  categoriaDeAporte(goal) {
+    const env = this.envelopeDeInvestimento();
+    if (!env) return null;
+    const filhas = this.subcategoriesOf(env.id);
+    const alvo = this.isReserveGoal(goal) ? /reserva/i : /objetivo|meta/i;
+    const achou = filhas.find(c => alvo.test(c.name));
+    return (achou || filhas[0] || env).id;
+  },
+
+  investidoNoPeriodo(period) {
+    const de = this.inicioISO(period), ate = this.fimISO(period);
+    let total = 0;
+    for (const e of this.all('goal_entries')) {
+      const d = String(e.date);
+      if (d < de || d >= ate) continue;
+      const v = Number(e.amount) || 0;
+      if (v > 0) total += v;
+    }
+    /* Lançamento posto à mão no envelope também conta — é o caso de quem investe
+       fora de uma meta cadastrada. Neutros (a transferência do próprio aporte)
+       ficam de fora por construção, e é isso que impede a contagem dobrada de
+       quem registra o aporte no app E importa o extrato depois. */
+    const env = this.envelopeDeInvestimento();
+    if (env) {
+      for (const t of this.expensesOf(period)) {
+        if (this.categoryRootId(t.category_id) === env.id) total += Number(t.amount) || 0;
+      }
+    }
+    return total;
+  },
+
   /* Grava o ajuste de um ciclo. REUSA o registro existente em vez de criar outro:
      o índice único no banco é (family_id, category_id, period_start), e duas
      linhas para o mesmo par fariam a leitura escolher uma delas em silêncio. */
@@ -1716,21 +1771,51 @@ const DB = {
   },
 
   /* Envelope (com limite) e suas subcategorias. As filhas não têm limite próprio:
-     o teto é do envelope, e é isso que evita orçamento contado duas vezes. */
+     o teto é do envelope, e é isso que evita orçamento contado duas vezes.
+
+     DOIS PRINCÍPIOS guiam os nomes daqui, e os dois vieram de confusão real ao
+     classificar:
+
+     1. NOME ÚNICO ENTRE ENVELOPES. No seletor a subcategoria aparece sozinha, e
+        "Manutenção" em Moradia e em Transporte era a mesma palavra para o telhado
+        e para a embreagem. Idem "Roupas" (Filhos e Vestuário) e "Saúde" (envelope
+        e subcategoria de Filhos). Cada um ganhou nome próprio.
+
+     2. SEPARAR POR INTENÇÃO, não por estabelecimento. Almoço de terça e jantar de
+        aniversário saem do mesmo restaurante e respondem perguntas diferentes: um
+        é comida, o outro é programa. Misturados, o envelope de Alimentação
+        engorda com lazer e ninguém sabe onde cortar. Por isso "Restaurante do dia
+        a dia" (Alimentação) e "Bar e restaurante (programa)" (Lazer) — e a mesma
+        régua em Viagem, Farmácia e Aplicativos.
+
+     Os orçamentos são para uma renda de referência de R$ 17.000 e seguem 50·30·20
+     com a dívida contando como necessidade: 56% necessidades, 15% estilo, 20%
+     investimento, e ~9% de folga deliberada — orçamento que consome 100% da renda
+     estoura no primeiro imprevisto e ensina a ignorar o plano. */
   ARVORE_PADRAO: [
-    [['Moradia', '🏠', 1800, 'Essencial'], ['Aluguel / Financiamento', 'Condomínio', 'Luz', 'Água', 'Gás', 'Internet / TV', 'Manutenção']],
-    [['Alimentação', '🍽️', 1500, 'Essencial'], ['Mercado', 'Feira / Açougue', 'Restaurante', 'Delivery', 'Padaria', 'Café / Lanche']],
-    [['Transporte', '🚗', 500, 'Essencial'], ['Combustível', 'Aplicativo / Táxi', 'Transporte público', 'Estacionamento', 'Manutenção', 'IPVA / Licenciamento', 'Seguro']],
-    [['Saúde', '💊', 400, 'Essencial'], ['Plano de saúde', 'Farmácia', 'Consulta', 'Exames', 'Dentista', 'Academia']],
-    [['Lazer', '🎮', 350, 'Estilo'], ['Viagem', 'Cinema / Show', 'Bar', 'Passeio', 'Jogos', 'Hobby']],
-    [['Assinaturas', '🔁', 150, 'Estilo'], ['Streaming', 'Música', 'Aplicativos', 'Nuvem', 'Revista / Jornal']],
-    [['Educação', '📚', 300, 'Essencial'], ['Escola / Faculdade', 'Curso', 'Material', 'Livros']],
-    [['Filhos', '🧒', 400, 'Essencial'], ['Escola', 'Roupas', 'Brinquedos', 'Atividades', 'Saúde']],
-    [['Vestuário', '👕', 250, 'Estilo'], ['Roupas', 'Calçados', 'Acessórios']],
+    [['Moradia', '🏠', 4180, 'Essencial'], ['Aluguel / Financiamento', 'Condomínio', 'Luz', 'Água', 'Gás', 'Internet / TV', 'Reparos em casa']],
+    [['Alimentação', '🍽️', 1700, 'Essencial'], ['Mercado', 'Feira / Açougue', 'Restaurante do dia a dia', 'Delivery', 'Padaria', 'Café / Lanche']],
+    [['Transporte', '🚗', 2180, 'Essencial'], ['Combustível', 'Parcela / Financiamento', 'Oficina / Revisão', 'Aplicativo / Táxi', 'Transporte público', 'Estacionamento', 'IPVA / Licenciamento', 'Seguro', 'Pedágio']],
+    [['Saúde', '💊', 500, 'Essencial'], ['Plano de saúde', 'Remédios', 'Consulta', 'Exames', 'Dentista', 'Academia']],
+    [['Filhos', '🧒', 700, 'Essencial'], ['Escola das crianças', 'Roupas das crianças', 'Pediatra / Saúde infantil', 'Brinquedos', 'Atividades']],
+    [['Empréstimos', '🏷️', 350, 'Essencial'], ['Pagamento Empréstimos']],
+    [['Educação', '📚', 200, 'Essencial'], ['Curso', 'Faculdade', 'Material', 'Livros']],
     [['Serviços & Taxas', '🧾', 200, 'Essencial'], ['Tarifas bancárias', 'Impostos', 'Seguros', 'Cartório / Documentos', 'Doações']],
-    [['Presentes', '🎁', 150, 'Estilo'], ['Aniversários', 'Datas comemorativas']],
-    [['Pets', '🐾', 150, 'Essencial'], ['Ração', 'Veterinário', 'Banho e tosa']],
-    [['Gastos Pessoais', '👤', 600, 'Estilo', 'Pessoal'], ['Beleza / Cabelo', 'Cuidados pessoais', 'Diversos']],
+    [['Lazer', '🎮', 700, 'Estilo'], ['Bar e restaurante (programa)', 'Viagem — passagem e hospedagem', 'Viagem — gastos no destino', 'Cinema / Show', 'Passeio', 'Jogos', 'Hobby']],
+    [['Gastos Pessoais', '👤', 500, 'Estilo', 'Pessoal'], ['Beleza / Cabelo', 'Higiene e cuidados', 'Diversos pessoais']],
+    [['Vestuário', '👕', 300, 'Estilo'], ['Roupas', 'Calçados', 'Acessórios']],
+    [['Pets', '🐾', 250, 'Essencial'], ['Ração', 'Veterinário', 'Banho e tosa']],
+    [['Presentes', '🎁', 200, 'Estilo'], ['Aniversários', 'Datas comemorativas']],
+    [['Assinaturas', '🔁', 150, 'Estilo'], ['Streaming', 'Música', 'Aplicativos e software', 'Nuvem', 'Revista / Jornal']],
+    /* INVESTIMENTOS é envelope de SAÍDA, e isso não é contradição: o dinheiro sai
+       do caixa do mês exatamente como o aluguel sai. A diferença é que ele não
+       desaparece — vira patrimônio.
+
+       Por isso o aporte continua sendo TRANSFERÊNCIA (o saldo tem de aparecer na
+       conta de investimento, não sumir), e o que esta categoria faz é dar nome à
+       movimentação no extrato e teto ao plano do mês. Quanto foi cumprido se lê
+       nos aportes, não em "gasto" — ver `investidoNoPeriodo`. */
+    [['Investimentos', '📈', 3400, 'Essencial'], ['Reserva de emergência', 'Objetivos e metas', 'Aposentadoria / Longo prazo', 'Investimento avulso']],
   ],
 
   /* Entradas: sem orçamento e sem 50/30/20 — o que importa aqui é a ORIGEM.
@@ -1745,6 +1830,53 @@ const DB = {
     [['Benefícios', '🧾'], ['Auxílio', 'Pensão', 'Restituição de imposto', 'Seguro / Indenização']],
     [['Outras entradas', '💵'], ['Reembolso', 'Venda de usados', 'Presente recebido', 'Estorno', 'Diversos']],
   ],
+
+  /* Renda para a qual os orçamentos do catálogo foram calculados.
+
+     Ela existe para que os valores possam ser ESCALADOS: um catálogo com números
+     absolutos serve a uma renda e desorienta todas as outras — quem ganha 5 mil
+     abriria o app com 15.510 orçados e concluiria, com razão, que o plano não é
+     sobre a vida dele. */
+  RENDA_DE_REFERENCIA: 17000,
+
+  /* Recalcula os tetos proporcionalmente a uma renda.
+
+     Proporção, e não regra nova por envelope: as fatias do catálogo já foram
+     pensadas juntas (56% necessidades, 15% estilo, 20% investimento, ~9% de
+     folga), e mexer numa sem mexer nas outras desmonta o conjunto.
+
+     ARREDONDA para dezena — um teto de "R$ 1.323,53" sugere uma precisão que
+     orçamento não tem, e ninguém decide nada com os centavos.
+
+     `rendaAnterior` é o que permite distinguir "valor sugerido" de "decisão da
+     pessoa": um envelope está sugerido se ainda vale o que o catálogo daria para a
+     renda antiga (ou o valor cru do catálogo, ou zero). Qualquer outro número foi
+     escolhido à mão e fica intacto — reescrever a decisão de quem vive com o
+     orçamento é justamente a "ajuda" que faz alguém desistir de planejar. */
+  calibrarOrcamentos(renda, rendaAnterior) {
+    const alvo = Number(renda) || 0;
+    if (alvo <= 0) return 0;
+    const escala = (v, base) => Math.round(v * (base / this.RENDA_DE_REFERENCIA) / 10) * 10;
+    const antes = Number(rendaAnterior) || 0;
+    const padrao = {};
+    for (const [[nome, , budget]] of this.ARVORE_PADRAO) padrao[nome] = budget;
+    let mudados = 0;
+    this.emLote(() => {
+      for (const c of this.rootCategories('Despesa')) {
+        const doCatalogo = padrao[c.name];
+        if (doCatalogo === undefined) continue;                     // envelope criado à mão
+        const atual = Number(c.monthly_budget) || 0;
+        const sugerido = atual === 0 || atual === doCatalogo
+          || (antes > 0 && atual === escala(doCatalogo, antes));
+        if (!sugerido) continue;
+        const novo = escala(doCatalogo, alvo);
+        if (atual === novo) continue;
+        this.upsert('categories', { ...c, monthly_budget: novo });
+        mudados++;
+      }
+    });
+    return mudados;
+  },
 
   seed() {
     if (this.data.meta.seeded) return;
