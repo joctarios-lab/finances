@@ -4956,6 +4956,22 @@ function openTxSheet(tx, asNew) {
         </select></div>
       <p class="muted" id="rep-resumo" style="margin-bottom:10px"></p>
     </div>`}
+    <!-- ALCANCE, só quando a compra é parcelada. Corrigir a categoria de uma
+         compra em 10x exigia abrir dez telas em dez meses; ninguém faz, e o dado
+         fica errado para sempre. A EXCLUSÃO já perguntava isso — a edição não
+         perguntava nada, e a assimetria não tinha razão. -->
+    ${(() => {
+      const n = isEdit ? irmasDaParcela(tx).length : 0;
+      if (n < 2) return '';
+      const futuras = irmasDaParcela(tx).filter(t => String(t.date) > String(tx.date)).length;
+      return `<div class="field" id="wrap-alcance"><label>Salvar alterações em</label>
+        ${chipGroup('g-alcance', [
+          { value: 'esta', label: 'Só esta' },
+          ...(futuras ? [{ value: 'proximas', label: `Esta e as próximas (${futuras + 1})` }] : []),
+          { value: 'todas', label: `Todas as ${n}` },
+        ], 'esta')}
+        <p class="muted" id="alcance-nota" style="margin-top:6px"></p></div>`;
+    })()}
     <button class="btn" id="sh-save">${isEdit ? 'Salvar alterações' : 'Lançar'}</button>
     ${isEdit ? '<div class="btn-row"><button class="btn ghost" id="sh-dup">Repetir</button><button class="btn danger" id="sh-del">Excluir</button></div>' : ''}
   `);
@@ -5204,6 +5220,22 @@ function openTxSheet(tx, asNew) {
   pintarTipo(tx.type || 'Despesa');
   bindChips('g-scope', applyScope);
   bindChips('g-method', v => { methodManual = true; applyMethod(v); });
+
+  /* A nota do alcance diz o que NÃO acompanha a série, e por quê.
+
+     Sem ela, quem escolhe "todas" não tem como saber que a data vira o mesmo DIA
+     em cada mês (e não a mesma data), nem que o valor é redividido em vez de
+     copiado — as duas coisas mais fáceis de errar por suposição. */
+  const notaAlcance = () => {
+    const n = $('#alcance-nota');
+    if (!n) return;
+    const v = chipValue('g-alcance');
+    n.textContent = v === 'esta'
+      ? 'As outras parcelas ficam como estão.'
+      : 'A data vira o mesmo dia em cada mês; o valor passa a valer para cada parcela; a fatura de cada uma é recalculada.';
+  };
+  bindChips('g-alcance', notaAlcance);
+  notaAlcance();
   applyType(tx.type || 'Despesa');
   applyScope(tx.scope || 'Família');
 
@@ -5358,6 +5390,7 @@ function openTxSheet(tx, asNew) {
     if (orig) applyTxEffect(orig, -1);   // reverte efeito antigo (inclui transferências)
     DB.upsert('transactions', rec);
     applyTxEffect(rec, +1);              // aplica efeito novo
+    const propagadas = propagarNasParcelas(rec, orig, chipValue('g-alcance'));
     aplicarFixacao();
     closeSheet(); render(); Sync.autoSync();
     /* Cria o contrato da repetição a partir do que acabou de ser lançado.
@@ -5366,7 +5399,8 @@ function openTxSheet(tx, asNew) {
        recorrência começa na próxima ocorrência, senão o mês atual ficaria com
        duas linhas iguais — uma paga e outra "A Pagar". */
     const criada = criarRecorrenciaDoLancamento(rec);
-    toast(isEdit ? 'Lançamento atualizado ✓'
+    toast(propagadas > 0 ? `Aplicado em ${propagadas + 1} parcelas ✓`
+      : isEdit ? 'Lançamento atualizado ✓'
       : criada ? `${isReceita ? 'Receita lançada' : 'Gasto lançado'} e repetição criada ✓`
       : (isReceita ? 'Receita lançada ✓' : 'Gasto lançado ✓'));
     // Depois de gravar: se o gasto entrou no que estava guardado, resolve agora
@@ -5399,6 +5433,110 @@ function openTxSheet(tx, asNew) {
     closeSheet(); render(); Sync.autoSync();
     toast('Excluído');
   };
+}
+
+/* As irmãs de uma parcela, em ordem cronológica. */
+function irmasDaParcela(tx) {
+  if (!tx || !tx.group_id) return [];
+  return DB.all('transactions')
+    .filter(t => t.group_id === tx.group_id)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+}
+
+/* Campos que se COPIAM iguais para a série inteira.
+
+   `description` entra, mas sem o sufixo "(3/10)": ele é da parcela, não da compra,
+   e copiá-lo faria todas se chamarem "(3/10)".
+
+   `invoice_key` NÃO está aqui: ela deriva da data de cada parcela, e uma cópia
+   jogaria as dez na mesma fatura. É recalculada uma a uma.
+
+   DATA e VALOR também não se copiam — eles se TRANSFORMAM, cada um com sua
+   regra. Ver `propagarNasParcelas`. */
+const CAMPOS_DA_SERIE = ['category_id', 'member', 'scope', 'method', 'tags', 'notes', 'card_id', 'account_id', 'status'];
+
+/* Move uma data para outro DIA DO MÊS, sem sair do mês dela.
+
+   É o que "errei o dia, era 11 e não 10" precisa: as parcelas seguintes vão para
+   o dia 11 dos SEUS meses, não todas para 11 do mês da primeira.
+
+   Dia 31 em fevereiro cai no último dia real — `new Date(ano, mes, 31)` transborda
+   para 3 de março em silêncio, e o mesmo cuidado já existe na geração das
+   recorrências. */
+function trocarDiaDoMes(dataISO, dia) {
+  const d = new Date(dataISO + 'T12:00:00');
+  const ultimo = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  const alvo = new Date(d.getFullYear(), d.getMonth(), Math.min(dia, ultimo));
+  return DB.paraISO(alvo);
+}
+
+/* Aplica a edição de uma parcela nas irmãs escolhidas.
+
+   POR QUE ISSO EXISTE: sem isto, corrigir a categoria de uma compra em 10x exige
+   abrir dez telas em dez meses diferentes. Ninguém faz, e o dado fica errado para
+   sempre — medido na base real: uma compra de R$ 2.000 em 10x com a categoria só
+   na primeira parcela, e R$ 1.800 fora do donut e do orçamento por nove meses.
+
+   A EXCLUSÃO já perguntava se era para apagar a série toda. A edição não
+   perguntava nada, e essa assimetria não tinha razão.
+
+   O VALOR é redividido, não copiado: mudar o total de uma compra parcelada muda
+   todas as parcelas, com os centavos na primeira, exatamente como na criação.
+   Copiar o valor da parcela aberta multiplicaria a compra pelo número de parcelas. */
+function propagarNasParcelas(rec, orig, alcance) {
+  if (!alcance || alcance === 'esta') return 0;
+  const irmas = irmasDaParcela(rec).filter(t => t.id !== rec.id);
+  if (!irmas.length) return 0;
+  const alvos = alcance === 'proximas'
+    ? irmas.filter(t => String(t.date) > String(rec.date))
+    : irmas;
+  if (!alvos.length) return 0;
+
+  const semSufixo = s => String(s || '').replace(/\s*\(\d+\/\d+\)$/, '');
+  const baseDesc = semSufixo(rec.description);
+  /* O VALOR se copia, e só quando de fato mudou.
+
+     O campo do formulário mostra o valor DA PARCELA, não o da compra: quem
+     corrige 200 para 300 está dizendo "cada parcela é 300", e o total da compra
+     acompanha. Copiar é o que corresponde ao que foi digitado.
+
+     Só quando mudou, porque a criação distribui os centavos que não dividem
+     certo na primeira parcela — reescrever o valor numa edição de categoria
+     apagaria esse ajuste e a soma deixaria de bater com a compra. */
+  const mudouValor = orig && Math.abs(Number(orig.amount) - Number(rec.amount)) > 0.005;
+  /* A DATA não se copia: propaga o DIA DO MÊS.
+     "Lancei no dia 10 mas era 11" tem de levar cada parcela para o dia 11 do SEU
+     mês. Copiar a data faria as dez caírem no mesmo dia do mesmo mês e a compra
+     parcelada viraria uma compra à vista repetida. */
+  const diaNovo = orig && String(orig.date) !== String(rec.date)
+    ? new Date(rec.date + 'T12:00:00').getDate() : null;
+
+  DB.emLote(() => {
+    for (const t of alvos) {
+      const novo = { ...t };
+      for (const c of CAMPOS_DA_SERIE) novo[c] = rec[c];
+      if (t.installment) novo.description = `${baseDesc} (${t.installment})`;
+      else novo.description = baseDesc;
+      if (diaNovo) novo.date = trocarDiaDoMes(t.date, diaNovo);
+      /* A fatura é recalculada a partir da DATA DE CADA UMA — e depois de a data
+         ter mudado. Trocar de cartão, ou mover o dia para depois do fechamento,
+         muda a fatura em que a parcela cai; copiar a chave da parcela editada
+         jogaria todas na mesma fatura. */
+      if (novo.card_id) {
+        const card = DB.get('cards', novo.card_id);
+        novo.invoice_key = card ? DB.invoiceKeyFor(card, novo.date) : '';
+      } else {
+        novo.invoice_key = '';
+      }
+      if (mudouValor) novo.amount = rec.amount;
+      // O efeito no saldo é revertido e reaplicado, como na edição única: uma
+      // parcela já paga em conta move dinheiro de verdade
+      applyTxEffect(t, -1);
+      DB.upsert('transactions', novo);
+      applyTxEffect(novo, +1);
+    }
+  });
+  return alvos.length;
 }
 
 /* ---------- Saldo rápido e transferência entre contas ---------- */

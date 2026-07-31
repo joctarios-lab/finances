@@ -90,6 +90,7 @@ eval(appSrc + `; Object.assign(global, {
   serieDeSaldo, sparkArea, PALETTE,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
+  propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
@@ -973,7 +974,87 @@ try {
   check('cada uma numa fatura diferente', new Set(parcelas.map(t => t.invoice_key)).size, 3);
   check('a busca do extrato encontra pelo nome',
     DB.all('transactions').filter(t => DB._semAcento(t.description).includes('geladeira')).length, 3);
-  for (const t of parcelas) DB.remove('transactions', t.id);
+  /* ---- EDITAR A SÉRIE INTEIRA ----
+
+     Corrigir a categoria de uma compra em 10x exigia abrir dez telas em dez meses
+     diferentes. Ninguém faz, e o dado fica errado para sempre — medido na base
+     real: uma compra de R$ 2.000 em 10x com a categoria só na primeira parcela, e
+     R$ 1.800 fora do donut e do orçamento por nove meses.
+
+     A EXCLUSÃO já perguntava se era para apagar a série toda; a edição não
+     perguntava nada. */
+  const ord = [...parcelas].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  /* Simula o fluxo real: ao salvar, o app grava a parcela aberta e SÓ DEPOIS
+     propaga nas irmãs — por isso a propagação exclui a própria parcela. */
+  const editarEPropagar = (base, mudanca, alcance) => {
+    const novo = { ...base, ...mudanca };
+    applyTxEffect(base, -1); DB.upsert('transactions', novo); applyTxEffect(novo, +1);
+    return propagarNasParcelas(novo, base, alcance);
+  };
+  const catNova = DB.rootCategories('Despesa')[0];
+  const primeira = ord[0];
+
+  check('a folha oferece o alcance quando é parcelado',
+    fs.readFileSync(BASE + 'js/app.js', 'utf8').includes("chipGroup('g-alcance'"), true);
+
+  // "todas": a categoria da parcela aberta vale para as irmãs
+  editarEPropagar(primeira, { category_id: catNova.id }, 'todas');
+  check('categoria aplicada em todas as parcelas',
+    DB.all('transactions').filter(t => t.group_id === primeira.group_id
+      && t.category_id === catNova.id).length, 3);
+
+  /* A DATA propaga o DIA DO MÊS, não a data absoluta. "Lancei no dia 10 mas era
+     11" tem de levar cada parcela para o dia 11 do SEU mês; copiar a data faria as
+     três caírem no mesmo dia e a compra parcelada viraria uma à vista repetida. */
+  const dia11 = trocarDiaDoMes(primeira.date, 11);
+  editarEPropagar(DB.get('transactions', primeira.id), { date: dia11 }, 'todas');
+  const depois = DB.all('transactions').filter(t => t.group_id === primeira.group_id)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  check('todas foram para o dia 11', depois.every(t => new Date(t.date + 'T12:00:00').getDate() === 11), true);
+  check('  mas cada uma no seu mês', new Set(depois.map(t => String(t.date).slice(0, 7))).size, 3);
+  check('  e a fatura de cada uma foi recalculada', new Set(depois.map(t => t.invoice_key)).size, 3);
+
+  // Dia 31 num mês curto cai no último dia real, não transborda para o mês seguinte
+  check('dia 31 em fevereiro não vira 3 de março',
+    trocarDiaDoMes('2027-02-10', 31), '2027-02-28');
+
+  /* O VALOR passa a valer para CADA parcela: o campo do formulário mostra o valor
+     da parcela, não o da compra, então quem corrige 200 para 300 está dizendo
+     "cada parcela é 300" — e o total da compra acompanha. */
+  editarEPropagar(depois[0], { amount: 300 }, 'todas');
+  const comValor = DB.all('transactions').filter(t => t.group_id === primeira.group_id);
+  check('o novo valor vale para cada parcela', comValor.every(t => t.amount === 300), true);
+  check('  e o total da compra acompanha',
+    Math.round(comValor.reduce((s, t) => s + t.amount, 0)), 900);
+  /* Uma edição que NÃO mexe no valor não pode reescrevê-lo: a criação distribui
+     na primeira parcela os centavos que não dividem certo, e sobrescrever apagaria
+     esse ajuste — a soma deixaria de bater com a compra.
+
+     A divergência é FORÇADA aqui: com todas as parcelas no mesmo valor, copiar e
+     preservar dão o mesmo resultado e o teste passaria por vazio. */
+  const serieC = DB.all('transactions').filter(t => t.group_id === primeira.group_id)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  DB.upsert('transactions', { ...serieC[0], amount: 300.02 });     // centavos na 1ª
+  const antesCent = DB.all('transactions').filter(t => t.group_id === primeira.group_id)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date))).map(t => t.amount).join();
+  check('as parcelas têm valores diferentes, senão o teste é vazio',
+    new Set(antesCent.split(',')).size > 1, true);
+  editarEPropagar(serieC[1], { member: 'Gleice' }, 'todas');
+  check('editar outro campo não mexe nos valores',
+    DB.all('transactions').filter(t => t.group_id === primeira.group_id)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date))).map(t => t.amount).join(), antesCent);
+
+  // "esta" não toca em ninguém; "proximas" só no que vem depois
+  const antesEsta = DB.all('transactions').filter(t => t.group_id === primeira.group_id).map(t => t.member).join();
+  check('alcance "esta" não propaga',
+    propagarNasParcelas({ ...comValor[0], member: 'Ninguém' }, comValor[0], 'esta'), 0);
+  check('  e nada mudou',
+    DB.all('transactions').filter(t => t.group_id === primeira.group_id).map(t => t.member).join(), antesEsta);
+  const meio = [...comValor].sort((a, b) => String(a.date).localeCompare(String(b.date)))[1];
+  check('alcance "próximas" só alcança o que vem depois',
+    propagarNasParcelas({ ...meio, member: 'Joctã' }, meio, 'proximas'), 1);
+
+  for (const t of DB.all('transactions').filter(t => t.group_id === primeira.group_id)) DB.remove('transactions', t.id);
   check('cenário devolvido ao estado anterior', DB.all('transactions').length, antesQtd);
 } catch (e) { console.log(` FALHA | parcelamento: ${e.message}`); fail++; }
 
