@@ -577,6 +577,7 @@ try {
     check('  e segue mostrando a reserva', /Reserva de emergência/.test(relFutP), true);
     check('  e o que há em contas', /Em contas hoje/.test(relFutP), true);
 
+
     // No mês corrente nada disso muda: lá existe ritmo, e as taxas são legítimas
     state.monthOffset = 0; state.repOffset = 0;
     const telaHoje = renderInicio(DB.monthPeriod(new Date()));
@@ -5516,30 +5517,181 @@ check('função is_member definida antes das policies', schema.indexOf('function
     });
     const investProx = DB.investidoNoPeriodo(proxP);
     check('o próximo mês tem investimento previsto, senão o teste é vazio', investProx > 0.005, true);
-    /* A PREVISÃO PRECISA CONTER O APORTE. O rodapé subtrai o investimento do total
-       de saídas, então se ele não estiver lá o número sai menor do que a
-       realidade — foi o defeito medido: agosto somava R$ 12.129 sem os R$ 3.400 do
-       aporte, e o rodapé mostrava "R$ 8.729 a pagar" tirando de um total que nunca
-       os teve. A dedupe contra a transferência do aporte era a causa: ela é
-       NEUTRA e nunca entrou na soma. */
+    /* A PREVISÃO CONHECE O APORTE, mas ele NÃO É SAÍDA.
+
+       Guardar é transferência entre contas próprias: o valor continua em
+       `accountsTotal`, só troca de bolso. Ele tem contador próprio (`investe`), e
+       `sai` responde só "quanto custa viver o mês". Somados, diziam que agosto
+       custa R$ 15.529 quando R$ 3.400 daquilo vira patrimônio. */
     const pvProxHero = DB.previsaoDoMes(proxP);
     check('o aporte agendado entra na previsão do mês',
       pvProxHero.itens.some(i => i.origem === 'aporte'), true);
-    check('  e o total de saídas o inclui',
-      Math.round(pvProxHero.sai) >= Math.round(investProx), true);
-    check('  soma dos itens = total informado', Math.round(pvProxHero.sai),
+    check('  contado em `investe`, não em `sai`', Math.round(pvProxHero.investe), Math.round(investProx));
+    check('  e `sai` não o inclui',
+      Math.round(pvProxHero.sai + pvProxHero.investe),
       Math.round(pvProxHero.itens.filter(i => !i.receita).reduce((s, i) => s + i.valor, 0)));
+    // O resultado não muda de valor: é a mesma conta, com a parcela em outra coluna
+    check('  o resultado continua entra − sai − investe',
+      Math.round(pvProxHero.resultado),
+      Math.round(pvProxHero.entra - pvProxHero.sai - pvProxHero.investe));
     /* E a transferência que acompanha o aporte NÃO pode ser contada além dele: ela
        é neutra por construção, mas se um dia deixar de ser, esta assertiva pega. */
     check('  o aporte aparece uma vez só',
       pvProxHero.itens.filter(i => Math.abs(i.valor - investProx) < 0.005 && !i.receita).length <= 1, true);
+    /* A IDENTIDADE RESTAURADA. `docs/plano-visao-futuro.md` trava "despesas do
+       Extrato = saídas previstas − fatura", e daí o KPI, Rel.gasto, o donut e a
+       cascata. Com o aporte dentro de `sai` ela quebrava pelo valor do aporte —
+       medido em agosto/2026: diferença de R$ 3.312,20.
+
+       A tolerância cobre a divergência ANTIGA e conhecida: compra no cartão entra
+       no extrato no mês da compra, e na previsão ela chega pela fatura. */
+    const faturaProx = pvProxHero.itens.filter(i => i.origem === 'fatura')
+      .reduce((s, i) => s + i.valor, 0);
+    const despProx = DB.expensesOf(proxP).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    const noCartao = DB.txOfPeriod(proxP)
+      .filter(t => t.card_id && DB.isExpense(t) && !DB.isNeutral(t))
+      .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    check('extrato = saídas previstas − fatura (com o aporte fora)',
+      Math.round(despProx - noCartao), Math.round(pvProxHero.sai - faturaProx));
+    /* ---- O HERO DO MÊS FUTURO CONTA A CONTA INTEIRA ----
+
+       Ele dava o número final e três colunas soltas (Entradas / Saídas /
+       Resultado) que não fechavam com ele — 17.831 − 15.529 = 2.302, mas o valor
+       grande era 2.593. Quem tentasse conferir desistia.
+
+       Agora são as mesmas linhas do hero do mês corrente: onde o mês ABRE, o que
+       ACONTECE, onde CHEGA em caixa, e quanto daquilo já tem dono. */
+    state.monthOffset = 1;
+    const heroFut = renderInicio(proxP);
+    const abreP = DB.saldoPrevistoNaData(null, DB.inicioISO(proxP));
+    const fimPT = DB.fimISO(proxP);
+    const emContasFimT = DB.saldoPrevistoNaData(null, fimPT);
+    const guardadoFimT = DB.guardadoPrevisto(fimPT);
+    const livreFimT = emContasFimT - guardadoFimT;
+    // A base do KPI de metas: todas as metas ATIVAS (reserva incluída), como o
+    // número de hoje já fazia — trocar a base faria o cartão saltar ao virar o mês
+    const metasAtivas = DB.all('goals').filter(g => !g.done);
+    const guardadoMetasHojeT = metasAtivas.reduce((s, g) => s + Math.max(0, DB.goalTotal(g.id)), 0);
+    const guardadoMetasFimT = guardadoMetasHojeT + DB.aportesAgendadosAte(fimPT);
+
+    /* APORTE VENCIDO NÃO CONTA como guardado ao fim: ele não aconteceu, e afirmá-lo
+       contradiria a fila de pendências do Painel, que ainda está cobrando por ele. */
+    const metaVenc = DB.upsert('goals', { name: 'Meta Vencida', icon: '🎯', kind: 'Objetivo', target_amount: 5000 });
+    const eVenc = DB.upsert('goal_entries', {
+      goal_id: metaVenc, amount: 999, description: 'Aporte VENCIDO',
+      date: somarDias(todayISO(), -3), from_account: cHero.id, to_account: cHero2.id, status: 'A Pagar',
+    });
+    check('aporte agendado e vencido não entra no guardado do fim',
+      Math.round(DB.guardadoPrevisto(fimPT)), Math.round(guardadoFimT));
+    check('  mas ele existe e está sendo cobrado na fila',
+      DB.pendencias(todayISO()).some(i => i.tipo === 'aporte' && i.id === eVenc), true);
+    DB.remove('goal_entries', eVenc); DB.remove('goals', metaVenc);
+
+    // Conta as LINHAS da decomposição, não só a existência da caixa: um `hidden`
+    // ou uma caixa vazia passariam por uma checagem de classe
+    const linhasConta = (heroFut.match(/<div class="hc-l/g) || []).length;
+    check('o hero futuro traz a decomposição', linhasConta >= 5, true);
+    check('  e a caixa não está escondida', /class="hero-conta"[^>]*hidden/.test(heroFut), false);
+    check('  e as três colunas soltas saíram', /hero-stats/.test(heroFut), false);
+    check('  ele diz onde o mês ABRE', heroFut.includes(`Abre em contas`) && heroFut.includes(fmt(abreP)), true);
+    check('  e onde CHEGA em caixa', heroFut.includes(fmt(emContasFimT)), true);
+    check('  o valor grande é a última linha da conta',
+      heroFut.includes(`hero-value">${fmt(livreFimT)}`)
+      && heroFut.includes(`= Livre ao fim</span><b>${fmt(livreFimT)}`), true);
+
+    /* A CONTA FECHA — é a assertiva mais importante daqui. Um topo cujas linhas
+       não somam no total é o mesmo defeito que um extrato cujo cabeçalho não bate
+       com a lista. */
+    check('abre + entradas − contas = em contas ao fim',
+      Math.round((abreP + pvProxHero.entra - pvProxHero.sai) * 100),
+      Math.round(emContasFimT * 100));
+    check('em contas ao fim − guardado = livre ao fim (o valor grande)',
+      Math.round((emContasFimT - guardadoFimT) * 100), Math.round(livreFimT * 100));
+
+    /* INVESTIMENTO NÃO É SAÍDA: ele não pode aparecer somado às contas do mês, e o
+       total antigo (sai + investe) não pode voltar à tela. */
+    check('as contas do mês não incluem o investimento',
+      heroFut.includes(fmt(pvProxHero.sai)), true);
+    check('  e o total somado com o aporte não aparece',
+      heroFut.includes(fmt(pvProxHero.sai + pvProxHero.investe)), false);
+    check('  o aporte aparece dentro do guardado', /\+.*no mês/.test(heroFut), true);
+    check('o guardado do hero é o do FIM do mês, não o de hoje',
+      heroFut.includes(fmt(guardadoFimT)) && guardadoFimT > DB.guardado() + 0.005, true);
+
+    /* O QUE JULHO PROMETE E O QUE AGOSTO MOSTRA são o mesmo número. Sem isso, quem
+       lê a frase no hero de hoje e navega para o mês seguinte encontra outro valor
+       e não tem como descobrir por quê. */
+    state.monthOffset = 0;
+    check('o "a pagar" prometido é o mesmo que o mês seguinte mostra',
+      resumoDoProximoMes().includes(fmt(pvProxHero.sai)), true);
+    state.monthOffset = 1;
+
+    /* O GRÁFICO DE 12 MESES CONTA A MESMA HISTÓRIA que o hero e o extrato.
+
+       Ele rolava `resultado`, que desconta o investimento — mas a metade passada
+       da série vem do saldo real conciliado, que soma TODAS as contas, inclusive a
+       de investimento. Medido: o gráfico terminava agosto em R$ 2.728 enquanto o
+       hero e o extrato diziam R$ 6.128, e a diferença era exatamente o aporte. */
+    for (const m of DB.fluxoMensal(6, 3).filter(x => x.futuro)) {
+      check(`fluxo de ${m.period.label} bate com o saldo previsto`,
+        Math.round(m.saldo * 100),
+        Math.round(DB.saldoPrevistoNaData(null, DB.fimISO(m.period)) * 100));
+    }
+
+    /* OS KPIs em mês futuro: número = onde chego, sub = de onde parti.
+
+       O valor é lido do PRÓPRIO cartão, não da tela inteira: o hero mostra os
+       mesmos números logo acima, então procurar o texto solto faz o teste passar
+       mesmo com o KPI errado — foi o que a sabotagem revelou. */
+    const kpiPorRotulo = (html, rotulo) => {
+      for (const c of html.match(/<div class="card kpi">[\s\S]*?<\/div><\/div>/g) || []) {
+        const l = (c.match(/kpi-label">([^<]*)</) || ['', ''])[1];
+        if (!l.includes(rotulo)) continue;
+        return {
+          valor: (c.match(/kpi-value[^>]*>([^<]*)</) || ['', ''])[1].trim(),
+          sub: (c.match(/kpi-sub">([\s\S]*?)<\/div>/) || ['', ''])[1].replace(/<[^>]+>/g, ''),
+        };
+      }
+      return null;
+    };
+    const kSaldo = kpiPorRotulo(heroFut, 'Saldo previsto');
+    check('o KPI de saldo mostra o previsto ao fim', !!kSaldo, true);
+    check('  com o valor do fim do mês', kSaldo.valor, fmt(emContasFimT));
+    check('  e não o saldo de hoje', kSaldo.valor === fmt(DB.accountsTotal()), false);
+    check('  os dois divergem, senão a assertiva é vazia',
+      Math.round(emContasFimT) !== Math.round(DB.accountsTotal()), true);
+    check('  com o saldo de hoje como ponto de partida', kSaldo.sub.includes('hoje'), true);
+    const kMetas = kpiPorRotulo(heroFut, 'Guardado em metas');
+    check('o KPI de metas mostra o que TERÁ ao fim',
+      kMetas.valor, fmt(guardadoMetasFimT));
+    check('  e não o de hoje', kMetas.valor === fmt(guardadoMetasHojeT), false);
+    check('  os dois divergem, senão a assertiva é vazia',
+      Math.round(guardadoMetasFimT) !== Math.round(guardadoMetasHojeT), true);
+    check('  dizendo que é do fim do mês', kMetas.sub.includes('ao fim do mês'), true);
+    check('  e quanto está agendado', /\+.*agendado/.test(kMetas.sub), true);
+    /* O "pior ponto" sai: ele é medido a partir de HOJE, e dentro de agosto lê como
+       se fosse do próprio mês exibido.
+       Olha só o SUB-RÓTULO renderizado — o texto solto acha os comentários que
+       explicam a decisão dentro do próprio HTML. */
+    const subsKpi = (h) => (h.match(/kpi-sub">([\s\S]*?)<\/div>/g) || []).join(' ');
+    check('o pior ponto do horizonte não aparece em mês futuro',
+      /pior ponto/.test(subsKpi(heroFut)), false);
+    check('  mas continua no mês corrente', (() => {
+      const off = state.monthOffset; state.monthOffset = 0;
+      const t = subsKpi(renderInicio(DB.monthPeriod(new Date())));
+      state.monthOffset = off;
+      return /pior ponto/.test(t);
+    })(), true);
+    check('a fatura do KPI é a que vence NESTE mês', /Faturas do mês/.test(heroFut), true);
     const frase = resumoDoProximoMes();
     check('o rodapé do hero separa o que será guardado', /a guardar/.test(frase), true);
     check('  e diz que a sobra é depois de guardar', /depois de guardar/.test(frase), true);
-    const saiProx = DB.previsaoDoMes(proxP).sai;
-    check('  o "a pagar" exclui o investimento',
-      frase.includes(fmt(saiProx - investProx)), true);
-    check('  e não mostra os dois somados', frase.includes(fmt(saiProx)), false);
+    // `sai` já vem sem o aporte; o total dos dois não pode aparecer na frase
+    const pvFrase = DB.previsaoDoMes(proxP);
+    check('  o "a pagar" é `sai`, que já exclui o investimento',
+      frase.includes(fmt(pvFrase.sai)), true);
+    check('  e não mostra os dois somados',
+      frase.includes(fmt(pvFrase.sai + pvFrase.investe)), false);
     for (const e of DB.all('goal_entries').filter(e => e.goal_id === metaHero)) DB.remove('goal_entries', e.id);
     DB.remove('goals', metaHero); DB.remove('transactions', rendaHero);
   } catch (e) { console.log(` FALHA | topo do painel: ${e.message}`); fail++; }

@@ -1146,6 +1146,27 @@ const DB = {
      real entre contas próprias, então o dinheiro guardado está dentro de
      accountsTotal, só que comprometido com um objetivo. */
   guardado() { return this.guardadoReserva() + this.guardadoMetas(); },
+
+  /* Quanto TERÁ dono numa data futura: o guardado de hoje mais os aportes já
+     agendados até lá.
+
+     `guardado()` responde "quanto já tem plano AGORA", e é o que o hero do mês
+     corrente desconta. Olhando para agosto ele responde a pergunta errada: quem
+     planejou guardar R$ 3.400 no dia 3 quer saber que terá R$ 3.534 guardados no
+     fim do mês, não os R$ 134 de hoje.
+
+     Só o que está À FRENTE. Aporte agendado e VENCIDO não entra: ele não
+     aconteceu, e contá-lo aqui afirmaria um fato que a própria fila de pendências
+     do Painel ainda está cobrando. */
+  aportesAgendadosAte(dataISO) {
+    const hoje = this.hojeISO();
+    return this.all('goal_entries')
+      .filter(e => !this.aportePago(e) && Number(e.amount) > 0
+        && String(e.date) >= hoje && String(e.date) < dataISO)
+      .reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  },
+  guardadoPrevisto(dataISO) { return this.guardado() + this.aportesAgendadosAte(dataISO); },
+
   guardadoReserva() { return this.reserveTotal(); },
   guardadoMetas() {
     return this.all('goals')
@@ -1626,7 +1647,7 @@ const DB = {
      agendadas) e as faturas que vencem lá. */
   previsaoDoMes(period) {
     const de = this.inicioISO(period), ate = this.fimISO(period);
-    let entra = 0, sai = 0;
+    let entra = 0, sai = 0, investe = 0;
     const itens = [];
     /* `molde` é o registro de onde o item veio — transação, contrato ou custo
        fixo. Carregar categoria, conta e método daqui é o que permite às telas
@@ -1733,16 +1754,27 @@ const DB = {
       add(molde.description, Number(molde.amount) || 0, !this.isExpense(molde), quando, 'custo fixo', molde);
     }
 
-    /* APORTE AGENDADO é compromisso do mês como qualquer outro: o dinheiro sai da
-       conta corrente na data marcada. Sem ele aqui, planejar guardar R$ 3.400 não
-       aparecia na previsão e o mês parecia ter mais folga do que tem.
+    /* APORTE AGENDADO: compromisso do mês, mas NÃO é saída.
+
+       Guardar dinheiro é transferência entre contas próprias — o valor continua
+       dentro de `accountsTotal`, só troca de bolso. Somá-lo a `sai` dizia que
+       agosto custa R$ 15.529 quando R$ 3.400 daquilo vira patrimônio, e quebrava
+       a identidade que o app trava por teste: "despesas do Extrato = saídas
+       previstas − fatura" (docs/plano-visao-futuro.md). Medido: a diferença era
+       exatamente o aporte.
+
+       Por isso ele tem contador próprio. `resultado` continua sendo o mesmo
+       número de antes — entra − sai − investe —, então nada que dependa dele muda.
+
+       Só o APORTE entra aqui. Um investimento lançado à mão como despesa no
+       envelope sai da conta de verdade e continua em `sai`, que é onde pertence
+       do ponto de vista de caixa. Por isso este laço lê `goal_entries` e não
+       `investidoNoPeriodo`, que soma os dois.
 
        NÃO se deduplica contra a transferência que acompanha o aporte: ela é
        NEUTRA (`isNeutral`) e por isso nunca entrou no laço de "lançado" acima —
-       pular o aporte por causa dela apagava o compromisso da conta em vez de
-       evitar repetição. Medido: agosto somava R$ 12.129 de saídas sem os R$ 3.400
-       do aporte, e o rodapé do hero subtraía do total um valor que nunca esteve
-       lá, mostrando "R$ 8.729 a pagar" quando o correto era R$ 12.129. */
+       pular o aporte por causa dela apagava o compromisso em vez de evitar
+       repetição. */
     for (const e of this.all('goal_entries')) {
       if (this.aportePago(e)) continue;
       const v = Number(e.amount) || 0;
@@ -1753,6 +1785,8 @@ const DB = {
       const env = this.envelopeDeInvestimento();
       add(`Guardar em ${meta ? meta.name : 'meta'}`, v, false, d, 'aporte',
         { account_id: e.from_account, category_id: meta ? this.categoriaDeAporte(meta) : (env ? env.id : null) });
+      investe += v;
+      sai -= v;          // `add` somou em `sai`; aqui ele muda de coluna
     }
 
     /* Faturas que vencem neste mês.
@@ -1770,7 +1804,7 @@ const DB = {
     }
 
     itens.sort((a, b) => String(a.data).localeCompare(String(b.data)));
-    return { period, entra, sai, resultado: entra - sai, itens };
+    return { period, entra, sai, investe, resultado: entra - sai - investe, itens };
   },
 
   /* Os itens da previsão que AINDA NÃO EXISTEM como lançamento.
@@ -1836,11 +1870,19 @@ const DB = {
     /* Futuro: rola a partir do saldo do fim do mês corrente. previsaoDoMes conta
        as recorrências, que NÃO estão materializadas além do ciclo atual — sem
        elas a linha ficaria plana e a projeção não diria nada. */
+    /* O saldo aqui é o EM CONTAS, e o aporte não o reduz: ele é transferência
+       entre contas próprias, e a metade passada desta série vem do saldo real
+       conciliado, que soma todas as contas — inclusive a de investimento.
+
+       Por isso rola `entra − sai` e não `resultado` (que desconta o investimento).
+       Medido: com `resultado`, o gráfico terminava agosto em R$ 2.728 enquanto o
+       hero e o extrato do mesmo mês diziam R$ 6.128 — a diferença era exatamente
+       o aporte, e a linha do gráfico contradizia as duas outras telas. */
     let saldo = fora[fora.length - 1].saldo;
     for (let i = 1; i <= futuros; i++) {
       const p = this.monthPeriod(new Date(), i);
       const m = this.previsaoDoMes(p);
-      saldo += m.resultado;
+      saldo += m.entra - m.sai;
       fora.push({ period: p, entra: m.entra, sai: m.sai, futuro: true, saldo, itens: m.itens });
     }
     return fora;

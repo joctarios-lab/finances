@@ -1134,17 +1134,17 @@ function resumoDoProximoMes() {
   if (!pv.itens.length) return '';
   const mes = prox.start.toLocaleDateString('pt-BR', { month: 'long' });
   const sobra = pv.resultado;
-  /* O INVESTIMENTO SAI DA CONTA DE "A PAGAR".
+  /* O INVESTIMENTO NÃO ENTRA NAS CONTAS A PAGAR.
 
-     Guardar dinheiro pesa no caixa do mês como qualquer débito, e por isso está
-     dentro de `pv.sai` — mas juntá-lo às contas faz a frase dizer que o mês tem
-     R$ 12.129 de despesa quando R$ 3.400 daquilo vira patrimônio. São movimentos
-     de natureza oposta: um consome, o outro acumula.
+     São movimentos de natureza oposta: um consome, o outro acumula. Juntá-los faz
+     a frase dizer que o mês tem R$ 12.129 de despesa quando R$ 3.400 daquilo vira
+     patrimônio.
 
-     Separado, a frase responde a pergunta certa — "quanto vai custar viver o mês"
-     — e ainda dá crédito pelo que está sendo construído. */
-  const investir = DB.investidoNoPeriodo(prox);
-  const aPagar = Math.max(0, pv.sai - investir);
+     `pv.sai` já vem sem o aporte — `previsaoDoMes` o contabiliza em `investe`.
+     Antes era preciso subtrair aqui, e a subtração era feita sobre um total que
+     nem sempre continha o valor, o que produzia números menores que a realidade. */
+  const investir = pv.investe;
+  const aPagar = pv.sai;
   const partes = [`já há <b>${fmt(aPagar)}</b> a pagar`];
   if (investir > 0.005) partes.push(`<b>${fmt(investir)}</b> a guardar`);
   if (pv.entra > 0.005) partes.push(`<b>${fmt(pv.entra)}</b> a receber`);
@@ -1527,6 +1527,8 @@ function renderInicio(period) {
      conta com risco de os números divergirem entre si na mesma tela. */
   const futuro6 = DB.horizonte(6);
 
+  const futuroMes = (state.monthOffset || 0) > 0;
+
   // --- Reserva de emergência (cobertura em meses) ---
   const reserve = DB.reserveTotal();
   /* Custo de VIDA, não gasto médio cru: a reserva mede quantos meses se aguenta
@@ -1638,38 +1640,73 @@ function renderInicio(period) {
      partir de hoje: um mês negativo no meio contamina os seguintes, e é isso que
      olhar mês a mês, isolado, não mostra. */
   const previsto = DB.previsaoDoMes(period);
-  const cadeia = state.monthOffset > 0 ? DB.previsaoMeses(state.monthOffset, 1) : [];
-  const saldoAoFim = cadeia.length ? cadeia[cadeia.length - 1].saldoAoFim : 0;
-  /* "DISPONÍVEL", não "saldo": este número desconta o comprometido e o que já tem
-     dono (reserva e metas), exatamente como o hero do mês corrente. Chamá-lo de
-     saldo o faria divergir do saldo que o extrato do mesmo mês mostra no topo — e
-     dois números com o mesmo nome e valores diferentes destroem a confiança nos
-     dois. O extrato mostra CAIXA (o que estará na conta); aqui é PLANEJAMENTO. */
-  const saldoEmContaFim = DB.saldoPrevistoNaData(null, DB.fimISO(period));
+  /* A CONTA DO MÊS QUE AINDA NÃO CHEGOU, por extenso.
+
+     O hero antigo dava o número final e três colunas soltas — Entradas 17.831,
+     Saídas 15.529, Resultado 2.302 — que não fechavam com ele: o valor grande era
+     2.593. Quem tentasse conferir desistia, e "um número que não se confere não
+     serve para decidir nada" vale dentro da própria tela.
+
+     Agora são as mesmas linhas do hero do mês corrente, contando o mês inteiro:
+     onde ele ABRE, o que ACONTECE, onde CHEGA em caixa, e quanto daquilo já tem
+     dono. O número grande passou a ser o RESULTADO da conta — antes vinha de
+     `previsaoMeses`, por outro caminho, e as duas contas só coincidiam por acaso
+     num mês em que o corrente não tinha nada previsto.
+
+     INVESTIMENTO NÃO É SAÍDA. O aporte não muda "em contas ao fim" (o dinheiro
+     continua na família, só trocou de bolso) e muda "livre ao fim" (ganhou dono).
+     Por isso ele não aparece em "Contas do mês" e sim dentro do "Guardado". */
+  const inicioP = DB.inicioISO(period), fimP = DB.fimISO(period);
+  const abreEmContas = DB.saldoPrevistoNaData(null, inicioP);
+  const emContasFim = DB.saldoPrevistoNaData(null, fimP);
+  const guardadoFim = DB.guardadoPrevisto(fimP);
+  /* "DISPONÍVEL", não "saldo": desconta o que já tem dono, exatamente como o hero
+     do mês corrente. Chamá-lo de saldo o faria divergir do saldo que o extrato do
+     mesmo mês mostra no topo — e dois números com o mesmo nome e valores
+     diferentes destroem a confiança nos dois. O extrato mostra CAIXA; aqui é
+     PLANEJAMENTO. É a linha "Em contas ao fim" que faz a ponte entre eles. */
+  const livreAoFim = emContasFim - guardadoFim;
+  const noAzul = livreAoFim >= 0;
+  /* Em MÊS FUTURO os KPIs mudam de pergunta: o número grande passa a ser onde se
+     CHEGA e o sub-rótulo diz de onde se parte. Sem isso a tela mostrava o saldo de
+     hoje e o guardado de hoje enquanto o hero, logo acima, falava do fim do mês.
+
+     A fatura sai dos itens da própria previsão, então ela é uma parcela VISÍVEL da
+     linha "Contas do mês" do hero — os dois números se explicam um ao outro. */
+  const faturasDoMes = previsto.itens.filter(i => i.origem === 'fatura')
+    .reduce((s, i) => s + i.valor, 0);
+  const nFaturasDoMes = previsto.itens.filter(i => i.origem === 'fatura').length;
+  /* MESMA BASE do número de hoje: o KPI soma as metas ATIVAS, reserva incluída
+     (é a variável `guardadoMetas` daqui, não a `DB.guardadoMetas()`, que exclui a
+     reserva). Somar os aportes agendados sobre outra base faria o cartão saltar de
+     valor ao virar o mês — medido: mostrava R$ 0,00 em agosto contra R$ 134 em
+     julho, porque o aporte planejado é para a reserva. */
+  const metasAoFim = guardadoMetas + DB.aportesAgendadosAte(fimP);
   const heroFuturo = `
-    <div class="hero hero-${saldoAoFim >= 0 ? 'green' : 'red'}">
+    <div class="hero hero-${noAzul ? 'green' : 'red'}">
       <div class="hero-top">
         <span class="hero-label">Disponível previsto ao fim de ${esc(period.label)}</span>
-        <span class="hero-badge b-${saldoAoFim >= 0 ? 'green' : 'red'}">${saldoAoFim >= 0 ? 'No azul' : 'Aperto'}</span>
+        <span class="hero-badge b-${noAzul ? 'green' : 'red'}">${noAzul ? 'No azul' : 'Aperto'}</span>
       </div>
-      <div class="hero-value">${fmt(saldoAoFim)}</div>
+      <div class="hero-value">${fmt(livreAoFim)}</div>
       <p class="hero-msg">${previsto.itens.length
         ? `Projeção com ${previsto.itens.length} item(ns) já conhecido(s) — contas fixas, repetições e faturas. Gasto variável não entra nesta conta.`
         : 'Nada previsto para este mês ainda. Contas que se repetem e faturas apareceriam aqui.'}</p>
-      <!-- A ponte entre os dois números: o extrato do mesmo mês mostra o saldo em
-           conta, e sem esta linha a diferença pareceria erro de um dos dois. -->
-      <p class="hero-depois">Em conta haverá <b>${fmt(saldoEmContaFim)}</b>${
-        Math.abs(saldoEmContaFim - saldoAoFim) > 0.005
-          ? ` — a diferença de ${fmt(Math.abs(saldoEmContaFim - saldoAoFim))} é o que já tem destino (reserva, metas e contas a vencer).`
-          : '.'}</p>
-      <!-- Rótulos curtos: em três colunas de celular eles quebram acima de ~14
-           caracteres, e "Previsto entrar" já passava. O cabeçalho do card abaixo
-           é que diz que tudo aqui é previsão. -->
-      <div class="hero-stats">
-        <div><small>Entradas</small><b>${fmt(previsto.entra)}</b></div>
-        <div><small>Saídas</small><b>${fmt(previsto.sai)}</b></div>
-        <div><small>Resultado</small><b>${fmt(previsto.resultado)}</b></div>
+      <div class="hero-conta">
+        <div class="hc-l"><span>Abre em contas <i>em ${fmtDate(new Date(inicioP + 'T12:00:00'))}</i></span><b>${fmt(abreEmContas)}</b></div>
+        <div class="hc-l"><span>+ Entradas <i>previstas</i></span><b>${fmt(previsto.entra)}</b></div>
+        <div class="hc-l"><span>− Contas do mês <i>faturas incluídas</i></span><b>${fmt(previsto.sai)}</b></div>
+        <div class="hc-l hc-sub"><span>= Em contas ao fim</span><b>${fmt(emContasFim)}</b></div>
+        ${guardadoFim > 0.005 ? `<div class="hc-l"><span>− Guardado${
+          previsto.investe > 0.005 ? ` <i>+${fmtShort(previsto.investe)} no mês</i>` : ''}</span><b>${fmt(guardadoFim)}</b></div>` : ''}
+        <div class="hc-l hc-total"><span>= Livre ao fim</span><b>${fmt(livreAoFim)}</b></div>
       </div>
+      <!-- A ponte com o Extrato continua dita por escrito, mas agora ela aponta
+           para um número que está na própria conta acima (linha 4), em vez de
+           pedir que se acredite numa diferença que não aparecia em lugar nenhum. -->
+      <p class="hero-depois">Em conta haverá <b>${fmt(emContasFim)}</b> — é o saldo que o extrato de ${esc(period.label)} mostra.${
+        Math.abs(emContasFim - livreAoFim) > 0.005
+          ? ` A diferença de ${fmt(Math.abs(emContasFim - livreAoFim))} é o que já tem destino.` : ''}</p>
     </div>`;
 
   const heroAtual = `
@@ -1716,26 +1753,50 @@ function renderInicio(period) {
          de fato mede segurança financeira é quantos meses a reserva cobre. As
          metas continuam nos Relatórios, uma a uma. -->
     <div class="kpi-grid">
-      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">Gasto do mês</div><div class="kpi-sub">${
-        futuro6.mediaSaida > 0
-          ? `${txs.length} lançamentos · ~${fmtShort(futuro6.mediaSaida)}/mês à frente`
-          : `${txs.length} lançamentos`}</div></div>
-      <div class="card kpi"><span class="kpi-ico t-danger" data-ico="invoice"></span><div class="kpi-value ${openInvoices ? 'red' : 'green'}">${fmt(openInvoices)}</div><div class="kpi-label">Faturas em aberto</div><div class="kpi-sub">${emAberto.length} fatura(s)${
-        doCiclo.length && doCiclo.length !== emAberto.length
-          ? ` · ${doCiclo.length} até o fim do mês` : ''}</div></div>
-      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value ${saldo < 0 ? 'red' : 'green'}">${fmt(saldo)}</div><div class="kpi-label">Saldo em contas</div><div class="kpi-sub">${
-        futuro6.temDados
-          ? `pior ponto <b class="${futuro6.pior < 0 ? 'txt-red' : 'txt-green'}">${fmtShort(futuro6.pior)}</b> em ${esc(futuro6.piorMes)}`
-          : `${contas.length} conta(s)`}</div></div>
+      <div class="card kpi"><span class="kpi-ico t-primary" data-ico="trend"></span><div class="kpi-value gold">${fmt(total)}</div><div class="kpi-label">${
+        futuroMes ? 'Gasto previsto' : 'Gasto do mês'}</div><div class="kpi-sub">${
+        futuroMes
+          ? `${previsto.itens.length} item(ns) conhecido(s) · variável não entra`
+          : futuro6.mediaSaida > 0
+            ? `${txs.length} lançamentos · ~${fmtShort(futuro6.mediaSaida)}/mês à frente`
+            : `${txs.length} lançamentos`}</div></div>
+      <!-- Em mês futuro, a fatura que importa é a que VENCE nele. O total em
+           aberto de hoje somaria também a que venceu em julho — um número que não
+           pertence ao mês que está na tela. -->
+      <div class="card kpi"><span class="kpi-ico t-danger" data-ico="invoice"></span><div class="kpi-value ${
+        (futuroMes ? faturasDoMes : openInvoices) ? 'red' : 'green'}">${fmt(futuroMes ? faturasDoMes : openInvoices)}</div><div class="kpi-label">${
+        futuroMes ? 'Faturas do mês' : 'Faturas em aberto'}</div><div class="kpi-sub">${
+        futuroMes
+          ? `${nFaturasDoMes} fatura(s) vencem em ${esc(period.label)}`
+          : `${emAberto.length} fatura(s)${doCiclo.length && doCiclo.length !== emAberto.length
+            ? ` · ${doCiclo.length} até o fim do mês` : ''}`}</div></div>
+      <!-- SALDO: em mês futuro o número é onde se CHEGA, e o sub diz de onde se
+           parte. O "pior ponto" do horizonte sai — ele é medido a partir de hoje,
+           e dentro de agosto "pior ponto em Agosto" lê como se fosse do próprio
+           mês exibido, o que é ruído. -->
+      <div class="card kpi"><span class="kpi-ico t-success" data-ico="wallet"></span><div class="kpi-value ${
+        (futuroMes ? emContasFim : saldo) < 0 ? 'red' : 'green'}">${fmt(futuroMes ? emContasFim : saldo)}</div><div class="kpi-label">${
+        futuroMes ? 'Saldo previsto' : 'Saldo em contas'}</div><div class="kpi-sub">${
+        futuroMes
+          ? `ao fim de ${esc(period.label)} · hoje ${fmtShort(saldo)}`
+          : futuro6.temDados
+            ? `pior ponto <b class="${futuro6.pior < 0 ? 'txt-red' : 'txt-green'}">${fmtShort(futuro6.pior)}</b> em ${esc(futuro6.piorMes)}`
+            : `${contas.length} conta(s)`}</div></div>
       <!-- METAS em números absolutos, não em média de percentuais: metas com
            alvos diferentes não se somam por porcentagem. "R$ 134 de R$ 100.000"
            diz onde se está; "0%" não diz nada além de "no começo".
-           A cobertura da reserva saiu daqui porque ela tem card próprio logo
-           abaixo, agora com previsão de quando fica pronta. -->
-      <div class="card kpi"><span class="kpi-ico t-info" data-ico="target"></span><div class="kpi-value">${fmt(guardadoMetas)}</div><div class="kpi-label">Guardado em metas</div><div class="kpi-sub">${
-        alvoMetas > 0
-          ? `de ${fmtShort(alvoMetas)} · ${goals.length} meta(s)${aportadoMes > 0.005 ? ` · ${fmtShort(aportadoMes)} este mês` : ''}`
-          : `${goals.length} meta(s) em andamento`}</div></div>
+
+           Em mês futuro mostra o que TERÁ, não o que tem: quem planejou guardar
+           quer saber onde chega com o plano cumprido. A cobertura da reserva saiu
+           daqui porque ela tem card próprio, com previsão de quando fica pronta. -->
+      <div class="card kpi"><span class="kpi-ico t-info" data-ico="target"></span><div class="kpi-value">${
+        fmt(futuroMes ? metasAoFim : guardadoMetas)}</div><div class="kpi-label">Guardado em metas</div><div class="kpi-sub">${
+        futuroMes
+          ? `ao fim do mês · hoje ${fmtShort(guardadoMetas)}${
+            metasAoFim - guardadoMetas > 0.005 ? ` · +${fmtShort(metasAoFim - guardadoMetas)} agendado` : ''}`
+          : alvoMetas > 0
+            ? `de ${fmtShort(alvoMetas)} · ${goals.length} meta(s)${aportadoMes > 0.005 ? ` · ${fmtShort(aportadoMes)} este mês` : ''}`
+            : `${goals.length} meta(s) em andamento`}</div></div>
     </div>
     <!-- Primeira linha: o que já está guardado, o que o mês vai fechar e como a
          renda se divide. As três perguntas de "estamos bem?", lado a lado — juntas
