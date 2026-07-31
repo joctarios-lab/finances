@@ -4192,6 +4192,32 @@ console.log('\n=== Voltar para a tela zera o estado ===');
 /* ---- O banco do Supabase aceita tudo o que o app envia? ---- */
 console.log('\n=== Schema do Supabase x payload do app ===');
 const schema = fs.readFileSync(BASE + 'supabase/schema.sql', 'utf8');
+
+/* ---- OS SQL PRECISAM SER EXECUTÁVEIS ----
+
+   Um `do $$ … end $$;` cujo delimitador virou `$` simples não é sintaxe válida:
+   o Postgres recusa o arquivo INTEIRO com "syntax error at or near $". Aconteceu
+   de verdade — os três blocos do carimbo do servidor foram gravados com `$` por
+   um script de edição em que `$$` no texto de substituição significa "um `$`
+   literal" (é o comportamento de `String.replace`, e está anotado no CLAUDE.md).
+
+   O defeito atravessou uma sessão inteira sem ser notado, porque nada aqui lia
+   esses arquivos: a suíte conferia COLUNAS declaradas no schema, e para isso o
+   delimitador é irrelevante. Quem descobriu foi quem tentou rodar. */
+console.log('\n=== SQL executável (delimitadores $$) ===');
+try {
+  for (const arq of fs.readdirSync(BASE + 'supabase').filter(f => f.endsWith('.sql'))) {
+    const sql = fs.readFileSync(`${BASE}supabase/${arq}`, 'utf8');
+    // `do $`, `as $` ou `end $` sem o segundo $ — o erro que o Postgres recusa
+    const quebrados = (sql.match(/^\s*(?:do|end)\s+\$(?!\$)|\bas\s+\$(?!\$)/gm) || []);
+    check(`${arq}: delimitadores íntegros`,
+      quebrados.length ? quebrados.join(' ') : true, true);
+    // E cada abertura tem o seu fechamento: contagem par de $$
+    const pares = (sql.match(/\$\$/g) || []).length;
+    check(`  ${arq}: $$ em pares`, pares % 2, 0);
+  }
+} catch (e) { console.log(` FALHA | sql executável: ${e.message}`); fail++; }
+
 const colunasDe = tabela => {
   const cria = schema.match(new RegExp(`create table if not exists ${tabela} \\(([\\s\\S]*?)\\n\\);`, 'i'));
   const cols = new Set(['id', 'family_id', 'updated_at', 'deleted']);

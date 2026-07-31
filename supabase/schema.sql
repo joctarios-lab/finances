@@ -268,7 +268,7 @@ alter table transactions add column if not exists tags jsonb not null default '[
 -- clock_timestamp() é o relógio real no momento da linha.
 -- ---------------------------------------------------------------------------
 
-do $
+do $$
 declare t text;
 begin
   foreach t in array array['accounts','cards','categories','transactions','recurrences',
@@ -281,18 +281,18 @@ begin
     execute format(
       'create index if not exists %I on %I (family_id, server_at)', t || '_family_server_idx', t);
   end loop;
-end $;
+end $$;
 
 create or replace function marca_server_at()
-returns trigger language plpgsql as $
+returns trigger language plpgsql as $$
 begin
   -- Sobrescreve sempre, inclusive no update: o cliente pode mandar qualquer
   -- coisa nesta coluna e ela é ignorada. É isso que torna o campo confiável.
   new.server_at := clock_timestamp();
   return new;
-end $;
+end $$;
 
-do $
+do $$
 declare t text;
 begin
   foreach t in array array['accounts','cards','categories','transactions','recurrences',
@@ -303,7 +303,7 @@ begin
       'create trigger trg_server_at before insert or update on %I
          for each row execute function marca_server_at()', t);
   end loop;
-end $;
+end $$;
 
 -- Conferência do carimbo:
 --   select tablename, indexname from pg_indexes
