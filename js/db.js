@@ -625,7 +625,17 @@ const DB = {
      conciliação) e o futuro soma o que está previsto para acontecer até lá. */
   saldoPrevistoNaData(contaIds, dataISO) {
     const hoje = this.paraISO(new Date());
-    const base = this.saldoNaData(contaIds, dataISO < hoje ? dataISO : hoje);
+    /* A base é o saldo no INÍCIO da data pedida, sempre — não o de hoje.
+
+       `saldoNaData(contas, D)` parte do saldo atual e desfaz tudo com data >= D.
+       Passando `hoje` para uma data futura, ela desfazia os lançamentos de HOJE,
+       que já aconteceram e já estão no saldo da conta: um gasto lançado hoje não
+       aparecia no "abre em contas" do mês que vem.
+
+       Medido: R$ 100 de mercado pagos em 31/07 deixavam a conta em R$ 326, e
+       agosto abria com R$ 426 — o gasto do dia sumia da projeção inteira, porque
+       todos os meses seguintes rolam a partir daí. */
+    const base = this.saldoNaData(contaIds, dataISO);
     if (dataISO <= hoje) return base;
 
     const contas = (contaIds && contaIds.length) ? contaIds : this.all('accounts').map(a => a.id);

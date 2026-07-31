@@ -5680,6 +5680,36 @@ check('função is_member definida antes das policies', schema.indexOf('function
       heroFut.includes(`hero-value">${fmt(livreFimT)}`)
       && heroFut.includes(`= Livre ao fim</span><b>${fmt(livreFimT)}`), true);
 
+    /* O GASTO DE HOJE APARECE NO MÊS QUE VEM.
+
+       `saldoPrevistoNaData` usava o saldo de HOJE como base para datas futuras, e
+       `saldoNaData(contas, hoje)` desfaz os lançamentos do próprio dia — ela
+       devolve o saldo do começo do dia, não o atual. Efeito: um gasto lançado hoje
+       não entrava no "abre em contas" do mês seguinte, e como todos os meses
+       rolam a partir daí, ele sumia da projeção inteira.
+
+       Medido na base real: R$ 100 de mercado pagos em 31/07 deixavam a conta em
+       R$ 326 e agosto abria com R$ 426. */
+    {
+      const cHoje = DB.all('accounts')[0];
+      const abreAntes = DB.saldoPrevistoNaData(null, DB.inicioISO(proxP));
+      const totalAntes = DB.accountsTotal();
+      const gastoHoje = DB.upsert('transactions', {
+        description: 'Mercado HOJE', amount: 137, date: todayISO(), type: 'Despesa',
+        status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito',
+        account_id: cHoje.id,
+      });
+      adjustBalance(cHoje.id, -137);              // como o app faz ao salvar
+      check('um gasto pago hoje reduz o saldo em contas',
+        Math.round(DB.accountsTotal()), Math.round(totalAntes - 137));
+      check('  e reduz o "abre em contas" do mês seguinte',
+        Math.round(DB.saldoPrevistoNaData(null, DB.inicioISO(proxP))), Math.round(abreAntes - 137));
+      check('  o abre do mês seguinte é o saldo real de hoje',
+        Math.round(DB.saldoPrevistoNaData(null, DB.inicioISO(proxP))), Math.round(DB.accountsTotal()));
+      adjustBalance(cHoje.id, 137);
+      DB.remove('transactions', gastoHoje);
+    }
+
     /* A CONTA FECHA — é a assertiva mais importante daqui. Um topo cujas linhas
        não somam no total é o mesmo defeito que um extrato cujo cabeçalho não bate
        com a lista. */
