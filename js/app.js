@@ -580,13 +580,6 @@ function svgFluxoSaldo(meses, opts = {}) {
   const saidas = meses.map(m => Math.round(Number(m.sai) || 0));
   const saldos = meses.map(m => Math.round(Number(m.saldo) || 0));
 
-  /* Mês sem entrada NEM saída não tem desvio para mostrar: escrever "0" ali seria
-     afirmar que o mês fechou empatado, quando o que houve foi mês sem nada
-     lançado. Medido na base real: a janela de 13 meses começa com cinco meses
-     vazios, que virariam cinco zeros verdes no eixo. Um zero de verdade —
-     entrou e saiu o mesmo valor — continua aparecendo. */
-  const semMovimento = i => entradas[i] === 0 && saidas[i] === 0;
-
   /* DUAS ESCALAS ANCORADAS: mesmo zero, mesmo topo.
 
      Fluxo mensal vive nos milhares e saldo acumulado nas dezenas de milhares —
@@ -632,43 +625,16 @@ function svgFluxoSaldo(meses, opts = {}) {
   const cfg = {
     ...Graficos.base(alt, {
       chart: { type: 'line', stacked: false },
-      /* O DESVIO DO MÊS acima do nome do mês.
+      /* RÓTULO DE UMA LINHA SÓ — o nome do mês.
 
-         O gráfico mostra três coisas — quanto entrou, quanto saiu e o saldo
-         acumulado — e deixava a pergunta mais direta para o olho fazer sozinho:
-         sobrou ou faltou naquele mês? Comparar a altura de duas barras vizinhas
-         responde "qual é maior", não "por quanto".
+         O desvio do mês (entradas − saídas) já morou aqui, numa segunda linha
+         acima do nome. A informação era boa e a execução não: com treze meses na
+         janela, dois textos por coluna encavalam no celular, e um eixo ilegível
+         custa mais do que o número acrescentava. Revertido depois de ver na tela.
 
-         Vai no rótulo do eixo, em duas linhas (o ApexCharts desenha uma linha por
-         item quando o formatter devolve array), e não como rótulo de dado: sobre
-         as barras ele brigaria com a área do saldo, que passa por cima.
-
-         A cor segue o sinal e é a mesma das barras — verde para sobra, vermelho
-         para falta. `style.colors` aceita um valor por categoria, então cada mês
-         recebe a sua; o nome do mês vai junto na cor, o que é aceitável porque as
-         duas linhas falam do mesmo mês.
-
-         O índice vem de `rotulos.indexOf`, e isso só é confiável porque os
-         rótulos são ÚNICOS por construção (ver acima) — numa janela de 13 meses
-         "jan" apareceria duas vezes e o desvio de janeiro de 2027 seria escrito
-         embaixo de janeiro de 2026. */
-      xaxis: {
-        categories: rotulos,
-        tooltip: { enabled: false },
-        labels: {
-          formatter: v => {
-            const i = rotulos.indexOf(v);
-            if (i < 0 || semMovimento(i)) return v;
-            const d = entradas[i] - saidas[i];
-            const sinal = d > 0 ? '+' : d < 0 ? '−' : '';
-            return [sinal + fmtShort(Math.abs(d)).replace('R$', '').trim(), v];
-          },
-          style: {
-            colors: meses.map((_m, i) => (semMovimento(i) ? Graficos.cor.tintaFraca
-              : entradas[i] - saidas[i] >= 0 ? Graficos.cor.verde : Graficos.cor.vermelho)),
-          },
-        },
-      },
+         Se o desvio voltar algum dia, precisa de outro lugar — rodapé do cartão
+         ou tooltip —, não de mais texto no eixo. */
+      xaxis: { categories: rotulos, tooltip: { enabled: false } },
       tooltip: {
         shared: true, intersect: false,
         y: { formatter: v => (v == null ? '—' : fmt(v)) },
@@ -1385,15 +1351,22 @@ function renderInicio(period) {
     if (!limite && !spent) continue;
     const pct = limite > 0 ? Math.round(spent / limite * 100) : 0;
     const detalhavel = spent > 0 && DB.subcategoriesOf(c.id).length > 0;
-    /* O lápis abre o ajuste DESTE ciclo. Fica na própria barra porque é onde a
-       necessidade aparece — quem vê "170%" numa categoria é quem sabe se o mês
-       era atípico. O selo diz que o mês está ajustado: um limite diferente do
-       padrão, sem aviso, seria um número que a pessoa não consegue explicar. */
+    /* AQUI NÃO SE EDITA O ORÇAMENTO — de propósito.
+
+       O painel existe para dizer como está o mês, e o orçamento é a régua dessa
+       medida. Um botão de editar ao lado da barra vermelha põe a régua ao alcance
+       de quem está justamente desconfortável com o que ela mostra, e a saída mais
+       fácil passa a ser aumentar o limite até a barra ficar verde. O ajuste é
+       legítimo, mas tem de ser uma decisão tomada em outro momento — por isso ele
+       mora em Configurações → Categorias, dentro do envelope.
+
+       O SELO fica: informar que o mês está ajustado é o oposto de facilitar o
+       ajuste. Sem ele, um limite diferente do padrão seria um número que a pessoa
+       não consegue explicar. */
     budgets += `<div class="budget-row${detalhavel ? ' clicavel' : ''}"${detalhavel ? ` data-envelope="${c.id}"` : ''}>
       <div class="budget-head"><b>${esc(c.icon)} ${esc(c.name)}${detalhavel ? ' <span class="chev-min" data-ico="chev"></span>' : ''}${
         ajustado ? ' <span class="selo-ajuste" title="orçamento ajustado neste mês">ajustado</span>' : ''}</b>
-        <span class="num">${fmtShort(spent)}${limite ? ` <span class="muted">/ ${fmtShort(limite)} · ${pct}%</span>` : ''}
-          <button class="mini-btn" data-orc="${c.id}" title="Ajustar o orçamento deste mês" aria-label="Ajustar orçamento de ${esc(c.name)}"><span data-ico="edit"></span></button></span></div>
+        <span class="num">${fmtShort(spent)}${limite ? ` <span class="muted">/ ${fmtShort(limite)} · ${pct}%</span>` : ''}</span></div>
       <div class="bar ${barClass(pct)}"><i style="width:${Math.min(100, pct)}%"></i></div>
     </div>`;
   }
@@ -3362,10 +3335,6 @@ function bindView() {
   v.querySelectorAll('[data-envelope]').forEach(el => el.onclick = () => openEnvelopeDetail(el.dataset.envelope));
   /* stopPropagation: o lápis vive DENTRO da linha do envelope, que também é
      clicável. Sem isto, ajustar o orçamento abriria o detalhe por baixo. */
-  v.querySelectorAll('[data-orc]').forEach(el => el.onclick = ev => {
-    if (ev && ev.stopPropagation) ev.stopPropagation();
-    openOrcamentoSheet(el.dataset.orc);
-  });
   const transf = $('#btn-transfer');
   if (transf) transf.onclick = () => openTxSheet({ type: 'Transferência', date: todayISO(), description: '', amount: '', status: 'Pago', method: 'Transferência', scope: 'Família', member: MEMBRO_COMUM }, true);
   const criarReserva = $('#btn-criar-reserva');
@@ -4351,10 +4320,16 @@ function openEnvelopeDetail(rootId) {
    lados de uma vez, porque "reforcei alimentação tirando do lazer" é uma decisão
    só — feita em dois passos, o total do mês fica errado no meio do caminho e
    ninguém confere. */
-function openOrcamentoSheet(categoryId) {
+function openOrcamentoSheet(categoryId, offset = 0) {
   const c = catOf(categoryId);
   if (!c) return;
-  const period = DB.monthPeriod(new Date(), state.monthOffset);
+  /* O MÊS é escolhido aqui dentro, não herdado da tela.
+
+     A folha é aberta de Configurações, onde não existe navegação de mês — e
+     mesmo que existisse, ajustar "o mês em que eu estava" é o tipo de suposição
+     que faz alguém mudar agosto achando que mudou julho. Com o seletor, o mês
+     ajustado está escrito na frente de quem confirma. */
+  const period = DB.monthPeriod(new Date(), offset);
   const atual = DB.budgetOf(categoryId, period);
   const padrao = Number(c.monthly_budget) || 0;
   const temAjuste = !!DB.overrideDeOrcamento(categoryId, period);
@@ -4364,8 +4339,15 @@ function openOrcamentoSheet(categoryId) {
 
   openSheet(`
     <div class="sheet-title">${esc(c.icon)} ${esc(c.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin:-4px 0 12px">Orçamento de <b>${esc(period.label)}</b>${
-      temAjuste ? ` · ajustado (padrão ${fmtShort(padrao)})` : ' · usando o padrão'} · já gasto ${fmtShort(gasto)}</p>
+    <p class="muted" style="margin:-4px 0 12px">${
+      temAjuste ? `Ajustado neste mês · padrão ${fmtShort(padrao)}` : `Usando o padrão de ${fmtShort(padrao)}`} · já gasto ${fmtShort(gasto)}</p>
+    <div class="field"><label>Qual mês</label>
+      <select id="orc-mes">${Array.from({ length: 10 }, (_, n) => n - 3).map(o => {
+        const p = DB.monthPeriod(new Date(), o);
+        const ajuste = DB.overrideDeOrcamento(categoryId, p);
+        return `<option value="${o}"${o === offset ? ' selected' : ''}>${esc(p.label)}${
+          ajuste ? ` — ajustado para ${fmtShort(Number(ajuste.amount) || 0)}` : ''}</option>`;
+      }).join('')}</select></div>
     <div class="field"><label>Quanto cabe neste mês</label><input id="orc-valor" type="text" inputmode="numeric" placeholder="R$ 0,00"></div>
     <div class="field"><label>Vale para</label>
       ${chipGroup('orc-alcance', [
@@ -4390,6 +4372,10 @@ function openOrcamentoSheet(categoryId) {
   };
   explicar();
   bindChips('orc-alcance', explicar);
+  // Trocar de mês redesenha a folha: valor, selo e o botão de voltar ao padrão
+  // são todos daquele ciclo, e mantê-los de um mês anterior mostraria o número
+  // de julho sob o título de agosto.
+  $('#orc-mes').addEventListener('change', ev => openOrcamentoSheet(categoryId, Number(ev.target.value) || 0));
   $('#sh-close').onclick = closeSheet;
   $('#sh-save').onclick = () => {
     const valor = moneyVal('#orc-valor');
@@ -6219,6 +6205,11 @@ function openCategoriesConfig(estado) {
             <button class="sub-linha" data-edit="${f.id}"><span class="sub-traco"></span>${esc(f.name)}</button>`).join('')
             || '<p class="muted" style="padding:4px 2px 8px">Nenhuma subcategoria ainda.</p>'}
           <button class="btn ghost btn-sub" data-nova-sub="${r.id}">＋ Subcategoria</button>
+          <!-- O ajuste por mês mora aqui, e não na barra do Painel: ao lado da
+               barra vermelha, o botão convida a subir o limite até o gráfico
+               ficar verde. Aqui é preciso vir, abrir o envelope e escolher o mês
+               — três passos que fazem do ajuste uma decisão, não um reflexo. -->
+          ${st.lado === 'Receita' ? '' : `<button class="btn ghost btn-sub" data-orc="${r.id}">Ajustar o orçamento de um mês</button>`}
         </div>` : ''}
       </div>`;
   };
@@ -6292,6 +6283,11 @@ function openCategoriesConfig(estado) {
   document.querySelectorAll('[data-nova-sub]').forEach(el => el.onclick = e => {
     e.stopPropagation();
     openCategoryEditor(null, el.dataset.novaSub, null, { ...st, aberto: el.dataset.novaSub });
+  });
+  // Ajuste do orçamento de um mês: vive só aqui, dentro do envelope aberto
+  document.querySelectorAll('[data-orc]').forEach(el => el.onclick = e => {
+    e.stopPropagation();
+    openOrcamentoSheet(el.dataset.orc);
   });
   $('#cat-novo').onclick = () => openCategoryEditor(null, null, st.lado, st);
 
