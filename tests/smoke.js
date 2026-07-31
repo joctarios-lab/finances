@@ -1326,7 +1326,7 @@ try {
      de trocá-la era apagar a descrição. Relatado por quem usa o app. */
   {
     openTxSheet(null);
-    const foraDoAtalho = DB.leafCategories('Despesa').find(c => !topCategoryIds(6, null, 'Despesa').includes(c.id));
+    const foraDoAtalho = DB.leafCategories('Despesa').find(c => !topCategoryIds(3, null, 'Despesa').includes(c.id));
     check('há categoria fora dos atalhos para o teste valer', !!foraDoAtalho, true);
     // simula o que a sugestão automática faz: escolhe uma categoria fora dos atalhos
     el('#f-cat-more').value = foraDoAtalho.id;
@@ -1337,38 +1337,6 @@ try {
     el('#cat-other').click();
     check('tocar em "Outra" reabre a lista com a sugestão preenchida', el('#f-cat-more').hidden, false);
     closeSheet();
-  }
-
-  /* Os atalhos cobrem mais: medido nesta base, três cobriam 58% dos lançamentos e
-     seis cobrem 74% — o resto caía no caminho longo, com quinze envelopes para
-     percorrer. */
-  check('o formulário oferece seis atalhos', /topCategoryIds\(6, escolhida, tipo\)/.test(
-    fs.readFileSync(BASE + 'js/app.js', 'utf8')), true);
-  /* E as mesmas seis aparecem no PRIMEIRO NÍVEL da lista completa: sem grupo, a
-     opção não exige abrir o envelope antes. */
-  {
-    const top6 = topCategoryIds(6, null, 'Despesa');
-    const comAtalhos = optionsCategorias('', 'Despesa', top6);
-    const antesDoGrupo = comAtalhos.slice(0, comAtalhos.indexOf('<optgroup'));
-    const quantos = (antesDoGrupo.match(/<option /g) || []).length;
-    check('a lista repete os atalhos fora de qualquer grupo', quantos > 0, true);
-    check('  com o caminho inteiro, senão o atalho vira adivinhação',
-      /›/.test(antesDoGrupo), true);
-    check('  e os envelopes continuam listados embaixo', comAtalhos.includes('<optgroup'), true);
-    // Sem atalhos, a lista é a de sempre — nada de opção solta no topo
-    check('sem atalhos, nada muda',
-      optionsCategorias('', 'Despesa').indexOf('<optgroup'), 0);
-    // …e o formulário precisa de fato ENTREGAR os atalhos para a lista
-    check('o formulário leva os atalhos para a lista',
-      /optionsCategorias\(escolhida, tipo, top\)/.test(fs.readFileSync(BASE + 'js/app.js', 'utf8')), true);
-    /* No painel, opção sem grupo vai para o primeiro nível — e a ORDEM importa
-       agora que são seis. O código montava cada uma na frente da anterior, o que
-       invertia a lista; com uma só (o placeholder) o defeito não aparecia. */
-    const fonteUi = fs.readFileSync(BASE + 'js/ui.js', 'utf8');
-    check('as opções soltas não são montadas ao contrário',
-      /html = linhaOpcao\(o, i\) \+ html/.test(fonteUi), false);
-    check('  elas são acumuladas em ordem e prefixadas juntas',
-      /soltasHtml \+= linhaOpcao\(o, i\)[\s\S]{0,120}html = soltasHtml \+ html/.test(fonteUi), true);
   }
 
   // Formulário: trocar o tipo troca a lista

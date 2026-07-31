@@ -4546,24 +4546,9 @@ function openTxSheet(tx, asNew) {
     <!-- A categoria vale para os dois lados: gasto responde "no que foi" e entrada
          responde "de onde veio". A lista troca junto com o tipo, porque as duas
          perguntas têm respostas diferentes. -->
-    <!-- Atalhos numa FAIXA QUE ROLA, com o "Outra" ancorado fora dela.
-
-         Os atalhos passaram de três para seis por medida, não por gosto: nesta
-         base, três cobrem 58% dos lançamentos e seis cobrem 74%. Os outros 42%
-         caíam no caminho longo — abrir a lista, percorrer quinze envelopes, abrir
-         um, escolher dentro.
-
-         Seis chips não cabem numa linha de celular, e deixá-los quebrar em três
-         linhas empurraria o resto do formulário para fora da tela. Rolando na
-         horizontal, a altura é a mesma de antes. O "Outra" fica FORA da faixa
-         porque é a saída para as outras 60 categorias: se rolasse junto, sumiria
-         justamente quando é necessário. -->
     <div class="field" id="wrap-cat">
       <label id="lbl-cat">Categoria <span class="muted" id="cat-auto"></span></label>
-      <div class="cat-linha">
-        <div class="chips chips-rol" id="g-cat"></div>
-        <button type="button" class="chip chip-more" id="cat-other" data-v="">Outra ▾</button>
-      </div>
+      <div class="chips" id="g-cat"></div>
       <select id="f-cat-more" hidden style="margin-top:8px"></select>
     </div>
     <div class="row2">
@@ -4745,20 +4730,24 @@ function openTxSheet(tx, asNew) {
     tipoCatAtual = tipo;
     const escolhida = DB.get('categories', tx.category_id) && DB.categoryType(DB.categoryRoot(tx.category_id)) === tipo
       ? tx.category_id : '';
-    const top = topCategoryIds(6, escolhida, tipo);
+    /* TRÊS atalhos, e a lista completa navegada por envelope.
+
+       Tentei seis atalhos numa faixa rolável, repetidos também no primeiro nível
+       da lista. A medida dizia que ajudaria — três cobrem 58% dos lançamentos
+       desta base e seis cobrem 74% —, mas na tela ficou pior: as mesmas
+       categorias soltas logo acima dos envelopes ("Alimentação › Mercado" em cima
+       de "Alimentação") leem como lista duplicada, não como atalho. Revertido a
+       pedido de quem usa o app.
+
+       Se voltar ao assunto, o caminho é uma seção NOMEADA ("Usadas
+       recentemente"), separada dos envelopes — e não opções soltas misturadas
+       com eles. */
+    const top = topCategoryIds(3, escolhida, tipo);
     $('#g-cat').innerHTML = top.map(id => {
       const c = DB.get('categories', id);
       return c ? `<button type="button" class="chip" data-v="${id}" title="${esc(DB.categoryPath(id))}">${esc(DB.categoryIcon(id))} ${esc(c.name)}</button>` : '';
-    }).join('');
-    /* As mais usadas TAMBÉM no topo da lista completa, achatadas.
-
-       O painel abre em dois níveis quando há muitos grupos — e com quinze
-       envelopes ele abre sempre. Isso põe a categoria mais banal do mês a três
-       toques: abrir, escolher o envelope, escolher dentro. Repetidas no primeiro
-       nível, com o caminho escrito, as mesmas seis resolvem em um toque depois de
-       abrir, e a navegação por envelope continua embaixo para o resto. */
-    $('#f-cat-more').innerHTML = `<option value="">— escolha a categoria —</option>${
-      optionsCategorias(escolhida, tipo, top)}`;
+    }).join('') + '<button type="button" class="chip chip-more" id="cat-other" data-v="">Outra ▾</button>';
+    $('#f-cat-more').innerHTML = `<option value="">— escolha a categoria —</option>${optionsCategorias(escolhida, tipo)}`;
     if (typeof UI !== 'undefined') {
       $('#f-cat-more').removeAttribute('data-ui');   // o select mudou: precisa ser reembrulhado
       UI.enhance($('#wrap-cat'));
@@ -4798,27 +4787,29 @@ function openTxSheet(tx, asNew) {
 
   // Reatribuído a cada remontagem da lista, porque os chips são recriados
   function ligarChipsCategoria() {
-    const outra = $('#cat-other');
     bindChips('g-cat', v => {
       const auto = $('#cat-auto'); if (auto) auto.textContent = '';
-      if (v) catManual = true;                       // escolheu um dos atalhos
-      /* O "Outra" vive FORA do grupo de chips (é o único que não rola junto),
-         então `bindChips` não o desmarca sozinho: escolher um atalho tem de
-         apagá-lo aqui, senão dois botões ficariam acesos ao mesmo tempo. */
-      outra.classList.remove('active');
-      outra.dataset.v = '';
-      outra.textContent = 'Outra ▾';
-      outra.title = '';
-      $('#f-cat-more').hidden = true;
+      if (v) catManual = true;                       // escolheu um dos botões
     });
     /* Tocar em "Outra" SEMPRE abre a lista — inclusive quando ele já mostra uma
-       categoria escolhida. Antes só abria estando vazio, e o efeito era que uma
-       categoria fora dos atalhos não podia ser trocada por ali: o toque marcava o
-       botão e não acontecia mais nada. */
+       categoria escolhida.
+
+       Antes a condição era `active && !dataset.v`: só abria com o botão VAZIO. E
+       a sugestão automática pela descrição preenche justamente esse `dataset.v`
+       quando acerta uma categoria fora dos três atalhos. O efeito era que a
+       sugestão não podia ser trocada — o toque marcava o botão e não acontecia
+       mais nada, e o único jeito de escolher outra era apagar a descrição.
+
+       O `onclick` é redefinido DEPOIS de `bindChips` porque o "Outra" também é um
+       chip do grupo: sem isto, valeria o handler genérico, que só alterna a
+       marcação. */
+    const outra = $('#cat-other');
     outra.onclick = () => {
       catManual = true;
       const auto = $('#cat-auto'); if (auto) auto.textContent = '';
-      document.querySelectorAll('#g-cat .chip').forEach(ch => ch.classList.remove('active'));
+      document.querySelectorAll('#g-cat .chip').forEach(ch => {
+        if (ch.id !== 'cat-other') ch.classList.remove('active');
+      });
       outra.classList.add('active');
       $('#f-cat-more').hidden = false;
       if (typeof UI !== 'undefined') setTimeout(() => UI.open($('#f-cat-more')), 30);
@@ -6125,23 +6116,10 @@ function openConfigSection(sec) {
    de cima e a subcategoria nunca acontecer. O filtro é outro caso — lá "tudo de
    Alimentação" é pergunta legítima — e por isso ele monta a própria lista, em
    opcoesCategoriaPilula. */
-function optionsCategorias(selecionado, tipo, atalhos) {
+function optionsCategorias(selecionado, tipo) {
   const marcados = Array.isArray(selecionado) ? selecionado : [selecionado];
   const opcao = (c, rotulo) =>
     `<option value="${c.id}"${marcados.includes(c.id) ? ' selected' : ''}>${esc(rotulo)}</option>`;
-  /* ATALHOS SEM GRUPO, no topo. Opção sem `optgroup` fica no primeiro nível do
-     painel, ao lado dos envelopes — é assim que a categoria mais usada deixa de
-     exigir que se abra o envelope dela.
-
-     Vão com o CAMINHO INTEIRO ("Alimentação › Mercado"): soltas, "Mercado" e
-     "Manutenção" não dizem de qual envelope são, e o atalho viraria adivinhação.
-     Aparecerem de novo dentro do envelope não é problema — o atalho é uma
-     segunda porta para a mesma sala, não outra sala. */
-  const topo = (atalhos || [])
-    .map(id => DB.get('categories', id))
-    .filter(c => c && c.parent_id)
-    .map(c => opcao(c, `${DB.categoryIcon(c.id)} ${DB.categoryPath(c.id)}`))
-    .join('');
   const soltas = [], grupos = [];
   for (const raiz of DB.rootCategories(tipo).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))) {
     const filhas = DB.subcategoriesOf(raiz.id).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
@@ -6153,7 +6131,7 @@ function optionsCategorias(selecionado, tipo, atalhos) {
     ? `<optgroup label="Sem subcategorias">${
         soltas.map(c => opcao(c, `${c.icon} ${c.name}`)).join('')}</optgroup>`
     : '';
-  return topo + grupos.join('') + semGrupo;
+  return grupos.join('') + semGrupo;
 }
 
 /* ---------- Convite para a família ----------

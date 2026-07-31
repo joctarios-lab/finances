@@ -777,25 +777,6 @@ body {
    saído justamente por isso. */
 
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
-/* Atalhos de categoria: uma linha que rola, com o "Outra" ancorado ao lado.
-
-   Seis chips não cabem na largura de um celular. Quebrando em linhas, o campo
-   cresceria três vezes e empurraria valor, data e conta para fora da primeira
-   tela — num formulário, altura é o recurso escasso. Rolando na horizontal, ele
-   ocupa a mesma altura de quando eram três.
-
-   `min-width: 0` no filho é o que permite ele encolher dentro do flex em vez de
-   esticar a linha inteira e criar rolagem na PÁGINA, que é o defeito clássico
-   desse arranjo. */
-.cat-linha { display: flex; align-items: center; gap: 8px; }
-.cat-linha .chips-rol {
-  flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto;
-  scrollbar-width: none; -webkit-overflow-scrolling: touch;
-  padding-bottom: 2px;
-}
-.cat-linha .chips-rol::-webkit-scrollbar { display: none; }
-.cat-linha .chip { flex: none; }
-.cat-linha #cat-other { flex: none; }
 .chip {
   border: 1px solid var(--line); background: var(--ink-2); color: var(--paper-dim);
   padding: 7px 14px; border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: var(--font-body);

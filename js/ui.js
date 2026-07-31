@@ -149,18 +149,8 @@ const UI = {
               }<span class="ui-grupo-seta">›</span></span></div>`;
             visiveis++;
           }
-          /* Opções sem grupo ficam no primeiro nível, ANTES dos grupos: é o
-             lugar do placeholder ("— escolha a categoria —") e dos atalhos para
-             as categorias mais usadas, que existem justamente para não obrigar a
-             abrir o envelope.
-
-             Montadas de uma vez e prefixadas juntas. Antes cada uma era colocada
-             na frente do que já havia, o que invertia a ordem — com uma só
-             (o placeholder) isso não aparecia; com seis atalhos, a lista sairia
-             de trás para a frente. */
-          let soltasHtml = '';
-          opcoes.forEach((o, i) => { if (!o.grupo) { soltasHtml += linhaOpcao(o, i); visiveis++; } });
-          html = soltasHtml + html;
+          // Opções sem grupo (ex.: "— escolha a categoria —") ficam no primeiro nível
+          opcoes.forEach((o, i) => { if (!o.grupo) { html = linhaOpcao(o, i) + html; visiveis++; } });
         } else {
           html += `<div class="ui-voltar" data-voltar="1">‹ Todos os grupos</div>
             <div class="ui-group">${this.esc(grupoAberto)}</div>`;
