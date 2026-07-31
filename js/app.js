@@ -1345,13 +1345,20 @@ function renderInicio(period) {
   // quando dá para ver se foi mercado ou delivery.
   let budgets = '';
   const envInvest = DB.envelopeDeInvestimento();
-  for (const c of DB.rootCategories('Despesa').sort((a, b) => (byCat[b.id] || 0) - (byCat[a.id] || 0))) {
-    /* INVESTIMENTO se mede pelo que foi GUARDADO, não pelo que foi gasto: o aporte
-       é transferência, e transferência não entra em `spentByCategory`. Sem este
-       desvio, a barra do envelope ficaria eternamente em 0% e o plano de poupar
-       seria a única linha do orçamento impossível de acompanhar. */
+  /* INVESTIMENTO se mede pelo que foi GUARDADO, não pelo que foi gasto: o aporte é
+     transferência, e transferência não entra em `spentByCategory`. Sem este
+     desvio, a barra do envelope ficaria eternamente em 0% e o plano de poupar
+     seria a única linha do orçamento impossível de acompanhar. */
+  const usadoNoEnvelope = c => (envInvest && c.id === envInvest.id
+    ? DB.investidoNoPeriodo(period) : (byCat[c.id] || 0));
+  /* A ORDEM sai do mesmo número que a linha mostra.
+     Ordenar por `byCat` deixava Investimentos sempre no fim da lista — com 3.400
+     guardados ele aparecia abaixo de envelopes de 60 reais, porque para o
+     `spentByCategory` ele vale zero. Uma lista ordenada por um critério
+     invisível na tela lê como lista desordenada. */
+  for (const c of DB.rootCategories('Despesa').sort((a, b) => usadoNoEnvelope(b) - usadoNoEnvelope(a))) {
     const ehInvest = !!envInvest && c.id === envInvest.id;
-    const spent = ehInvest ? DB.investidoNoPeriodo(period) : (byCat[c.id] || 0);
+    const spent = usadoNoEnvelope(c);
     const limite = DB.budgetOf(c.id, period);
     const ajustado = !!DB.overrideDeOrcamento(c.id, period);
     if (!limite && !spent) continue;

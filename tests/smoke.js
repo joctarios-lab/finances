@@ -5319,6 +5319,26 @@ check('função is_member definida antes das policies', schema.indexOf('function
       const l = linhas.find(x => x.includes(`>${envInv.icon} ${envInv.name}`)) || '';
       return (l.match(/class="bar ([a-z-]+)"/) || [])[1];
     };
+    /* A ORDEM da lista sai do valor que cada linha MOSTRA.
+       Ordenada por `byCat`, Investimentos caía sempre no fim — com milhares
+       guardados ele aparecia abaixo de envelopes de poucos reais, porque para o
+       `spentByCategory` ele vale zero. Lista ordenada por critério invisível na
+       tela lê como lista desordenada. */
+    {
+      const linhasDe = html => (html.match(/<div class="budget-row[\s\S]*?<\/div>\s*<\/div>/g) || []);
+      const nomeDaLinha = l => (l.match(/<b>([^<]+)/) || ['', ''])[1].trim();
+      // Um envelope com gasto pequeno, para o investimento ter de passar por cima
+      const byCatDoMes = DB.spentByCategory(pInv);
+      const pequeno = DB.rootCategories('Despesa').find(c => c.id !== envInv.id
+        && (byCatDoMes[c.id] || 0) > 0 && (byCatDoMes[c.id] || 0) < DB.investidoNoPeriodo(pInv));
+      check('há envelope com gasto menor que o investido, senão o teste é vazio', !!pequeno, true);
+      const ordem = linhasDe(renderInicio(pInv)).map(nomeDaLinha);
+      const iInvest = ordem.findIndex(n => n.includes(envInv.name));
+      const iPequeno = ordem.findIndex(n => n.includes(pequeno.name));
+      check('investimento aparece acima de quem gastou menos que ele', iInvest < iPequeno, true);
+      check('  e não no fim da lista', iInvest < ordem.length - 1, true);
+    }
+
     const guardado = DB.investidoNoPeriodo(pInv);
     DB.ajustarOrcamento(envInv.id, pInv, guardado * 10);      // ~10% da meta
     check('guardou pouco: âmbar, não o verde da régua de gasto', classeDaBarraInv(), 'bar-amber');
