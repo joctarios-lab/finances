@@ -89,7 +89,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes,
+  cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
@@ -5652,11 +5652,44 @@ check('função is_member definida antes das policies', schema.indexOf('function
         Math.round(somaDasBarras) !== Math.round(DB.expensesOf(proxP).reduce((s, t) => s + (Number(t.amount) || 0), 0)), true);
       check('  e o restante sai da mesma conta',
         foot.includes(fmtShort(DB.budgetTotal(proxP) - somaDasBarras)), true);
-      /* E o que falta GUARDAR é dito à parte: sem isso, o "Restante" convida a
-         gastar a meta de poupança do mês. */
-      const faltaGuardar = DB.budgetOf(envI.id, proxP) - DB.investidoNoPeriodo(proxP);
-      check('  quando falta cumprir a meta de investimento, a tela avisa',
-        /é a meta de investimento ainda não cumprida/.test(heroFut), faltaGuardar > 0.005);
+      /* E o que falta GUARDAR é dito à parte — mas a FRASE MUDA conforme haja
+         sobra ou não.
+
+         "Do restante, R$ 3.266 é a meta de investimento" pressupõe que exista
+         restante. Em julho o orçamento estourou em R$ 7.580: não há restante
+         nenhum, e a frase falava de uma sobra que não existe. */
+      /* A função é testada DIRETO, com os três cenários montados à mão: montar
+         "orçamento estourado" mexendo nos tetos da tela exigiria conhecer o gasto
+         do fixture, e um cenário que não estoura faria o teste passar por vazio. */
+      const limpo = t => t.replace(/<[^>]+>/g, '');
+      const faltando = { id: envI.id };
+      const usadoZero = () => 0;                       // nada guardado: falta tudo
+      const tetoInv = DB.budgetOf(envI.id, proxP);
+      check('a meta de investimento do cenário é > 0, senão o teste é vazio', tetoInv > 0, true);
+
+      const comSobra = limpo(notaDoInvestimento(faltando, proxP, 50000, usadoZero));
+      check('com sobra, a frase protege a meta dentro do restante',
+        /Do restante[\s\S]*não é para gastar/.test(comSobra), true);
+
+      /* ESTOURADO: "Do restante, R$ X é a meta…" pressupõe que exista restante.
+         Medido em julho/2026 — o orçamento estourou em R$ 7.580 e a frase falava
+         de uma sobra que não existe. */
+      const estourado = limpo(notaDoInvestimento(faltando, proxP, -7580, usadoZero));
+      check('com o orçamento estourado, a frase não fala de "restante"',
+        /Do restante/.test(estourado), false);
+      check('  ela diz que estourou e quanto falta guardar',
+        /estourou em[\s\S]*faltam[\s\S]*meta de investimento/.test(estourado), true);
+      check('  com o valor do estouro', estourado.includes(fmtShort(7580)), true);
+
+      // Sobra MENOR que o que falta: só o que cabe nela é "reservado"
+      const sobraCurta = limpo(notaDoInvestimento(faltando, proxP, 10, usadoZero));
+      check('a reserva anunciada nunca passa do restante', sobraCurta.includes(fmtShort(10)), true);
+
+      // Meta cumprida: nada a avisar
+      check('meta de investimento cumprida não gera aviso',
+        notaDoInvestimento(faltando, proxP, 50000, () => tetoInv), '');
+      check('sem envelope de investimento, também não',
+        notaDoInvestimento(null, proxP, 50000, usadoZero), '');
     }
 
     /* O GRÁFICO DE 12 MESES CONTA A MESMA HISTÓRIA que o hero e o extrato.

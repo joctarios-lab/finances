@@ -1261,6 +1261,28 @@ function secaoDoQueAindaVem(period, previstoDoMes) {
     <div class="grid-3">${cards.join('')}</div>`;
 }
 
+/* O que ainda falta GUARDAR, dito conforme o orçamento tenha sobra ou não.
+
+   "Do restante, R$ 3.266 é a meta de investimento" pressupõe que exista restante.
+   Em julho o orçamento estourou em R$ 7.580 — não há restante nenhum, e a frase
+   ficava sem sentido: falava de uma sobra que não existe.
+
+   São dois cenários diferentes e a leitura muda inteira. Com sobra, o aviso
+   protege a meta: parte daquele dinheiro tem destino. Sem sobra, o aviso é outra
+   coisa — a meta de poupança não vai sair deste mês, e dizer isso é mais honesto
+   do que sugerir um "restante" que já foi gasto. */
+function notaDoInvestimento(env, period, restante, usadoNoEnvelope) {
+  if (!env) return '';
+  const falta = DB.budgetOf(env.id, period) - usadoNoEnvelope(env);
+  if (falta <= 0.005) return '';                 // meta cumprida: nada a avisar
+  if (restante > 0.005) {
+    // Só a parte que cabe na sobra é "reservada"; o excedente já não tem de onde sair
+    const reservado = Math.min(falta, restante);
+    return `<p class="muted" style="margin-top:6px">Do restante, <b>${fmtShort(reservado)}</b> é a meta de investimento ainda não cumprida — não é para gastar.</p>`;
+  }
+  return `<p class="muted" style="margin-top:6px">O orçamento já estourou em <b>${fmtShort(-restante)}</b>, e ainda faltam <b>${fmtShort(falta)}</b> para a meta de investimento do mês.</p>`;
+}
+
 /* QUANDO a reserva fica pronta.
 
    "Faltam R$ 72.526" é um número que paralisa; "no ritmo atual, fevereiro de 2028"
@@ -1858,11 +1880,7 @@ function renderInicio(period) {
           <span>Usado <b>${fmtShort(usadoNasBarras)}</b></span>
           <span>Restante <b class="${budgetTotal - usadoNasBarras >= 0 ? 'txt-green' : 'txt-red'}">${fmtShort(budgetTotal - usadoNasBarras)}</b></span>
         </div>
-        <!-- O que ainda falta GUARDAR não é dinheiro para gastar. Sem esta linha,
-             o "Restante" convida a gastar a meta de poupança do mês. -->
-        ${envInvest && DB.budgetOf(envInvest.id, period) - usadoNoEnvelope(envInvest) > 0.005
-          ? `<p class="muted" style="margin-top:6px">Do restante, <b>${fmtShort(DB.budgetOf(envInvest.id, period) - usadoNoEnvelope(envInvest))}</b> é a meta de investimento ainda não cumprida — não é para gastar.</p>`
-          : ''}` : ''}
+        ${notaDoInvestimento(envInvest, period, budgetTotal - usadoNasBarras, usadoNoEnvelope)}` : ''}
       </div>
     </div>
     ${secaoDoQueAindaVem(period, previsto)}
