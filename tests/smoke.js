@@ -533,6 +533,60 @@ try {
       Math.abs(st.dailyAvg - st.spent / st.totalDays) < 0.005, true);
     check(`  marcado como mês que não começou`, st.naoComecou, true);
   }
+
+  /* ---- O CARD DE PROJEÇÃO NÃO PROMETE POUPANÇA QUE NÃO EXISTE ----
+
+     A taxa de poupança é (renda − fechamento projetado) / renda. Num mês que não
+     começou, o fechamento projetado é só o que está CONTRATADO: aluguel, parcelas,
+     escola. O gasto variável — mercado, combustível, farmácia — ainda não existe.
+
+     Medido em agosto/2026: o card anunciava "Poupança projetada: 60%", prometendo
+     R$ 10.262 de sobra num mês que vai consumir a maior parte disso. O próprio app
+     já dizia em `cardPrevisaoDoMes` que "chamar o resto de sobra seria otimista
+     por construção" — este card era onde a regra estava sendo violada. */
+  {
+    const offP = state.monthOffset;
+    state.monthOffset = 1;
+    const perP = DB.monthPeriod(new Date(), 1);
+    const telaFut = renderInicio(perP);
+    check('mês futuro não anuncia taxa de poupança', /Poupança projetada/.test(telaFut), false);
+    check('  e diz que o variável ainda não entrou', /gasto variável ainda não entra/.test(telaFut), true);
+    check('  chamando o previsto de comprometido, não de fechamento',
+      /Já comprometido no mês/.test(telaFut), true);
+    check('  e avisando que o que resta não é sobra', /Não é sobra/.test(telaFut), true);
+    /* Uma linha só para o previsto: no mês futuro `spent` e `projection` são o
+       MESMO número, e duas linhas com rótulos diferentes fazem o leitor procurar
+       a diferença entre elas. */
+    check('  sem repetir o mesmo valor em duas linhas',
+      /Gasto até hoje/.test(telaFut), false);
+
+    /* O MESMO ENGANO em outros dois cards, e todos os três eram variações da
+       divisão "receita − o que está contratado". A regra 50·30·20 tirava a linha de
+       poupança do RESÍDUO (100 − necessidades − desejos), e num mês futuro o
+       resíduo é generoso por construção. E "O que está sendo construído" dividia
+       o resultado do mês pela receita. */
+    check('a regra 50·30·20 não mostra poupança em mês futuro',
+      /Poupança \(sobra\)/.test(telaFut), false);
+    check('  e avisa que os percentuais são do contratado',
+      /o variável do mês ainda não entra/.test(telaFut), true);
+    state.repOffset = 1;
+    const relFutP = renderRelatorios();
+    check('"o que está sendo construído" não anuncia taxa em mês futuro',
+      /Taxa de poupança do mês/.test(relFutP), false);
+    // …mas continua falando do que é FATO: patrimônio, reserva, cobertura
+    check('  e segue mostrando a reserva', /Reserva de emergência/.test(relFutP), true);
+    check('  e o que há em contas', /Em contas hoje/.test(relFutP), true);
+
+    // No mês corrente nada disso muda: lá existe ritmo, e as taxas são legítimas
+    state.monthOffset = 0; state.repOffset = 0;
+    const telaHoje = renderInicio(DB.monthPeriod(new Date()));
+    check('mês corrente mantém a taxa de poupança', /Poupança projetada/.test(telaHoje), true);
+    check('  e o gasto até hoje', /Gasto até hoje/.test(telaHoje), true);
+    check('  com o fechamento projetado', /Fechamento projetado/.test(telaHoje), true);
+    check('  e a linha de poupança na regra 50·30·20', /Poupança \(sobra\)/.test(telaHoje), true);
+    check('  e a taxa no card de construção', /Taxa de poupança do mês/.test(renderRelatorios()), true);
+    state.monthOffset = offP;
+  }
   // No mês corrente o run-rate continua sendo run-rate: projeta acima do gasto
   const stHoje = DB.statsFor(DB.monthPeriod(new Date()));
   check('mês corrente: a projeção continua extrapolando o ritmo',

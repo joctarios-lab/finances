@@ -1398,23 +1398,40 @@ function renderInicio(period) {
      R$ 300 sem perder de vista de quanto era a fatura. */
   // --- Projeção de fim de mês (run-rate) ---
   const projPct = refLimit > 0 ? Math.round(stats.projection / refLimit * 100) : 0;
-  const savingsRate = income > 0 ? Math.round((income - stats.projection) / income * 100) : null;
+  /* TAXA DE POUPANÇA SÓ QUANDO HÁ RITMO PARA PROJETAR.
+
+     A conta é (renda − fechamento projetado) / renda. Num mês que ainda não
+     começou, o "fechamento projetado" é só o que está CONTRATADO — aluguel,
+     parcelas, escola. O gasto variável do mês (mercado, combustível, farmácia)
+     não existe ainda, e chamar a diferença de "poupança projetada" prometia 60%
+     de sobra num mês que vai consumir a maior parte disso.
+
+     O próprio app já dizia isso em `cardPrevisaoDoMes`: "uma projeção que só
+     conhece contas fixas e chama o resto de sobra seria otimista por construção".
+     Este card era o lugar onde a regra estava sendo violada.
+
+     Em mês futuro a linha desaparece e no lugar entra o que se pode afirmar: o
+     quanto das receitas já está comprometido. */
+  const savingsRate = income > 0 && !stats.naoComecou
+    ? Math.round((income - stats.projection) / income * 100) : null;
   const projCard = `
     <div class="card">
       <div class="card-head"><div><b>Projeção do mês</b><small>${stats.naoComecou
-        ? `com o que já está previsto (${fmtShort(stats.dailyAvg)}/dia em média)`
+        ? 'só o que já está contratado — gasto variável ainda não entra'
         : `no ritmo atual de gastos (${fmtShort(stats.dailyAvg)}/dia)`}</small></div><span class="kpi-ico t-warning" data-ico="calendar" style="width:34px;height:34px;margin:0"></span></div>
       ${realized > 0 ? `<div class="proj-row"><span>${stats.naoComecou ? 'Receitas previstas para o mês' : 'Receitas lançadas no período'}</span><b class="txt-green">${fmtShort(realized)}</b></div>` : ''}
-      <!-- Num mês que não começou não existe "até hoje": o número é o mês inteiro
-           previsto, e chamá-lo de gasto realizado seria mentir sobre o que ele é. -->
-      <div class="proj-row"><span>${stats.naoComecou
-        ? `Previsto para o mês (${stats.totalDays} dias)`
-        : `Gasto até hoje (dia ${stats.elapsedDays} de ${stats.totalDays})`}</span><b>${fmtShort(stats.spent)}</b></div>
-      <div class="proj-row"><span>Fechamento projetado</span><b class="${refLimit > 0 && stats.projection > refLimit ? 'txt-red' : 'txt-green'}">${fmtShort(stats.projection)}</b></div>
+      <!-- Num mês que não começou, "gasto até hoje" e "fechamento projetado" são o
+           MESMO número: não há ritmo para extrapolar, e a projeção é o próprio
+           previsto. Mostrar as duas linhas repetia o valor com dois rótulos
+           diferentes, o que faz o leitor procurar a diferença entre elas. Some uma
+           e a que fica diz o que é. -->
+      ${stats.naoComecou ? '' : `<div class="proj-row"><span>Gasto até hoje (dia ${stats.elapsedDays} de ${stats.totalDays})</span><b>${fmtShort(stats.spent)}</b></div>`}
+      <div class="proj-row"><span>${stats.naoComecou ? 'Já comprometido no mês' : 'Fechamento projetado'}</span><b class="${refLimit > 0 && stats.projection > refLimit ? 'txt-red' : 'txt-green'}">${fmtShort(stats.projection)}</b></div>
       ${refLimit > 0 ? `
         <div class="bar ${barClass(projPct)}" style="margin:8px 0 4px"><i style="width:${Math.min(100, projPct)}%"></i></div>
         <div class="proj-row muted"><span>${projPct}% ${income > 0 ? (realized > 0 ? 'das receitas do período' : 'da renda familiar') : 'do orçamento total'} (${fmtShort(refLimit)})</span>
         ${savingsRate !== null ? `<span>Poupança projetada: <b class="${savingsRate >= 20 ? 'txt-green' : savingsRate >= 0 ? 'txt-amber' : 'txt-red'}">${savingsRate}%</b></span>` : ''}</div>
+        ${stats.naoComecou ? `<p class="muted" style="margin-top:6px">Sobrariam <b>${fmtShort(Math.max(0, income - stats.projection))}</b> para o gasto variável do mês — mercado, transporte e o que mais aparecer. Não é sobra.</p>` : ''}
       ` : `<p class="muted" style="margin-top:6px">Cadastre a renda familiar em Configurações → Membros &amp; ciclo para ver % da renda e taxa de poupança (especialistas recomendam poupar ≥ 20%).</p>`}
     </div>`;
 
@@ -1430,12 +1447,20 @@ function renderInicio(period) {
         <div class="budget-head"><b>${nome}</b><span class="num">${pct}% <span class="muted">/ alvo ${alvo}%</span></span></div>
         <div class="bar ${cls}"><i style="width:${Math.min(100, pct)}%"></i></div>
       </div>`;
+    /* A LINHA DE POUPANÇA É RESÍDUO: 100 − necessidades − desejos. Num mês que
+       ainda não começou, necessidades e desejos contêm só o que está contratado, e
+       o resíduo vira uma poupança generosa que ninguém prometeu — o mesmo engano
+       da "Poupança projetada". Em mês futuro ela sai, e o cabeçalho diz que os
+       percentuais são do previsto, não do realizado. */
+    const futuro5030 = DB.inicioISO(period) > DB.hojeISO();
     rule5030 = `
       <div class="card">
-        <div class="card-head"><div><b>Regra 50 · 30 · 20</b><small>necessidades, desejos e poupança como % da renda</small></div></div>
+        <div class="card-head"><div><b>Regra 50 · 30 · 20</b><small>${futuro5030
+          ? 'do que já está contratado — o variável do mês ainda não entra'
+          : 'necessidades, desejos e poupança como % da renda'}</small></div></div>
         ${row('Necessidades', nPct, 50, nPct > 50 ? 'bar-red' : 'bar-green')}
         ${row('Desejos', wPct, 30, wPct > 30 ? 'bar-red' : 'bar-green')}
-        ${row('Poupança (sobra)', sPct, 20, sPct < 20 ? 'bar-amber' : 'bar-green')}
+        ${futuro5030 ? '' : row('Poupança (sobra)', sPct, 20, sPct < 20 ? 'bar-amber' : 'bar-green')}
       </div>`;
   }
 
@@ -3113,9 +3138,17 @@ function relConstrucao({ period, receitas, resultado, filtrado }) {
   const meses = gastoMedio > 0 ? reserva / gastoMedio : 0;
   const contas = DB.accountsTotal();
   const metas = DB.all('goals').filter(g => !g.done && !DB.isReserveGoal(g));
-  // Taxa de poupança só existe com a receita inteira: sob recorte, o resultado
-  // não é resultado de nada
-  const taxa = !filtrado && receitas > 0 ? resultado / receitas * 100 : null;
+  /* Taxa de poupança só existe com a receita inteira: sob recorte, o resultado
+     não é resultado de nada.
+
+     E só em mês que JÁ ACONTECEU. Num mês futuro, `resultado` é a receita menos as
+     contas contratadas — o gasto variável ainda não existe —, e a divisão daria
+     uma taxa de 60% que não descreve poupança nenhuma. É o mesmo engano que a
+     "Poupança projetada" do Painel cometia: chamar de sobra o que ainda vai ser
+     gasto. Aqui a linha desaparece e o card segue falando do que é fato —
+     patrimônio, reserva e cobertura. */
+  const mesFuturo = DB.inicioISO(period) > DB.hojeISO();
+  const taxa = !filtrado && !mesFuturo && receitas > 0 ? resultado / receitas * 100 : null;
 
   return `
     <div class="grid-2">
