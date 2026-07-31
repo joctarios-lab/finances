@@ -7187,6 +7187,42 @@ try {
       fAcima(cN.yaxis[0]) >= 0.5 - 1e-9, true);
   }
 
+  /* ---- O DESVIO DO MÊS acima do nome do mês ----
+     O gráfico mostrava entrou, saiu e saldo, e deixava "sobrou ou faltou neste
+     mês?" para o olho resolver comparando alturas — o que responde "qual barra é
+     maior", não "por quanto". */
+  {
+    zeraFila();
+    const mesesD = [
+      { period: DB.monthPeriod(new Date(), -2), entra: 0, sai: 0, saldo: 1000, futuro: false },
+      { period: DB.monthPeriod(new Date(), -1), entra: 5000, sai: 3000, saldo: 3000, futuro: false },
+      { period: DB.monthPeriod(new Date()), entra: 4000, sai: 6500, saldo: 500, futuro: false },
+      { period: DB.monthPeriod(new Date(), 1), entra: 7000, sai: 7000, saldo: 500, futuro: true },
+    ];
+    svgFluxoSaldo(mesesD);
+    const cD = cfgDo();
+    const rot = cD.xaxis.categories;
+    const fD = cD.xaxis.labels.formatter;
+    const linhas = rot.map(r => fD(r));
+    // Array = duas linhas; o desvio vem PRIMEIRO, e é isso que o põe acima do mês
+    check('o rótulo do mês com sobra tem duas linhas', Array.isArray(linhas[1]), true);
+    check('  com o desvio acima do nome do mês', linhas[1][0].includes('+'), true);
+    check('  e o nome do mês embaixo', linhas[1][1], rot[1]);
+    check('mês com falta traz o sinal de menos', linhas[2][0].includes('−'), true);
+    check('  e o valor da diferença', linhas[2][0].replace(/\D/g, ''), '2500');
+    /* Mês sem NADA lançado não vira "0": isso afirmaria que o mês fechou
+       empatado, quando o que houve foi mês vazio. Um zero de verdade — entrou e
+       saiu o mesmo valor — continua aparecendo. */
+    check('mês sem movimento não ganha desvio', Array.isArray(linhas[0]), false);
+    check('mas empate de verdade aparece', linhas[3][0], '0');
+    // A cor segue o sinal, uma por categoria, e o mês vazio volta ao cinza do eixo
+    const cores = cD.xaxis.labels.style.colors;
+    check('sobra em verde', cores[1], Graficos.cor.verde);
+    check('falta em vermelho', cores[2], Graficos.cor.vermelho);
+    check('mês vazio no cinza do eixo', cores[0], Graficos.cor.tintaFraca);
+    check('uma cor por mês', cores.length, mesesD.length);
+  }
+
   // Rótulo no tamanho da escala do tema e sem giro: nome de mês virado é mais
   // difícil de ler, e tamanho solto sai do alinhamento com o resto do layout
   check('os rótulos não colidem nem giram',

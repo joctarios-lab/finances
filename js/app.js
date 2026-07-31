@@ -580,6 +580,13 @@ function svgFluxoSaldo(meses, opts = {}) {
   const saidas = meses.map(m => Math.round(Number(m.sai) || 0));
   const saldos = meses.map(m => Math.round(Number(m.saldo) || 0));
 
+  /* Mês sem entrada NEM saída não tem desvio para mostrar: escrever "0" ali seria
+     afirmar que o mês fechou empatado, quando o que houve foi mês sem nada
+     lançado. Medido na base real: a janela de 13 meses começa com cinco meses
+     vazios, que virariam cinco zeros verdes no eixo. Um zero de verdade —
+     entrou e saiu o mesmo valor — continua aparecendo. */
+  const semMovimento = i => entradas[i] === 0 && saidas[i] === 0;
+
   /* DUAS ESCALAS ANCORADAS: mesmo zero, mesmo topo.
 
      Fluxo mensal vive nos milhares e saldo acumulado nas dezenas de milhares —
@@ -625,7 +632,43 @@ function svgFluxoSaldo(meses, opts = {}) {
   const cfg = {
     ...Graficos.base(alt, {
       chart: { type: 'line', stacked: false },
-      xaxis: { categories: rotulos, tooltip: { enabled: false } },
+      /* O DESVIO DO MÊS acima do nome do mês.
+
+         O gráfico mostra três coisas — quanto entrou, quanto saiu e o saldo
+         acumulado — e deixava a pergunta mais direta para o olho fazer sozinho:
+         sobrou ou faltou naquele mês? Comparar a altura de duas barras vizinhas
+         responde "qual é maior", não "por quanto".
+
+         Vai no rótulo do eixo, em duas linhas (o ApexCharts desenha uma linha por
+         item quando o formatter devolve array), e não como rótulo de dado: sobre
+         as barras ele brigaria com a área do saldo, que passa por cima.
+
+         A cor segue o sinal e é a mesma das barras — verde para sobra, vermelho
+         para falta. `style.colors` aceita um valor por categoria, então cada mês
+         recebe a sua; o nome do mês vai junto na cor, o que é aceitável porque as
+         duas linhas falam do mesmo mês.
+
+         O índice vem de `rotulos.indexOf`, e isso só é confiável porque os
+         rótulos são ÚNICOS por construção (ver acima) — numa janela de 13 meses
+         "jan" apareceria duas vezes e o desvio de janeiro de 2027 seria escrito
+         embaixo de janeiro de 2026. */
+      xaxis: {
+        categories: rotulos,
+        tooltip: { enabled: false },
+        labels: {
+          formatter: v => {
+            const i = rotulos.indexOf(v);
+            if (i < 0 || semMovimento(i)) return v;
+            const d = entradas[i] - saidas[i];
+            const sinal = d > 0 ? '+' : d < 0 ? '−' : '';
+            return [sinal + fmtShort(Math.abs(d)).replace('R$', '').trim(), v];
+          },
+          style: {
+            colors: meses.map((_m, i) => (semMovimento(i) ? Graficos.cor.tintaFraca
+              : entradas[i] - saidas[i] >= 0 ? Graficos.cor.verde : Graficos.cor.vermelho)),
+          },
+        },
+      },
       tooltip: {
         shared: true, intersect: false,
         y: { formatter: v => (v == null ? '—' : fmt(v)) },
