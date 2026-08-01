@@ -19,8 +19,8 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 112 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2167 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 113 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2171 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - Nada pendente no git
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync

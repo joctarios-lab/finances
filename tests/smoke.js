@@ -82,7 +82,7 @@ global.pontosDe = s => (s.data || []).map(p => (p && typeof p === 'object' ? p.y
 const appSrc = fs.readFileSync(BASE + 'js/app.js', 'utf8').split('/* ---------- Boot ---------- */')[0];
 eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
-  state, fmt, fmtShort, fmtSemMoeda, fmtDay, esc, todayISO, avisarSeUsouGuardado, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
+  state, fmt, fmtShort, fmtSemMoeda, fmtDay, fmtDate, esc, todayISO, avisarSeUsouGuardado, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
@@ -240,15 +240,34 @@ const idSemTipo = DB.upsert('accounts', { name: 'Sem tipo', balance: 700, active
 check('conta sem tipo entra no caixa, não some', DB.saldoEmCaixa(), DB.accountsTotal() - 12000);
 DB.remove('accounts', idSemTipo);
 const heroSep = renderInicio(p);
-/* A linha inteira, com o valor: "Em conta" sozinho é prefixo de "Em contas" e o
-   teste passaria com o rótulo antigo intacto. */
-check('o hero separa o que está em conta',
-  heroSep.includes(`<span>Em conta <i>disponível no banco</i></span><b>${fmt(DB.saldoEmCaixa())}</b>`), true);
-check('e mostra o investido em linha própria', heroSep.includes('+ Investido'), true);
-/* O subtotal de caixa é o número que responde "quanto dá para gastar agora" — o
-   mesmo DB.caixaLivre() que decide se um gasto encosta na reserva. */
-check('e dá o subtotal de hoje', heroSep.includes('= Dá para gastar hoje'), true);
-check('que é o caixa livre, não o disponível', heroSep.includes(fmt(DB.caixaLivre())), true);
+/* A linha "Em contas" continua sendo o total, como sempre foi: as duas de baixo a
+   ABREM, não somam a ela. A conta da tela segue contas − comprometido − guardado. */
+check('o total das contas continua abrindo a conta',
+  heroSep.includes(`<span>Em contas</span><b>${fmt(DB.accountsTotal())}</b>`), true);
+check('e ele se abre no que está disponível na conta',
+  heroSep.includes(`<span>disponível na conta</span><b>${fmt(DB.saldoEmCaixa())}</b>`), true);
+check('e no que está investido',
+  heroSep.includes(`<b>${fmt(DB.saldoInvestido())}</b>`) && heroSep.includes('>investido <i>'), true);
+/* Recuadas e sem operador: com "+" elas viram parcelas e a conta parece não
+   fechar — foi o defeito da primeira tentativa. */
+check('as duas entram como detalhe, não como parcela',
+  (heroSep.match(/hc-l hc-d/g) || []).length, 2);
+check('e nenhuma delas leva operador', /hc-d"><span>[+−-]/.test(heroSep), false);
+check('o comprometido continua na conta', heroSep.includes('− Comprometido'), true);
+/* O rótulo do prazo mostrava `fimISO`, que é EXCLUSIVO — "até 01 de set." para um
+   comprometido que só conta o que vence até 31 de agosto. */
+if (DB.committedDepois() > 0.005) {
+  /* Só o bloco da conta: o painel inteiro cita outras datas por outros motivos, e
+     a asserção negativa varrendo tudo acusaria inocentes. */
+  const contaHero = heroSep.slice(heroSep.indexOf('<div class="hero-conta">'),
+    heroSep.indexOf('hc-total') + 200);
+  const fimExcl = DB.fimISO(DB.monthPeriod(new Date()));
+  const ultimoDia = new Date(Date.parse(fimExcl + 'T12:00:00') - 86400000);
+  check('e o prazo dele é o último dia do ciclo, não o primeiro do seguinte',
+    contaHero.includes(`até ${fmtDate(ultimoDia)}`), true);
+  check('e não a data crua do fim exclusivo',
+    contaHero.includes(`até ${fmtDate(new Date(fimExcl + 'T12:00:00'))}`), false);
+}
 
 /* ---- Fluxos reais: aportes, detalhe da meta e da fatura ---- */
 /* ---- Compra parcelada (fluxo real, do clique às parcelas) ----

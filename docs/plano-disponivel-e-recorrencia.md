@@ -144,9 +144,26 @@ do contrato — 3 dias no semanal, 7 no quinzenal, 15 no mensal e no anual.
 dos quais R$ 134,00 num CDB. O número prometia um poder de compra que não existia
 e não havia como descobrir isso na tela. `saldoEmCaixa` e `saldoInvestido` separam
 por **tipo de conta** — que é onde o dinheiro ESTÁ —, recorte diferente de
-`guardado()`, que diz quem tem DONO e pode estar na conta corrente. O hero passou
-a abrir com o dinheiro de uso imediato e a mostrar o subtotal `caixaLivre()` — "dá
-para gastar hoje" — antes de descontar o comprometido, que é planejamento.
+`guardado()`, que diz quem tem DONO e pode estar na conta corrente.
+
+**A primeira correção do hero foi rejeitada, e o motivo vale registrar.** Ela
+transformou a conta de quatro linhas em seis: somava `+ Investido`, logo abaixo
+subtraía `− Guardado` o mesmo valor, e ainda repetia o caixa num subtotal
+`= Dá para gastar hoje`. Três defeitos de leitura de uma vez — somar e subtrair o
+mesmo número em linhas seguidas parece erro de conta; o mesmo valor com dois
+rótulos faz duvidar dos dois; e dois números disputando "quanto posso gastar"
+entregam ambiguidade a quem pediu clareza.
+
+A raiz foi tentar fazer **uma conta linear responder duas perguntas** (caixa de
+hoje × planejamento do mês). O desenho aceito **abre** a linha em vez de
+acrescentar parcelas: "disponível na conta" e "investido" entram recuadas, sem
+operador e com peso menor, e a conta da tela continua sendo exatamente a de
+sempre — contas − comprometido − guardado. `caixaLivre()` segue existindo no
+código, disparando a pergunta de resgate; ele só não vira linha de hero.
+
+**O prazo do comprometido mostrava um dia a mais.** `fimISO` é exclusivo, então o
+rótulo dizia "até 01 de set." de um número que só conta o que vence até 31 de
+agosto. A barra de período já resolvia isso; o hero, não.
 
 ## Cenários que a Fase 2 precisa cobrir
 
