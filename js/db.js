@@ -1189,6 +1189,32 @@ const DB = {
       .reduce((s, a) => s + (Number(a.balance) || 0), 0);
   },
 
+  /* ---------- Caixa x investido ----------
+
+     `accountsTotal` soma tudo o que a família tem, e é o número certo para
+     patrimônio. Mas ele não responde "quanto eu tenho na conta AGORA": um saldo
+     de R$ 325 do qual R$ 134 estão num CDB não é R$ 325 de poder de compra, e o
+     hero mostrava só o total — foi o que motivou esta separação.
+
+     A divisão é pelo TIPO da conta, não pelo que está guardado em metas. São dois
+     recortes diferentes e ambos precisam existir: `guardado()` diz o que tem DONO
+     (pode estar na conta corrente), e isto aqui diz onde o dinheiro ESTÁ.
+
+     O teste é pela lista de investimento, não pela de caixa: conta com tipo vazio
+     — as antigas, criadas antes de o campo existir — cai em caixa. Sumir da linha
+     "em conta" é o erro pior dos dois: quem tem o dinheiro precisa vê-lo. */
+  TIPOS_INVESTIDOS: ['Investimento', 'Caixinha / Rendimento'],
+
+  saldoInvestido() {
+    return this.all('accounts')
+      .filter(a => a.active !== false && this.TIPOS_INVESTIDOS.includes(a.type))
+      .reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  },
+
+  // O dinheiro de uso imediato: conta corrente, carteira digital e o que não
+  // declarou tipo. Por construção, saldoEmCaixa + saldoInvestido = accountsTotal.
+  saldoEmCaixa() { return this.accountsTotal() - this.saldoInvestido(); },
+
   /* Disponível de verdade: o que está nas contas, menos o que já tem destino.
 
      Três subtrações, e cada uma responde a uma pergunta diferente:
@@ -1414,6 +1440,53 @@ const DB = {
     return Math.round(this.mediana(pagas) * 100) / 100;
   },
 
+  /* A JANELA em que dois lançamentos com o mesmo nome são a MESMA ocorrência.
+
+     Ela existe porque a chave do vínculo não basta e a chave do nome, sozinha,
+     erra para o outro lado. Casar por nome dentro do mês inteiro é certo para o
+     aluguel (uma vez por mês) e destrói a diarista semanal: as ocorrências 2, 3 e
+     4 seriam tomadas por repetição da primeira e nunca apareceriam.
+
+     Então a janela acompanha o intervalo do contrato — metade dele, que é o ponto
+     em que "atrasou uns dias" deixa de ser plausível e vira outra cobrança. */
+  janelaDaOcorrencia(r) {
+    if (r.periodicidade === 'semanal') return 3;
+    if (r.periodicidade === 'quinzenal') return 7;
+    return 15;                                  // mensal e anual
+  },
+
+  /* Esta ocorrência JÁ EXISTE como lançamento? Devolve o lançamento, ou null.
+
+     Duas chaves, e é preciso ter as duas:
+
+     1. Pelo VÍNCULO (`recurrence_id` + data) — pega o que o próprio gerador criou.
+     2. Pelo NOME, dentro da janela — pega o lançamento que DEU ORIGEM ao contrato.
+        Ele nunca recebe vínculo (o vínculo só nasce no que o gerador cria), e por
+        isso a chave 1 não o enxerga.
+
+     A segunda foi medida nos dados reais: a parcela do Fiat 500 tinha TRÊS linhas
+     em agosto — a lançada à mão e duas geradas — porque o contrato começava no
+     mesmo dia do lançamento que o originou. A previsão do mês já tratava disso; o
+     gerador, que é quem GRAVA, não tratava. O resultado era pior ali: a previsão
+     inflava um número na tela, o gerador inflava o comprometido de verdade.
+
+     Conta o que está PAGO também: pagar adiantado é o caso mais comum, e um
+     lançamento pago é a prova mais forte de que a ocorrência aconteceu. */
+  ocorrenciaJaLancada(r, dataISO) {
+    const nome = String(r.description || '').trim().toLowerCase();
+    const janela = this.janelaDaOcorrencia(r);
+    const alvo = Date.parse(String(dataISO) + 'T12:00:00');
+    for (const t of this.all('transactions')) {
+      if (this.isNeutral(t)) continue;
+      if (t.recurrence_id === r.id && String(t.date) === String(dataISO)) return t;
+      if (t.recurrence_id && t.recurrence_id !== r.id) continue;   // é de outro contrato
+      if (String(t.description || '').trim().toLowerCase() !== nome) continue;
+      const d = Date.parse(String(t.date) + 'T12:00:00');
+      if (!Number.isNaN(d) && Math.abs(d - alvo) / 86400000 <= janela) return t;
+    }
+    return null;
+  },
+
   /* Gera o que falta até `ateISO`.
 
      Três proteções que valem mais que o resto do código:
@@ -1421,8 +1494,9 @@ const DB = {
      1. NUNCA GERA RETROATIVO antes do início. Cadastrar hoje o aluguel que se
         paga há dois anos não pode despejar 24 lançamentos no passado — foi por
         isso que o início existe como campo, e não é a data de criação.
-     2. NÃO DUPLICA: antes de criar, confere se já existe lançamento daquela
-        recorrência naquela data. Rodar a geração duas vezes é inofensivo.
+     2. NÃO DUPLICA: antes de criar, confere se aquela ocorrência já foi lançada —
+        pelo vínculo E pelo nome (ver `ocorrenciaJaLancada`). Rodar a geração duas
+        vezes, ou em dois aparelhos, é inofensivo.
      3. PARA NO FIM: por data, por contagem ou por cancelamento.
 
      O limite de 400 ocorrências é rede contra recorrência mal formada (início em
@@ -1432,14 +1506,12 @@ const DB = {
     const criadas = [];
     for (const r of this.all('recurrences')) {
       if (r.status !== 'ativa') continue;          // pausada e cancelada não geram
-      const jaExistem = new Set(this.all('transactions')
-        .filter(t => t.recurrence_id === r.id).map(t => String(t.date)));
       let n = 0;
       while (n < 400) {
         const data = this.dataDaOcorrencia(r, n);
         if (data >= limite) break;
         if (this.recorrenciaEncerrada(r, data, n)) break;
-        if (!jaExistem.has(data)) criadas.push(this.criarDaRecorrencia(r, data));
+        if (!this.ocorrenciaJaLancada(r, data)) criadas.push(this.criarDaRecorrencia(r, data));
         n++;
       }
     }
@@ -1447,8 +1519,41 @@ const DB = {
     return criadas;
   },
 
+  /* Id DETERMINÍSTICO da ocorrência: mesmo contrato + mesma data = mesmo id.
+
+     É o que torna verdadeira a promessa do comentário de `gerarRecorrencias` —
+     "rodar duas vezes é inofensivo" — quando as duas vezes acontecem em APARELHOS
+     diferentes. A conferência por lançamento existente só enxerga o que já
+     chegou pela sincronização; dois aparelhos que geram antes de conversar criam
+     duas linhas, cada uma com id sorteado, e o merge (que é por id) mantém as
+     duas. Foi exatamente o que os dados mostraram: duas parcelas do Fiat com o
+     mesmo `recurrence_id` e a mesma data, criadas com 10 horas de diferença.
+
+     Com o id derivado do par, as duas gravações COLIDEM e viram uma linha só, sem
+     depender de quem sincronizou primeiro.
+
+     O hash é FNV-1a de 32 bits em quatro sementes — não é criptográfico e não
+     precisa ser: o espaço de entrada é (contrato, data), e um contrato tem
+     dezenas de datas, não bilhões. O formato respeita o de um UUID porque a
+     coluna no Postgres é `uuid` e a auditoria de schema confere o formato. */
+  idDaOcorrencia(recurrenceId, dataISO) {
+    const semente = `${recurrenceId}|${dataISO}`;
+    const fnv = inicio => {
+      let h = inicio;
+      for (let i = 0; i < semente.length; i++) {
+        h ^= semente.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      return h.toString(16).padStart(8, '0');
+    };
+    const h = fnv(0x811c9dc5) + fnv(0x01000193) + fnv(0xdeadbeef) + fnv(0x9e3779b9);
+    // Versão 4 e variante 8 no lugar canônico: é um id sintético, mas com forma válida
+    return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+  },
+
   criarDaRecorrencia(r, dataISO) {
     const tx = {
+      id: this.idDaOcorrencia(r.id, dataISO),
       description: r.description,
       amount: this.valorDaRecorrencia(r),
       date: dataISO,
@@ -1681,27 +1786,11 @@ const DB = {
 
     /* Lançado com data futura: parcelas de cartão e contas agendadas. Vem antes
        das recorrências porque é o que já existe — e o que existe manda. */
-    const materializado = new Set();
-    /* Nomes já presentes no mês, em QUALQUER situação — pago inclusive. É a
-       segunda chave de deduplicação, e ela existe porque a primeira falha no caso
-       mais comum: o contrato criado a partir de um lançamento que já existe.
-
-       Medido nos dados reais: das 11 recorrências cadastradas, NENHUMA tinha
-       transação com `recurrence_id` apontando para ela — o vínculo só nasce no que
-       o gerador cria, e o lançamento que deu origem ao contrato não o recebe. Com
-       o contrato começando na mesma data do lançamento (o Fiat, dia 20/08), o mês
-       contava os R$ 780 duas vezes e a previsão saía inflada. */
-    const nomesNoMes = new Set(
-      this.all('transactions')
-        .filter(t => !this.isNeutral(t) && String(t.date) >= de && String(t.date) < ate)
-        .map(t => String(t.description).trim().toLowerCase()),
-    );
     for (const t of this.all('transactions')) {
       if (t.status !== 'A Pagar' || this.isNeutral(t)) continue;
       const d = String(t.date);
       if (d < de || d >= ate) continue;
       if (t.card_id) continue;                 // compra no cartão pesa na fatura, não solta
-      if (t.recurrence_id) materializado.add(`${t.recurrence_id}|${d}`);
       add(t.description, Number(t.amount) || 0, !this.isExpense(t), d, 'lançado', t);
     }
 
@@ -1714,12 +1803,10 @@ const DB = {
         if (this.recorrenciaEncerrada(r, data, n)) break;
         if (data < de) continue;
         /* Já materializada: contar de novo somaria o mesmo compromisso duas vezes.
-           Duas chaves, porque uma só não basta: pelo VÍNCULO (o que o gerador
-           criou) e pelo NOME (o lançamento que deu origem ao contrato, que nunca
-           recebe vínculo). Sem a segunda, criar o contrato a partir de uma conta já
-           lançada fazia o mês contá-la duas vezes. */
-        if (materializado.has(`${r.id}|${data}`)) continue;
-        if (nomesNoMes.has(String(r.description).trim().toLowerCase())) continue;
+           A regra vive em `ocorrenciaJaLancada` e é a MESMA que o gerador usa —
+           tem de ser, senão a previsão promete um item que o gerador não cria (ou
+           o contrário) e as duas telas param de contar a mesma história. */
+        if (this.ocorrenciaJaLancada(r, data)) continue;
         add(r.description, this.valorDaRecorrencia(r), r.type === 'Receita', data, 'prevista', r);
       }
     }

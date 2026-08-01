@@ -1336,6 +1336,12 @@ function renderInicio(period) {
   const committed = DB.committed();
   const guardado = DB.guardado();
   const guardadoReserva = DB.guardadoReserva();
+  /* ONDE o dinheiro está, que é pergunta diferente de quanto dele tem dono. Um
+     saldo total de R$ 325 com R$ 134 num CDB não é R$ 325 de poder de compra, e o
+     hero mostrava só o total — quem olhava não tinha como saber. */
+  const investido = DB.saldoInvestido();
+  const emCaixa = saldo - investido;
+  const caixaLivre = saldo - guardado;      // o que dá para gastar hoje, sem mexer no guardado
   // Mesma conta do DB.available(), com as parcelas à mão para a decomposição
   const available = saldo - committed - guardado;
   const realized = DB.realizedIncome(period);              // receitas realmente lançadas
@@ -1757,15 +1763,35 @@ function renderInicio(period) {
       <div class="hero-value">${fmt(available)}</div>
       <p class="hero-msg">${health.msg}</p>
       <!-- A conta por extenso, não um número solto. Cada linha responde a uma
-           pergunta diferente: quanto existe, quanto já é de outra pessoa, quanto
-           já tem plano. Sem isso, "disponível" é um número que a pessoa precisa
-           acreditar sem poder conferir. -->
+           pergunta diferente: quanto existe, ONDE está, quanto já é de outra
+           pessoa, quanto já tem plano. Sem isso, "disponível" é um número que a
+           pessoa precisa acreditar sem poder conferir.
+
+           "Em contas" era UMA linha só e escondia duas perguntas diferentes.
+           Medido: R$ 325,63 no total, dos quais R$ 134,00 num CDB — o número dizia
+           que havia R$ 325 de poder de compra e havia R$ 191. Agora o dinheiro de
+           uso imediato abre a conta e o investido entra numa linha própria, porque
+           "quanto tenho na conta agora" e "quanto a família tem" são duas
+           respostas legítimas que não podem dividir o mesmo rótulo.
+
+           O SUBTOTAL DE CAIXA vem antes do comprometido de propósito. Ele é o
+           DB.caixaLivre() — o que dá para gastar hoje sem encostar no guardado —
+           e é o mesmo número que dispara a pergunta de resgate ao salvar um gasto.
+           O comprometido entra depois porque é planejamento: a conta ainda não foi
+           debitada, ela só não pode ser gasta duas vezes. Ordem trocada, resultado
+           idêntico: o "Livre para usar" continua sendo contas − comprometido −
+           guardado. -->
       <div class="hero-conta">
-        <div class="hc-l"><span>Em contas</span><b>${fmt(saldo)}</b></div>
-        <div class="hc-l"><span>− Comprometido${
-          DB.committedDepois() > 0.005 ? ` <i>até ${fmtDate(new Date(DB.fimISO(DB.monthPeriod(new Date())) + 'T12:00:00'))}</i>` : ''}</span><b>${fmt(committed)}</b></div>
+        <div class="hc-l"><span>Em conta${
+          investido > 0.005 ? ' <i>disponível no banco</i>' : ''}</span><b>${fmt(emCaixa)}</b></div>
+        ${investido > 0.005 ? `<div class="hc-l"><span>+ Investido <i>${
+          esc(DB.all('accounts').filter(a => a.active !== false && DB.TIPOS_INVESTIDOS.includes(a.type)).map(a => a.name).join(', '))}</i></span><b>${fmt(investido)}</b></div>` : ''}
         ${guardado > 0.005 ? `<div class="hc-l"><span>− Guardado${
           guardadoReserva > 0.005 ? ` <i>reserva ${fmtShort(guardadoReserva)}</i>` : ''}</span><b>${fmt(guardado)}</b></div>` : ''}
+        ${guardado > 0.005 || investido > 0.005
+          ? `<div class="hc-l hc-sub"><span>= Dá para gastar hoje</span><b>${fmt(caixaLivre)}</b></div>` : ''}
+        <div class="hc-l"><span>− Comprometido${
+          DB.committedDepois() > 0.005 ? ` <i>até ${fmtDate(new Date(DB.fimISO(DB.monthPeriod(new Date())) + 'T12:00:00'))}</i>` : ''}</span><b>${fmt(committed)}</b></div>
         <div class="hc-l hc-total"><span>= Livre para usar</span><b>${fmt(available)}</b></div>
       </div>
       ${resumoDoProximoMes()}

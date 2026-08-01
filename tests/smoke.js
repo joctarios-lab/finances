@@ -223,6 +223,33 @@ for (const [rotulo, valor] of [['disponível', fmt(14550)], ['gasto do mês', fm
 check('e mostra a conta que leva até ele', inicio.includes('= Livre para usar'), true);
 check('com o guardado como parcela', inicio.includes('− Guardado'), true);
 
+/* ONDE o dinheiro está é pergunta diferente de quanto dele tem dono, e o hero
+   respondia só a segunda. Medido nos dados reais em 1º/08/2026: R$ 325,63 "em
+   contas", dos quais R$ 134,00 num CDB — o número prometia um poder de compra que
+   não existia, e não havia como descobrir isso na tela.
+
+   O cenário do teste tem a conta corrente (5.000) e a caixinha (12.000), então a
+   separação tem de aparecer com números diferentes um do outro. */
+check('a soma das duas partes é o total das contas',
+  DB.saldoEmCaixa() + DB.saldoInvestido(), DB.accountsTotal());
+check('a caixinha conta como investido', DB.saldoInvestido(), 12000);
+check('e não entra no dinheiro de uso imediato', DB.saldoEmCaixa(), DB.accountsTotal() - 12000);
+/* Conta sem tipo — as criadas antes de o campo existir — cai em CAIXA. Sumir da
+   linha "em conta" é o pior dos dois erros: quem tem o dinheiro precisa vê-lo. */
+const idSemTipo = DB.upsert('accounts', { name: 'Sem tipo', balance: 700, active: true });
+check('conta sem tipo entra no caixa, não some', DB.saldoEmCaixa(), DB.accountsTotal() - 12000);
+DB.remove('accounts', idSemTipo);
+const heroSep = renderInicio(p);
+/* A linha inteira, com o valor: "Em conta" sozinho é prefixo de "Em contas" e o
+   teste passaria com o rótulo antigo intacto. */
+check('o hero separa o que está em conta',
+  heroSep.includes(`<span>Em conta <i>disponível no banco</i></span><b>${fmt(DB.saldoEmCaixa())}</b>`), true);
+check('e mostra o investido em linha própria', heroSep.includes('+ Investido'), true);
+/* O subtotal de caixa é o número que responde "quanto dá para gastar agora" — o
+   mesmo DB.caixaLivre() que decide se um gasto encosta na reserva. */
+check('e dá o subtotal de hoje', heroSep.includes('= Dá para gastar hoje'), true);
+check('que é o caixa livre, não o disponível', heroSep.includes(fmt(DB.caixaLivre())), true);
+
 /* ---- Fluxos reais: aportes, detalhe da meta e da fatura ---- */
 /* ---- Compra parcelada (fluxo real, do clique às parcelas) ----
    Nunca teve teste, e por isso a descrição das parcelas ficou meses gravando
@@ -799,12 +826,34 @@ try {
   });
   const comTardio5 = DB.saldoPrevistoNaData(null, dia5);
   const comTardioFim = DB.saldoPrevistoNaData(null, DB.fimISO(setV));
-  /* No dia 5 de setembro só a ocorrência de AGOSTO já venceu (dia 20/08); a de
-     setembro (dia 20/09) ainda não. No fim do mês as duas contam. É a diferença
-     entre 1 e 2 ocorrências que prova que a janela está sendo respeitada. */
-  check('no dia 5 conta só a ocorrência de agosto',
-    Math.round(saldoDia5 - comTardio5), 400);
-  check('e no fim do mês, as duas', Math.round(fimV - comTardioFim), 800);
+  /* No dia 5 do mês analisado, a ocorrência DELE (dia 20) ainda não venceu; as
+     dos meses anteriores, sim. No fim do mês entra mais uma. É a diferença de
+     exatamente UMA ocorrência que prova que a janela está sendo respeitada.
+
+     Quantas são as anteriores depende de que dia é hoje, então o número é
+     CALCULADO. Fixar "1 e 2" era verdade em julho, quando o teste foi escrito, e
+     virou falso em 1º de agosto: o mês analisado (hoje + 2) passou a ser outubro
+     e havia duas ocorrências vencidas antes do dia 5, não uma. Um teste que
+     depende do calendário reprova sozinho no dia da virada. */
+  /* Só as PREVISTAS contam no delta: a ocorrência do mês do molde é lançamento
+     real e já está no saldo das contas. As previsões começam no ciclo corrente e
+     vão até o corte. */
+  const ocorrenciasAte = ateISO => {
+    let n = 0;
+    let d = DB.somarDiasISO(DB.inicioISO(DB.monthPeriod(new Date())), 19);
+    while (d < ateISO) {
+      if (d >= DB.hojeISO()) n++;
+      const x = new Date(d + 'T12:00:00');
+      x.setMonth(x.getMonth() + 1);
+      d = DB.paraISO(x);
+    }
+    return n;
+  };
+  const nDia5 = ocorrenciasAte(dia5);
+  check('no dia 5 conta só o que já venceu',
+    Math.round(saldoDia5 - comTardio5), nDia5 * 400);
+  check('e no fim do mês entra mais uma',
+    Math.round(fimV - comTardioFim), (nDia5 + 1) * 400);
   DB.remove('transactions', idTardio);
 
   /* AS TELAS. Cada objeto que antes aparecia vazio. */
@@ -3121,7 +3170,8 @@ try {
      faixa dos dados. Agora é a curva "smooth" da biblioteca, e o que resta
      verificar é que pedimos curva e não poligonal (feito acima). */
   check('KPIs do painel também', !/kpi-value[^"]*">\$\{fmtShort\(/.test(apF), true);
-  check('e o hero do painel', /<span>Em contas<\/span><b>\$\{fmt\(saldo\)\}/.test(apF), true);
+  // A linha de abertura do hero mostra o dinheiro de uso imediato, com centavos
+  check('e o hero do painel', /<b>\$\{fmt\(emCaixa\)\}/.test(apF), true);
 
   // Dia só com entrada não mostra saída zerada
   const soEntrada = dia(24);
@@ -6732,7 +6782,10 @@ console.log('\n=== Gráficos: legibilidade e encaixe no tema ===');
   const fmtU = cfgDo().dataLabels.formatter;
   const hoje29 = DB.elapsedDays(p29) - 1;
   check('o burn-up rotula o ponto de hoje', fmtU(500, { seriesIndex: 0, dataPointIndex: hoje29 }) !== '', true);
-  check('e nenhum outro dia', fmtU(400, { seriesIndex: 0, dataPointIndex: 0 }), '');
+  /* "Outro dia" precisa ser mesmo OUTRO: no dia 1º do ciclo, hoje é o índice 0 e
+     o teste comparava o ponto de hoje consigo mesmo, reprovando uma vez por mês. */
+  check('e nenhum outro dia',
+    fmtU(400, { seriesIndex: 0, dataPointIndex: hoje29 === 0 ? 1 : 0 }), '');
   check('nem a trilha ideal, que é referência e não gasto',
     fmtU(3000, { seriesIndex: 1, dataPointIndex: hoje29 }), '');
 
@@ -7162,6 +7215,64 @@ try {
     !!DB.aPagarQueCasa({ date: dPrev, amount: -500, memo: 'DEBITO QUALQUER' }, cR), false);
   check('mas o nome parecido desempata',
     (DB.aPagarQueCasa({ date: dPrev, amount: -500, memo: 'Conta A' }, cR) || {}).description, 'Conta A');
+
+  /* CENÁRIO DO FIAT 500: o contrato criado a partir de um lançamento que JÁ
+     EXISTE, começando no mesmo dia dele.
+
+     Medido nos dados reais em 1º/08/2026: a parcela do Fiat aparecia TRÊS vezes
+     em agosto. Uma lançada à mão (sem vínculo, porque o vínculo só nasce no que o
+     gerador cria) e duas criadas pelo gerador, que deduplicava só pelo vínculo e
+     por isso não enxergava a primeira. A previsão do mês já tratava disso; o
+     gerador, que é quem GRAVA, não — e ali o estrago é maior: inflou o
+     comprometido de verdade, não um número de tela. */
+  DB.data.transactions = DB.data.transactions.filter(t => !/Parcela carro/.test(t.description || ''));
+  const diaCarro = somarDias(DB.inicioISO(DB.monthPeriod(new Date())), 19);
+  DB.upsert('transactions', {
+    description: 'Parcela carro', amount: 780, date: diaCarro, type: 'Despesa',
+    status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: cR,
+  });
+  const rCarro = novaRec({ description: 'Parcela carro', amount: 780, dia: 20, inicio: diaCarro });
+  DB.gerarRecorrencias();
+  const doCarro = () => DB.all('transactions').filter(t => /Parcela carro/.test(t.description || ''));
+  check('contrato que começa no dia de um lançamento existente não duplica', doCarro().length, 1);
+  check('e o que sobrou é o lançamento original, sem vínculo',
+    doCarro().every(t => !t.recurrence_id), true);
+  // E de novo, porque a geração roda a cada abertura do app
+  DB.gerarRecorrencias();
+  check('nem na segunda passagem', doCarro().length, 1);
+  check('a previsão do mês conta a parcela uma vez só',
+    DB.previsaoDoMes(DB.monthPeriod(new Date())).itens
+      .filter(i => i.titulo === 'Parcela carro').length, 1);
+
+  /* A JANELA não pode matar a repetição legítima. Uma diarista semanal tem quatro
+     ocorrências no mesmo mês com o mesmo nome: casar por nome dentro do mês
+     inteiro — que é o que a previsão fazia — deixaria só a primeira. */
+  DB.data.transactions = DB.data.transactions.filter(t => !/Diarista/.test(t.description || ''));
+  const rDia = novaRec({ description: 'Diarista', amount: 150, periodicidade: 'semanal',
+    inicio: DB.inicioISO(DB.monthPeriod(new Date())) });
+  DB.gerarRecorrencias();
+  check('semanal gera todas as ocorrências do mês',
+    DB.all('transactions').filter(t => t.recurrence_id === rDia).length >= 4, true);
+  check('e a previsão do mês também as conta',
+    DB.previsaoDoMes(DB.monthPeriod(new Date())).itens
+      .filter(i => i.titulo === 'Diarista').length >= 4, true);
+
+  /* O ID DA OCORRÊNCIA é derivado do par (contrato, data). É o que faz dois
+     aparelhos que geram antes de conversar criarem a MESMA linha: o merge do sync
+     é por id, então ids sorteados manteriam as duas. Foi o segundo defeito do
+     Fiat — duas linhas com o mesmo recurrence_id e a mesma data, criadas com 10
+     horas de diferença. */
+  const idA = DB.idDaOcorrencia(rCarro, '2026-08-20');
+  check('o id da ocorrência é o mesmo nas duas vezes', DB.idDaOcorrencia(rCarro, '2026-08-20'), idA);
+  check('outra data dá outro id', DB.idDaOcorrencia(rCarro, '2026-09-20') !== idA, true);
+  check('outro contrato dá outro id', DB.idDaOcorrencia(rDia, '2026-08-20') !== idA, true);
+  check('e tem forma de uuid, porque a coluna é uuid no banco',
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/.test(idA), true);
+  check('o gerado carrega esse id',
+    DB.all('transactions').filter(t => t.recurrence_id === rDia)
+      .every(t => t.id === DB.idDaOcorrencia(rDia, t.date)), true);
+
+  DB.data.transactions = DB.data.transactions.filter(t => !/Parcela carro|Diarista/.test(t.description || ''));
 
   // Limpa
   DB.data.transactions = DB.data.transactions.filter(t =>

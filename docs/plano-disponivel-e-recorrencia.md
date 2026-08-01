@@ -116,6 +116,38 @@ candidatos sem parecença de nome.
 **O Sync quebrava com tabela nova.** Uma versão que traz tabela nova derrubava a
 sincronização inteira num aparelho que abrisse antes de recarregar o app.
 
+**O gerador duplicava, e por dois caminhos diferentes.** Medido em 1º/08/2026: a
+parcela do Fiat 500 tinha TRÊS linhas em agosto.
+
+1. `gerarRecorrencias` deduplicava só pelo **vínculo** (`recurrence_id` + data).
+   O lançamento que dá origem ao contrato nunca recebe vínculo — o vínculo só
+   nasce no que o gerador cria —, então um contrato que começa no mesmo dia dele
+   não o enxergava e criava a segunda linha. É a mesma raiz já corrigida na
+   *previsão* (ver `plano-visao-futuro.md`), que ficou corrigida só de um lado: a
+   previsão inflava um número de tela, o gerador inflava o **comprometido de
+   verdade**.
+2. Dois aparelhos geraram a mesma ocorrência antes de sincronizar. A conferência
+   só enxerga o que já chegou pelo pull, e o merge é por id — com ids sorteados,
+   as duas linhas sobrevivem. Daí o **id determinístico**: `idDaOcorrencia`
+   deriva o id do par (contrato, data), as duas gravações colidem e viram uma só.
+
+A regra de "esta ocorrência já foi lançada" passou a viver num ponto só,
+`ocorrenciaJaLancada`, usado pelo gerador **e** pela previsão. Duas cópias da
+mesma regra é como a divergência começou.
+
+**A janela do nome depende da periodicidade.** Casar por nome dentro do mês
+inteiro é certo para o aluguel e destrói a diarista semanal: as ocorrências 2, 3
+e 4 seriam tomadas por repetição da primeira. A janela virou metade do intervalo
+do contrato — 3 dias no semanal, 7 no quinzenal, 15 no mensal e no anual.
+
+**"Em contas" escondia duas perguntas.** O hero somava tudo numa linha: R$ 325,63,
+dos quais R$ 134,00 num CDB. O número prometia um poder de compra que não existia
+e não havia como descobrir isso na tela. `saldoEmCaixa` e `saldoInvestido` separam
+por **tipo de conta** — que é onde o dinheiro ESTÁ —, recorte diferente de
+`guardado()`, que diz quem tem DONO e pode estar na conta corrente. O hero passou
+a abrir com o dinheiro de uso imediato e a mostrar o subtotal `caixaLivre()` — "dá
+para gastar hoje" — antes de descontar o comprometido, que é planejamento.
+
 ## Cenários que a Fase 2 precisa cobrir
 
 | Cenário | Como cai no modelo |

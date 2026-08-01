@@ -95,8 +95,18 @@ A deduplicação casava **só pelo vínculo**. Com o contrato começando na mesm
 do lançamento (uma parcela de carro, dia 20/08), o mês contava os R$ 780 **duas
 vezes**: uma como "lançado", outra como "prevista".
 
-Agora há duas chaves: pelo vínculo e **pelo nome**, olhando o mês inteiro —
-inclusive o que já foi pago, porque pagar adiantado é o caso mais comum.
+Agora há duas chaves: pelo vínculo e **pelo nome** — inclusive no que já foi pago,
+porque pagar adiantado é o caso mais comum.
+
+> **Corrigido pela metade, e isso apareceu depois.** A correção entrou só na
+> previsão. O **gerador**, que é quem grava, continuou deduplicando pelo vínculo e
+> criou uma segunda parcela do Fiat em agosto/2026 — ali o estrago é maior, porque
+> infla o comprometido de verdade, não um número de tela. A regra vive agora em
+> `DB.ocorrenciaJaLancada`, usada pelos dois. Ver `plano-disponivel-e-recorrencia.md`.
+>
+> A janela do nome também mudou: era "o mês inteiro", o que deixava uma diarista
+> **semanal** com uma ocorrência só no mês. Passou a ser metade do intervalo do
+> contrato.
 
 Isso não esconde repetição legítima: o mesmo contrato no mês seguinte é outro
 compromisso. Verificado mês a mês nos dados reais — o aluguel aparece uma vez em
