@@ -127,6 +127,24 @@ embaixo do saldo que ela decompõe, resolve sem virar uma segunda conta:
    Em conta de uso  fora R$ 134,00 em investimento   R$ 97,35
 ```
 
+**A mesma pergunta em cada fechamento.** A linha aparece embaixo de todo saldo de
+fechamento, e cada uma usa a função que produziu o total que ela decompõe:
+
+| onde | o total vem de | o investido vem de |
+|---|---|---|
+| hoje | saldo real das contas | saldo real das de investimento |
+| mês encerrado | `saldoNaData(fim)` | `saldoNaData(investidas, fim)` |
+| fim do mês, corrente ou futuro | `saldoPrevistoNaData(fim)` | `saldoPrevistoNaData(investidas, fim)` |
+
+Assim o mês encerrado se abre pelo saldo **daquela data** — não pelo de hoje — e o
+fim do mês inclui o **aporte agendado**: em agosto, dos R$ 9.333,63 previstos,
+R$ 3.534,00 estarão investidos e R$ 5.799,63 à mão. Em setembro, R$ 6.934,00 e
+R$ 12.761,83.
+
+A parte de uso vem sempre por **subtração**, nunca de uma segunda soma: as duas
+partes fecham no total por construção, mesmo com transferência entre uma conta de
+investimento e uma conta de uso dentro do próprio recorte.
+
 Ela não é parcela: se entrasse na soma, o mesmo dinheiro seria contado duas vezes.
 E o rótulo **não é** o do Painel — lá "Livre para gastar hoje" desconta o que já
 tem dono (reserva e metas), aqui o corte é o **tipo da conta**. Hoje os dois dão

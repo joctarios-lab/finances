@@ -19,8 +19,8 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 117 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2252 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 118 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2258 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - Nada pendente no git
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
@@ -84,7 +84,9 @@ mão toda vez.
 - No cartão do Extrato, o corte entre "já aconteceu" e "ainda vem" é o STATUS, não
   a data: quem paga adiantado deixa a data do vencimento e o dinheiro já saiu.
 - No Extrato, "Em conta de uso" (fora do investimento) ≠ "Livre para gastar hoje" do
-  Painel (desconta reserva e metas). Podem coincidir; os nomes não podem.
+  Painel (desconta reserva e metas). Podem coincidir; os nomes não podem. Ela
+  aparece sob TODO fechamento — hoje, mês encerrado e fim do mês —, cada uma
+  medindo o investido pela mesma função que produziu o total decomposto.
 - Saldo só entende filtro de CONTA e de janela de dias. Com categoria, membro,
   etiqueta ou busca, o cartão mostra o movimento do filtro e avisa que o saldo não
   responde a ele.

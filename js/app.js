@@ -2380,9 +2380,22 @@ function pontePrevista({ contas, bordaDe, bordaAte, fim, soDeConta, movimento })
      os dois dão R$ 97,35 por coincidência — uma meta guardada na conta corrente
      separaria os dois, e dois números com o mesmo nome destroem a confiança nos
      dois. */
-  const investido = emAberto ? DB.saldoInvestido(contas) : 0;
-  const linhaDeUso = !naoZero(investido) ? '' : l('Em conta de uso',
-    `fora ${fmt(investido)} em investimento`, emConta - investido, 'hc-d');
+  /* A MESMA PERGUNTA EM CADA FECHAMENTO — hoje, no fim de um mês encerrado e no
+     fim de um mês que ainda vem. Cada linha usa a mesma função que produziu o
+     total que ela decompõe: o saldo real hoje, `saldoNaData` no passado,
+     `saldoPrevistoNaData` no futuro. Recalcular por outro caminho daria uma
+     decomposição que não pertence ao número decomposto.
+
+     A parte de uso vem por SUBTRAÇÃO, nunca de uma segunda soma: assim as duas
+     partes fecham no total por construção, mesmo com transferência entre uma conta
+     de investimento e uma conta de uso dentro do próprio recorte. */
+  const idsInvest = DB.contasInvestidas(contas);
+  const investidoEm = medir => (idsInvest.length ? medir(idsInvest) : 0);
+  const detalheDeUso = (total, investido) => !naoZero(investido) ? '' : l('Em conta de uso',
+    `fora ${fmt(investido)} em investimento`, total - investido, 'hc-d');
+  const linhaDeUso = detalheDeUso(emConta, investidoEm(ids => emAberto
+    ? saldoDeContas(ids)                       // hoje: o saldo real das contas
+    : DB.saldoNaData(ids, bordaAte)));         // mês encerrado: o saldo naquela data
   const mudouAlgo = naoZero(real.entra) || naoZero(real.sai);
   const temBloco1 = comecouAntes && (mudouAlgo || !emAberto);
   const bloco1 = !temBloco1 ? '' : `
@@ -2423,6 +2436,10 @@ function pontePrevista({ contas, bordaDe, bordaAte, fim, soDeConta, movimento })
         ${naoZero(vencido) ? l(`${vencido < 0 ? '−' : '+'} Vencido`, 'de períodos anteriores, em aberto', Math.abs(vencido)) : ''}
         ${naoZero(resto) ? l(`${resto < 0 ? '−' : '+'} Já pago`, 'com data fora do período', Math.abs(resto)) : ''}
         <div class="hc-l hc-total"><span>= Saldo previsto em ${ultimo}</span><b>${fmt(fim)}</b></div>
+        <!-- O mesmo detalhe do saldo de hoje, projetado: o aporte agendado para a
+             conta de investimento chega lá dentro de saldoPrevistoNaData, então a
+             linha mostra quanto do saldo do fim ainda vai estar a mao. -->
+        ${detalheDeUso(fim, investidoEm(ids => DB.saldoPrevistoNaData(ids, bordaAte)))}
       </div>`;
 }
 

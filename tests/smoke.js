@@ -3622,6 +3622,12 @@ try {
      é de DETALHE: decompõe a de cima e não entra na soma — se entrasse, o mesmo
      dinheiro seria contado duas vezes e a conta da tela deixaria de fechar. */
   DB.upsert('accounts', { ...DB.get('accounts', cD), balance: 400 });
+  /* Uma saída JÁ PAGA da conta de investimento neste mês: ela faz o investido de
+     HOJE (400) diferir do investido no fim do mês passado (550). Sem essa
+     diferença, ler o saldo de hoje no lugar do saldo daquela data passaria
+     despercebido — que é exatamente o erro que a linha do mês encerrado pode ter. */
+  DB.upsert('transactions', { ...base, status: 'Pago', description: 'Taxa ponte', amount: 150,
+    date: DB.inicioISO(mesAtual), type: 'Despesa', method: 'Débito', account_id: cD });
   state.filtros = { ...filtrosVazios(), contas: [cE, cD] };
   const comInvest = linhasDaPonte(renderExtrato(mesAtual));
   const uso = comInvest.find(l => l.detalhe) || {};
@@ -3640,9 +3646,25 @@ try {
   state.filtros = { ...filtrosVazios(), contas: [cE] };
   check('  sem conta de investimento no recorte, a linha não aparece',
     linhasDaPonte(renderExtrato(mesAtual)).some(l => l.detalhe), false);
+
+  /* O FIM DO MÊS também se abre — e com o investido PROJETADO, que inclui o aporte
+     agendado. É a resposta a "quanto do que vou ter no fim do mês estará à mão". */
   state.filtros = { ...filtrosVazios(), contas: [cE, cD] };
-  check('  e mês encerrado não a ganha, porque ela fala de hoje',
-    linhasDaPonte(renderExtrato(mesPassado)).some(l => l.detalhe), false);
+  const detalhes = linhasDaPonte(renderExtrato(mesAtual)).filter(l => l.detalhe);
+  check('  o fim do mês corrente também se abre', detalhes.length, 2);
+  check('  com o investido projetado, aporte agendado incluído',
+    detalhes[1].nota, `fora ${fmt(400 + 200)} em investimento`);
+  check('  e o número é o previsto daquelas contas',
+    DB.saldoPrevistoNaData([cD], DB.fimISO(mesAtual)), 600);
+
+  /* MÊS ENCERRADO se abre pelo saldo DAQUELA DATA, não pelo de hoje: em 31/07 havia
+     R$ 550 investidos, contra R$ 400 agora. */
+  const noPassado = linhasDaPonte(renderExtrato(mesPassado));
+  const usoP = noPassado.find(l => l.detalhe) || {};
+  check('  mês encerrado se abre pelo saldo daquela data', usoP.nota, `fora ${fmt(550)} em investimento`);
+  check('  e a parte de uso é o resto do fechamento', usoP.val, fmt(1150));
+  check('  sem virar parcela também lá', fecha(noPassado), true);
+  check('  mês futuro idem', linhasDaPonte(renderExtrato(mesQueVem)).some(l => l.detalhe), true);
 
   for (const t of DB.all('transactions').filter(t => / ponte$/.test(t.description))) DB.remove('transactions', t.id);
   DB.remove('accounts', cE); DB.remove('accounts', cD);

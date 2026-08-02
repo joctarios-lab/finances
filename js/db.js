@@ -1286,16 +1286,25 @@ const DB = {
      "em conta" é o erro pior dos dois: quem tem o dinheiro precisa vê-lo. */
   TIPOS_INVESTIDOS: ['Investimento', 'Caixinha / Rendimento'],
 
+  /* AS CONTAS DE INVESTIMENTO do recorte. Devolver os ids, e não o saldo, é o que
+     deixa a pergunta "quanto disso está investido" ser feita em QUALQUER data: o
+     Extrato passa esta lista para saldoNaData num mês encerrado e para
+     saldoPrevistoNaData num mês futuro, e a resposta sai da mesma função que
+     produziu o total que ela decompõe. Uma versão que só soubesse o saldo de hoje
+     obrigaria cada tela a inventar a sua própria projeção. */
+  contasInvestidas(contaIds) {
+    const lista = (contaIds && contaIds.length)
+      ? contaIds.map(id => this.get('accounts', id)).filter(Boolean)
+      : this.all('accounts').filter(a => a.active !== false);
+    return lista.filter(a => this.TIPOS_INVESTIDOS.includes(a.type)).map(a => a.id);
+  },
+
   /* `contaIds` opcional: sem ele, todas as contas ativas; com ele, só as do
      recorte — é o que deixa o Extrato de UMA conta responder a mesma pergunta que
      o Extrato da família. */
   saldoInvestido(contaIds) {
-    const lista = (contaIds && contaIds.length)
-      ? contaIds.map(id => this.get('accounts', id)).filter(Boolean)
-      : this.all('accounts').filter(a => a.active !== false);
-    return lista
-      .filter(a => this.TIPOS_INVESTIDOS.includes(a.type))
-      .reduce((s, a) => s + (Number(a.balance) || 0), 0);
+    return this.contasInvestidas(contaIds)
+      .reduce((s, id) => s + (Number((this.get('accounts', id) || {}).balance) || 0), 0);
   },
 
   // O dinheiro de uso imediato: conta corrente, carteira digital e o que não
