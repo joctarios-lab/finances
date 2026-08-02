@@ -1058,6 +1058,11 @@ body {
    escrever uma conta. Só as bordas mudam — no hero elas são brancas
    translúcidas, porque lá o fundo é colorido; aqui sumiriam sobre o papel. */
 .res-conta { padding: 10px 16px 2px; border-top: 1px solid var(--line); font-size: 12.5px; }
+/* Linha de DETALHE: não é parcela da conta, é a decomposição da linha logo acima.
+   Recuada e menor de propósito — no mesmo peso das outras ela pareceria mais um
+   termo da soma, e a conta passaria a ter dois caminhos possíveis. */
+.res-conta .hc-d { padding-left: 12px; font-size: 11.5px; opacity: .85; }
+.res-conta .hc-d b { font-weight: 600; }
 .res-conta .hc-total,
 .res-conta .hc-sub { border-top-color: var(--line); }
 .res-nota { padding: 8px 16px 12px; margin: 0; font-size: 11.5px; }

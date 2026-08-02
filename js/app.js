@@ -2366,6 +2366,23 @@ function pontePrevista({ contas, bordaDe, bordaAte, fim, soDeConta, movimento })
   /* NADA SE MOVEU AINDA: um bloco "Realizado" com uma linha só, repetindo o saldo
      de abertura, é cabeçalho a mais para informação nenhuma. Nesse caso o saldo
      vira a primeira linha do bloco de previsão, que é onde ele faz falta. */
+  /* ONDE ESTÁ O DINHEIRO QUE HÁ NA CONTA. "Em conta hoje: R$ 231,35" não responde
+     quanto dá para gastar quando R$ 134 estão numa conta de investimento — e a
+     diferença entre os dois números não aparecia em tela nenhuma do Extrato.
+
+     Uma linha só, sem operador, presa embaixo do saldo que ela decompõe: com duas
+     linhas viraria uma segunda conta competindo com a de cima, e a soma da tela
+     deixaria de ter um caminho único. Por isso os dois valores moram nela — o que
+     está fora do investimento no número, o investido na nota.
+
+     "Em conta de uso", NÃO "livre para gastar": o Painel já tem uma linha com esse
+     nome e ela desconta o que tem dono (reserva e metas), que é outro corte. Hoje
+     os dois dão R$ 97,35 por coincidência — uma meta guardada na conta corrente
+     separaria os dois, e dois números com o mesmo nome destroem a confiança nos
+     dois. */
+  const investido = emAberto ? DB.saldoInvestido(contas) : 0;
+  const linhaDeUso = !naoZero(investido) ? '' : l('Em conta de uso',
+    `fora ${fmt(investido)} em investimento`, emConta - investido, 'hc-d');
   const mudouAlgo = naoZero(real.entra) || naoZero(real.sai);
   const temBloco1 = comecouAntes && (mudouAlgo || !emAberto);
   const bloco1 = !temBloco1 ? '' : `
@@ -2375,8 +2392,8 @@ function pontePrevista({ contas, bordaDe, bordaAte, fim, soDeConta, movimento })
         ${l('Abriu', `em ${dia(bordaDe)}`, abriu)}
         ${naoZero(real.entra) ? l('+ Entrou na conta', '', real.entra) : ''}
         ${naoZero(real.sai) ? l('− Saiu da conta', '', real.sai) : ''}
-        ${l(`= ${rotuloAgora}`, '', emConta, emAberto ? 'hc-sub' : 'hc-total')}`
-        : l(rotuloAgora, `nada se moveu desde ${dia(bordaDe)}`, emConta)}
+        ${l(`= ${rotuloAgora}`, '', emConta, emAberto ? 'hc-sub' : 'hc-total')}${linhaDeUso}`
+        : l(rotuloAgora, `nada se moveu desde ${dia(bordaDe)}`, emConta) + linhaDeUso}
       </div>`;
 
   /* BLOCO 2 — O QUE AINDA VEM. Continua a conta de onde o bloco 1 parou: por isso
@@ -2400,7 +2417,7 @@ function pontePrevista({ contas, bordaDe, bordaAte, fim, soDeConta, movimento })
       <div class="res-conta">
         <div class="hc-cab">Previsto <i>${temBloco1 ? 'daqui até' : 'até'} ${ultimo}</i></div>
         ${temBloco1 ? '' : l(comecouAntes ? rotuloAgora : 'Abre em contas',
-          comecouAntes ? '' : `em ${dia(bordaDe)}`, base)}
+          comecouAntes ? '' : `em ${dia(bordaDe)}`, base) + (comecouAntes ? linhaDeUso : '')}
         ${naoZero(janela.entra) ? l('+ A receber', 'ainda não caiu', janela.entra) : ''}
         ${naoZero(janela.sai) ? l('− A pagar', 'contas e faturas em aberto', janela.sai) : ''}
         ${naoZero(vencido) ? l(`${vencido < 0 ? '−' : '+'} Vencido`, 'de períodos anteriores, em aberto', Math.abs(vencido)) : ''}

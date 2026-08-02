@@ -1286,9 +1286,15 @@ const DB = {
      "em conta" é o erro pior dos dois: quem tem o dinheiro precisa vê-lo. */
   TIPOS_INVESTIDOS: ['Investimento', 'Caixinha / Rendimento'],
 
-  saldoInvestido() {
-    return this.all('accounts')
-      .filter(a => a.active !== false && this.TIPOS_INVESTIDOS.includes(a.type))
+  /* `contaIds` opcional: sem ele, todas as contas ativas; com ele, só as do
+     recorte — é o que deixa o Extrato de UMA conta responder a mesma pergunta que
+     o Extrato da família. */
+  saldoInvestido(contaIds) {
+    const lista = (contaIds && contaIds.length)
+      ? contaIds.map(id => this.get('accounts', id)).filter(Boolean)
+      : this.all('accounts').filter(a => a.active !== false);
+    return lista
+      .filter(a => this.TIPOS_INVESTIDOS.includes(a.type))
       .reduce((s, a) => s + (Number(a.balance) || 0), 0);
   },
 

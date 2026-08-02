@@ -117,6 +117,22 @@ julho fecha em `1.168,77 + 22.453,72 − 23.296,86 = 325,63`. Antes, o card dava
 número final e as duas colunas do cabeçalho — que contam GASTO, não caixa, e por
 isso nunca fechavam com ele.
 
+**Onde está o dinheiro que há em conta.** "Em conta hoje: R$ 231,35" não responde
+quanto dá para gastar quando R$ 134 estão numa conta de investimento, e essa
+diferença não aparecia em tela nenhuma do Extrato. Uma linha de **detalhe**, presa
+embaixo do saldo que ela decompõe, resolve sem virar uma segunda conta:
+
+```
+= Em conta hoje                              R$ 231,35
+   Em conta de uso  fora R$ 134,00 em investimento   R$ 97,35
+```
+
+Ela não é parcela: se entrasse na soma, o mesmo dinheiro seria contado duas vezes.
+E o rótulo **não é** o do Painel — lá "Livre para gastar hoje" desconta o que já
+tem dono (reserva e metas), aqui o corte é o **tipo da conta**. Hoje os dois dão
+R$ 97,35 por coincidência; uma meta guardada na conta corrente separaria os dois, e
+dois números com o mesmo nome destroem a confiança nos dois.
+
 **O corte entre os dois blocos é o STATUS, não a data.** Quem paga um boleto
 adiantado deixa a data do vencimento e o dinheiro sai hoje — é o que o app faz ao
 marcar como pago. Cortar por data mostrava, num cenário de teste, "em conta hoje

@@ -3405,14 +3405,17 @@ console.log('\n=== O extrato mostra o hoje e o fim do período ===');
 try {
   // O rótulo sem a nota em <i>: a nota traz data e explicação, que mudam com o dia
   const linhasDaPonte = html => [...html.matchAll(/<div class="hc-l([^"]*)"><span>(.*?)<\/span><b>(.*?)<\/b>/g)]
-    .map(m => ({ total: m[1].includes('hc-total'), val: m[3],
+    .map(m => ({ total: m[1].includes('hc-total'), detalhe: m[1].includes('hc-d'), val: m[3],
+      nota: (m[2].match(/<i>(.*?)<\/i>/) || [])[1] || '',
       rot: m[2].replace(/<i>.*?<\/i>/g, '').replace(/<[^>]*>/g, '').trim() }));
   const numeroGrande = html => ((html.match(/res-dir">\s*<b[^>]*>([^<]+)/) || [])[1] || '').trim();
   /* A CONTA TEM DE FECHAR, lida como quem confere no papel: parte da primeira
      linha, aplica os sinais e cobra cada "=" pelo caminho. Vale mais do que
      conferir valor por valor — pega tanto uma parcela errada quanto uma parcela
      que deixou de entrar, que é o defeito que só aparece com dado incomum. */
-  const fecha = linhas => {
+  const fecha = todas => {
+    // Linha de detalhe decompõe a de cima; somá-la contaria o mesmo dinheiro duas vezes
+    const linhas = todas.filter(l => !l.detalhe);
     if (linhas.length < 2) return true;
     const num = s => Number(String(s).replace(/[^\d,-]/g, '').replace(/\./g, '').replace(',', '.'));
     let soma = num(linhas[0].val);
@@ -3613,6 +3616,33 @@ try {
   check('  filtro mais estreito, números menores',
     (linhasB2.find(l => l.rot === 'A pagar') || {}).val, fmt(300));
   check('  e o que não casa com a busca some', linhasB2.some(l => l.rot === 'A receber'), false);
+
+  /* ONDE ESTÁ O DINHEIRO QUE HÁ EM CONTA. "Em conta hoje R$ 1.400" não responde
+     quanto dá para gastar quando R$ 400 estão numa conta de investimento. A linha
+     é de DETALHE: decompõe a de cima e não entra na soma — se entrasse, o mesmo
+     dinheiro seria contado duas vezes e a conta da tela deixaria de fechar. */
+  DB.upsert('accounts', { ...DB.get('accounts', cD), balance: 400 });
+  state.filtros = { ...filtrosVazios(), contas: [cE, cD] };
+  const comInvest = linhasDaPonte(renderExtrato(mesAtual));
+  const uso = comInvest.find(l => l.detalhe) || {};
+  check('o saldo de hoje se abre em uso e investimento',
+    (comInvest.find(l => l.rot === '= Em conta hoje') || {}).val, fmt(1400));
+  check('  a linha mostra o que está fora do investimento', uso.val, fmt(1000));
+  check('  e a nota diz quanto está investido', uso.nota, `fora ${fmt(400)} em investimento`);
+  check('  sem virar parcela: a conta continua fechando', fecha(comInvest), true);
+  /* O rótulo NÃO pode ser o do Painel. Lá "Livre para gastar hoje" desconta o que
+     tem dono (reserva e metas); aqui o corte é onde o dinheiro está. Hoje os dois
+     podem coincidir, e é justamente aí que o nome repetido faria estrago. */
+  check('  e o rótulo não é o do Painel', uso.rot, 'Em conta de uso');
+  check('  que continua sendo outra conta',
+    /Livre para gastar/.test(renderExtrato(mesAtual)), false);
+
+  state.filtros = { ...filtrosVazios(), contas: [cE] };
+  check('  sem conta de investimento no recorte, a linha não aparece',
+    linhasDaPonte(renderExtrato(mesAtual)).some(l => l.detalhe), false);
+  state.filtros = { ...filtrosVazios(), contas: [cE, cD] };
+  check('  e mês encerrado não a ganha, porque ela fala de hoje',
+    linhasDaPonte(renderExtrato(mesPassado)).some(l => l.detalhe), false);
 
   for (const t of DB.all('transactions').filter(t => / ponte$/.test(t.description))) DB.remove('transactions', t.id);
   DB.remove('accounts', cE); DB.remove('accounts', cD);
