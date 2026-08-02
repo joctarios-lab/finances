@@ -593,25 +593,50 @@ const DB = {
     const contas = (contaIds && contaIds.length)
       ? contaIds
       : this.all('accounts').map(a => a.id);
-    const dentro = id => contas.includes(id);
     const atual = contas.reduce((s, id) => s + (Number((this.get('accounts', id) || {}).balance) || 0), 0);
+    // Tudo que se moveu de lá para cá, desfeito. O saldo atual é o número
+    // confiável — vem da conciliação com o banco.
+    const desde = this.movimentoRealizadoAte(contaIds, dataISO, null);
+    return atual - (desde.entra - desde.sai);
+  },
 
-    let desde = 0;
+  /* O QUE JÁ MEXEU NO SALDO entre duas datas, separado em entra e sai.
+
+     É o irmão realizado de `movimentoPrevistoAte`, e existe pelo mesmo motivo: o
+     cartão do Extrato mostra "abriu com X, entrou Y, saiu Z, hoje tem W" e as
+     quatro coisas precisam vir da MESMA regra, senão a linha não fecha com o
+     saldo logo abaixo dela. Por construção,
+     `saldoNaData(fim) − saldoNaData(início) = entra − sai`.
+
+     Fala de CAIXA, não de gasto: compra no cartão não sai da conta (fica na
+     fatura) e por isso não entra aqui, enquanto o pagamento da fatura entra. A
+     conciliação também entra, de propósito — ela mexe no saldo de verdade, e foi
+     justamente ela que já fez o extrato discordar do saldo da conta.
+
+     `deISO`/`ateISO` são opcionais: sem eles, a janela é aberta daquele lado. */
+  movimentoRealizadoAte(contaIds, deISO, ateISO) {
+    const contas = (contaIds && contaIds.length) ? contaIds : this.all('accounts').map(a => a.id);
+    const dentro = id => contas.includes(id);
+    const mov = { entra: 0, sai: 0 };
     for (const t of this.all('transactions')) {
       if (t.status !== 'Pago') continue;              // a pagar ainda não mexeu no saldo
-      if (String(t.date) < dataISO) continue;
+      const d = String(t.date);
+      if (deISO && d < deISO) continue;
+      if (ateISO && d >= ateISO) continue;
       const v = Number(t.amount) || 0;
       if (this.isTransfer(t)) {
-        // Transferência interna ao conjunto se anula: sai de um lado, entra no outro
-        if (dentro(t.account_id)) desde -= v;
-        if (dentro(t.to_account)) desde += v;
+        /* Transferência interna ao conjunto se anula: sai de um lado, entra no
+           outro. Fora dele, é entrada ou saída de verdade — é assim que o extrato
+           do banco de UMA conta mostra. */
+        const daqui = dentro(t.account_id), praca = dentro(t.to_account);
+        if (daqui && !praca) mov.sai += v;
+        else if (praca && !daqui) mov.entra += v;
         continue;
       }
       if (!dentro(t.account_id)) continue;
-      // Conciliação entra aqui de propósito: ela mexe no saldo de verdade
-      desde += this.isExpense(t) ? -v : v;
+      if (this.isExpense(t)) mov.sai += v; else mov.entra += v;
     }
-    return atual - desde;
+    return mov;
   },
 
   /* Saldo numa data, contando o que está AGENDADO quando a data é futura.
@@ -635,8 +660,12 @@ const DB = {
      a soma exibida não tem como discordar da projeção. Uma cópia divergiria no
      primeiro ajuste, que é como já nasceram três defeitos neste código.
 
-     A janela inclui o VENCIDO de ciclos anteriores: é dinheiro que ainda vai sair. */
-  movimentoPrevistoAte(contaIds, dataISO) {
+     Sem `desdeISO`, a janela inclui o VENCIDO de ciclos anteriores — é dinheiro
+     que ainda vai sair, e ignorá-lo faria o saldo previsto ser otimista. Com
+     `desdeISO`, ela se fecha naquele começo: é como o cartão do Extrato separa o
+     que vence DENTRO do período (e portanto está na lista logo abaixo) do que
+     ficou para trás. Um número que não se confere na própria tela não decide nada. */
+  movimentoPrevistoAte(contaIds, dataISO, desdeISO) {
     const hoje = this.paraISO(new Date());
     const mov = { entra: 0, sai: 0 };
     if (dataISO <= hoje) return mov;             // no passado não há previsão, há fato
@@ -648,6 +677,7 @@ const DB = {
       if (t.status !== 'A Pagar' || t.card_id) continue;
       // Vencido e não pago entra também: é dinheiro que ainda vai sair
       if (String(t.date) >= dataISO) continue;
+      if (desdeISO && String(t.date) < desdeISO) continue;
       /* TRANSFERÊNCIA AGENDADA é neutra para a família — o dinheiro só muda de
          bolso —, mas não para uma conta olhada sozinha: ali ela entra ou sai de
          verdade, exatamente como no extrato do banco.
@@ -696,6 +726,7 @@ const DB = {
       if (this.fimISO(p) <= hoje) continue;      // ciclo já encerrado não tem previsão
       for (const it of this.previstosNaoLancados(p)) {
         if (String(it.data) >= dataISO || String(it.data) <= hoje) continue;
+        if (desdeISO && String(it.data) < desdeISO) continue;
         // Sem conta definida, o item pertence ao conjunto todo: só entra quando
         // não há recorte de contas, senão apareceria em qualquer conta filtrada
         if (it.account_id ? !dentro(it.account_id) : (contaIds && contaIds.length)) continue;
@@ -713,6 +744,7 @@ const DB = {
       for (const inv of this.invoicesOf(card)) {
         if (inv.status === 'Paga' || !(inv.falta > 0.005)) continue;
         if (this.paraISO(inv.due) >= dataISO) continue;
+        if (desdeISO && this.paraISO(inv.due) < desdeISO) continue;
         mov.sai += Math.max(0, inv.falta);
       }
     }

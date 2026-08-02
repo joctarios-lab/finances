@@ -2313,41 +2313,99 @@ function sparkArea(vals, dias, porDia) {
 
    Período ENCERRADO não tem ponte: ali o fim é fato, e uma linha de previsão
    sobre fato é o que faz o extrato do mês discordar do extrato do banco. */
-function pontePrevista(contas, bordaDe, bordaAte, fim) {
+function pontePrevista({ contas, bordaDe, bordaAte, fim, soDeConta, movimento }) {
   const hojeISO = DB.hojeISO();
-  if (bordaAte <= hojeISO) return '';
-  const jaComecou = bordaDe <= hojeISO;
-  /* Janela do recorte, por diferença. Sem descontar o que já passou, a ponte de
-     setembro incluiria o que falta de agosto e as parcelas não bateriam com a
-     lista logo abaixo delas. */
-  const ate = DB.movimentoPrevistoAte(contas, bordaAte);
-  const de = jaComecou ? { entra: 0, sai: 0 } : DB.movimentoPrevistoAte(contas, bordaDe);
-  const entra = ate.entra - de.entra;
-  const sai = ate.sai - de.sai;
-  /* A base é o saldo REAL de hoje quando o período já começou — é a resposta a
-     "quanto eu tenho agora", que era o que faltava — e o saldo previsto de
-     abertura quando ele ainda vai começar. */
-  const base = jaComecou ? saldoDeContas(contas) : DB.saldoPrevistoNaData(contas, bordaDe);
-  const ultimo = new Date(somarDias(bordaAte, -1) + 'T12:00:00');
+  const dia = iso => fmtDate(new Date(iso + 'T12:00:00'));
+  const ultimo = dia(somarDias(bordaAte, -1));
+  const l = (rot, nota, valor, cls) =>
+    `<div class="hc-l${cls ? ' ' + cls : ''}"><span>${rot}${nota ? ` <i>${nota}</i>` : ''}</span><b>${fmt(valor)}</b></div>`;
+  const naoZero = v => Math.abs(v) > 0.005;
+
+  /* COM FILTRO DE CATEGORIA, MEMBRO, BUSCA…, a conta de saldo perde o sentido:
+     dinheiro em conta não tem categoria. O que sobra — e é o que se quer ver — é
+     o MOVIMENTO daquele filtro, partido em o que já aconteceu e o que ainda vai
+     acontecer. Esses quatro números vêm da mesma lista que está logo abaixo e
+     somam exatamente as duas colunas do cabeçalho. */
+  if (!soDeConta) {
+    const m = movimento;
+    const linhas = [
+      naoZero(m.jaEntrou) ? l('Já entrou', `até ${dia(hojeISO)}`, m.jaEntrou) : '',
+      naoZero(m.jaSaiu) ? l('Já saiu', `até ${dia(hojeISO)}`, m.jaSaiu) : '',
+      naoZero(m.aReceber) ? l('A receber', 'ainda não caiu', m.aReceber) : '',
+      naoZero(m.aPagar) ? l('A pagar', 'ainda não saiu', m.aPagar) : '',
+    ].filter(Boolean).join('');
+    if (!linhas) return '';
+    return `
+      <div class="res-conta">
+        <div class="hc-cab">No filtro <i>${dia(bordaDe)} a ${ultimo}</i></div>
+        ${linhas}
+      </div>`;
+  }
+
+  const comecouAntes = bordaDe <= hojeISO;
+  const emAberto = bordaAte > hojeISO;
+
+  /* BLOCO 1 — O QUE JÁ ACONTECEU. Abriu com tanto, entrou, saiu, e é isto que há
+     na conta agora. As duas pontas vêm de `saldoNaData` e o meio de
+     `movimentoRealizadoAte`, que é a mesma regra: a conta fecha por construção,
+     em vez de fechar por sorte.
+
+     Fala de CAIXA — compra no cartão não sai da conta, o pagamento da fatura sai.
+     Por isso os rótulos dizem "na conta", e não "receitas"/"despesas" como o
+     cabeçalho acima, que conta GASTO. Dois números com nomes diferentes. */
+  /* O CORTE É O STATUS, NÃO A DATA. Quem paga um boleto adiantado deixa o
+     lançamento com a data do vencimento e o dinheiro sai da conta hoje — o app faz
+     isso ao marcar como pago. Cortar por data mostraria "em conta hoje" um número
+     que não existe em lugar nenhum: no cenário do teste, R$ 700 enquanto a tela de
+     contas dizia R$ 450. Com o corte no status, o bloco fecha no saldo REAL, que é
+     o número que o resto do app mostra — e nenhuma linha de sobra é necessária. */
+  const abriu = DB.saldoNaData(contas, bordaDe);
+  const real = DB.movimentoRealizadoAte(contas, bordaDe, emAberto ? null : bordaAte);
+  const emConta = emAberto ? saldoDeContas(contas) : DB.saldoNaData(contas, bordaAte);
+  const rotuloAgora = emAberto ? 'Em conta hoje' : `Em conta em ${ultimo}`;
+  /* NADA SE MOVEU AINDA: um bloco "Realizado" com uma linha só, repetindo o saldo
+     de abertura, é cabeçalho a mais para informação nenhuma. Nesse caso o saldo
+     vira a primeira linha do bloco de previsão, que é onde ele faz falta. */
+  const mudouAlgo = naoZero(real.entra) || naoZero(real.sai);
+  const temBloco1 = comecouAntes && (mudouAlgo || !emAberto);
+  const bloco1 = !temBloco1 ? '' : `
+      <div class="res-conta">
+        <div class="hc-cab">${emAberto ? 'Realizado <i>o que já entrou e saiu</i>' : `No período <i>${dia(bordaDe)} a ${ultimo}</i>`}</div>
+        ${mudouAlgo ? `
+        ${l('Abriu', `em ${dia(bordaDe)}`, abriu)}
+        ${naoZero(real.entra) ? l('+ Entrou na conta', '', real.entra) : ''}
+        ${naoZero(real.sai) ? l('− Saiu da conta', '', real.sai) : ''}
+        ${l(`= ${rotuloAgora}`, '', emConta, emAberto ? 'hc-sub' : 'hc-total')}`
+        : l(rotuloAgora, `nada se moveu desde ${dia(bordaDe)}`, emConta)}
+      </div>`;
+
+  /* BLOCO 2 — O QUE AINDA VEM. Continua a conta de onde o bloco 1 parou: por isso
+     ele não repete o saldo de hoje numa linha própria — dois números iguais e
+     seguidos foram exatamente o que fez a primeira versão do hero ser recusada. */
+  if (!emAberto) return bloco1;
+  const total = DB.movimentoPrevistoAte(contas, bordaAte);
+  const janela = DB.movimentoPrevistoAte(contas, bordaAte, bordaDe);
+  /* VENCIDO de antes deste período: é dinheiro que ainda vai sair, mas não está na
+     lista abaixo. Fora da linha "A pagar" para que ela continue conferível contra
+     a lista — foi por não separar os dois que o hero antigo virou um número que
+     ninguém conseguia auditar. Em período futuro ele já está dentro da abertura. */
+  const vencido = comecouAntes ? (total.entra - total.sai) - (janela.entra - janela.sai) : 0;
+  const base = comecouAntes ? emConta : DB.saldoPrevistoNaData(contas, bordaDe);
   /* Sobra quando existe lançamento JÁ PAGO com data depois do período: ele está no
      saldo de hoje e não pode estar no do fim. Raro — zero na base real —, mas sem
      a linha a conta deixaria de fechar justamente para quem paga adiantado, e uma
      conta que não fecha é pior do que uma linha a mais. */
-  const resto = fim - (base + entra - sai);
-  const temMovimento = Math.abs(entra) > 0.005 || Math.abs(sai) > 0.005 || Math.abs(resto) > 0.005;
-  const l = (rot, nota, valor) =>
-    `<div class="hc-l"><span>${rot}${nota ? ` <i>${nota}</i>` : ''}</span><b>${fmt(valor)}</b></div>`;
-  return `
+  const resto = fim - (base + janela.entra - janela.sai + vencido);
+  return `${bloco1}
       <div class="res-conta">
-        <div class="hc-cab">Previsto <i>até ${fmtDate(ultimo)}</i></div>
-        ${jaComecou
-          ? l('Em conta hoje', fmtDate(new Date(hojeISO + 'T12:00:00')), base)
-          : l('Abre em contas', `em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}`, base)}
-        ${!temMovimento ? '' : `
-        ${Math.abs(entra) > 0.005 ? l('+ A receber', 'ainda não caiu', entra) : ''}
-        ${Math.abs(sai) > 0.005 ? l('− A pagar', 'contas e faturas em aberto', sai) : ''}
-        ${Math.abs(resto) > 0.005 ? l(`${resto < 0 ? '−' : '+'} Já pago`, 'com data fora do período', Math.abs(resto)) : ''}
-        <div class="hc-l hc-total"><span>= Saldo previsto em ${fmtDate(ultimo)}</span><b>${fmt(fim)}</b></div>`}
+        <div class="hc-cab">Previsto <i>${temBloco1 ? 'daqui até' : 'até'} ${ultimo}</i></div>
+        ${temBloco1 ? '' : l(comecouAntes ? rotuloAgora : 'Abre em contas',
+          comecouAntes ? '' : `em ${dia(bordaDe)}`, base)}
+        ${naoZero(janela.entra) ? l('+ A receber', 'ainda não caiu', janela.entra) : ''}
+        ${naoZero(janela.sai) ? l('− A pagar', 'contas e faturas em aberto', janela.sai) : ''}
+        ${naoZero(vencido) ? l(`${vencido < 0 ? '−' : '+'} Vencido`, 'de períodos anteriores, em aberto', Math.abs(vencido)) : ''}
+        ${naoZero(resto) ? l(`${resto < 0 ? '−' : '+'} Já pago`, 'com data fora do período', Math.abs(resto)) : ''}
+        <div class="hc-l hc-total"><span>= Saldo previsto em ${ultimo}</span><b>${fmt(fim)}</b></div>
       </div>`;
 }
 
@@ -2359,6 +2417,14 @@ function pontePrevista(contas, bordaDe, bordaAte, fim) {
 function notaDeHoje(contas, bordaDe) {
   if (bordaDe <= DB.hojeISO()) return '';
   return ` Hoje há <b>${fmt(saldoDeContas(contas))}</b> em conta — este período começa depois.`;
+}
+
+/* Com filtro de categoria, membro ou busca, o número grande continua sendo o saldo
+   de TUDO: ele não tem como responder ao filtro. Dizer isso é obrigatório — um
+   número que parece filtrado e não está é pior do que número nenhum. */
+function notaDoFiltro(soDeConta) {
+  return soDeConta ? ''
+    : ' O saldo não responde a este filtro — dinheiro em conta não tem categoria. As linhas acima são o movimento filtrado.';
 }
 
 /* Saldo de um conjunto de contas, ou de todas quando não há recorte. Existe para
@@ -2452,6 +2518,16 @@ function renderExtrato(period) {
   const efeitoNaConta = t => efeitoDaTransferencia(t, contasFiltradas);
   const contaFiltrada = contasFiltradas.length ? contasFiltradas : null;
 
+  /* CONTA E JANELA DE DIAS são filtros que o SALDO entende: um conjunto de contas
+     tem saldo, um intervalo tem começo e fim. Categoria, membro, etiqueta e busca
+     não — dinheiro em conta não tem categoria, e um "saldo do envelope Mercado"
+     seria um número inventado. Com um desses ligado, o cartão troca a conta de
+     saldo pelo MOVIMENTO do filtro. */
+  const soDeConta = !(state.filtros.busca || state.filtros.valorMin || state.filtros.valorMax
+    || state.filtros.recorrente
+    || ['scope', 'membro', 'tipo', 'situacao', 'categorias', 'tags', 'metodos']
+      .some(k => (state.filtros[k] || []).length));
+
   /* Total do dia, somado sobre a lista JÁ FILTRADA: com um filtro ativo, um total
      vindo de outra base não bateria com as linhas logo abaixo dele. */
   /* Faturas do período entram na lista como linhas PREVISTAS.
@@ -2464,12 +2540,21 @@ function renderExtrato(period) {
 
   const porDia = {};
   for (const t of txs) {
-    const d = (porDia[t.date] = porDia[t.date] || { saiu: 0, entrou: 0 });
+    const d = (porDia[t.date] = porDia[t.date] || { saiu: 0, entrou: 0, saiuPrev: 0, entrouPrev: 0 });
     const v = Number(t.amount) || 0;
+    /* Soma no total do dia e, quando o item ainda não aconteceu, também na parcela
+       PREVISTA dele. Marcar aqui, dentro da regra que já decide o que conta, é o
+       que permite partir o cabeçalho em "já foi" e "ainda vem" sem escrever a
+       regra uma segunda vez — e regra escrita duas vezes diverge na primeira
+       manutenção. */
+    const soma = (campo, valor) => {
+      d[campo] += valor;
+      if (t.status === 'A Pagar') d[campo + 'Prev'] += valor;
+    };
     if (DB.isTransfer(t)) {
       const efeito = efeitoNaConta(t);
-      if (efeito < 0) d.saiu += -efeito;
-      else if (efeito > 0) d.entrou += efeito;
+      if (efeito < 0) soma('saiu', -efeito);
+      else if (efeito > 0) soma('entrou', efeito);
       continue;
     }
     if (t.adjustment) continue;              // conciliação não é gasto nem entrada
@@ -2478,11 +2563,11 @@ function renderExtrato(period) {
        olhando a família inteira, ele não é saída nova — as compras do cartão já
        contaram como despesa quando aconteceram. */
     if (t.pays_invoice) {
-      if (contasFiltradas.length) d.saiu += v;
+      if (contasFiltradas.length) soma('saiu', v);
       continue;
     }
-    if (DB.isExpense(t)) d.saiu += v;
-    else if (!t.card_id) d.entrou += v;      // estorno de cartão abate a fatura, não entra na conta
+    if (DB.isExpense(t)) soma('saiu', v);
+    else if (!t.card_id) soma('entrou', v);  // estorno de cartão abate a fatura, não entra na conta
   }
 
   /* A fatura conta no total do dia SÓ quando se está conferindo contas.
@@ -2494,8 +2579,9 @@ function renderExtrato(period) {
      vezes. Por isso a linha aparece nos dois casos, mas o total só num. */
   if (contasFiltradas.length) {
     for (const inv of faturasNoPeriodo) {
-      const d = (porDia[inv.venceISO] = porDia[inv.venceISO] || { saiu: 0, entrou: 0 });
+      const d = (porDia[inv.venceISO] = porDia[inv.venceISO] || { saiu: 0, entrou: 0, saiuPrev: 0, entrouPrev: 0 });
       d.saiu += Math.max(0, inv.falta);
+      d.saiuPrev += Math.max(0, inv.falta);   // fatura em aberto é previsão, não fato
     }
   }
 
@@ -2503,6 +2589,20 @@ function renderExtrato(period) {
   // a mesma história
   const saiuNaConta = Object.values(porDia).reduce((s, d) => s + d.saiu, 0);
   const entrouNaConta = Object.values(porDia).reduce((s, d) => s + d.entrou, 0);
+
+  /* O MESMO movimento, partido em o que já aconteceu e o que ainda vem. As duas
+     metades somam o total acima por construção, então o cartão pode mostrar as
+     duas sem risco de contradizer o próprio cabeçalho. */
+  const previstoDoTotal = (campo, filtro) => contasFiltradas.length
+    ? Object.values(porDia).reduce((s, d) => s + d[campo], 0)
+    : txs.filter(t => t.status === 'A Pagar' && filtro(t)).reduce((s, t) => s + Number(t.amount || 0), 0);
+  const aPagar = previstoDoTotal('saiuPrev', t => DB.isExpense(t) && !DB.isNeutral(t));
+  const aReceber = previstoDoTotal('entrouPrev', t => !DB.isExpense(t) && !t.card_id && !DB.isNeutral(t));
+  const movimentoDoFiltro = {
+    jaEntrou: (contasFiltradas.length ? entrouNaConta : receitas) - aReceber,
+    jaSaiu: (contasFiltradas.length ? saiuNaConta : total) - aPagar,
+    aReceber, aPagar,
+  };
 
   /* Marcadas como previstas e sem ação de pagar na própria linha: quem paga usa a
      folha, que trata parcial e escolhe a conta. */
@@ -2678,14 +2778,19 @@ function renderExtrato(period) {
           fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
         saldo: finalMes, anterior, entrou: entrouNaConta, saiu: saiuNaConta,
         rotEntrou: 'entrou', rotSaiu: 'saiu',
-        ponte: pontePrevista(contasFiltradas, bordaDe, bordaAte, finalMes),
+        ponte: pontePrevista({ contas: contasFiltradas, bordaDe, bordaAte, fim: finalMes,
+          soDeConta, movimento: movimentoDoFiltro }),
         dias: diasDoRecorte, porDia,
         serie: serieDeSaldo(contasFiltradas, diasDoRecorte, anterior),
         nota: `Extrato de <b>${esc(nomes.join(' + '))}</b> — o saldo anterior é o que ${
           recortado ? `havia em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}` : 'veio do mês passado'}.${
-          Math.abs(conciliado) > 0.005 ? ` Há <b>${fmt(Math.abs(conciliado))}</b> de conciliação no período, que mexe no saldo mas não é gasto nem entrada.` : ''}${varias
+          /* Só sem filtro de conteúdo: com um deles ligado, entrou/saiu são do
+             recorte e o saldo é de tudo, então a diferença entre os dois não é
+             conciliação nenhuma — é o próprio filtro, e anunciá-la como conciliação
+             seria inventar um problema que não existe. */
+          soDeConta && Math.abs(conciliado) > 0.005 ? ` Há <b>${fmt(Math.abs(conciliado))}</b> de conciliação no período, que mexe no saldo mas não é gasto nem entrada.` : ''}${varias
           ? ' Transferência entre estas contas não conta, porque o dinheiro não saiu daqui.' : ''}${
-          notaDeHoje(contasFiltradas, bordaDe)}`,
+          notaDeHoje(contasFiltradas, bordaDe)}${notaDoFiltro(soDeConta)}`,
       });
     })()
     : (() => {
@@ -2707,13 +2812,21 @@ function renderExtrato(period) {
           fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
         saldo: finalMes, anterior, entrou: receitas, saiu: total,
         rotEntrou: 'receitas', rotSaiu: 'despesas',
-        ponte: pontePrevista(null, bordaDe, bordaAte, finalMes),
+        ponte: pontePrevista({ contas: null, bordaDe, bordaAte, fim: finalMes,
+          soDeConta, movimento: movimentoDoFiltro }),
         dias: diasDoRecorte, porDia,
         serie: serieDeSaldo(null, diasDoRecorte, anterior),
-        nota: `${resultado >= 0
+        /* COM FILTRO DE CONTEÚDO a frase do "sobrou/faltou" mentiria: ela soma um
+           movimento filtrado a um saldo que é de tudo. Ali a nota vira só o aviso
+           de que o saldo não segue o filtro. */
+        nota: !soDeConta ? notaDoFiltro(soDeConta).trim() : `${resultado >= 0
           ? `Sobrou <b class="txt-green">${fmt(resultado)}</b> ${onde}, somados aos ${fmt(anterior)} ${vindo}.`
           : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> ${onde}, tirados dos ${fmt(anterior)} ${vindo}.`}${
-          Math.abs(conciliado) > 0.005 ? ` Há ainda <b>${fmt(Math.abs(conciliado))}</b> de conciliação, que mexe no saldo sem ser gasto nem entrada.` : ''}${
+          /* A diferença entre a conta de GASTO (as duas colunas acima) e a de CAIXA
+             (o bloco de linhas abaixo). Chamá-la de "conciliação" era impreciso: a
+             maior parte dela costuma ser compra no cartão, que é gasto e não sai da
+             conta, e pagamento de fatura, que sai da conta e não é gasto novo. */
+          Math.abs(conciliado) > 0.005 ? ` Há ainda <b>${fmt(Math.abs(conciliado))}</b> de diferença entre gasto e caixa — compra no cartão, pagamento de fatura e conciliação mexem num e não no outro.` : ''}${
           notaDeHoje(null, bordaDe)}`,
       });
     })()}

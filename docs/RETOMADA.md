@@ -19,8 +19,8 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 115 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2211 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 116 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2244 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - Nada pendente no git
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
@@ -81,6 +81,11 @@ mão toda vez.
   defeitos já corrigidos aqui.
 - Transferência agendada é neutra para a família e NÃO é neutra para uma conta
   filtrada — ali ela entra ou sai de verdade, como no extrato do banco.
+- No cartão do Extrato, o corte entre "já aconteceu" e "ainda vem" é o STATUS, não
+  a data: quem paga adiantado deixa a data do vencimento e o dinheiro já saiu.
+- Saldo só entende filtro de CONTA e de janela de dias. Com categoria, membro,
+  etiqueta ou busca, o cartão mostra o movimento do filtro e avisa que o saldo não
+  responde a ele.
 
 ## O que eu quero fazer agora
 [escreva aqui]

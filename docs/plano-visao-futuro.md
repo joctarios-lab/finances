@@ -96,23 +96,46 @@ lugar nenhum. Medido em 2 de agosto: o cartão dizia **R$ 9.333,63** com
 O título também mentia por omissão: "Saldo em 31 de ago." é o nome de um fato.
 Passou a ser "Saldo **previsto** em 31 de ago." enquanto o período não fechar.
 
-Abaixo do cabeçalho, a conta por extenso:
+Abaixo do cabeçalho, a conta por extenso, em dois blocos — o que já aconteceu e o
+que ainda vem:
 
 ```
-PREVISTO · até 31 de ago.
-Em conta hoje  02 de ago.                    R$ 231,35
+REALIZADO · o que já entrou e saiu
+Abriu  em 01 de ago.                         R$ 325,63
++ Entrou na conta                            R$ 150,00
+− Saiu da conta                              R$ 244,28
+= Em conta hoje                              R$ 231,35
+
+PREVISTO · daqui até 31 de ago.
 + A receber  ainda não caiu               R$ 17.831,50
 − A pagar  contas e faturas em aberto      R$ 8.729,22
 = Saldo previsto em 31 de ago.             R$ 9.333,63
 ```
 
+O bloco de cima também vale para **mês encerrado**, onde não há previsão nenhuma:
+julho fecha em `1.168,77 + 22.453,72 − 23.296,86 = 325,63`. Antes, o card dava só o
+número final e as duas colunas do cabeçalho — que contam GASTO, não caixa, e por
+isso nunca fechavam com ele.
+
+**O corte entre os dois blocos é o STATUS, não a data.** Quem paga um boleto
+adiantado deixa a data do vencimento e o dinheiro sai hoje — é o que o app faz ao
+marcar como pago. Cortar por data mostrava, num cenário de teste, "em conta hoje
+R$ 700" enquanto a tela de contas dizia R$ 450. Com o corte no status, o bloco
+fecha no saldo **real**, o mesmo que o resto do app mostra.
+
 Três decisões que sustentam isso:
 
 **As parcelas saem da mesma função que compõe o saldo.** `saldoPrevistoNaData`
 perdeu o miolo para `DB.movimentoPrevistoAte`, que devolve `{ entra, sai }`. O
-saldo previsto passou a ser, literalmente, `saldoNaData + entra − sai`. Uma cópia
-da regra na view divergiria no primeiro ajuste — foi assim que nasceram três dos
-defeitos já corrigidos aqui.
+saldo previsto passou a ser, literalmente, `saldoNaData + entra − sai`. O mesmo do
+lado realizado: `saldoNaData` agora se apoia em `DB.movimentoRealizadoAte`, e vale
+`saldoNaData(fim) − saldoNaData(início) = entra − sai`. Uma cópia da regra na view
+divergiria no primeiro ajuste — foi assim que nasceram três dos defeitos já
+corrigidos aqui.
+
+**Vencido de antes fica em linha própria.** Ele ainda vai sair, mas não está na
+lista daquele mês; somá-lo dentro de "A pagar" faria a linha deixar de conferir
+contra o que se vê logo abaixo dela.
 
 **Mês que ainda não começou parte da abertura dele, não de hoje.** A janela vem por
 diferença (`movimentoPrevistoAte(fim) − movimentoPrevistoAte(início)`). Sem isso, o
@@ -138,6 +161,30 @@ assim o que foi **pago**; faltava o mesmo para o que está **agendado**.
 Com a correção, o extrato do C6 Invest fecha em **R$ 3.534,00** — exatamente o
 "Guardado" ao fim do mês que o Painel mostra. Dois números que se conferem em telas
 diferentes.
+
+### E quando há filtro
+
+Conta e janela de dias são filtros que o **saldo entende**: um conjunto de contas
+tem saldo, um intervalo tem começo e fim. Categoria, membro, etiqueta e busca não —
+dinheiro em conta não tem categoria, e um "saldo do envelope Mercado" seria um
+número inventado.
+
+Com um desses ligado, o cartão troca a conta de saldo pelo **movimento do filtro**,
+partido do mesmo jeito:
+
+```
+NO FILTRO · 01 de ago. a 31 de ago.
+Já saiu  até 02 de ago.                      R$ 194,28
+```
+
+As duas metades somam exatamente as colunas do cabeçalho (`já saiu + a pagar =
+despesas`), e vêm da mesma lista que está logo abaixo. O saldo continua sendo o de
+tudo, e a nota **diz isso** — um número que parece filtrado e não está é pior do
+que número nenhum.
+
+Pelo mesmo motivo, sob filtro a nota perdeu a frase do "sobrou/faltou": ela somava
+um movimento filtrado a um saldo que é de tudo, e anunciava a diferença como
+"conciliação". Medido: R$ 9.202,28 de conciliação inexistente ao buscar "mercado".
 
 ## Duas duplicações encontradas nos dados reais
 

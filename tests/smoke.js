@@ -87,7 +87,7 @@ eval(appSrc + `; Object.assign(global, {
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
-  serieDeSaldo, sparkArea, PALETTE, pontePrevista, saldoDeContas, notaDeHoje,
+  serieDeSaldo, sparkArea, PALETTE, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
@@ -3403,9 +3403,27 @@ try {
    coisas — que os dois números apareçam, e que as parcelas entre eles FECHEM. */
 console.log('\n=== O extrato mostra o hoje e o fim do período ===');
 try {
+  // O rótulo sem a nota em <i>: a nota traz data e explicação, que mudam com o dia
   const linhasDaPonte = html => [...html.matchAll(/<div class="hc-l([^"]*)"><span>(.*?)<\/span><b>(.*?)<\/b>/g)]
-    .map(m => ({ total: m[1].includes('hc-total'), rot: m[2].replace(/<[^>]*>/g, ''), val: m[3] }));
+    .map(m => ({ total: m[1].includes('hc-total'), val: m[3],
+      rot: m[2].replace(/<i>.*?<\/i>/g, '').replace(/<[^>]*>/g, '').trim() }));
   const numeroGrande = html => ((html.match(/res-dir">\s*<b[^>]*>([^<]+)/) || [])[1] || '').trim();
+  /* A CONTA TEM DE FECHAR, lida como quem confere no papel: parte da primeira
+     linha, aplica os sinais e cobra cada "=" pelo caminho. Vale mais do que
+     conferir valor por valor — pega tanto uma parcela errada quanto uma parcela
+     que deixou de entrar, que é o defeito que só aparece com dado incomum. */
+  const fecha = linhas => {
+    if (linhas.length < 2) return true;
+    const num = s => Number(String(s).replace(/[^\d,-]/g, '').replace(/\./g, '').replace(',', '.'));
+    let soma = num(linhas[0].val);
+    for (const l of linhas.slice(1)) {
+      if (l.rot.startsWith('+')) soma += num(l.val);
+      else if (l.rot.startsWith('−')) soma -= num(l.val);
+      else if (l.rot.startsWith('=')) { if (Math.abs(soma - num(l.val)) > 0.005) return false; }
+      else return false;                    // linha sem sinal no meio da conta
+    }
+    return true;
+  };
 
   const cE = DB.upsert('accounts', { name: 'Conta Ponte', type: 'Conta Corrente', balance: 1000, active: true });
   const mesAtual = DB.monthPeriod(new Date());
@@ -3423,19 +3441,28 @@ try {
      os dois números coincidem e trocar um pelo outro passaria despercebido. */
   DB.upsert('transactions', { ...base, status: 'Pago', description: 'Mercado ponte', amount: 150,
     date: DB.inicioISO(mesAtual), type: 'Despesa', method: 'Débito' });
+  // Uma entrada no mês passado, para o cartão do mês encerrado ter o que contar
+  DB.upsert('transactions', { ...base, status: 'Pago', description: 'Salário ponte', amount: 500,
+    date: somarDias(DB.inicioISO(mesPassado), 2), type: 'Receita', method: 'PIX' });
 
   state.filtros = { ...filtrosVazios(), contas: [cE] };
   const tela = renderExtrato(mesAtual);
   const linhas = linhasDaPonte(tela);
-  check('o cartão traz a ponte até o fim do período', /class="res-conta"/.test(tela), true);
-  check('  a primeira linha é o dinheiro que existe hoje', linhas[0].rot.startsWith('Em conta hoje'), true);
-  check('  com o saldo real da conta', linhas[0].val, fmt(1000));
+  check('o cartão traz a conta do período', /class="res-conta"/.test(tela), true);
+  check('  começa pela abertura do período', linhas[0].rot.startsWith('Abriu'), true);
+  check('  com o saldo que veio de antes', linhas[0].val, fmt(1150));
+  check('  mostra o que JÁ saiu da conta',
+    (linhas.find(l => l.rot.startsWith('− Saiu da conta')) || {}).val, fmt(150));
+  check('  e fecha no dinheiro que existe hoje',
+    (linhas.find(l => l.rot.startsWith('= Em conta hoje')) || {}).val, fmt(1000));
+  check('  que é o saldo real da conta', DB.get('accounts', cE).balance, 1000);
   check('  o que ainda vai entrar', (linhas.find(l => l.rot.startsWith('+ A receber')) || {}).val, fmt(800));
   check('  o que ainda vai sair', (linhas.find(l => l.rot.startsWith('− A pagar')) || {}).val, fmt(300));
   /* A conta tem de FECHAR na tela: 1000 + 800 − 300. Uma ponte que não soma é pior
      do que ponte nenhuma — ela convida a conferir e desmente o próprio cartão. */
   check('  e as parcelas fecham no total', linhas[linhas.length - 1].total
     && linhas[linhas.length - 1].val === fmt(1500), true);
+  check('  a conta inteira fecha, linha a linha', fecha(linhas), true);
   check('  o total é o mesmo número grande do cartão', numeroGrande(tela), fmt(1500));
   check('  que é o saldo previsto da conta', DB.saldoPrevistoNaData([cE], DB.fimISO(mesAtual)), 1500);
   check('  e a abertura do mês não é o saldo de hoje', DB.saldoNaData([cE], DB.inicioISO(mesAtual)), 1150);
@@ -3445,10 +3472,20 @@ try {
   const tituloDe = html => ((html.match(/res-rot">\s*<b>([^<]+)/) || [])[1] || '').trim();
   check('  e o título avisa que é previsão', /^Saldo previsto em /.test(tituloDe(tela)), true);
 
-  // Mês encerrado não tem ponte: ali o fim é fato, e prever sobre fato faria o
-  // extrato do mês discordar do extrato do banco
+  /* MÊS ENCERRADO tem a conta do realizado e NÃO tem a do previsto: ali o fim é
+     fato, e prever sobre fato faria o extrato do mês discordar do extrato do
+     banco. A conta fecha em "Em conta em <último dia>", não em "hoje". */
   const telaPassado = renderExtrato(mesPassado);
-  check('mês encerrado não ganha ponte', /class="res-conta"/.test(telaPassado), false);
+  const linhasP = linhasDaPonte(telaPassado);
+  check('mês encerrado mostra o que aconteceu nele', linhasP[0].rot.startsWith('Abriu'), true);
+  check('  e não projeta nada', /= Saldo previsto em/.test(telaPassado), false);
+  check('  fecha no saldo do último dia, não no de hoje',
+    linhasP[linhasP.length - 1].rot.startsWith('= Em conta em'), true);
+  check('  com o valor daquela data', linhasP[linhasP.length - 1].val,
+    fmt(DB.saldoNaData([cE], DB.fimISO(mesPassado))));
+  check('  e o que entrou nele aparece',
+    (linhasP.find(l => l.rot.startsWith('+ Entrou na conta')) || {}).val, fmt(500));
+  check('  e a conta do mês encerrado fecha', fecha(linhasP), true);
   check('  e o título dele não diz previsto', /previsto/.test(tituloDe(telaPassado)), false);
   check('  ele continua chamando o fim de saldo', /^Saldo em /.test(tituloDe(telaPassado)), true);
 
@@ -3483,6 +3520,13 @@ try {
   check('  o extrato do destino mostra o aporte a caminho',
     (linhasDaPonte(telaDestino).find(l => l.rot.startsWith('+ A receber')) || {}).val, fmt(200));
   check('  e fecha no saldo previsto dela', numeroGrande(telaDestino), fmt(200));
+  /* Nessa conta nada se moveu ainda. Um bloco "Realizado" com uma linha só,
+     repetindo a abertura, seria cabeçalho sem informação: o saldo vira a primeira
+     linha da previsão, que é onde ele faz falta. */
+  check('  sem movimento, não há bloco de realizado', /hc-cab">Realizado/.test(telaDestino), false);
+  check('  e a conta começa pelo dinheiro que há nela',
+    linhasDaPonte(telaDestino)[0].rot, 'Em conta hoje');
+  check('  fechando assim mesmo', fecha(linhasDaPonte(telaDestino)), true);
 
   // Identidade que sustenta tudo: o saldo previsto É saldoNaData + entra − sai
   const mov = DB.movimentoPrevistoAte([cE], DB.fimISO(mesAtual));
@@ -3492,6 +3536,83 @@ try {
   check('  e no passado não há movimento previsto',
     DB.movimentoPrevistoAte([cE], DB.inicioISO(mesPassado)).entra
     + DB.movimentoPrevistoAte([cE], DB.inicioISO(mesPassado)).sai, 0);
+
+  /* VENCIDO DE ANTES fica em linha própria. Ele é dinheiro que ainda vai sair, mas
+     não está na lista daquele mês — misturá-lo em "A pagar" faria a linha deixar de
+     conferir com o que se vê logo abaixo dela. */
+  DB.upsert('transactions', { ...base, description: 'Atrasado ponte', amount: 90,
+    date: somarDias(DB.inicioISO(mesAtual), -3), type: 'Despesa', method: 'Boleto' });
+  state.filtros = { ...filtrosVazios(), contas: [cE] };
+  const comVencido = linhasDaPonte(renderExtrato(mesAtual));
+  check('o vencido de antes ganha linha própria',
+    (comVencido.find(l => l.rot.startsWith('− Vencido')) || {}).val, fmt(90));
+  check('  e não infla o "a pagar" do mês',
+    (comVencido.find(l => l.rot.startsWith('− A pagar')) || {}).val, fmt(500));
+  check('  mas entra no total previsto',
+    comVencido[comVencido.length - 1].val, fmt(1500 - 200 - 90));
+  check('  e com ele a conta continua fechando', fecha(comVencido), true);
+
+  /* PAGO COM DATA DEPOIS DO PERÍODO — quem paga adiantado. O dinheiro já saiu da
+     conta (o saldo caiu quando marcou como pago), mas o lançamento tem a data do
+     vencimento, lá no mês que vem. Ele pertence ao realizado de hoje e NÃO ao
+     saldo com que este mês fecha; sem as duas coisas, uma das pontas não fecha. */
+  DB.upsert('transactions', { ...base, status: 'Pago', description: 'Adiantado ponte', amount: 60,
+    date: somarDias(DB.fimISO(mesAtual), 3), type: 'Despesa', method: 'Boleto' });
+  const comAdiantado = linhasDaPonte(renderExtrato(mesAtual));
+  check('pagamento adiantado entra no que já saiu da conta',
+    (comAdiantado.find(l => l.rot.startsWith('− Saiu da conta')) || {}).val, fmt(150 + 60));
+  check('  o bloco de hoje ainda fecha no saldo real',
+    (comAdiantado.find(l => l.rot.startsWith('= Em conta hoje')) || {}).val,
+    fmt(DB.get('accounts', cE).balance));
+  check('  e volta como linha própria no previsto',
+    (comAdiantado.find(l => l.rot.startsWith('+ Já pago')) || {}).val, fmt(60));
+  check('  com a conta inteira fechando', fecha(comAdiantado), true);
+  check('  no total que o cartão anuncia',
+    comAdiantado[comAdiantado.length - 1].val, fmt(1500 - 200 - 90 + 60));
+  DB.remove('transactions', DB.all('transactions').find(t => t.description === 'Adiantado ponte').id);
+
+  /* COM FILTRO QUE O SALDO NÃO ENTENDE (busca, categoria, membro…), o cartão troca
+     a conta de saldo pelo MOVIMENTO do filtro — partido em o que já aconteceu e o
+     que ainda vem. Foi o pedido: ver as entradas e saídas até aqui, e vê-las
+     obedecendo ao filtro. */
+  state.filtros = { ...filtrosVazios(), busca: 'ponte' };
+  const comBusca = renderExtrato(mesAtual);
+  const linhasB = linhasDaPonte(comBusca);
+  check('com filtro de busca, o cartão mostra o movimento do filtro',
+    linhasB.map(l => l.rot).join(' · '), 'Já saiu · A receber · A pagar');
+  check('  o que já saiu, só do que o filtro deixou passar',
+    (linhasB.find(l => l.rot === 'Já saiu') || {}).val, fmt(150));
+  check('  o que ainda vem, idem', (linhasB.find(l => l.rot === 'A pagar') || {}).val, fmt(300));
+  check('  e nenhuma linha de saldo, que não se filtra por categoria',
+    /Abriu|Em conta|Saldo previsto em/.test(comBusca.slice(comBusca.indexOf('res-conta'))), false);
+  check('  a tela diz por que o saldo não mudou',
+    comBusca.includes('não responde a este filtro'), true);
+  /* As duas metades somam a coluna do cabeçalho: é o que impede o cartão de
+     contradizer a si mesmo duas linhas acima. */
+  const saiuNoTopo = (comBusca.match(/pt pt-dn"><\/i>([\d.,]+) <small>(?:saiu|despesas)/) || [])[1];
+  check('  já saiu + a pagar = a coluna de saídas do topo', saiuNoTopo, fmtSemMoeda(150 + 300));
+
+  /* O MESMO, conferindo uma conta: aí os números saem do total do dia — a regra que
+     trata transferência e fatura como o extrato do banco trata — e não da soma
+     solta dos lançamentos. Duas contas diferentes, e as duas precisam partir. */
+  state.filtros = { ...filtrosVazios(), contas: [cE], busca: 'ponte' };
+  const comBuscaEConta = renderExtrato(mesAtual);
+  const linhasBC = linhasDaPonte(comBuscaEConta);
+  check('busca + conta: o já saiu vem do movimento da conta',
+    (linhasBC.find(l => l.rot === 'Já saiu') || {}).val, fmt(150));
+  check('  o a pagar inclui a transferência que sai dela',
+    (linhasBC.find(l => l.rot === 'A pagar') || {}).val, fmt(500));
+  check('  e o a receber, o que ainda cai nela',
+    (linhasBC.find(l => l.rot === 'A receber') || {}).val, fmt(800));
+  const saiuNaConta = (comBuscaEConta.match(/pt pt-dn"><\/i>([\d.,]+) <small>(?:saiu|despesas)/) || [])[1];
+  check('  as duas metades somam a coluna do topo', saiuNaConta, fmtSemMoeda(150 + 500));
+
+  // Trocar o filtro tem de trocar os números — senão ele não está sendo obedecido
+  state.filtros = { ...filtrosVazios(), busca: 'boleto ponte' };
+  const linhasB2 = linhasDaPonte(renderExtrato(mesAtual));
+  check('  filtro mais estreito, números menores',
+    (linhasB2.find(l => l.rot === 'A pagar') || {}).val, fmt(300));
+  check('  e o que não casa com a busca some', linhasB2.some(l => l.rot === 'A receber'), false);
 
   for (const t of DB.all('transactions').filter(t => / ponte$/.test(t.description))) DB.remove('transactions', t.id);
   DB.remove('accounts', cE); DB.remove('accounts', cD);
