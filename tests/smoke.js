@@ -87,7 +87,7 @@ eval(appSrc + `; Object.assign(global, {
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
-  serieDeSaldo, sparkArea, PALETTE,
+  serieDeSaldo, sparkArea, PALETTE, pontePrevista, saldoDeContas, notaDeHoje,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
@@ -3395,6 +3395,108 @@ try {
   DB.remove('accounts', cM);
   state.filtros = filtrosVazios();
 } catch (e) { console.log(` FALHA | saldo entre meses: ${e.message}`); fail++; }
+
+/* ---- A ponte do extrato: o que existe hoje e onde o período fecha ----
+   O número grande do cartão sempre foi o saldo do FIM do recorte. Num mês que
+   ainda não acabou ele é projeção, e o saldo de hoje não aparecia em lugar nenhum:
+   o cartão dizia R$ 9.333,63 com R$ 231,35 em conta. Os testes aqui cobram as duas
+   coisas — que os dois números apareçam, e que as parcelas entre eles FECHEM. */
+console.log('\n=== O extrato mostra o hoje e o fim do período ===');
+try {
+  const linhasDaPonte = html => [...html.matchAll(/<div class="hc-l([^"]*)"><span>(.*?)<\/span><b>(.*?)<\/b>/g)]
+    .map(m => ({ total: m[1].includes('hc-total'), rot: m[2].replace(/<[^>]*>/g, ''), val: m[3] }));
+  const numeroGrande = html => ((html.match(/res-dir">\s*<b[^>]*>([^<]+)/) || [])[1] || '').trim();
+
+  const cE = DB.upsert('accounts', { name: 'Conta Ponte', type: 'Conta Corrente', balance: 1000, active: true });
+  const mesAtual = DB.monthPeriod(new Date());
+  const mesQueVem = DB.monthPeriod(new Date(), 1);
+  const mesPassado = DB.monthPeriod(new Date(), -1);
+  // Último dia do ciclo corrente: data que ainda não chegou (ou é hoje), então o
+  // lançamento continua "a pagar" e pertence à ponte
+  const fimDoMes = somarDias(DB.fimISO(mesAtual), -1);
+  const base = { scope: 'Família', member: MEMBRO_COMUM, status: 'A Pagar', account_id: cE };
+  DB.upsert('transactions', { ...base, description: 'Boleto ponte', amount: 300, date: fimDoMes, type: 'Despesa', method: 'Boleto' });
+  DB.upsert('transactions', { ...base, description: 'Freela ponte', amount: 800, date: fimDoMes, type: 'Receita', method: 'PIX' });
+  /* Um gasto JÁ PAGO no começo do ciclo, sem mexer no saldo (o saldo já nasce
+     descontado, como na vida real). Ele afasta a ABERTURA do mês do saldo de HOJE
+     — 1.150 contra 1.000 — e é o que dá poder ao teste da primeira linha: sem ele
+     os dois números coincidem e trocar um pelo outro passaria despercebido. */
+  DB.upsert('transactions', { ...base, status: 'Pago', description: 'Mercado ponte', amount: 150,
+    date: DB.inicioISO(mesAtual), type: 'Despesa', method: 'Débito' });
+
+  state.filtros = { ...filtrosVazios(), contas: [cE] };
+  const tela = renderExtrato(mesAtual);
+  const linhas = linhasDaPonte(tela);
+  check('o cartão traz a ponte até o fim do período', /class="res-conta"/.test(tela), true);
+  check('  a primeira linha é o dinheiro que existe hoje', linhas[0].rot.startsWith('Em conta hoje'), true);
+  check('  com o saldo real da conta', linhas[0].val, fmt(1000));
+  check('  o que ainda vai entrar', (linhas.find(l => l.rot.startsWith('+ A receber')) || {}).val, fmt(800));
+  check('  o que ainda vai sair', (linhas.find(l => l.rot.startsWith('− A pagar')) || {}).val, fmt(300));
+  /* A conta tem de FECHAR na tela: 1000 + 800 − 300. Uma ponte que não soma é pior
+     do que ponte nenhuma — ela convida a conferir e desmente o próprio cartão. */
+  check('  e as parcelas fecham no total', linhas[linhas.length - 1].total
+    && linhas[linhas.length - 1].val === fmt(1500), true);
+  check('  o total é o mesmo número grande do cartão', numeroGrande(tela), fmt(1500));
+  check('  que é o saldo previsto da conta', DB.saldoPrevistoNaData([cE], DB.fimISO(mesAtual)), 1500);
+  check('  e a abertura do mês não é o saldo de hoje', DB.saldoNaData([cE], DB.inicioISO(mesAtual)), 1150);
+  /* No TÍTULO, não em qualquer lugar da tela: a última linha da própria ponte diz
+     "= Saldo previsto em ...", e procurar o texto solto deixava passar um título
+     que continuava chamando de saldo um número que é projeção. */
+  const tituloDe = html => ((html.match(/res-rot">\s*<b>([^<]+)/) || [])[1] || '').trim();
+  check('  e o título avisa que é previsão', /^Saldo previsto em /.test(tituloDe(tela)), true);
+
+  // Mês encerrado não tem ponte: ali o fim é fato, e prever sobre fato faria o
+  // extrato do mês discordar do extrato do banco
+  const telaPassado = renderExtrato(mesPassado);
+  check('mês encerrado não ganha ponte', /class="res-conta"/.test(telaPassado), false);
+  check('  e o título dele não diz previsto', /previsto/.test(tituloDe(telaPassado)), false);
+  check('  ele continua chamando o fim de saldo', /^Saldo em /.test(tituloDe(telaPassado)), true);
+
+  /* MÊS QUE AINDA NÃO COMEÇOU: a ponte parte da ABERTURA dele, não de hoje. Sem
+     descontar o que já passou, setembro mostraria também as parcelas de agosto e
+     as linhas não bateriam com a lista logo abaixo delas. */
+  const telaFuturo = renderExtrato(mesQueVem);
+  const linhasF = linhasDaPonte(telaFuturo);
+  check('no mês que ainda não chegou, a ponte parte da abertura', linhasF[0].rot.startsWith('Abre em contas'), true);
+  check('  com o saldo com que aquele mês abre', linhasF[0].val, fmt(1500));
+  check('  o que é do mês corrente não vaza para ele', linhasF.some(l => /A receber|A pagar/.test(l.rot)), false);
+  check('  e o dinheiro de hoje vem dito por escrito', telaFuturo.includes('Hoje há'), true);
+  check('  com o valor de hoje, não o da abertura',
+    telaFuturo.includes(`Hoje há <b>${fmt(1000)}</b>`), true);
+
+  /* TRANSFERÊNCIA AGENDADA. Para a família ela é neutra; para uma conta olhada
+     sozinha, não. Medido na base real: R$ 3.400 de aporte apareciam na lista do
+     C6 Invest e não mexiam no saldo previsto do topo. */
+  const cD = DB.upsert('accounts', { name: 'Conta Ponte Destino', type: 'Investimento', balance: 0, active: true });
+  const familiaAntes = DB.saldoPrevistoNaData(null, DB.fimISO(mesAtual));
+  DB.upsert('transactions', { ...base, description: 'Aporte ponte', amount: 200, date: fimDoMes,
+    type: 'Transferência', method: 'Transferência', to_account: cD });
+  check('transferência agendada não muda o previsto da família',
+    DB.saldoPrevistoNaData(null, DB.fimISO(mesAtual)), familiaAntes);
+  check('  mas chega na conta de destino', DB.saldoPrevistoNaData([cD], DB.fimISO(mesAtual)), 200);
+  check('  e sai da conta de origem', DB.saldoPrevistoNaData([cE], DB.fimISO(mesAtual)), 1300);
+  check('  olhando as duas juntas, o dinheiro não se move',
+    DB.saldoPrevistoNaData([cE, cD], DB.fimISO(mesAtual)), 1500);
+
+  state.filtros = { ...filtrosVazios(), contas: [cD] };
+  const telaDestino = renderExtrato(mesAtual);
+  check('  o extrato do destino mostra o aporte a caminho',
+    (linhasDaPonte(telaDestino).find(l => l.rot.startsWith('+ A receber')) || {}).val, fmt(200));
+  check('  e fecha no saldo previsto dela', numeroGrande(telaDestino), fmt(200));
+
+  // Identidade que sustenta tudo: o saldo previsto É saldoNaData + entra − sai
+  const mov = DB.movimentoPrevistoAte([cE], DB.fimISO(mesAtual));
+  check('o saldo previsto é o saldo de hoje mais o movimento',
+    DB.saldoNaData([cE], DB.fimISO(mesAtual)) + mov.entra - mov.sai,
+    DB.saldoPrevistoNaData([cE], DB.fimISO(mesAtual)));
+  check('  e no passado não há movimento previsto',
+    DB.movimentoPrevistoAte([cE], DB.inicioISO(mesPassado)).entra
+    + DB.movimentoPrevistoAte([cE], DB.inicioISO(mesPassado)).sai, 0);
+
+  for (const t of DB.all('transactions').filter(t => / ponte$/.test(t.description))) DB.remove('transactions', t.id);
+  DB.remove('accounts', cE); DB.remove('accounts', cD);
+  state.filtros = filtrosVazios();
+} catch (e) { console.log(` FALHA | ponte do extrato: ${e.message}`); fail++; }
 
 console.log('\n=== Extrato por conta bate com o do banco ===');
 try {

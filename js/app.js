@@ -2300,7 +2300,77 @@ function sparkArea(vals, dias, porDia) {
   }, alt, 'saldo-dia');
 }
 
-function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSaiu, nota, dias, serie, porDia }) {
+/* A PONTE entre o dinheiro que existe AGORA e o saldo com que o período FECHA.
+
+   O número grande deste cartão sempre foi o saldo do fim do recorte. Num período
+   que ainda não terminou ele é projeção: em 2 de agosto o cartão dizia
+   R$ 9.333,63 e na conta havia R$ 231,35. Os dois são verdade, mas só um estava
+   na tela — e sem as parcelas do meio o de cima se lê como dinheiro que já existe.
+
+   As parcelas vêm de DB.movimentoPrevistoAte, a mesma função que compõe o saldo
+   previsto. Por construção base + a receber − a pagar = o número grande; não há
+   caminho para a conta da tela discordar da projeção que está acima dela.
+
+   Período ENCERRADO não tem ponte: ali o fim é fato, e uma linha de previsão
+   sobre fato é o que faz o extrato do mês discordar do extrato do banco. */
+function pontePrevista(contas, bordaDe, bordaAte, fim) {
+  const hojeISO = DB.hojeISO();
+  if (bordaAte <= hojeISO) return '';
+  const jaComecou = bordaDe <= hojeISO;
+  /* Janela do recorte, por diferença. Sem descontar o que já passou, a ponte de
+     setembro incluiria o que falta de agosto e as parcelas não bateriam com a
+     lista logo abaixo delas. */
+  const ate = DB.movimentoPrevistoAte(contas, bordaAte);
+  const de = jaComecou ? { entra: 0, sai: 0 } : DB.movimentoPrevistoAte(contas, bordaDe);
+  const entra = ate.entra - de.entra;
+  const sai = ate.sai - de.sai;
+  /* A base é o saldo REAL de hoje quando o período já começou — é a resposta a
+     "quanto eu tenho agora", que era o que faltava — e o saldo previsto de
+     abertura quando ele ainda vai começar. */
+  const base = jaComecou ? saldoDeContas(contas) : DB.saldoPrevistoNaData(contas, bordaDe);
+  const ultimo = new Date(somarDias(bordaAte, -1) + 'T12:00:00');
+  /* Sobra quando existe lançamento JÁ PAGO com data depois do período: ele está no
+     saldo de hoje e não pode estar no do fim. Raro — zero na base real —, mas sem
+     a linha a conta deixaria de fechar justamente para quem paga adiantado, e uma
+     conta que não fecha é pior do que uma linha a mais. */
+  const resto = fim - (base + entra - sai);
+  const temMovimento = Math.abs(entra) > 0.005 || Math.abs(sai) > 0.005 || Math.abs(resto) > 0.005;
+  const l = (rot, nota, valor) =>
+    `<div class="hc-l"><span>${rot}${nota ? ` <i>${nota}</i>` : ''}</span><b>${fmt(valor)}</b></div>`;
+  return `
+      <div class="res-conta">
+        <div class="hc-cab">Previsto <i>até ${fmtDate(ultimo)}</i></div>
+        ${jaComecou
+          ? l('Em conta hoje', fmtDate(new Date(hojeISO + 'T12:00:00')), base)
+          : l('Abre em contas', `em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}`, base)}
+        ${!temMovimento ? '' : `
+        ${Math.abs(entra) > 0.005 ? l('+ A receber', 'ainda não caiu', entra) : ''}
+        ${Math.abs(sai) > 0.005 ? l('− A pagar', 'contas e faturas em aberto', sai) : ''}
+        ${Math.abs(resto) > 0.005 ? l(`${resto < 0 ? '−' : '+'} Já pago`, 'com data fora do período', Math.abs(resto)) : ''}
+        <div class="hc-l hc-total"><span>= Saldo previsto em ${fmtDate(ultimo)}</span><b>${fmt(fim)}</b></div>`}
+      </div>`;
+}
+
+/* Num período que ainda VAI COMEÇAR, a ponte parte do saldo de abertura — e aí o
+   dinheiro de hoje não apareceria em lugar nenhum. Ele vem em prosa, e não como
+   mais uma linha da conta, porque a distância entre o saldo de hoje e a abertura
+   do mês que vem é o resto do mês corrente: duas linhas sem operação entre elas
+   fariam a conta parecer errada. */
+function notaDeHoje(contas, bordaDe) {
+  if (bordaDe <= DB.hojeISO()) return '';
+  return ` Hoje há <b>${fmt(saldoDeContas(contas))}</b> em conta — este período começa depois.`;
+}
+
+/* Saldo de um conjunto de contas, ou de todas quando não há recorte. Existe para
+   que o topo do extrato e a ponte partam do MESMO número: derivar um deles de
+   outro caminho é como o extrato de julho passou a discordar do saldo da conta. */
+function saldoDeContas(contas) {
+  return (contas && contas.length)
+    ? contas.reduce((s, id) => s + (Number((DB.get('accounts', id) || {}).balance) || 0), 0)
+    : DB.accountsTotal();
+}
+
+function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSaiu, nota, ponte, dias, serie, porDia }) {
   const aberto = state.resumoAberto !== false;
   const variacao = saldo - anterior;
   const dia = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
@@ -2336,6 +2406,7 @@ function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSa
           <span><i class="pt pt-dn"></i>${fmtSemMoeda(saiu)} <small>${esc(rotSaiu)}</small></span>
         </span>
       </button>
+      ${ponte || ''}
       <p class="muted res-nota">${nota}</p>
       <!-- Sangra até a borda, com o raio de baixo do cartão. É o que separa um
            gráfico desenhado de um gráfico encaixotado, e é o padrão do Metronic
@@ -2601,15 +2672,20 @@ function renderExtrato(period) {
       const finalMes = DB.saldoPrevistoNaData(contasFiltradas, bordaAte);
       const conciliado = finalMes - (anterior + entrouNaConta - saiuNaConta);
       return resumoExtrato({
-        titulo: `${varias ? 'Saldo somado' : 'Saldo'} em ${fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
+        // "previsto" no título quando o período ainda não acabou: o número é
+        // projeção, e chamá-lo de saldo o faz passar por dinheiro que já existe
+        titulo: `${varias ? 'Saldo somado' : 'Saldo'}${bordaAte > DB.hojeISO() ? ' previsto' : ''} em ${
+          fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
         saldo: finalMes, anterior, entrou: entrouNaConta, saiu: saiuNaConta,
         rotEntrou: 'entrou', rotSaiu: 'saiu',
+        ponte: pontePrevista(contasFiltradas, bordaDe, bordaAte, finalMes),
         dias: diasDoRecorte, porDia,
         serie: serieDeSaldo(contasFiltradas, diasDoRecorte, anterior),
         nota: `Extrato de <b>${esc(nomes.join(' + '))}</b> — o saldo anterior é o que ${
           recortado ? `havia em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}` : 'veio do mês passado'}.${
           Math.abs(conciliado) > 0.005 ? ` Há <b>${fmt(Math.abs(conciliado))}</b> de conciliação no período, que mexe no saldo mas não é gasto nem entrada.` : ''}${varias
-          ? ' Transferência entre estas contas não conta, porque o dinheiro não saiu daqui.' : ''}`,
+          ? ' Transferência entre estas contas não conta, porque o dinheiro não saiu daqui.' : ''}${
+          notaDeHoje(contasFiltradas, bordaDe)}`,
       });
     })()
     : (() => {
@@ -2627,15 +2703,18 @@ function renderExtrato(period) {
         ? `que havia em ${fmtDate(new Date(bordaDe + 'T12:00:00'))}`
         : 'que vieram do anterior';
       return resumoExtrato({
-        titulo: `Saldo em ${fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
+        titulo: `Saldo${bordaAte > DB.hojeISO() ? ' previsto' : ''} em ${
+          fmtDate(new Date(somarDias(bordaAte, -1) + 'T12:00:00'))}`,
         saldo: finalMes, anterior, entrou: receitas, saiu: total,
         rotEntrou: 'receitas', rotSaiu: 'despesas',
+        ponte: pontePrevista(null, bordaDe, bordaAte, finalMes),
         dias: diasDoRecorte, porDia,
         serie: serieDeSaldo(null, diasDoRecorte, anterior),
         nota: `${resultado >= 0
           ? `Sobrou <b class="txt-green">${fmt(resultado)}</b> ${onde}, somados aos ${fmt(anterior)} ${vindo}.`
           : `Faltou <b class="txt-red">${fmt(Math.abs(resultado))}</b> ${onde}, tirados dos ${fmt(anterior)} ${vindo}.`}${
-          Math.abs(conciliado) > 0.005 ? ` Há ainda <b>${fmt(Math.abs(conciliado))}</b> de conciliação, que mexe no saldo sem ser gasto nem entrada.` : ''}`,
+          Math.abs(conciliado) > 0.005 ? ` Há ainda <b>${fmt(Math.abs(conciliado))}</b> de conciliação, que mexe no saldo sem ser gasto nem entrada.` : ''}${
+          notaDeHoje(null, bordaDe)}`,
       });
     })()}
     <!-- Cabeçalho da seção com as ações à direita, no lugar de dois botões de

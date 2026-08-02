@@ -623,29 +623,51 @@ const DB = {
 
      Aqui o passado continua vindo do saldo real (é o número confiável, vem da
      conciliação) e o futuro soma o que está previsto para acontecer até lá. */
-  saldoPrevistoNaData(contaIds, dataISO) {
+  /* O QUE AINDA VAI MEXER NO SALDO daqui até uma data futura, separado em entra e
+     sai. É o miolo de `saldoPrevistoNaData`, extraído para poder ser mostrado.
+
+     O cartão do Extrato dava só o número do fim do período. Num mês que ainda não
+     acabou esse número é projeção — em 2 de agosto ele dizia R$ 9.333,63 enquanto
+     na conta havia R$ 231,35 — e não havia como conferir de onde ele vinha. Com as
+     duas parcelas à vista a conta fecha na tela.
+
+     Extrair em vez de recalcular na view é o ponto: as duas coisas saem daqui, então
+     a soma exibida não tem como discordar da projeção. Uma cópia divergiria no
+     primeiro ajuste, que é como já nasceram três defeitos neste código.
+
+     A janela inclui o VENCIDO de ciclos anteriores: é dinheiro que ainda vai sair. */
+  movimentoPrevistoAte(contaIds, dataISO) {
     const hoje = this.paraISO(new Date());
-    /* A base é o saldo no INÍCIO da data pedida, sempre — não o de hoje.
-
-       `saldoNaData(contas, D)` parte do saldo atual e desfaz tudo com data >= D.
-       Passando `hoje` para uma data futura, ela desfazia os lançamentos de HOJE,
-       que já aconteceram e já estão no saldo da conta: um gasto lançado hoje não
-       aparecia no "abre em contas" do mês que vem.
-
-       Medido: R$ 100 de mercado pagos em 31/07 deixavam a conta em R$ 326, e
-       agosto abria com R$ 426 — o gasto do dia sumia da projeção inteira, porque
-       todos os meses seguintes rolam a partir daí. */
-    const base = this.saldoNaData(contaIds, dataISO);
-    if (dataISO <= hoje) return base;
+    const mov = { entra: 0, sai: 0 };
+    if (dataISO <= hoje) return mov;             // no passado não há previsão, há fato
 
     const contas = (contaIds && contaIds.length) ? contaIds : this.all('accounts').map(a => a.id);
     const dentro = id => contas.includes(id);
-    let previsto = 0;
 
     for (const t of this.all('transactions')) {
-      if (t.status !== 'A Pagar' || t.card_id || this.isNeutral(t)) continue;
+      if (t.status !== 'A Pagar' || t.card_id) continue;
       // Vencido e não pago entra também: é dinheiro que ainda vai sair
       if (String(t.date) >= dataISO) continue;
+      /* TRANSFERÊNCIA AGENDADA é neutra para a família — o dinheiro só muda de
+         bolso —, mas não para uma conta olhada sozinha: ali ela entra ou sai de
+         verdade, exatamente como no extrato do banco.
+
+         Medido: o extrato do C6 Invest listava R$ 3.400 de aporte a caminho e
+         mostrava saldo previsto inalterado no topo. A diferença aparecia disfarçada
+         de "conciliação", que é o nome de outra coisa. `saldoNaData` já tratava
+         assim o que foi PAGO; aqui faltava o mesmo para o que está agendado.
+
+         Entre duas contas do próprio recorte não há movimento — mesma regra do
+         efeitoDaTransferencia, que é quem monta a lista logo abaixo do total. */
+      if (this.isTransfer(t)) {
+        if (!(contaIds && contaIds.length)) continue;
+        const v = Number(t.amount) || 0;
+        const daqui = dentro(t.account_id), praca = dentro(t.to_account);
+        if (daqui && !praca) mov.sai += v;
+        else if (praca && !daqui) mov.entra += v;
+        continue;
+      }
+      if (this.isNeutral(t)) continue;
       /* Lançamento SEM CONTA pertence ao conjunto todo, e por isso entra quando não
          há recorte — a mesma regra que o laço dos previstos, logo abaixo, já usava.
          Aqui ela faltava: um boleto agendado sem conta escolhida (o formulário
@@ -653,7 +675,8 @@ const DB = {
          soma das próprias linhas. Medido: R$ 450 de IPTU a pagar não mexiam num
          saldo previsto de R$ 17.000. */
       if (t.account_id ? !dentro(t.account_id) : (contaIds && contaIds.length)) continue;
-      previsto += (this.isExpense(t) ? -1 : 1) * (Number(t.amount) || 0);
+      const v = Number(t.amount) || 0;
+      if (this.isExpense(t)) mov.sai += v; else mov.entra += v;
     }
 
     /* CONTRATO E CUSTO FIXO que ainda não viraram lançamento.
@@ -676,9 +699,11 @@ const DB = {
         // Sem conta definida, o item pertence ao conjunto todo: só entra quando
         // não há recorte de contas, senão apareceria em qualquer conta filtrada
         if (it.account_id ? !dentro(it.account_id) : (contaIds && contaIds.length)) continue;
-        previsto += (it.receita ? 1 : -1) * (Number(it.valor) || 0);
+        const v = Number(it.valor) || 0;
+        if (it.receita) mov.entra += v; else mov.sai += v;
       }
     }
+
     /* Fatura conta pelo VENCIMENTO, e é o que faltava para o extrato de um mês
        futuro fechar: a compra no cartão não sai da conta quando é feita, sai
        quando a fatura é paga. */
@@ -688,10 +713,28 @@ const DB = {
       for (const inv of this.invoicesOf(card)) {
         if (inv.status === 'Paga' || !(inv.falta > 0.005)) continue;
         if (this.paraISO(inv.due) >= dataISO) continue;
-        previsto -= Math.max(0, inv.falta);
+        mov.sai += Math.max(0, inv.falta);
       }
     }
-    return base + previsto;
+    return mov;
+  },
+
+  saldoPrevistoNaData(contaIds, dataISO) {
+    const hoje = this.paraISO(new Date());
+    /* A base é o saldo no INÍCIO da data pedida, sempre — não o de hoje.
+
+       `saldoNaData(contas, D)` parte do saldo atual e desfaz tudo com data >= D.
+       Passando `hoje` para uma data futura, ela desfazia os lançamentos de HOJE,
+       que já aconteceram e já estão no saldo da conta: um gasto lançado hoje não
+       aparecia no "abre em contas" do mês que vem.
+
+       Medido: R$ 100 de mercado pagos em 31/07 deixavam a conta em R$ 326, e
+       agosto abria com R$ 426 — o gasto do dia sumia da projeção inteira, porque
+       todos os meses seguintes rolam a partir daí. */
+    const base = this.saldoNaData(contaIds, dataISO);
+    if (dataISO <= hoje) return base;
+    const mov = this.movimentoPrevistoAte(contaIds, dataISO);
+    return base + mov.entra - mov.sai;
   },
 
   /* Migra fatura marcada como paga no caminho ANTIGO para lançamento de verdade.

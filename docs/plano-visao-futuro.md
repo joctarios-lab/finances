@@ -86,6 +86,59 @@ contradiriam. O hero traz uma linha de ponte — "Em conta haverá X" — com a
 diferença explicada, para que ninguém precise descobrir sozinho por que os dois
 números discordam.
 
+## A ponte do Extrato: o que existe hoje e onde o período fecha
+
+O número grande do cartão do Extrato sempre foi o saldo do **fim** do recorte. Num
+mês que ainda não acabou, isso é projeção — e o saldo de hoje não aparecia em
+lugar nenhum. Medido em 2 de agosto: o cartão dizia **R$ 9.333,63** com
+**R$ 231,35** na conta, sem nada na tela ligando os dois.
+
+O título também mentia por omissão: "Saldo em 31 de ago." é o nome de um fato.
+Passou a ser "Saldo **previsto** em 31 de ago." enquanto o período não fechar.
+
+Abaixo do cabeçalho, a conta por extenso:
+
+```
+PREVISTO · até 31 de ago.
+Em conta hoje  02 de ago.                    R$ 231,35
++ A receber  ainda não caiu               R$ 17.831,50
+− A pagar  contas e faturas em aberto      R$ 8.729,22
+= Saldo previsto em 31 de ago.             R$ 9.333,63
+```
+
+Três decisões que sustentam isso:
+
+**As parcelas saem da mesma função que compõe o saldo.** `saldoPrevistoNaData`
+perdeu o miolo para `DB.movimentoPrevistoAte`, que devolve `{ entra, sai }`. O
+saldo previsto passou a ser, literalmente, `saldoNaData + entra − sai`. Uma cópia
+da regra na view divergiria no primeiro ajuste — foi assim que nasceram três dos
+defeitos já corrigidos aqui.
+
+**Mês que ainda não começou parte da abertura dele, não de hoje.** A janela vem por
+diferença (`movimentoPrevistoAte(fim) − movimentoPrevistoAte(início)`). Sem isso, o
+extrato de setembro mostraria também as parcelas de agosto e as linhas não bateriam
+com a lista logo abaixo delas. O saldo de hoje continua na tela, mas em prosa — duas
+linhas sem operação entre elas fariam a conta parecer errada.
+
+**Mês encerrado não ganha ponte.** Ali o fim é fato, e é a mesma regra do resto do
+Extrato: previsão sobre fato faz o extrato do mês discordar do extrato do banco.
+
+### O defeito que a ponte revelou: transferência agendada
+
+Exigir que as linhas somassem expôs mais um. Filtrando o **C6 Invest**, o extrato
+listava **R$ 3.400** de aporte a caminho e mostrava o saldo previsto **inalterado**
+no topo — a diferença aparecia disfarçada de "conciliação", que é o nome de outra
+coisa.
+
+Causa: `movimentoPrevistoAte` descartava tudo que é `isNeutral`, e transferência é
+neutra. Ela é neutra **para a família** — o dinheiro só muda de bolso — mas não para
+uma conta olhada sozinha, onde ela entra ou sai de verdade. `saldoNaData` já tratava
+assim o que foi **pago**; faltava o mesmo para o que está **agendado**.
+
+Com a correção, o extrato do C6 Invest fecha em **R$ 3.534,00** — exatamente o
+"Guardado" ao fim do mês que o Painel mostra. Dois números que se conferem em telas
+diferentes.
+
 ## Duas duplicações encontradas nos dados reais
 
 Validado contra o Supabase de produção (270 transações, 14 recorrências), a partir

@@ -1053,7 +1053,15 @@ body {
 /* Dentro do balão escuro as cores do app não teriam contraste; aqui elas clareiam */
 .res-tip-l b.txt-green { color: #7ee2ab; }
 .res-tip-l b.txt-red { color: #ff8fa8; }
-.res-nota { padding: 0 16px 12px; margin: 0; font-size: 11.5px; }
+/* A ponte até o fim do período usa as MESMAS linhas do hero (.hc-l, .hc-total):
+   as duas telas respondem a mesma pergunta e não devem ter formas diferentes de
+   escrever uma conta. Só as bordas mudam — no hero elas são brancas
+   translúcidas, porque lá o fundo é colorido; aqui sumiriam sobre o papel. */
+.res-conta { padding: 10px 16px 2px; border-top: 1px solid var(--line); font-size: 12.5px; }
+.res-conta .hc-total,
+.res-conta .hc-sub { border-top-color: var(--line); }
+.res-nota { padding: 8px 16px 12px; margin: 0; font-size: 11.5px; }
+.res.fechado .res-conta,
 .res.fechado .res-nota,
 .res.fechado .res-graf { display: none; }
 /* Recolhido, o cartão vira só a linha de cabeçalho — 56px em vez de 190 */

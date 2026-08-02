@@ -19,8 +19,8 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 114 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2185 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 115 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2211 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - Nada pendente no git
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
@@ -75,6 +75,12 @@ mão toda vez.
   extrato, botão de pagar.
 - "Disponível" (desconta comprometido e guardado) ≠ "Saldo em conta". Os dois
   aparecem no app e não podem ter o mesmo nome.
+- saldoPrevistoNaData = saldoNaData + entra − sai, com as duas parcelas vindo de
+  DB.movimentoPrevistoAte. A ponte do Extrato e o hero do Painel LEEM daí; nenhum
+  dos dois recalcula por fora. Copiar a regra na view é como nasceram três dos
+  defeitos já corrigidos aqui.
+- Transferência agendada é neutra para a família e NÃO é neutra para uma conta
+  filtrada — ali ela entra ou sai de verdade, como no extrato do banco.
 
 ## O que eu quero fazer agora
 [escreva aqui]
