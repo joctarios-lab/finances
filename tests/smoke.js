@@ -3278,9 +3278,18 @@ try {
   const anteriorS = DB.saldoNaData(null, DB.inicioISO(pSerie));
   const serieS = serieDeSaldo(null, diasS, anteriorS);
   check('a série cobre todos os dias do período', serieS.length, diasS.length);
+  /* Contra o saldo PREVISTO, que é o que o cartão escreve ao lado do gráfico num
+     mês que ainda não acabou. Comparar com saldoNaData era cobrar da linha um
+     número que a tela não mostra — e foi o que deixou passar a linha reta. */
   check('e termina no mesmo saldo que o cartão mostra',
     Math.round(serieS[serieS.length - 1] * 100) / 100,
-    Math.round(DB.saldoNaData(null, DB.fimISO(pSerie)) * 100) / 100);
+    Math.round(DB.saldoPrevistoNaData(null, DB.fimISO(pSerie)) * 100) / 100);
+  const pPassado = DB.monthPeriod(new Date(), -1);
+  const diasPas = diasDoPeriodo(pPassado);
+  const seriePas = serieDeSaldo(null, diasPas, DB.saldoNaData(null, DB.inicioISO(pPassado)));
+  check('  e num mês encerrado ela termina no saldo daquela data',
+    Math.round(seriePas[seriePas.length - 1] * 100) / 100,
+    Math.round(DB.saldoNaData(null, DB.fimISO(pPassado)) * 100) / 100);
   /* Um passe só sobre os lançamentos, não uma varredura por dia: com 31 dias,
      chamar saldoNaData por dia percorreria a base inteira 31 vezes. */
   const corpoSerie = apF.slice(apF.indexOf('function serieDeSaldo'), apF.indexOf('function sparkArea'));
@@ -3665,6 +3674,32 @@ try {
   check('  e a parte de uso é o resto do fechamento', usoP.val, fmt(1150));
   check('  sem virar parcela também lá', fecha(noPassado), true);
   check('  mês futuro idem', linhasDaPonte(renderExtrato(mesQueVem)).some(l => l.detalhe), true);
+
+  /* O GRÁFICO SEGUE A MESMA PROJEÇÃO DO CARTÃO. Antes ele só conhecia o que já
+     tinha sido pago: agosto virava uma reta de 31 pontos com um valor só, e
+     setembro idem, enquanto o número ao lado anunciava outra coisa. */
+  const cent = v => Math.round(v * 100) / 100;
+  const diasM = diasDoPeriodo(mesAtual);
+  const serieM = serieDeSaldo([cE], diasM, DB.saldoNaData([cE], DB.inicioISO(mesAtual)));
+  check('a linha do gráfico chega no saldo previsto do cartão',
+    cent(serieM[serieM.length - 1]), cent(DB.saldoPrevistoNaData([cE], DB.fimISO(mesAtual))));
+  check('  e deixou de ser uma reta', new Set(serieM.map(cent)).size > 1, true);
+  const iHoje = diasM.indexOf(DB.hojeISO());
+  check('  no ponto de hoje ela vale o saldo de hoje',
+    cent(serieM[iHoje]), cent(DB.saldoNaData([cE], somarDias(DB.hojeISO(), 1))));
+  /* O vencido cai no primeiro dia AINDA POR VIR: a data dele já passou, e o
+     passado da linha é fato. Aqui são os R$ 90 do "Atrasado ponte". */
+  check('  o vencido entra no primeiro dia por vir, não no passado',
+    cent(serieM[iHoje] - serieM[iHoje + 1]), 90);
+
+  const diasF = diasDoPeriodo(mesQueVem);
+  const serieF = serieDeSaldo([cE], diasF, DB.saldoPrevistoNaData([cE], DB.inicioISO(mesQueVem)));
+  check('no mês que ainda não chegou ela também fecha no previsto',
+    cent(serieF[serieF.length - 1]), cent(DB.saldoPrevistoNaData([cE], DB.fimISO(mesQueVem))));
+  // Se o vencido de agosto entrasse aqui de novo, a identidade acima quebraria:
+  // ele já está dentro do saldo com que setembro abre
+  check('  sem contar de novo o que já está na abertura',
+    cent(serieF[0]), cent(DB.saldoPrevistoNaData([cE], DB.inicioISO(mesQueVem))));
 
   for (const t of DB.all('transactions').filter(t => / ponte$/.test(t.description))) DB.remove('transactions', t.id);
   DB.remove('accounts', cE); DB.remove('accounts', cD);

@@ -666,9 +666,27 @@ const DB = {
      que vence DENTRO do período (e portanto está na lista logo abaixo) do que
      ficou para trás. Um número que não se confere na própria tela não decide nada. */
   movimentoPrevistoAte(contaIds, dataISO, desdeISO) {
-    const hoje = this.paraISO(new Date());
     const mov = { entra: 0, sai: 0 };
-    if (dataISO <= hoje) return mov;             // no passado não há previsão, há fato
+    for (const dia of Object.values(this.previstoPorDia(contaIds, dataISO, desdeISO))) {
+      mov.entra += dia.entra; mov.sai += dia.sai;
+    }
+    return mov;
+  },
+
+  /* O MESMO, dia a dia. O gráfico do Extrato precisa saber QUANDO cada coisa
+     acontece, não só o total: sem isso ele desenhava uma reta em todo mês que
+     ainda não terminou — 31 pontos com um valor só em agosto, 30 em setembro —,
+     porque só somava o que já foi pago, e mês corrente e futuro são feitos do que
+     ainda vai acontecer.
+
+     Um mapa data → { entra, sai }, e o total acima passou a ser a soma dele: a
+     linha do gráfico e o número do cartão não têm como discordar, porque saem da
+     mesma varredura. */
+  previstoPorDia(contaIds, dataISO, desdeISO) {
+    const hoje = this.paraISO(new Date());
+    const porDia = {};
+    if (dataISO <= hoje) return porDia;          // no passado não há previsão, há fato
+    const noDia = d => (porDia[d] = porDia[d] || { entra: 0, sai: 0 });
 
     const contas = (contaIds && contaIds.length) ? contaIds : this.all('accounts').map(a => a.id);
     const dentro = id => contas.includes(id);
@@ -693,8 +711,8 @@ const DB = {
         if (!(contaIds && contaIds.length)) continue;
         const v = Number(t.amount) || 0;
         const daqui = dentro(t.account_id), praca = dentro(t.to_account);
-        if (daqui && !praca) mov.sai += v;
-        else if (praca && !daqui) mov.entra += v;
+        if (daqui && !praca) noDia(t.date).sai += v;
+        else if (praca && !daqui) noDia(t.date).entra += v;
         continue;
       }
       if (this.isNeutral(t)) continue;
@@ -706,7 +724,7 @@ const DB = {
          saldo previsto de R$ 17.000. */
       if (t.account_id ? !dentro(t.account_id) : (contaIds && contaIds.length)) continue;
       const v = Number(t.amount) || 0;
-      if (this.isExpense(t)) mov.sai += v; else mov.entra += v;
+      if (this.isExpense(t)) noDia(t.date).sai += v; else noDia(t.date).entra += v;
     }
 
     /* CONTRATO E CUSTO FIXO que ainda não viraram lançamento.
@@ -731,7 +749,7 @@ const DB = {
         // não há recorte de contas, senão apareceria em qualquer conta filtrada
         if (it.account_id ? !dentro(it.account_id) : (contaIds && contaIds.length)) continue;
         const v = Number(it.valor) || 0;
-        if (it.receita) mov.entra += v; else mov.sai += v;
+        if (it.receita) noDia(it.data).entra += v; else noDia(it.data).sai += v;
       }
     }
 
@@ -745,10 +763,10 @@ const DB = {
         if (inv.status === 'Paga' || !(inv.falta > 0.005)) continue;
         if (this.paraISO(inv.due) >= dataISO) continue;
         if (desdeISO && this.paraISO(inv.due) < desdeISO) continue;
-        mov.sai += Math.max(0, inv.falta);
+        noDia(this.paraISO(inv.due)).sai += Math.max(0, inv.falta);
       }
     }
-    return mov;
+    return porDia;
   },
 
   saldoPrevistoNaData(contaIds, dataISO) {

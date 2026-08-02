@@ -196,6 +196,36 @@ Com a correção, o extrato do C6 Invest fecha em **R$ 3.534,00** — exatamente
 "Guardado" ao fim do mês que o Painel mostra. Dois números que se conferem em telas
 diferentes.
 
+### O gráfico seguia só o que já foi pago
+
+O sparkline do cartão desenhava a partir de `Pago` apenas. Mês corrente e mês
+futuro são feitos justamente do que **ainda vai acontecer**, então a linha virava
+uma reta:
+
+| mês | pontos | valores distintos | terminava em | o cartão dizia |
+|---|---|---|---|---|
+| agosto | 31 | **1** | R$ 231,35 | R$ 9.333,63 |
+| setembro | 30 | **1** | R$ 9.333,63 | R$ 19.695,83 |
+| julho | 31 | 29 | R$ 325,63 | R$ 325,63 ✓ |
+
+O rótulo de acessibilidade já dizia "de X a Y" com um Y que a linha nunca
+alcançava — o próprio comentário da função exigia o contrário: *"um gráfico que
+termina num número diferente do número ao lado dele é pior que gráfico nenhum"*.
+
+`movimentoPrevistoAte` virou a soma de **`DB.previstoPorDia`**, um mapa
+`data → { entra, sai }`. A linha e o número do cartão saem da mesma varredura, e
+por isso a ponta cai exatamente no valor escrito ao lado. As três pontas passaram
+a bater.
+
+**O vencido entra no primeiro dia ainda por vir.** A data dele já passou e o
+passado da série é fato — somá-lo lá seria reescrever o que aconteceu. Em janela
+que ainda vai começar ele não entra: já está dentro do saldo de abertura.
+
+O teste que deveria ter pego isso comparava a ponta com `saldoNaData` — um número
+que a tela não mostra num mês em aberto. Agora compara com `saldoPrevistoNaData`,
+que é o que está escrito ao lado do gráfico, e cobra que a linha **não seja uma
+reta** quando há previsão.
+
 ### E quando há filtro
 
 Conta e janela de dias são filtros que o **saldo entende**: um conjunto de contas

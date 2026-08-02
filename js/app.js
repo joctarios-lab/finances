@@ -2221,8 +2221,45 @@ function serieDeSaldo(contas, dias, anterior) {
     }
     if (e) delta[t.date] = (delta[t.date] || 0) + e;
   }
+  if (!dias.length) return [];
+
+  /* DEPOIS DE HOJE, A LINHA SEGUE O QUE ESTÁ AGENDADO.
+
+     Sem isto ela só conhecia o que já foi pago — e mês corrente e mês futuro são
+     feitos justamente do que ainda vai acontecer. Medido: agosto virava uma reta
+     de 31 pontos com UM valor (R$ 231,35) enquanto o cartão logo acima anunciava
+     R$ 9.333,63 no fim; setembro, uma reta de 30 pontos. O rótulo de acessibilidade
+     dizia "de X a Y" com um Y que a linha nunca alcançava.
+
+     Vem de DB.previstoPorDia, a mesma varredura que compõe o saldo previsto do
+     cartão — por isso a ponta da linha cai exatamente no número ao lado dela. */
+  const hoje = DB.hojeISO();
+  const fimJanela = somarDias(dias[dias.length - 1], 1);
+  const previsto = DB.previstoPorDia(contas, fimJanela);
+  /* O VENCIDO não tem lugar natural na linha: a data dele já passou, e o passado
+     da série é fato — mexer ali seria reescrever o que aconteceu. Ele entra de uma
+     vez no primeiro dia ainda por vir, que é quando pode sair.
+
+     Só quando a janela COMEÇOU no passado. Se ela ainda vai começar, o vencido já
+     está dentro do saldo de abertura e somá-lo aqui contaria o mesmo dinheiro duas
+     vezes — os dias anteriores à janela nem chegam a ser lidos, então o recorte
+     dessa varredura não precisa ser outro. */
+  let atrasado = 0;
+  if (dias[0] <= hoje) {
+    for (const [d, m] of Object.entries(previsto)) if (d <= hoje) atrasado += m.entra - m.sai;
+  }
+
   let acumulado = Number(anterior) || 0;
-  return dias.map(d => { acumulado += (delta[d] || 0); return acumulado; });
+  let primeiroFuturo = true;
+  return dias.map(d => {
+    acumulado += (delta[d] || 0);
+    if (d > hoje) {
+      if (primeiroFuturo) { acumulado += atrasado; primeiroFuturo = false; }
+      const m = previsto[d];
+      if (m) acumulado += m.entra - m.sai;
+    }
+    return acumulado;
+  });
 }
 
 /* Saldo dia a dia no resumo do extrato.
