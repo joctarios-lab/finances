@@ -161,9 +161,43 @@ operador e com peso menor, e a conta da tela continua sendo exatamente a de
 sempre — contas − comprometido − guardado. `caixaLivre()` segue existindo no
 código, disparando a pergunta de resgate; ele só não vira linha de hero.
 
-**O prazo do comprometido mostrava um dia a mais.** `fimISO` é exclusivo, então o
-rótulo dizia "até 01 de set." de um número que só conta o que vence até 31 de
-agosto. A barra de período já resolvia isso; o hero, não.
+**O prazo mostrava um dia a mais.** `fimISO` é exclusivo, então o rótulo dizia o
+primeiro dia do mês seguinte para um ciclo que termina no último dia deste. A
+barra de período já resolvia isso; o hero, não.
+
+**O hero do mês corrente virou DOIS blocos, e o número grande passou a ser o
+previsto.** O número antigo — "Disponível para usar" = contas − comprometido −
+guardado — dava **−R$ 10.097,59** em 1º de agosto: o comprometido do mês inteiro
+contra o saldo de um dia em que o salário ainda não caiu. Verdadeiro como
+conceito e inútil como leitura, porque o mês fecha com **+R$ 5.893,91**.
+
+| bloco | pergunta |
+|---|---|
+| **Hoje** | o caixa de verdade: o que existe, o que já tem dono, o que sobra para gastar sem encostar na reserva |
+| **Previsto** | o mês rolando até o fim do ciclo, nas mesmas linhas do mês futuro |
+
+As linhas do bloco previsto saem de `linhasDaPrevisao`, **compartilhada com o hero
+de mês futuro**: navegar de agosto para setembro passou a mudar só os números, não
+a forma da tela. Duas cópias divergiriam na primeira correção que entrasse só de
+um lado — foi assim que quase toda divergência deste app começou.
+
+"Investido" saiu da tela. No uso real ele e o "Guardado" são o **mesmo dinheiro**
+— a reserva mora na conta de investimento —, então mostrar os dois era exibir o
+mesmo valor duas vezes com nomes diferentes. `saldoInvestido` continua no `DB`
+para o dia em que houver investimento que não seja meta.
+
+**Dois defeitos que só apareceram porque a conta agora precisa FECHAR na tela:**
+
+1. **`saldoPrevistoNaData` ignorava lançamento sem conta.** O laço dos previstos já
+   tratava "sem conta = pertence ao conjunto todo"; o das transações, não. Um
+   boleto agendado sem conta escolhida — o formulário permite — sumia da projeção.
+   Medido: R$ 450 de IPTU a pagar não mexiam num saldo previsto de R$ 17.000.
+2. **O que ficou de ciclos anteriores não tinha onde aparecer.** `previsaoDoMes`
+   enxerga só o mês pedido, mas `saldoPrevistoNaData` conta todo "A Pagar"
+   vencido. Sem a linha "− Vencido", a soma das parcelas na tela não bateria com o
+   total logo abaixo. `pendenteDeCiclosAnteriores` devolve o **efeito no saldo**,
+   com sinal: receita atrasada soma, não subtrai — um salário que não caiu não
+   piora o saldo.
 
 ## Cenários que a Fase 2 precisa cobrir
 

@@ -214,14 +214,109 @@ console.log('\n=== Ações no topo seguem um padrão só ===');
 
 console.log('\n=== Painel mostra os números certos ===');
 const inicio = renderInicio(p);
-// O disponível passou a descontar o guardado: 17000 − 650 comprometido − 2000 guardado
-for (const [rotulo, valor] of [['disponível', fmt(14550)], ['gasto do mês', fmtShort(1550)], ['comprometido', fmtShort(450)]]) {
+for (const [rotulo, valor] of [['gasto do mês', fmtShort(1550)], ['comprometido', fmtShort(450)]]) {
   check(`painel exibe ${rotulo} (${valor})`, inicio.includes(valor), true);
 }
-/* A conta vem por extenso, não só o resultado: sem as parcelas visíveis o
-   disponível é um número que se acredita sem poder conferir. */
-check('e mostra a conta que leva até ele', inicio.includes('= Livre para usar'), true);
+/* O hero do mês corrente tem DOIS blocos: o caixa de HOJE e a projeção até o fim
+   do ciclo. Cada um fecha no seu próprio total — sem isso viram uma conta só de
+   nove linhas que não fecha. */
+check('o hero abre com o bloco de hoje', inicio.includes('>Hoje <i>dia '), true);
+check('e tem o bloco do previsto', /hc-cab">Previsto <i>até /.test(inicio), true);
+check('o caixa de hoje é contas menos guardado',
+  inicio.includes(`<span>= Livre para gastar hoje</span><b>${fmt(DB.accountsTotal() - DB.guardado())}</b>`), true);
 check('com o guardado como parcela', inicio.includes('− Guardado'), true);
+check('e a projeção fecha em "Livre ao fim"', inicio.includes('= Livre ao fim'), true);
+
+/* A IDENTIDADE do bloco previsto: a soma das linhas TEM de dar o total logo
+   abaixo delas. Um painel cujo total não se confere nas próprias parcelas é o
+   pior defeito possível — foi por isso que a linha do vencido passou a existir. */
+{
+  const perA = DB.monthPeriod(new Date());
+  const fimA = DB.fimISO(perA);
+  const pvA = DB.previsaoDoMes(perA);
+  const emContasFimA = DB.saldoPrevistoNaData(null, fimA);
+  const atrasadoA = DB.pendenteDeCiclosAnteriores(perA);
+  check('a conta do previsto fecha: abre + entra − sai + vencido = fim',
+    Math.round((DB.accountsTotal() + pvA.entra - pvA.sai + atrasadoA) * 100) / 100,
+    Math.round(emContasFimA * 100) / 100);
+  /* O rótulo do topo tem de nomear o MÊS: "disponível previsto" sem dizer até
+     quando é uma promessa sem prazo. */
+  check('e o topo diz de que mês está falando',
+    inicio.includes(`Disponível previsto ao fim de ${p.label}`), true);
+
+  /* O NÚMERO GRANDE é o previsto, não o disponível de hoje. Sem uma receita à
+     frente os dois COINCIDEM — foi assim que a primeira versão deste teste passou
+     mesmo com o hero sabotado de volta para `available`. Uma entrada prevista os
+     separa, que é justamente o caso real: o salário que ainda vai cair. */
+  const idSal = DB.upsert('transactions', {
+    description: 'Salário previsto', amount: 5000,
+    date: somarDias(todayISO(), 3), type: 'Receita', status: 'A Pagar',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: DB.all('accounts')[0].id,
+  });
+  const comSalario = renderInicio(DB.monthPeriod(new Date()));
+  const fimS = DB.saldoPrevistoNaData(null, fimA) - DB.guardadoPrevisto(fimA);
+  check('com receita à frente, o previsto difere do disponível de hoje',
+    Math.abs(fimS - DB.available()) > 0.005, true);
+  check('e o número grande é o previsto ao fim, não o de hoje',
+    comSalario.includes(`<div class="hero-value">${fmt(fimS)}</div>`), true);
+  check('o disponível de hoje não ocupa o número grande',
+    comSalario.includes(`<div class="hero-value">${fmt(DB.available())}</div>`), false);
+  DB.remove('transactions', idSal);
+}
+
+/* A LINHA DO VENCIDO só aparece quando existe — e, quando existe, é ela que faz a
+   conta fechar. Sem ela o saldo final ficaria otimista em silêncio. */
+{
+  const perV = DB.monthPeriod(new Date());
+  check('sem vencido de meses anteriores, a linha não aparece',
+    /hc-l"><span>[−+] Vencido/.test(renderInicio(perV)), false);
+  const contaV = DB.all('accounts')[0];
+  const idV = DB.upsert('transactions', {
+    description: 'Boleto atrasado', amount: 300,
+    date: somarDias(DB.inicioISO(perV), -5), type: 'Despesa', status: 'A Pagar',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: contaV.id,
+  });
+  const comVencido = renderInicio(perV);
+  check('com vencido em aberto, ela aparece',
+    comVencido.includes('− Vencido <i>de meses anteriores, em aberto</i></span><b>' + fmt(300)), true);
+  const pvV = DB.previsaoDoMes(perV);
+  check('e a conta continua fechando com ela',
+    Math.round((DB.accountsTotal() + pvV.entra - pvV.sai + DB.pendenteDeCiclosAnteriores(perV)) * 100) / 100,
+    Math.round(DB.saldoPrevistoNaData(null, DB.fimISO(perV)) * 100) / 100);
+  check('o vencido entra como saída, não como entrada',
+    DB.pendenteDeCiclosAnteriores(perV) < 0, true);
+  /* RECEITA atrasada tem o sinal contrário: um salário que não caiu não piora o
+     saldo, ele ainda vai somar. Sem este caso, um sinal fixo em "menos" passaria
+     no teste da despesa e só apareceria na tela de quem tem recebimento em atraso. */
+  const soDespesa = DB.pendenteDeCiclosAnteriores(perV);
+  const idR = DB.upsert('transactions', {
+    description: 'Recebimento atrasado', amount: 200,
+    date: somarDias(DB.inicioISO(perV), -4), type: 'Receita', status: 'A Pagar',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: contaV.id,
+  });
+  check('receita atrasada soma, não subtrai',
+    Math.round((DB.pendenteDeCiclosAnteriores(perV) - soDespesa) * 100) / 100, 200);
+  check('e a conta fecha também com as duas em aberto',
+    Math.round((DB.accountsTotal() + DB.previsaoDoMes(perV).entra - DB.previsaoDoMes(perV).sai
+      + DB.pendenteDeCiclosAnteriores(perV)) * 100) / 100,
+    Math.round(DB.saldoPrevistoNaData(null, DB.fimISO(perV)) * 100) / 100);
+  DB.remove('transactions', idR);
+  DB.remove('transactions', idV);
+}
+
+/* MESMA FORMA no mês corrente e no futuro: as linhas do previsto saem do mesmo
+   código, então navegar de um para o outro muda os números, não a tela. */
+{
+  const offG = state.monthOffset;
+  state.monthOffset = 2;
+  const futuroG = renderInicio(DB.monthPeriod(new Date(), 2));
+  state.monthOffset = offG;
+  for (const linha of ['+ Entradas <i>previstas</i>', '− Contas do mês <i>faturas incluídas</i>',
+                       '= Em contas ao fim', '= Livre ao fim']) {
+    check(`a linha "${linha.replace(/<[^>]+>/g, '').trim()}" é a mesma nos dois heros`,
+      inicio.includes(linha) && futuroG.includes(linha), true);
+  }
+}
 
 /* ONDE o dinheiro está é pergunta diferente de quanto dele tem dono, e o hero
    respondia só a segunda. Medido nos dados reais em 1º/08/2026: R$ 325,63 "em
@@ -240,33 +335,25 @@ const idSemTipo = DB.upsert('accounts', { name: 'Sem tipo', balance: 700, active
 check('conta sem tipo entra no caixa, não some', DB.saldoEmCaixa(), DB.accountsTotal() - 12000);
 DB.remove('accounts', idSemTipo);
 const heroSep = renderInicio(p);
-/* A linha "Em contas" continua sendo o total, como sempre foi: as duas de baixo a
-   ABREM, não somam a ela. A conta da tela segue contas − comprometido − guardado. */
-check('o total das contas continua abrindo a conta',
+/* "Em contas" volta a ser UMA linha. Investido e guardado são o mesmo dinheiro no
+   uso real — a reserva mora na conta de investimento —, e mostrar os dois era o
+   mesmo valor duas vezes com nomes diferentes. `saldoInvestido` segue no DB, para
+   o dia em que houver investimento que não seja meta. */
+check('o total das contas abre o bloco de hoje',
   heroSep.includes(`<span>Em contas</span><b>${fmt(DB.accountsTotal())}</b>`), true);
-check('e ele se abre no que está disponível na conta',
-  heroSep.includes(`<span>disponível na conta</span><b>${fmt(DB.saldoEmCaixa())}</b>`), true);
-check('e no que está investido',
-  heroSep.includes(`<b>${fmt(DB.saldoInvestido())}</b>`) && heroSep.includes('>investido <i>'), true);
-/* Recuadas e sem operador: com "+" elas viram parcelas e a conta parece não
-   fechar — foi o defeito da primeira tentativa. */
-check('as duas entram como detalhe, não como parcela',
-  (heroSep.match(/hc-l hc-d/g) || []).length, 2);
-check('e nenhuma delas leva operador', /hc-d"><span>[+−-]/.test(heroSep), false);
-check('o comprometido continua na conta', heroSep.includes('− Comprometido'), true);
-/* O rótulo do prazo mostrava `fimISO`, que é EXCLUSIVO — "até 01 de set." para um
-   comprometido que só conta o que vence até 31 de agosto. */
-if (DB.committedDepois() > 0.005) {
-  /* Só o bloco da conta: o painel inteiro cita outras datas por outros motivos, e
-     a asserção negativa varrendo tudo acusaria inocentes. */
-  const contaHero = heroSep.slice(heroSep.indexOf('<div class="hero-conta">'),
-    heroSep.indexOf('hc-total') + 200);
+check('e não há uma segunda linha de investido no hero',
+  /investido <i>/.test(heroSep), false);
+check('mas o conceito continua no DB, para quando fizer falta',
+  DB.saldoEmCaixa() + DB.saldoInvestido(), DB.accountsTotal());
+/* O prazo do bloco previsto mostrava `fimISO`, que é EXCLUSIVO — dizia o primeiro
+   dia do mês seguinte para um ciclo que termina no último dia deste. */
+{
   const fimExcl = DB.fimISO(DB.monthPeriod(new Date()));
   const ultimoDia = new Date(Date.parse(fimExcl + 'T12:00:00') - 86400000);
-  check('e o prazo dele é o último dia do ciclo, não o primeiro do seguinte',
-    contaHero.includes(`até ${fmtDate(ultimoDia)}`), true);
+  check('o prazo do previsto é o último dia do ciclo',
+    heroSep.includes(`Previsto <i>até ${fmtDate(ultimoDia)}</i>`), true);
   check('e não a data crua do fim exclusivo',
-    contaHero.includes(`até ${fmtDate(new Date(fimExcl + 'T12:00:00'))}`), false);
+    heroSep.includes(`Previsto <i>até ${fmtDate(new Date(fimExcl + 'T12:00:00'))}</i>`), false);
 }
 
 /* ---- Fluxos reais: aportes, detalhe da meta e da fatura ---- */
@@ -545,17 +632,29 @@ try {
   check('o saldo previsto rola de um mês para o outro',
     saldos.every((v, i) => i === 0 || v > saldos[i - 1]), true);
 
-  /* PREVISÃO SÓ NO FUTURO. No mês corrente e no passado, o que não foi lançado não
-     aconteceu — mostrar previsão ali competiria com o fato. */
+  /* PREVISÃO SÓ NO FUTURO — no EXTRATO, que é onde a regra vale. Lá o previsto
+     viraria linha ao lado do que aconteceu, e o extrato do mês passaria a
+     discordar do extrato do banco. Isso continua valendo e é o que se testa aqui.
+
+     No PAINEL do mês corrente a regra é outra, e mudou de propósito: o hero passou
+     a projetar o fim do ciclo. O número antigo — comprometido do mês inteiro
+     contra o saldo de hoje — dava −R$ 10.097,59 em 1º de agosto, num mês que fecha
+     positivo porque o salário ainda ia cair. Era verdadeiro como conceito e
+     inútil como leitura. O painel não compete com o fato porque o fato continua
+     no primeiro bloco ("Hoje"), separado e rotulado. */
   for (const off of [0, -1]) {
     state.monthOffset = off;
     const per = DB.monthPeriod(new Date(), off);
     const html = renderExtrato(per);
     check(`extrato de ${per.label} não mistura previsão`,
       /repete todo mês · ainda não lançado|custo fixo · ainda não lançado/.test(html), false);
-    check(`painel de ${per.label} não usa o hero de previsão`,
-      renderInicio(per).includes('previsto ao fim de'), false);
   }
+  /* Mês ENCERRADO não projeta: não há fim de ciclo para onde caminhar, e um
+     "previsto ao fim" de um mês que já acabou seria absurdo. */
+  state.monthOffset = -1;
+  check('painel de mês encerrado não usa o hero de previsão',
+    renderInicio(DB.monthPeriod(new Date(), -1)).includes('previsto ao fim de'), false);
+  state.monthOffset = 0;
 
   // O limite é 6 meses: a seta pára ali, senão a projeção viraja adivinhação
   state.monthOffset = 6;
@@ -2887,8 +2986,14 @@ try {
      também como quem usa leitor de tela recebe as duas pontas da curva. */
   const antes = html => (html.match(/aria-label="Saldo dia a dia[^"]*, de ([\d.,]+) a/) || [])[1];
   check('o saldo anterior muda com o recorte', antes(extMes) !== antes(extMetade), true);
-  check('e é o saldo real na data de início do recorte',
-    antes(extMetade), fmtSemMoeda(DB.saldoNaData(null, dias[meio + 1])));
+  /* PREVISTO, não realizado: um recorte que começa daqui a duas semanas não tem
+     saldo "real" — ele ainda não aconteceu. O cabeçalho usa `saldoPrevistoNaData`,
+     que é o mesmo número da projeção do hero, e os dois coincidem com o realizado
+     quando a data já passou (conferido logo abaixo). */
+  check('e é o saldo previsto na data de início do recorte',
+    antes(extMetade), fmtSemMoeda(DB.saldoPrevistoNaData(null, dias[meio + 1])));
+  check('numa data que já passou, previsto e realizado são o mesmo número',
+    DB.saldoPrevistoNaData(null, dias[0]), DB.saldoNaData(null, dias[0]));
   check('o texto explica de quando é o saldo anterior', extMetade.includes('que havia em'), true);
   check('sem recorte, volta a falar do mês anterior', extMes.includes('vieram do anterior'), true);
 
@@ -3189,8 +3294,8 @@ try {
      faixa dos dados. Agora é a curva "smooth" da biblioteca, e o que resta
      verificar é que pedimos curva e não poligonal (feito acima). */
   check('KPIs do painel também', !/kpi-value[^"]*">\$\{fmtShort\(/.test(apF), true);
-  // A linha de abertura do hero mostra o dinheiro de uso imediato, com centavos
-  check('e o hero do painel', /<b>\$\{fmt\(emCaixa\)\}/.test(apF), true);
+  // A linha de abertura do hero mostra o saldo com centavos, não abreviado
+  check('e o hero do painel', /<span>Em contas<\/span><b>\$\{fmt\(saldo\)\}/.test(apF), true);
 
   // Dia só com entrada não mostra saída zerada
   const soEntrada = dia(24);
@@ -5773,8 +5878,19 @@ check('função is_member definida antes das policies', schema.indexOf('function
         Math.round(DB.accountsTotal()), Math.round(totalAntes - 137));
       check('  e reduz o "abre em contas" do mês seguinte',
         Math.round(DB.saldoPrevistoNaData(null, DB.inicioISO(proxP))), Math.round(abreAntes - 137));
-      check('  o abre do mês seguinte é o saldo real de hoje',
-        Math.round(DB.saldoPrevistoNaData(null, DB.inicioISO(proxP))), Math.round(DB.accountsTotal()));
+      /* O "abre" do mês seguinte é o saldo de hoje MAIS o que ainda vence até lá.
+         Antes isto era uma igualdade simples com `accountsTotal`, que só valia
+         porque o cenário não tinha nada pendente com data à frente — e passou a
+         mentir quando um boleto sem conta escolhida entrou na projeção (ele era
+         ignorado, e o saldo previsto saía otimista). A relação abaixo é a que vale
+         sempre, e é mais forte: diz de quanto é a diferença, não só que existe. */
+      const pendenteAteLa = DB.all('transactions')
+        .filter(t => t.status === 'A Pagar' && !t.card_id && !DB.isNeutral(t)
+          && String(t.date) < DB.inicioISO(proxP) && String(t.date) > todayISO())
+        .reduce((s, t) => s + (DB.isExpense(t) ? -1 : 1) * (Number(t.amount) || 0), 0);
+      check('  o abre do mês seguinte é o saldo de hoje mais o que vence até lá',
+        Math.round(DB.saldoPrevistoNaData(null, DB.inicioISO(proxP))),
+        Math.round(DB.accountsTotal() + pendenteAteLa));
       adjustBalance(cHoje.id, 137);
       DB.remove('transactions', gastoHoje);
     }

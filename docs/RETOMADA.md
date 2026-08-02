@@ -19,8 +19,8 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 113 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2171 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 114 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2185 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - Nada pendente no git
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
@@ -61,6 +61,10 @@ mão toda vez.
 - Heredoc no bash quebra com aspas/acentos: prefira escrever o script num arquivo.
 - A suíte termina com process.exit dentro de uma IIFE async. Bloco async novo
   precisa de `await`, senão agenda e nunca roda.
+- Comentário HTML dentro de template literal: crase ali QUEBRA o arquivo, e o
+  texto do comentário É RENDERIZADO — um teste que procura "hero-depois" ou uma
+  data no HTML casa com o comentário. Escreva sem crase e sem citar literais que
+  algum teste procura.
 
 ## Decisões que não devem ser revertidas sem conversa
 - O marcador do pull é server_at (carimbo do banco). updated_at é do cliente e

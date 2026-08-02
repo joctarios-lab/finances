@@ -251,14 +251,17 @@ body {
   font-weight: 600;
 }
 .hc-sub span { opacity: .95; }
-/* Detalhe de uma linha: "disponível na conta" e "investido" NÃO são parcelas
-   novas — são a linha "Em contas" aberta. Sem o recuo e o peso menor elas se leem
-   como somas, a conta parece não fechar, e foi exatamente esse o defeito da
-   primeira tentativa: um "+ Investido" seguido de um "− Guardado" do mesmo valor.
-   Sem operador na frente, pelo mesmo motivo. */
-.hc-d { padding: 1px 0 1px 14px; font-size: 11.5px; }
-.hc-d span { opacity: .6; }
-.hc-d b { font-weight: 600; opacity: .8; }
+/* Cabeçalho de bloco. O hero do mês corrente tem DUAS contas — o caixa de hoje e
+   a projeção até o fim do ciclo — e sem um rótulo separando as duas elas se leem
+   como uma conta só de nove linhas que não fecha. Cada bloco fecha no seu total.
+
+   O segundo `.hero-conta` já traz a própria borda de topo, então o cabeçalho não
+   acrescenta outra: duas linhas seguidas viram moldura e pesam a tela. */
+.hc-cab {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  opacity: .5; margin-bottom: 4px;
+}
+.hc-cab i { font-style: normal; font-weight: 600; letter-spacing: 0; text-transform: none; opacity: .8; }
 .hero-depois { margin-top: 8px; font-size: 11.5px; opacity: .78; }
 
 /* Aviso de recorte ativo: sem ele, alguém abre a tela com um filtro esquecido e

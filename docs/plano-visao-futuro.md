@@ -47,6 +47,13 @@ extrato de registros que ninguém pediu e que dariam trabalho para desfazer.
 aconteceu — misturar previsão ali competiria com o fato e faria o extrato do mês
 discordar do extrato do banco.
 
+> **A regra vale para o EXTRATO, e continua valendo lá.** No **hero do Painel** ela
+> foi revista: o mês corrente passou a projetar o fim do ciclo, porque o número
+> anterior (comprometido do mês inteiro contra o saldo de hoje) dava um valor
+> negativo num mês que fecha positivo. Ele não compete com o fato porque o fato
+> está no primeiro bloco, "Hoje", separado e rotulado. Ver
+> `plano-disponivel-e-recorrencia.md`.
+
 ### O que tornou isso possível
 
 `previsaoDoMes` passou a carregar o **molde** de cada item — categoria, conta,

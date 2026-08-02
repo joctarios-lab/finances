@@ -1325,6 +1325,32 @@ function healthOf(stats, refLimit, available) {
   return { label: 'Saudável', cls: 'green', msg: 'Gastos sob controle no ritmo atual.' };
 }
 
+/* As linhas da conta PREVISTA, num ponto só.
+
+   O mês corrente e o mês futuro respondem a mesma pergunta — onde o saldo chega
+   no fim do ciclo — e por isso mostram a mesma conta. Duas cópias divergiriam na
+   primeira correção que entrasse só de um lado, que é como quase toda divergência
+   deste app começou. Navegar de agosto para setembro também não muda mais a forma
+   da tela: só mudam os números e a data de abertura.
+
+   A LINHA DO ATRASADO existe para a conta fechar. `previsaoDoMes` enxerga só o
+   mês pedido; `saldoPrevistoNaData` conta todo "A Pagar" vencido, inclusive de
+   ciclos anteriores. Sem expor essa parcela, a soma das linhas não bateria com o
+   total logo abaixo — e um total que não se confere não serve para decidir nada.
+   Ela só aparece quando existe: no mês em dia, some. */
+function linhasDaPrevisao({ abreRotulo, abreNota, abre, previsto, atrasado, emContasFim, guardadoFim, livreAoFim }) {
+  return `
+        <div class="hc-l"><span>${abreRotulo}${abreNota ? ` <i>${abreNota}</i>` : ''}</span><b>${fmt(abre)}</b></div>
+        <div class="hc-l"><span>+ Entradas <i>previstas</i></span><b>${fmt(previsto.entra)}</b></div>
+        <div class="hc-l"><span>− Contas do mês <i>faturas incluídas</i></span><b>${fmt(previsto.sai)}</b></div>
+        ${Math.abs(atrasado) > 0.005 ? `<div class="hc-l"><span>${
+          atrasado < 0 ? '−' : '+'} Vencido <i>de meses anteriores, em aberto</i></span><b>${fmt(Math.abs(atrasado))}</b></div>` : ''}
+        <div class="hc-l hc-sub"><span>= Em contas ao fim</span><b>${fmt(emContasFim)}</b></div>
+        ${guardadoFim > 0.005 ? `<div class="hc-l"><span>− Guardado${
+          previsto.investe > 0.005 ? ` <i>+${fmtShort(previsto.investe)} no mês</i>` : ''}</span><b>${fmt(guardadoFim)}</b></div>` : ''}
+        <div class="hc-l hc-total"><span>= Livre ao fim</span><b>${fmt(livreAoFim)}</b></div>`;
+}
+
 /* ---------- Início ---------- */
 function renderInicio(period) {
   const txs = DB.expensesOf(period);
@@ -1336,11 +1362,6 @@ function renderInicio(period) {
   const committed = DB.committed();
   const guardado = DB.guardado();
   const guardadoReserva = DB.guardadoReserva();
-  /* ONDE o dinheiro está, que é pergunta diferente de quanto dele tem dono. Um
-     saldo total de R$ 325 com R$ 134 num CDB não é R$ 325 de poder de compra, e o
-     hero mostrava só o total — quem olhava não tinha como saber. */
-  const investido = DB.saldoInvestido();
-  const emCaixa = saldo - investido;
   // Mesma conta do DB.available(), com as parcelas à mão para a decomposição
   const available = saldo - committed - guardado;
   const realized = DB.realizedIncome(period);              // receitas realmente lançadas
@@ -1737,13 +1758,11 @@ function renderInicio(period) {
         ? `Projeção com ${previsto.itens.length} item(ns) já conhecido(s) — contas fixas, repetições e faturas. Gasto variável não entra nesta conta.`
         : 'Nada previsto para este mês ainda. Contas que se repetem e faturas apareceriam aqui.'}</p>
       <div class="hero-conta">
-        <div class="hc-l"><span>Abre em contas <i>em ${fmtDate(new Date(inicioP + 'T12:00:00'))}</i></span><b>${fmt(abreEmContas)}</b></div>
-        <div class="hc-l"><span>+ Entradas <i>previstas</i></span><b>${fmt(previsto.entra)}</b></div>
-        <div class="hc-l"><span>− Contas do mês <i>faturas incluídas</i></span><b>${fmt(previsto.sai)}</b></div>
-        <div class="hc-l hc-sub"><span>= Em contas ao fim</span><b>${fmt(emContasFim)}</b></div>
-        ${guardadoFim > 0.005 ? `<div class="hc-l"><span>− Guardado${
-          previsto.investe > 0.005 ? ` <i>+${fmtShort(previsto.investe)} no mês</i>` : ''}</span><b>${fmt(guardadoFim)}</b></div>` : ''}
-        <div class="hc-l hc-total"><span>= Livre ao fim</span><b>${fmt(livreAoFim)}</b></div>
+        ${linhasDaPrevisao({
+          abreRotulo: 'Abre em contas', abreNota: `em ${fmtDate(new Date(inicioP + 'T12:00:00'))}`,
+          abre: abreEmContas, previsto, atrasado: DB.pendenteDeCiclosAnteriores(period),
+          emContasFim, guardadoFim, livreAoFim,
+        })}
       </div>
       <!-- A ponte com o Extrato continua dita por escrito, mas agora ela aponta
            para um número que está na própria conta acima (linha 4), em vez de
@@ -1753,46 +1772,73 @@ function renderInicio(period) {
           ? ` A diferença de ${fmt(Math.abs(emContasFim - livreAoFim))} é o que já tem destino.` : ''}</p>
     </div>`;
 
+  /* O MÊS CORRENTE EM DOIS BLOCOS.
+
+     O hero antigo respondia uma pergunta só — "quanto posso assumir agora" — e o
+     número dela, em 1º de agosto, era −R$ 10.097,59: o comprometido do mês inteiro
+     contra o saldo de um dia em que o salário ainda não caiu. Verdadeiro como
+     conceito e inútil como leitura, porque a pessoa fecha o mês com dinheiro.
+
+     Agora o topo responde ONDE SE CHEGA e a tela se abre em dois:
+
+       HOJE      — o caixa de verdade: o que existe, o que já tem dono, o que
+                   sobra para gastar sem encostar na reserva.
+       PREVISTO  — o mês rolando até o fim, com as mesmas linhas do mês futuro.
+
+     "Investido" saiu. No uso real ele e o "Guardado" são o mesmo dinheiro — a
+     reserva mora na conta de investimento —, então mostrar os dois era exibir o
+     mesmo valor duas vezes com nomes diferentes. `DB.saldoInvestido` continua
+     existindo para o dia em que houver investimento que não seja meta; hoje quem
+     responde "quanto tenho livre na conta" é a linha "Livre para gastar hoje".
+
+     O COMPROMETIDO não sumiu: virou "Contas do mês" no bloco previsto, que é a
+     mesma dívida vista pelo lado certo — junto do dinheiro que entra para pagá-la,
+     em vez de descontada de um saldo que ainda não recebeu a receita do mês. */
+  const fimCicloAtual = DB.fimISO(period);
+  const ultimoDiaCiclo = new Date(Date.parse(fimCicloAtual + 'T12:00:00') - 86400000);
+  const atrasadoAtual = DB.pendenteDeCiclosAnteriores(period);
+  const emContasFimAtual = DB.saldoPrevistoNaData(null, fimCicloAtual);
+  const guardadoFimAtual = DB.guardadoPrevisto(fimCicloAtual);
+  const livreAoFimAtual = emContasFimAtual - guardadoFimAtual;
+  const fechaNoAzul = livreAoFimAtual >= 0;
   const heroAtual = `
-    <div class="hero hero-${health.cls}">
+    <div class="hero hero-${fechaNoAzul ? 'green' : 'red'}">
       <div class="hero-top">
-        <span class="hero-label">Disponível para usar</span>
-        <span class="hero-badge b-${health.cls}">${health.label}</span>
+        <span class="hero-label">Disponível previsto ao fim de ${esc(period.label)}</span>
+        <span class="hero-badge b-${fechaNoAzul ? 'green' : 'red'}">${fechaNoAzul ? 'No azul' : 'Aperto'}</span>
       </div>
-      <div class="hero-value">${fmt(available)}</div>
-      <p class="hero-msg">${health.msg}</p>
-      <!-- A conta por extenso, não um número solto. Cada linha responde a uma
-           pergunta diferente: quanto existe, quanto já é de outra pessoa, quanto
-           já tem plano. Sem isso, "disponível" é um número que a pessoa precisa
-           acreditar sem poder conferir.
+      <div class="hero-value">${fmt(livreAoFimAtual)}</div>
+      <p class="hero-msg">${previsto.itens.length
+        ? `Projeção com ${previsto.itens.length} item(ns) já conhecido(s) — contas fixas, repetições e faturas. Gasto variável não entra nesta conta.`
+        : 'Nada previsto para o resto do mês. Contas que se repetem e faturas apareceriam aqui.'}</p>
 
-           "Em contas" escondia ONDE o dinheiro está. Medido: R$ 325,63 no total,
-           dos quais R$ 134,00 num CDB — o número prometia um poder de compra que
-           não existia, e não havia como descobrir isso na tela.
-
-           A correção é ABRIR a linha, não acrescentar parcelas. A primeira
-           tentativa somava "+ Investido" e logo abaixo subtraía "− Guardado" o
-           mesmo valor, e ainda repetia o caixa num subtotal: três linhas a mais
-           que se liam como erro de conta. As duas linhas de detalhe entram
-           recuadas e sem operador porque não são parcelas novas — são a linha de
-           cima aberta, e a conta continua sendo exatamente a de antes:
-           contas − comprometido − guardado. -->
+      <!-- BLOCO 1 — o caixa de hoje. Três linhas, nenhuma projeção: é o dinheiro
+           que existe neste minuto. "Livre para gastar hoje" é o DB.caixaLivre(),
+           o mesmo número que dispara a pergunta de resgate ao salvar um gasto. -->
       <div class="hero-conta">
+        <div class="hc-cab">Hoje <i>dia ${stats.elapsedDays} de ${stats.totalDays}</i></div>
         <div class="hc-l"><span>Em contas</span><b>${fmt(saldo)}</b></div>
-        ${investido > 0.005 ? `
-        <div class="hc-l hc-d"><span>disponível na conta</span><b>${fmt(emCaixa)}</b></div>
-        <div class="hc-l hc-d"><span>investido <i>${
-          esc(DB.all('accounts').filter(a => a.active !== false && DB.TIPOS_INVESTIDOS.includes(a.type)).map(a => a.name).join(', '))}</i></span><b>${fmt(investido)}</b></div>` : ''}
-        <!-- fimISO é EXCLUSIVO: o ciclo termina no primeiro dia do mês seguinte.
-             O rótulo mostrava essa data crua, prometendo um dia a mais do que o
-             comprometido de fato conta. Cai no último dia real do ciclo, do mesmo
-             jeito que a barra de período já faz. -->
-        <div class="hc-l"><span>− Comprometido${
-          DB.committedDepois() > 0.005 ? ` <i>até ${fmtDate(new Date(Date.parse(DB.fimISO(DB.monthPeriod(new Date())) + 'T12:00:00') - 86400000))}</i>` : ''}</span><b>${fmt(committed)}</b></div>
         ${guardado > 0.005 ? `<div class="hc-l"><span>− Guardado${
           guardadoReserva > 0.005 ? ` <i>reserva ${fmtShort(guardadoReserva)}</i>` : ''}</span><b>${fmt(guardado)}</b></div>` : ''}
-        <div class="hc-l hc-total"><span>= Livre para usar</span><b>${fmt(available)}</b></div>
+        <div class="hc-l hc-sub"><span>= Livre para gastar hoje</span><b>${fmt(saldo - guardado)}</b></div>
       </div>
+
+      <!-- BLOCO 2 — para onde isso vai até o fim do ciclo. Mesmas linhas do hero
+           de mês futuro, pelo mesmo código: navegar para setembro passa a mudar
+           só os números, não a forma da tela. -->
+      <div class="hero-conta">
+        <div class="hc-cab">Previsto <i>até ${fmtDate(ultimoDiaCiclo)}</i></div>
+        ${linhasDaPrevisao({
+          abreRotulo: 'Em contas hoje', abreNota: '',
+          abre: saldo, previsto, atrasado: atrasadoAtual,
+          emContasFim: emContasFimAtual, guardadoFim: guardadoFimAtual, livreAoFim: livreAoFimAtual,
+        })}
+      </div>
+      <!-- Sem a frase-ponte "em conta haverá X" que o hero de mês futuro traz: aqui
+           os dois números — "Em contas ao fim" e "Livre ao fim" — estão em linhas
+           vizinhas, à vista. Repeti-los em prosa acrescentaria um terceiro
+           parágrafo a um hero que já tem dois blocos, e disputaria o lugar do
+           resumo do mês seguinte, que vem logo abaixo. -->
       ${resumoDoProximoMes()}
     </div>`;
 

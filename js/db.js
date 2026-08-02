@@ -646,7 +646,13 @@ const DB = {
       if (t.status !== 'A Pagar' || t.card_id || this.isNeutral(t)) continue;
       // Vencido e não pago entra também: é dinheiro que ainda vai sair
       if (String(t.date) >= dataISO) continue;
-      if (!dentro(t.account_id)) continue;
+      /* Lançamento SEM CONTA pertence ao conjunto todo, e por isso entra quando não
+         há recorte — a mesma regra que o laço dos previstos, logo abaixo, já usava.
+         Aqui ela faltava: um boleto agendado sem conta escolhida (o formulário
+         permite) sumia da projeção, e o saldo do extrato deixava de bater com a
+         soma das próprias linhas. Medido: R$ 450 de IPTU a pagar não mexiam num
+         saldo previsto de R$ 17.000. */
+      if (t.account_id ? !dentro(t.account_id) : (contaIds && contaIds.length)) continue;
       previsto += (this.isExpense(t) ? -1 : 1) * (Number(t.amount) || 0);
     }
 
@@ -1214,6 +1220,29 @@ const DB = {
   // O dinheiro de uso imediato: conta corrente, carteira digital e o que não
   // declarou tipo. Por construção, saldoEmCaixa + saldoInvestido = accountsTotal.
   saldoEmCaixa() { return this.accountsTotal() - this.saldoInvestido(); },
+
+  /* O que ficou PARA TRÁS: "A Pagar" de ciclos anteriores, ainda em aberto.
+
+     Ele existe para a conta do hero FECHAR. `previsaoDoMes` só enxerga o mês
+     pedido, mas `saldoPrevistoNaData` conta todo "A Pagar" vencido — é dinheiro
+     que ainda vai sair, e ignorá-lo daria um saldo final otimista. Sem esta
+     parcela, a soma das linhas na tela não bateria com o total logo abaixo delas,
+     que é o defeito mais grave que um painel pode ter.
+
+     Devolve o EFEITO NO SALDO (negativo quando falta pagar), não um valor
+     absoluto: receita atrasada também fica para trás, e somar as duas com o mesmo
+     sinal diria que um salário que não caiu piora o saldo.
+
+     O recorte é o mesmo de `saldoPrevistoNaData` sem filtro de contas: tudo entra,
+     inclusive o lançamento que não escolheu conta. Se as duas regras divergirem, a
+     linha explicará uma diferença que o total não tem. */
+  pendenteDeCiclosAnteriores(period) {
+    const de = this.inicioISO(period);
+    return this.all('transactions')
+      .filter(t => t.status === 'A Pagar' && !t.card_id && !this.isNeutral(t)
+        && String(t.date) < de)
+      .reduce((s, t) => s + (this.isExpense(t) ? -1 : 1) * (Number(t.amount) || 0), 0);
+  },
 
   /* Disponível de verdade: o que está nas contas, menos o que já tem destino.
 
