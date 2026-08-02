@@ -1292,18 +1292,35 @@ function notaDoInvestimento(env, period, restante, usadoNoEnvelope) {
    dito à parte: contar um plano como se fosse ritmo daria uma data que ninguém
    sustentou ainda. Sem histórico nenhum, a estimativa cai para o que o orçamento
    prevê guardar — que é uma intenção declarada, e a frase diz isso. */
+/* HORIZONTE HUMANO. No ritmo de R$ 44,67/mês, uma reserva de R$ 60.000 fica pronta
+   em 1.340 meses — e a tela dizia "maio de 2138". É aritmeticamente verdadeiro e
+   não serve para decidir nada: ninguém planeja 112 anos.
+
+   Acima de 10 anos a resposta deixa de ser a data e passa a ser o que falta para
+   ela existir: quanto por mês fecharia a meta num prazo que cabe numa vida. */
+const HORIZONTE_MESES = 120;
+function prazoDaMeta(falta, ritmo) {
+  if (!(ritmo > 0.005)) return null;
+  const meses = Math.ceil(falta / ritmo);
+  if (meses > HORIZONTE_MESES) return { meses, longe: true, precisaria: falta / 60 };
+  const quando = new Date();
+  quando.setMonth(quando.getMonth() + meses);
+  return { meses, longe: false, rotulo: quando.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }) };
+}
+
 function previsaoDaReserva(meta, falta) {
   if (!meta || falta <= 0) return '';
   const ritmo = DB.goalPace(meta.id);
   const planejado = DB.goalPlanejado(meta.id);
-  if (ritmo > 0.005) {
-    const meses = Math.ceil(falta / ritmo);
-    const quando = new Date();
-    quando.setMonth(quando.getMonth() + meses);
-    const rotulo = quando.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+  const prazo = prazoDaMeta(falta, ritmo);
+  if (prazo && prazo.longe) {
+    return `<p class="muted">🐢 No ritmo de <b>${fmtShort(ritmo)}/mês</b> seriam <b>${Math.round(prazo.meses / 12)} anos</b>. Para fechar em 5, seriam <b>${fmtShort(prazo.precisaria)}/mês</b>.</p>`;
+  }
+  if (prazo) {
+    const meses = prazo.meses;
     const reforco = planejado > 0.005
       ? ` Há ${fmtShort(planejado)} já agendado, que antecipa isso.` : '';
-    return `<p class="muted">📈 No ritmo de <b>${fmtShort(ritmo)}/mês</b>, fica pronta em <b>${esc(rotulo)}</b> — ${meses} ${meses === 1 ? 'mês' : 'meses'}.${esc(reforco)}</p>`;
+    return `<p class="muted">📈 No ritmo de <b>${fmtShort(ritmo)}/mês</b>, fica pronta em <b>${esc(prazo.rotulo)}</b> — ${meses} ${meses === 1 ? 'mês' : 'meses'}.${esc(reforco)}</p>`;
   }
   if (planejado > 0.005) {
     return `<p class="muted">📅 <b>${fmtShort(planejado)}</b> já agendado. Ainda sem histórico de aportes para estimar a data.</p>`;
@@ -1365,7 +1382,11 @@ function renderInicio(period) {
   // Mesma conta do DB.available(), com as parcelas à mão para a decomposição
   const available = saldo - committed - guardado;
   const realized = DB.realizedIncome(period);              // receitas realmente lançadas
-  const income = realized > 0 ? realized : (Number(DB.settings().monthly_income) || 0);
+  /* A base das porcentagens vem de DB.rendaDoMes: o que ja entrou mais o que
+     ainda entra neste ciclo, com a renda declarada so como ultimo recurso. A
+     declarada envelhece — medido, R$ 17.000 cadastrados contra R$ 31.239 em
+     junho, R$ 22.453 em julho e R$ 17.981 em agosto. */
+  const income = DB.rendaDoMes(period);
   const budgetTotal = DB.budgetTotal(period);
   const refLimit = income > 0 ? income : budgetTotal;
   const health = healthOf(stats, refLimit, available);
@@ -1520,7 +1541,8 @@ function renderInicio(period) {
      contradiria o histórico: quem pagou R$ 700 de R$ 1.000 precisa ver que faltam
      R$ 300 sem perder de vista de quanto era a fatura. */
   // --- Projeção de fim de mês (run-rate) ---
-  const projPct = refLimit > 0 ? Math.round(stats.projection / refLimit * 100) : 0;
+  const proj = DB.projecaoDeGasto(period);
+  const projPct = refLimit > 0 ? Math.round(proj.total / refLimit * 100) : 0;
   /* TAXA DE POUPANÇA SÓ QUANDO HÁ RITMO PARA PROJETAR.
 
      A conta é (renda − fechamento projetado) / renda. Num mês que ainda não
@@ -1535,26 +1557,31 @@ function renderInicio(period) {
 
      Em mês futuro a linha desaparece e no lugar entra o que se pode afirmar: o
      quanto das receitas já está comprometido. */
-  const savingsRate = income > 0 && !stats.naoComecou
-    ? Math.round((income - stats.projection) / income * 100) : null;
+  const savingsRate = income > 0 && !proj.naoComecou
+    ? Math.round((income - proj.total) / income * 100) : null;
   const projCard = `
     <div class="card">
-      <div class="card-head"><div><b>Projeção do mês</b><small>${stats.naoComecou
+      <div class="card-head"><div><b>Projeção do mês</b><small>${proj.naoComecou
         ? 'só o que já está contratado — gasto variável ainda não entra'
-        : `no ritmo atual de gastos (${fmtShort(stats.dailyAvg)}/dia)`}</small></div><span class="kpi-ico t-warning" data-ico="calendar" style="width:34px;height:34px;margin:0"></span></div>
-      ${realized > 0 ? `<div class="proj-row"><span>${stats.naoComecou ? 'Receitas previstas para o mês' : 'Receitas lançadas no período'}</span><b class="txt-green">${fmtShort(realized)}</b></div>` : ''}
+        : `o que já foi, o que está agendado e ${fmtShort(proj.ritmoDiario)}/dia de gasto variável`}</small></div><span class="kpi-ico t-warning" data-ico="calendar" style="width:34px;height:34px;margin:0"></span></div>
+      ${income > 0 ? `<div class="proj-row"><span>${proj.naoComecou ? 'Receitas previstas para o mês' : 'Receitas do período'}</span><b class="txt-green">${fmtShort(income)}</b></div>` : ''}
       <!-- Num mês que não começou, "gasto até hoje" e "fechamento projetado" são o
            MESMO número: não há ritmo para extrapolar, e a projeção é o próprio
            previsto. Mostrar as duas linhas repetia o valor com dois rótulos
            diferentes, o que faz o leitor procurar a diferença entre elas. Some uma
            e a que fica diz o que é. -->
-      ${stats.naoComecou ? '' : `<div class="proj-row"><span>Gasto até hoje (dia ${stats.elapsedDays} de ${stats.totalDays})</span><b>${fmtShort(stats.spent)}</b></div>`}
-      <div class="proj-row"><span>${stats.naoComecou ? 'Já comprometido no mês' : 'Fechamento projetado'}</span><b class="${refLimit > 0 && stats.projection > refLimit ? 'txt-red' : 'txt-green'}">${fmtShort(stats.projection)}</b></div>
+      ${proj.naoComecou ? '' : `<div class="proj-row"><span>Gasto até hoje (dia ${stats.elapsedDays} de ${stats.totalDays})</span><b>${fmtShort(proj.ateHoje)}</b></div>`}
+      <!-- As duas parcelas que faltam para chegar no fechamento, ditas por extenso:
+           sem elas a diferenca entre "gasto ate hoje" e "fechamento" e um salto que
+           so se aceita por fe. -->
+      ${proj.naoComecou || !(proj.lancadoAVir + proj.naoLancado > 0.005) ? '' : `<div class="proj-row muted"><span>+ agendado para o resto do mês</span><b>${fmtShort(proj.lancadoAVir + proj.naoLancado)}</b></div>`}
+      ${proj.naoComecou || !(proj.variavel > 0.005) ? '' : `<div class="proj-row muted"><span>+ gasto variável no ritmo atual</span><b>${fmtShort(proj.variavel)}</b></div>`}
+      <div class="proj-row"><span>${proj.naoComecou ? 'Já comprometido no mês' : 'Fechamento projetado'}</span><b class="${refLimit > 0 && proj.total > refLimit ? 'txt-red' : 'txt-green'}">${fmtShort(proj.total)}</b></div>
       ${refLimit > 0 ? `
         <div class="bar ${barClass(projPct)}" style="margin:8px 0 4px"><i style="width:${Math.min(100, projPct)}%"></i></div>
-        <div class="proj-row muted"><span>${projPct}% ${income > 0 ? (realized > 0 ? 'das receitas do período' : 'da renda familiar') : 'do orçamento total'} (${fmtShort(refLimit)})</span>
+        <div class="proj-row muted"><span>${projPct}% ${income > 0 ? 'das receitas do período' : 'do orçamento total'} (${fmtShort(refLimit)})</span>
         ${savingsRate !== null ? `<span>Poupança projetada: <b class="${savingsRate >= 20 ? 'txt-green' : savingsRate >= 0 ? 'txt-amber' : 'txt-red'}">${savingsRate}%</b></span>` : ''}</div>
-        ${stats.naoComecou ? `<p class="muted" style="margin-top:6px">Sobrariam <b>${fmtShort(Math.max(0, income - stats.projection))}</b> para o gasto variável do mês — mercado, transporte e o que mais aparecer. Não é sobra.</p>` : ''}
+        ${proj.naoComecou ? `<p class="muted" style="margin-top:6px">Sobrariam <b>${fmtShort(Math.max(0, income - proj.total))}</b> para o gasto variável do mês — mercado, transporte e o que mais aparecer. Não é sobra.</p>` : ''}
       ` : `<p class="muted" style="margin-top:6px">Cadastre a renda familiar em Configurações → Membros &amp; ciclo para ver % da renda e taxa de poupança (especialistas recomendam poupar ≥ 20%).</p>`}
     </div>`;
 
@@ -1628,7 +1655,39 @@ function renderInicio(period) {
 
   // --- Conselheiro: insights automáticos por regras de especialista ---
   const tips = [];
-  if (available < 0) tips.push({ cls: 'red', txt: `Compromissos superam o saldo em ${fmtShort(-available)} — priorize quitar ou remanejar.` });
+  /* O ALERTA É SOBRE O FIM DO MÊS, não sobre o saldo de hoje contra o mês inteiro.
+     "Compromissos superam o saldo em R$ 10.254" aparecia em 2 de agosto num mês que
+     fecha com R$ 5.799 sobrando: comparava o comprometido do mês inteiro com um
+     saldo de antes do salário. É o mesmo engano que o hero já tinha deixado para
+     trás, e o Conselheiro tinha ficado com ele. */
+  const fimDoCiclo = DB.fimISO(period);
+  const sobraAoFim = DB.saldoPrevistoNaData(null, fimDoCiclo) - DB.guardadoPrevisto(fimDoCiclo);
+  if (sobraAoFim < 0) tips.push({ cls: 'red', txt: `Do jeito que está, o mês fecha ${fmtShort(-sobraAoFim)} no vermelho depois do que já tem dono — priorize quitar ou remanejar.` });
+
+  /* O VALE DE CAIXA vem primeiro depois do saldo, porque é o único alerta sobre
+     UMA DATA. Fechar o mês no azul não impede o boleto do dia 12 de não passar, e
+     nenhuma tela respondia isso. Só no mês corrente: navegar para março não muda
+     o risco de amanhã, e repetir o aviso em todo mês o transformaria em paisagem. */
+  if (state.monthOffset === 0) {
+    const vale = DB.valeDeCaixa(3);
+    const quandoVale = fmtDay(vale.data);
+    if (vale.valor < 0) {
+      tips.push({ cls: 'red', txt: `O saldo previsto fica NEGATIVO em ${quandoVale}: ${fmtShort(vale.valor)}${
+        vale.negativos > 1 ? ` (${vale.negativos} dias no vermelho nos próximos 3 meses)` : ''}. Antecipe uma entrada ou adie uma conta.` });
+    } else if (vale.valor < (avgSpend / 30) * 7 && avgSpend > 0) {
+      tips.push({ cls: 'amber', txt: `O dia mais apertado dos próximos 3 meses é ${quandoVale}, com ${fmtShort(vale.valor)} em conta — menos de uma semana de folga.` });
+    }
+  }
+
+  /* VIGIA DOS CONTRATOS. O gerador criou uma parcela do Fiat 500 duas vezes e quem
+     percebeu foi o dono da casa, no olho, um mês depois — R$ 1.560 a mais de
+     comprometido. Com 11 contratos rodando sozinhos, isso é manutenção. */
+  for (const d of DB.duplicatasDeContrato(period)) {
+    tips.push({ cls: 'red', txt: `"${d.descricao}" aparece ${d.quantas}× neste mês, mesmo valor de ${fmtShort(d.valor)} — confira se o contrato lançou repetido.` });
+  }
+  for (const it of DB.contratosAtrasados(period)) {
+    tips.push({ cls: 'amber', txt: `"${it.titulo}" era esperado em ${fmtDay(it.data)} e não foi lançado — o contrato pode ter falhado.` });
+  }
   for (const c of DB.rootCategories('Despesa')) {
     // O limite DESTE ciclo: alertar contra o padrão num mês ajustado seria acusar
     // estouro de um teto que a própria pessoa já corrigiu
@@ -2963,6 +3022,64 @@ function renderExtrato(period) {
 }
 
 /* ---------- Cartões ---------- */
+/* PATRIMÔNIO: o que há menos o que se deve.
+
+   Esta tela listava saldos e faturas em blocos separados, e a subtração entre eles
+   não era feita em lugar nenhum — medido na base real: R$ 169,70 em conta contra
+   R$ 2.179,22 de cartão, ou seja, patrimônio de −R$ 2.009,52 que nenhuma tela
+   dizia. Ela mora aqui porque é aqui que estão as duas metades.
+
+   A dívida vem PARTIDA em duas porque as duas doem em momentos diferentes: a que
+   vence neste ciclo é caixa do mês e já aparece no disponível; a que já foi
+   comprada e ainda vai faturar (R$ 1.800 espalhados até maio de 2027) não aparecia
+   em número nenhum do app. */
+function patrimonioCard() {
+  const p = DB.patrimonio();
+  const deve = p.cartaoAgora + p.cartaoDepois;
+  if (!(p.emContas > 0.005 || deve > 0.005)) return '';
+  const l = (rot, nota, valor, cls) =>
+    `<div class="hc-l${cls ? ' ' + cls : ''}"><span>${rot}${nota ? ` <i>${nota}</i>` : ''}</span><b>${fmt(valor)}</b></div>`;
+  return `
+    <div class="card">
+      <div class="card-head" style="margin-bottom:6px"><div><b>Patrimônio</b><small>o que há hoje menos o que já foi comprado</small></div>
+        <span class="num ${p.liquido >= 0 ? 'txt-green' : 'txt-red'}" style="font-size:18px">${fmtShort(p.liquido)}</span></div>
+      <div class="res-conta" style="border-top:0;padding:0">
+        ${l('Em contas', p.investido > 0.005 ? `${fmtShort(p.investido)} investido` : '', p.emContas)}
+        ${p.cartaoAgora > 0.005 ? l('− Fatura que vence neste ciclo', '', p.cartaoAgora) : ''}
+        ${p.cartaoDepois > 0.005 ? l('− Já comprado, fatura depois', 'parcelas em aberto', p.cartaoDepois) : ''}
+        <div class="hc-l hc-total"><span>= Patrimônio líquido</span><b class="${p.liquido >= 0 ? '' : 'txt-red'}">${fmt(p.liquido)}</b></div>
+      </div>
+    </div>`;
+}
+
+/* O CUSTO FIXO e a data em que cada pedaço dele acaba.
+
+   "A parcela do FordKa acaba em 9 meses e libera R$ 500 por mês" é a informação
+   que faz planejar, e ela estava só dentro do cadastro de cada contrato, um a um.
+   O total sozinho não bastaria: 38% da renda é um diagnóstico, e o que acaba é o
+   tratamento. */
+function custoFixoCard() {
+  const cf = DB.custoFixoMensal();
+  if (!cf.itens.length) return '';
+  const renda = DB.rendaMediaRecente() || DB.rendaDoMes(DB.monthPeriod(new Date()));
+  const pct = renda > 0 ? Math.round(cf.total / renda * 100) : null;
+  const acabam = cf.itens.filter(i => i.restam !== null).sort((a, b) => a.restam - b.restam);
+  return `
+    <div class="card">
+      <div class="card-head" style="margin-bottom:6px"><div><b>Custo fixo mensal</b><small>${
+        cf.itens.length} contrato(s)${pct !== null ? ` — ${pct}% da renda média` : ''}</small></div>
+        <span class="num txt-red" style="font-size:18px">${fmtShort(cf.total)}</span></div>
+      <div class="res-conta" style="border-top:0;padding:0">
+        ${cf.itens.slice(0, 4).map(i => `<div class="hc-l"><span>${esc(i.descricao)}${
+          i.periodicidade !== 'mensal' ? ` <i>${esc(i.periodicidade)}, por mês</i>` : ''}</span><b>${fmt(i.mensal)}</b></div>`).join('')}
+        ${cf.itens.length > 4 ? `<div class="hc-l hc-d"><span>e mais ${cf.itens.length - 4}</span><b>${
+          fmt(cf.itens.slice(4).reduce((s, i) => s + i.mensal, 0))}</b></div>` : ''}
+      </div>
+      ${acabam.length ? `<p class="muted" style="margin-top:8px">${acabam.slice(0, 2).map(i =>
+        `<b>${esc(i.descricao)}</b> acaba em ${i.restam} ${i.restam === 1 ? 'mês' : 'meses'} e libera ${fmtShort(i.mensal)}/mês`).join('. ')}.</p>` : ''}
+    </div>`;
+}
+
 function renderCartoes() {
   const cards = DB.all('cards').filter(c => c.active !== false);
   const contas = DB.all('accounts').filter(a => a.active !== false);
@@ -2989,7 +3106,7 @@ function renderCartoes() {
           <span class="acc-info"><b>${esc(a.name)}</b><small>${esc(a.type)}${a.institution ? ' · ' + esc(a.institution) : ''}</small></span>
           <span class="num">${fmt(a.balance)}</span>
         </div>`).join('') : '<div class="empty">Nenhuma conta cadastrada. Adicione em Configurações → Contas.</div>'}
-    </div>`;
+    </div>` + patrimonioCard() + custoFixoCard();
 
   if (!cards.length) {
     return contasHtml + `<div class="card"><div class="empty"><b>Nenhum cartão cadastrado</b>Cadastre seus cartões para o app controlar faturas e parcelas automaticamente.</div>
@@ -3092,10 +3209,13 @@ function renderMetas() {
     const remaining = Math.max(0, (Number(g.target_amount) || 0) - total);
     if (!g.done && remaining > 0) {
       const pace = DB.goalPace(g.id);
-      if (pace > 0) {
-        const eta = new Date(Date.now() + (remaining / pace) * 30.44 * 86400000);
-        const etaLabel = eta.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' });
-        forecast += `<div class="muted" style="margin-top:8px">📈 Ritmo: <b>${fmtShort(pace)}/mês</b> → conclusão prevista em <b>${etaLabel}</b></div>`;
+      const prazo = prazoDaMeta(remaining, pace);
+      // Mesma régua do painel: acima de 10 anos a data vira ficção e o que ajuda
+      // é o quanto por mês faltaria para o prazo caber numa vida
+      if (prazo && prazo.longe) {
+        forecast += `<div class="muted" style="margin-top:8px">🐢 Ritmo: <b>${fmtShort(pace)}/mês</b> → <b>${Math.round(prazo.meses / 12)} anos</b>. Para 5 anos: <b>${fmtShort(prazo.precisaria)}/mês</b></div>`;
+      } else if (prazo) {
+        forecast += `<div class="muted" style="margin-top:8px">📈 Ritmo: <b>${fmtShort(pace)}/mês</b> → conclusão prevista em <b>${esc(prazo.rotulo)}</b></div>`;
       } else {
         forecast += `<div class="muted" style="margin-top:8px">📈 Sem aportes nos últimos 90 dias — a meta está parada.</div>`;
       }

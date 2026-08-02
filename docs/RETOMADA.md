@@ -15,12 +15,13 @@ Leia primeiro, nesta ordem:
   docs/plano-visao-futuro.md            ← como as telas mostram meses futuros
   docs/plano-graficos.md                ← ApexCharts e o que continua SVG à mão
   docs/plano-disponivel-e-recorrencia.md
+  docs/plano-gestao-eficiente.md      ← auditoria das telas e as 6 contas novas
   docs/plano-extrato.md
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 120 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2282 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 121 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2321 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - Nada pendente no git
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
@@ -91,6 +92,12 @@ mão toda vez.
   dela tem de cair no saldo previsto escrito ao lado. Comparar com saldoNaData
   deixou passar meses inteiros desenhados como reta. Realizado e previsto sao
   DUAS series (cheia e tracejada), que se tocam no ponto de hoje.
+- Projeção do mês = DB.projecaoDeGasto: só o gasto VARIÁVEL se extrapola. O
+  run-rate antigo dava R$ 162.807 num mês de R$ 17.981 de renda.
+- Base das porcentagens = DB.rendaDoMes (o mês), não a renda declarada. Cuidado:
+  realizedIncome já inclui o que está lançado a pagar, e em mês futuro inclui as
+  virtuais — somar previsaoDoMes().entra por cima conta o salário duas vezes.
+- Meta com prazo acima de 10 anos não vira data: vira quanto/mês para caber em 5.
 - Saldo só entende filtro de CONTA e de janela de dias. Com categoria, membro,
   etiqueta ou busca, o cartão mostra o movimento do filtro e avisa que o saldo não
   responde a ele.

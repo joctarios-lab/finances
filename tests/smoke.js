@@ -87,7 +87,7 @@ eval(appSrc + `; Object.assign(global, {
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
-  serieDeSaldo, sparkArea, PALETTE, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
+  serieDeSaldo, sparkArea, PALETTE, prazoDaMeta, patrimonioCard, custoFixoCard, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
@@ -6686,6 +6686,159 @@ check('função is_member definida antes das policies', schema.indexOf('function
     DB.remove('categories', env); DB.remove('categories', env2);
     DB.save();
   } catch (e) { console.log(` FALHA | orçamento flexível: ${e.message}`); fail++; }
+
+
+  /* ---- GESTÃO: projeção, renda, vale de caixa, patrimônio, custo fixo, vigia ----
+     Seis perguntas que a base já respondia e nenhuma tela fazia. Os testes medem
+     por DIFERENÇA, porque a suíte compartilha uma base cheia: o que importa é o
+     efeito de cada lançamento, não o total absoluto. */
+  console.log('\n=== Gestão financeira: as seis contas novas ===');
+  try {
+    const pG = DB.monthPeriod(new Date());
+    const cG = DB.upsert('accounts', { name: 'Conta Gestao', type: 'Conta Corrente', balance: 2000, active: true });
+    const baseG = { scope: 'Família', member: MEMBRO_COMUM, account_id: cG, method: 'Débito' };
+    const hojeG = DB.hojeISO();
+    const apG = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+    const decorridos = Math.max(1, DB.elapsedDays(pG));
+    const restantes = Math.max(0, DB.periodDays(pG) - DB.elapsedDays(pG));
+
+    /* 1. A PROJEÇÃO NÃO EXTRAPOLA O QUE NÃO SE REPETE. Era o defeito: R$ 10.503
+       gastos em 2 dias viravam projeção de R$ 162.807, e daí saía "poupança
+       projetada −671%" que o Conselheiro repetia como alerta. */
+    const antesProj = DB.projecaoDeGasto(pG).total;
+    DB.upsert('transactions', { ...baseG, description: 'Aluguel Gestao', amount: 3000, date: hojeG,
+      type: 'Despesa', status: 'Pago', recurring: true });
+    const comFixo = DB.projecaoDeGasto(pG).total;
+    check('gasto fixo entra pelo valor, não pelo ritmo', Math.round(comFixo - antesProj), 3000);
+    DB.upsert('transactions', { ...baseG, description: 'Mercado Gestao', amount: 120, date: hojeG,
+      type: 'Despesa', status: 'Pago' });
+    const comVariavel = DB.projecaoDeGasto(pG).total;
+    check('  gasto variável, esse sim, é extrapolado',
+      Math.round(comVariavel - comFixo), Math.round(120 + (120 / decorridos) * restantes));
+    check('  e a projeção nunca é menor do que o que já aconteceu',
+      DB.projecaoDeGasto(pG).total >= DB.projecaoDeGasto(pG).ateHoje, true);
+    /* O QUE ESTÁ AGENDADO para o resto do mês entra pelo valor, uma vez. Sem esta
+       parcela a projeção ficaria menor do que o mês que já se sabe que vem. */
+    const antesAgendado = DB.projecaoDeGasto(pG).total;
+    const fimDoCicloG = somarDias(DB.fimISO(pG), -1);
+    DB.upsert('transactions', { ...baseG, description: 'Boleto Gestao', amount: 450, date: fimDoCicloG,
+      type: 'Despesa', status: 'A Pagar', method: 'Boleto' });
+    check('  o que vence no resto do mês entra pelo valor',
+      Math.round(DB.projecaoDeGasto(pG).total - antesAgendado), 450);
+    const passadoG = DB.projecaoDeGasto(DB.monthPeriod(new Date(), -1));
+    check('  mês encerrado não ganha projeção', passadoG.variavel + passadoG.naoLancado, 0);
+    check('  e o total dele é o próprio gasto', passadoG.total, passadoG.ateHoje);
+    check('  e ele se declara encerrado, para ninguém projetar sobre fato', passadoG.encerrado, true);
+    /* O NÚMERO DA TELA é o desta conta, não o run-rate antigo: era ele que dizia
+       R$ 162.807 de projeção num mês de R$ 17.981 de renda. */
+    check('  e é este número que o painel mostra',
+      renderInicio(pG).includes(fmtShort(DB.projecaoDeGasto(pG).total)), true);
+
+    /* 2. A RENDA DO MÊS não conta o mesmo salário duas vezes — foi o primeiro
+       resultado errado desta implementação: R$ 35.813 num mês de R$ 17.981. */
+    const antesRenda = DB.rendaDoMes(pG);
+    DB.upsert('transactions', { ...baseG, description: 'Freela Gestao', amount: 700, date: hojeG,
+      type: 'Receita', status: 'A Pagar', method: 'PIX' });
+    check('receita lançada entra na renda do mês uma vez só',
+      Math.round(DB.rendaDoMes(pG) - antesRenda), 700);
+    check('  e a renda do mês é a base das porcentagens do painel',
+      /const income = DB\.rendaDoMes\(period\)/.test(apG), true);
+
+    /* 3. O VALE DE CAIXA: o dia mais apertado, que nenhuma tela respondia. */
+    const antesVale = DB.valeDeCaixa(3);
+    const daquiDezDias = somarDias(hojeG, 10);
+    DB.upsert('transactions', { ...baseG, description: 'Boletao Gestao', amount: 999999,
+      date: daquiDezDias, type: 'Despesa', status: 'A Pagar', method: 'Boleto' });
+    const depoisVale = DB.valeDeCaixa(3);
+    check('um boleto grande afunda o vale de caixa', depoisVale.valor < antesVale.valor - 999000, true);
+    check('  e o vale aponta o dia, não só o valor', depoisVale.data >= daquiDezDias, true);
+    check('  e conta os dias no vermelho', depoisVale.negativos > 0, true);
+    state.monthOffset = 0;   // o aviso é sobre o risco de agora, e só o mês corrente o traz
+    check('  o painel avisa quando o saldo previsto fica negativo',
+      renderInicio(pG).includes('fica NEGATIVO'), true);
+    DB.remove('transactions', DB.all('transactions').find(t => t.description === 'Boletao Gestao').id);
+    check('  e sem o boleto o vale volta ao que era',
+      Math.round(DB.valeDeCaixa(3).valor * 100), Math.round(antesVale.valor * 100));
+
+    /* 4. PATRIMÔNIO: o que há menos o que se deve. A dívida do cartão vem partida
+       porque as duas metades doem em momentos diferentes. */
+    const pat = DB.patrimonio();
+    check('o patrimônio fecha: contas − o que se deve',
+      Math.round((pat.emContas - pat.cartaoAgora - pat.cartaoDepois) * 100), Math.round(pat.liquido * 100));
+    check('  e parte do saldo real das contas', Math.round(pat.emContas * 100), Math.round(DB.accountsTotal() * 100));
+    check('  separando o que vence agora do que já foi comprado',
+      typeof pat.cartaoAgora === 'number' && typeof pat.cartaoDepois === 'number', true);
+    check('  a tela de contas mostra o patrimônio líquido', renderCartoes().includes('Patrimônio líquido'), true);
+
+    /* 5. CUSTO FIXO MENSAL, com as periodicidades normalizadas e o fim de cada um. */
+    const rSem = DB.upsert('recurrences', { description: 'Diarista Gestao', amount: 100, type: 'Despesa',
+      periodicidade: 'semanal', dia: 1, inicio: DB.inicioISO(pG), fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0 });
+    const rVez = DB.upsert('recurrences', { description: 'Parcela Gestao', amount: 500, type: 'Despesa',
+      periodicidade: 'mensal', dia: 10, inicio: DB.inicioISO(pG), fim_tipo: 'vezes', fim_vezes: 12, geradas: 4, status: 'ativa' });
+    const cf = DB.custoFixoMensal();
+    const acheiCf = nome => cf.itens.find(i => i.descricao === nome) || {};
+    check('semanal vira custo mensal equivalente', Math.round(acheiCf('Diarista Gestao').mensal), Math.round(100 * 52 / 12));
+    check('  mensal é o próprio valor', acheiCf('Parcela Gestao').mensal, 500);
+    check('  contrato com fim por vezes sabe quantas faltam', acheiCf('Parcela Gestao').restam, 8);
+    check('  contrato sem prazo não inventa um fim', acheiCf('Diarista Gestao').restam, null);
+    check('  o total é a soma dos itens',
+      Math.round(cf.total * 100), Math.round(cf.itens.reduce((s, i) => s + i.mensal, 0) * 100));
+    const rRec = DB.upsert('recurrences', { description: 'Salario Gestao', amount: 9000, type: 'Receita',
+      periodicidade: 'mensal', dia: 5, inicio: DB.inicioISO(pG), fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0 });
+    check('  contrato de receita não entra no custo fixo',
+      DB.custoFixoMensal().itens.some(i => i.descricao === 'Salario Gestao'), false);
+    check('  e a tela mostra quando um contrato acaba', renderCartoes().includes('libera'), true);
+
+    /* 6. VIGIA DOS CONTRATOS. O gerador criou a parcela do Fiat 500 duas vezes e
+       quem percebeu foi o dono da casa, um mês depois. */
+    const dupA = { ...baseG, description: 'Parcela Gestao', amount: 500, date: somarDias(hojeG, 1),
+      type: 'Despesa', status: 'A Pagar', method: 'Boleto' };
+    DB.upsert('transactions', { ...dupA });
+    check('um lançamento só do contrato não é duplicata',
+      DB.duplicatasDeContrato(pG).some(d => d.descricao === 'Parcela Gestao'), false);
+    DB.upsert('transactions', { ...dupA });
+    const achado = DB.duplicatasDeContrato(pG).find(d => d.descricao === 'Parcela Gestao') || {};
+    check('dois lançamentos do mesmo contrato, mesmo valor e mesma janela: duplicata', achado.quantas, 2);
+    check('  com o valor repetido à mão', achado.valor, 500);
+    /* Exigir o MESMO VALOR é o que separa "a parcela veio duas vezes" de "fui ao
+       mercado duas vezes na semana" — sem isso o aviso viraria ruído e ninguém
+       leria mais nenhum. */
+    DB.upsert('transactions', { ...baseG, description: 'Mercado Gestao', amount: 55, date: somarDias(hojeG, 1),
+      type: 'Despesa', status: 'Pago' });
+    check('  dois gastos parecidos SEM contrato por trás não viram alerta',
+      DB.duplicatasDeContrato(pG).some(d => d.descricao === 'Mercado Gestao'), false);
+    /* Com contrato por trás mas VALORES diferentes também não: a conta de luz vem
+       uma vez por mês e varia. Duplicata é a mesma cobrança repetida. */
+    const rLuz = DB.upsert('recurrences', { description: 'Energia Gestao', amount: 400, type: 'Despesa',
+      periodicidade: 'mensal', dia: 15, inicio: DB.inicioISO(pG), fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0 });
+    DB.upsert('transactions', { ...baseG, description: 'Energia Gestao', amount: 400, date: somarDias(hojeG, 1),
+      type: 'Despesa', status: 'A Pagar', method: 'Boleto' });
+    DB.upsert('transactions', { ...baseG, description: 'Energia Gestao', amount: 412, date: somarDias(hojeG, 2),
+      type: 'Despesa', status: 'A Pagar', method: 'Boleto' });
+    check('  mesmo contrato com valores diferentes não é duplicata',
+      DB.duplicatasDeContrato(pG).some(d => d.descricao === 'Energia Gestao'), false);
+    DB.remove('recurrences', rLuz);
+    const telaPainel = renderInicio(pG);
+    check('  o painel leva a duplicata para o Conselheiro', telaPainel.includes('aparece 2'), true);
+    check('  e cobra o contrato que devia ter lançado e não lançou',
+      telaPainel.includes('não foi lançado'), true);
+    check('  o contrato atrasado também sai da regra, não de um palpite',
+      DB.contratosAtrasados(pG).some(it => it.titulo === 'Diarista Gestao'), true);
+
+    /* 7. A DATA IMPOSSÍVEL DA META. No ritmo de R$ 44,67/mês a reserva ficava
+       pronta em "maio de 2138" — verdadeiro e inútil. */
+    const longe = prazoDaMeta(60000, 44.67);
+    check('ritmo lento não vira data, vira diagnóstico', longe.longe, true);
+    check('  e diz quanto seria preciso para caber em 5 anos', Math.round(longe.precisaria), Math.round(60000 / 60));
+    const perto2 = prazoDaMeta(1200, 100);
+    check('  ritmo que cabe no horizonte continua virando data', perto2.longe, false);
+    check('  com o mês certo', perto2.meses, 12);
+    check('  e sem ritmo não há promessa nenhuma', prazoDaMeta(1000, 0), null);
+
+    for (const t of DB.all('transactions').filter(t => / Gestao$/.test(t.description || ''))) DB.remove('transactions', t.id);
+    for (const r of [rSem, rVez, rRec]) DB.remove('recurrences', r);
+    DB.remove('accounts', cG);
+  } catch (e) { console.log(' FALHA | gestão financeira: ' + e.message); fail++; }
 
   for (const k of Object.keys(store)) delete store[k];
   Object.assign(store, storeAntes);

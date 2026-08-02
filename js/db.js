@@ -1143,6 +1143,215 @@ const DB = {
     return { spent, count: txs.length, dailyAvg, projection, totalDays: total, elapsedDays: elapsed, remainingDays: Math.max(0, total - elapsed) };
   },
 
+  /* A RENDA DO MÊS: o que já entrou mais o que ainda vai entrar nele.
+
+     As porcentagens da tela — regra 50·30·20, taxa de poupança, "% da renda" —
+     precisam de uma base, e uma renda declarada uma vez em Configurações envelhece.
+     Medido nesta base: declarada R$ 17.000, realidade R$ 31.239 em junho,
+     R$ 22.453 em julho, R$ 17.981 em agosto. Aqui a base é o próprio mês, pela
+     mesma conta que o Extrato mostra no topo.
+
+     Sem receita nenhuma no mês (base nova, mês em branco), cai para a média dos
+     ciclos recentes e, em último caso, para a renda declarada — que continua útil
+     como ponto de partida de quem acabou de instalar. */
+  rendaDoMes(period) {
+    /* `realizedIncome` conta o que está LANÇADO, pago ou a pagar — o nome engana.
+       Somar `previsaoDoMes().entra` por cima contava o salário duas vezes: medido,
+       R$ 35.813 num mês de R$ 17.981. Falta só o que nem lançamento é ainda.
+
+       Em mês INTEIRAMENTE FUTURO essas ocorrências já vêm como transações
+       virtuais dentro de `realizedIncome`, e somá-las aqui dobraria de novo. */
+    const lancada = this.realizedIncome(period);
+    let naoLancada = 0;
+    if (this.inicioISO(period) <= this.hojeISO()) {
+      for (const it of this.previstosNaoLancados(period)) if (it.receita) naoLancada += Number(it.valor) || 0;
+    }
+    const total = lancada + naoLancada;
+    if (total > 0.005) return total;
+    const media = this.rendaMediaRecente();
+    return media > 0 ? media : (Number(this.settings().monthly_income) || 0);
+  },
+
+  // Média das receitas dos ciclos ENCERRADOS que tiveram receita. Mês sem nada não
+  // entra na média: ele não é um mês pobre, é um mês que não foi usado.
+  rendaMediaRecente(quantos = 6) {
+    const vals = [];
+    for (let i = 1; i <= quantos; i++) {
+      const v = this.realizedIncome(this.monthPeriod(new Date(), -i));
+      if (v > 0.005) vals.push(v);
+    }
+    return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0;
+  },
+
+  /* PROJEÇÃO DE GASTO DO MÊS, sem extrapolar o que não se repete.
+
+     O card "Projeção do mês" multiplicava o gasto do mês pelo número de dias
+     decorridos. Como aluguel, escola e parcelas caem no começo do ciclo, o "ritmo"
+     dos primeiros dias é o custo fixo inteiro — medido em 2 de agosto de 2026:
+     R$ 10.503,73 viraram projeção de R$ 162.807,82 e "poupança projetada −671%",
+     que o Conselheiro ainda repetia como alerta.
+
+     Pior do que o número: o app já tinha a resposta certa na tela ao lado, em
+     `previsaoDoMes`. Eram duas projeções contraditórias no mesmo painel.
+
+     Aqui cada coisa entra uma vez e do jeito que ela é:
+       - o que já aconteceu entra pelo valor;
+       - o que está lançado para o resto do mês entra pelo valor;
+       - contrato e custo fixo que ainda não viraram lançamento entram pelo valor;
+       - só o gasto VARIÁVEL é extrapolado, que é o único que se comporta como
+         ritmo. Fatura não entra: a compra no cartão já contou como gasto no dia
+         em que foi feita, e somar a fatura contaria o mesmo dinheiro duas vezes. */
+  projecaoDeGasto(period) {
+    const hoje = this.hojeISO();
+    const gastos = this.expensesOf(period);
+    const soma = f => gastos.filter(f).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    if (this.fimISO(period) <= hoje) {
+      const t = soma(() => true);
+      return { ateHoje: t, lancadoAVir: 0, naoLancado: 0, variavel: 0, ritmoDiario: 0, total: t, encerrado: true };
+    }
+    const ateHoje = soma(t => String(t.date) <= hoje);
+    const lancadoAVir = soma(t => String(t.date) > hoje);
+    /* O que nem lançamento é ainda. Data já vencida fica de fora: se não foi
+       lançado e a data passou, não aconteceu — e isso aparece como pendência de
+       contrato em `contratosAtrasados`, que é o lugar certo para cobrar. */
+    let naoLancado = 0;
+    // Em mês inteiramente futuro elas já estão em `gastos`, como transações
+    // virtuais: somá-las de novo dobraria o mês inteiro.
+    if (this.inicioISO(period) <= hoje) {
+      for (const it of this.previstosNaoLancados(period)) {
+        if (it.receita || it.origem === 'fatura' || String(it.data) <= hoje) continue;
+        naoLancado += Number(it.valor) || 0;
+      }
+    }
+    /* FIXO NÃO SE EXTRAPOLA: ele já está contado acima, inteiro. Vem de contrato,
+       de custo fixo marcado ou de parcela — as três coisas que acontecem uma vez
+       por ciclo com dia marcado. */
+    const ehFixo = t => !!t.recurrence_id || t.recurring === true || !!t.installment;
+    const decorridos = Math.max(1, this.elapsedDays(period));
+    const restantes = Math.max(0, this.periodDays(period) - this.elapsedDays(period));
+    const ritmoDiario = soma(t => String(t.date) <= hoje && !ehFixo(t)) / decorridos;
+    const variavel = this.elapsedDays(period) === 0 ? 0 : ritmoDiario * restantes;
+    return { ateHoje, lancadoAVir, naoLancado, variavel, ritmoDiario,
+      total: ateHoje + lancadoAVir + naoLancado + variavel,
+      encerrado: false, naoComecou: this.elapsedDays(period) === 0 };
+  },
+
+  /* O VALE DE CAIXA: o dia mais apertado daqui até o fim do horizonte.
+
+     Fechar o mês no azul não impede o boleto do dia 12 de não passar. Esta é a
+     única pergunta de risco que nenhuma tela respondia, e o dado para ela já
+     existe — é a mesma varredura que desenha a linha do Extrato. */
+  valeDeCaixa(meses = 3) {
+    const hoje = this.hojeISO();
+    const fim = this.fimISO(this.monthPeriod(new Date(), Math.max(0, meses - 1)));
+    const mapa = this.previstoPorDia(null, fim);
+    let saldo = this.accountsTotal();
+    // O vencido pode sair a qualquer momento: entra logo, como na linha do gráfico
+    for (const [d, m] of Object.entries(mapa)) if (d <= hoje) saldo += m.entra - m.sai;
+    let pior = { valor: saldo, data: hoje }, negativos = saldo < 0 ? 1 : 0;
+    for (let d = this.somarDiasISO(hoje, 1); d < fim; d = this.somarDiasISO(d, 1)) {
+      const m = mapa[d];
+      if (m) saldo += m.entra - m.sai;
+      if (saldo < pior.valor) pior = { valor: saldo, data: d };
+      if (saldo < 0) negativos++;
+    }
+    return { valor: pior.valor, data: pior.data, negativos, ate: fim };
+  },
+
+  /* PATRIMÔNIO: o que há menos o que se deve.
+
+     A dívida do cartão vem partida em duas porque as duas doem em momentos
+     diferentes: a que vence neste ciclo é caixa do mês; a que já foi comprada e
+     ainda vai faturar é dívida que nenhuma tela mostrava. Medido: R$ 379,22 agora
+     e R$ 1.800,00 espalhados até maio de 2027. */
+  patrimonio() {
+    const emContas = this.accountsTotal();
+    const fimCiclo = this.fimISO(this.monthPeriod(new Date()));
+    let cartaoAgora = 0, cartaoDepois = 0;
+    for (const card of this.all('cards').filter(c => c.active !== false)) {
+      for (const inv of this.invoicesOf(card)) {
+        if (inv.status === 'Paga' || !(inv.falta > 0.005)) continue;
+        if (this.paraISO(inv.due) < fimCiclo) cartaoAgora += inv.falta;
+        else cartaoDepois += inv.falta;
+      }
+    }
+    return { emContas, investido: this.saldoInvestido(), cartaoAgora, cartaoDepois,
+      liquido: emContas - cartaoAgora - cartaoDepois };
+  },
+
+  // Quanto cada periodicidade pesa num mês. Sem isto, uma diarista semanal e uma
+  // mensalidade de mesmo valor pareceriam custar o mesmo.
+  POR_MES: { semanal: 52 / 12, quinzenal: 26 / 12, mensal: 1, anual: 1 / 12 },
+
+  /* O CUSTO FIXO MENSAL e quando cada pedaço dele acaba.
+
+     "Sua parcela acaba em 8 meses e libera R$ 500 por mês" é a informação que faz
+     planejar, e ela estava só dentro do cadastro do contrato, um a um. */
+  custoFixoMensal() {
+    const hoje = this.hojeISO();
+    const itens = [];
+    for (const r of this.all('recurrences')) {
+      if (r.status === 'Encerrada' || r.type === 'Receita') continue;
+      const mensal = (Number(r.amount) || 0) * (this.POR_MES[r.periodicidade] || 1);
+      let restam = null;                         // null = sem prazo
+      if (r.fim_tipo === 'vezes') restam = Math.max(0, (Number(r.fim_vezes) || 0) - (Number(r.geradas) || 0));
+      else if (r.fim_tipo === 'data' && r.fim_data) {
+        const meses = (Number(String(r.fim_data).slice(0, 4)) - Number(hoje.slice(0, 4))) * 12
+          + (Number(String(r.fim_data).slice(5, 7)) - Number(hoje.slice(5, 7)));
+        restam = Math.max(0, meses);
+      }
+      itens.push({ id: r.id, descricao: r.description, mensal, restam, periodicidade: r.periodicidade });
+    }
+    itens.sort((a, b) => b.mensal - a.mensal);
+    return { total: itens.reduce((s, i) => s + i.mensal, 0), itens };
+  },
+
+  /* VIGIA DOS CONTRATOS — o que roda sozinho precisa de quem olhe.
+
+     O gerador criou uma parcela do Fiat duas vezes e quem percebeu foi o dono da
+     casa, no olho, um mês depois. Com 11 contratos rodando, isso é manutenção.
+
+     Duplicata: dois lançamentos do MESMO nome, MESMO valor, dentro da janela de
+     uma ocorrência do contrato. Exigir o mesmo valor e a existência do contrato é
+     o que separa "a parcela veio duas vezes" de "fui ao mercado duas vezes". */
+  duplicatasDeContrato(period) {
+    const contratos = this.all('recurrences');
+    const chaveDe = t => String(t.description || '').trim().toLowerCase();
+    const porNome = {};
+    for (const t of this.txOfPeriod(period)) {
+      if (t.virtual || t.card_id || this.isNeutral(t)) continue;
+      (porNome[chaveDe(t)] = porNome[chaveDe(t)] || []).push(t);
+    }
+    const achados = [];
+    for (const [nome, lista] of Object.entries(porNome)) {
+      if (lista.length < 2) continue;
+      const contrato = contratos.find(r => String(r.description || '').trim().toLowerCase() === nome)
+        || contratos.find(r => lista.some(t => t.recurrence_id === r.id));
+      if (!contrato) continue;                   // sem contrato por trás, repetir é normal
+      const janela = this.janelaDaOcorrencia(contrato);
+      const ordenada = [...lista].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      for (let i = 1; i < ordenada.length; i++) {
+        const dif = Math.abs(Date.parse(ordenada[i].date + 'T12:00:00')
+          - Date.parse(ordenada[i - 1].date + 'T12:00:00')) / 86400000;
+        const mesmoValor = Math.abs((Number(ordenada[i].amount) || 0) - (Number(ordenada[i - 1].amount) || 0)) < 0.005;
+        if (dif <= janela && mesmoValor) {
+          achados.push({ descricao: ordenada[i].description, data: ordenada[i].date,
+            valor: Number(ordenada[i].amount) || 0, quantas: ordenada.length });
+          break;                                 // um aviso por contrato basta
+        }
+      }
+    }
+    return achados;
+  },
+
+  /* O contrário da duplicata: o contrato que DEVIA ter lançado e não lançou. Sai
+     de graça de `previstosNaoLancados` — é o que já venceu e não tem lançamento. */
+  contratosAtrasados(period) {
+    const hoje = this.hojeISO();
+    return this.previstosNaoLancados(period)
+      .filter(it => String(it.data) <= hoje && it.origem !== 'fatura');
+  },
+
   /* Comprometido = o que já está lançado e vence ATÉ O FIM DO CICLO ATUAL.
 
      O horizonte não é detalhe: sem ele, uma conta que vence em setembro pesa
