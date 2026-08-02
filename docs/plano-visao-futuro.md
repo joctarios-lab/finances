@@ -221,6 +221,26 @@ a bater.
 passado da série é fato — somá-lo lá seria reescrever o que aconteceu. Em janela
 que ainda vai começar ele não entra: já está dentro do saldo de abertura.
 
+**Duas linhas, porque a curva muda de natureza no meio.** Até hoje ela é fato;
+daí em diante, projeção. Com um traço só, o previsto passava por extrato — e é
+justamente ele que pode não acontecer.
+
+- realizado: linha cheia, azul;
+- previsto: **tracejada**, mais clara — a convenção que dispensa legenda num
+  gráfico de 130px;
+- uma **vertical** discreta marca o dia de hoje;
+- o balão diz "saldo previsto", "a receber" e "a pagar" do lado de lá, em vez de
+  "saldo", "entrou" e "saiu".
+
+As duas **se tocam** no ponto do corte (ele entra nas duas séries): sem repeti-lo
+haveria um buraco de um dia entre as metades, e a linha pareceria interrompida em
+vez de continuada. Mês encerrado tem só a cheia; mês que ainda não chegou, só a
+tracejada — nesses não há emenda a desenhar.
+
+O corte é **hoje**, não o último dia com lançamento: ele é uma data, não um
+movimento. Do contrário o tracejado começaria antes ou depois de hoje conforme o
+mês tivesse sido mais ou menos movimentado.
+
 O teste que deveria ter pego isso comparava a ponta com `saldoNaData` — um número
 que a tela não mostra num mês em aberto. Agora compara com `saldoPrevistoNaData`,
 que é o que está escrito ao lado do gráfico, e cobra que a linha **não seja uma

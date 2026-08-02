@@ -3210,6 +3210,12 @@ try {
   renderExtrato(pD);
   const cReal = Graficos.fila.find(f => f.nome === 'saldo-dia');
   check('o extrato entrega os dias e o movimento ao gráfico', !!cReal, true);
+  /* O CORTE É HOJE, não o último dia com movimento: ele é uma data, não um
+     lançamento. Do contrário o tracejado começaria antes ou depois de hoje
+     conforme o mês tivesse sido mais ou menos movimentado. */
+  check('o extrato parte a curva exatamente em hoje',
+    (cReal.opts.annotations.xaxis || [{}])[0].x, DB.hojeISO());
+  check('  e desenha as duas naturezas', cReal.opts.series.length, 2);
   const balReal = cReal.opts.tooltip.custom({ dataPointIndex: 1 });
   check('e a dica nomeia um dia de verdade, não um índice',
     /\d{2} de |\d{2}\/|jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/.test(balReal), true);
@@ -3265,6 +3271,41 @@ try {
   check('e série sempre positiva não ganha', !cfgDo().annotations.yaxis, true);
   check('duas medidas já desenham', sparkArea([1, 2], ['a', 'b'], {}).includes('apx'), true);
   check('uma medida só não desenha nada', sparkArea([1], ['a'], {}), '');
+
+  /* DUAS LINHAS: até hoje é fato, daí em diante é projeção. Com um traço só, o
+     previsto passava por extrato — e ele é justamente a parte que pode não
+     acontecer. */
+  zeraFila();
+  sparkArea([100, 200, 300, 400], ['d1', 'd2', 'd3', 'd4'], {}, 1);
+  const cDuas = cfgDo();
+  check('a curva se parte em fato e projeção', cDuas.series.length, 2);
+  check('  a de baixo é o realizado', cDuas.series[0].name, 'saldo');
+  check('  e ela para no corte', JSON.stringify(cDuas.series[0].data), '[100,200,null,null]');
+  check('  a outra é o previsto', cDuas.series[1].name, 'previsto');
+  /* As duas se TOCAM no ponto do corte: sem repeti-lo, haveria um buraco de um dia
+     entre as metades e a linha pareceria interrompida em vez de continuada. */
+  check('  que começa no mesmo ponto onde o fato termina',
+    JSON.stringify(cDuas.series[1].data), '[null,200,300,400]');
+  check('  o previsto é tracejado, o realizado inteiro',
+    JSON.stringify(cDuas.stroke.dashArray), '[0,5]');
+  check('  e o previsto vem mais claro', cDuas.colors[1] !== cDuas.colors[0], true);
+  check('  uma vertical marca onde o fato acaba', cDuas.annotations.xaxis[0].x, 'd2');
+  check('  o balão avisa que aquele saldo é projeção',
+    cDuas.tooltip.custom({ dataPointIndex: 2 }).includes('saldo previsto'), true);
+  check('  e no lado do fato ele não avisa',
+    cDuas.tooltip.custom({ dataPointIndex: 0 }).includes('previsto'), false);
+
+  // Sem futuro (mês encerrado) ou sem passado (mês que não chegou), não há emenda
+  zeraFila();
+  sparkArea([100, 200, 300], ['d1', 'd2', 'd3'], {}, 2);
+  check('mês encerrado desenha uma linha só, inteira', cfgDo().series.length, 1);
+  check('  e sem vertical de corte', !cfgDo().annotations.xaxis, true);
+  zeraFila();
+  sparkArea([100, 200, 300], ['d1', 'd2', 'd3'], {}, -1);
+  const cFut = cfgDo();
+  check('mês que ainda não chegou desenha uma linha só, tracejada', cFut.series.length, 1);
+  check('  e ela é toda de previsto', cFut.series[0].name, 'previsto');
+  check('  com o traço cortado', JSON.stringify(cFut.stroke.dashArray), '[5]');
   /* O gráfico sangra até a borda e herda o raio do cartão — é o que separa um
      gráfico desenhado de um gráfico encaixotado (card-p-0 + rounded-bottom). */
   check('o cartão zera o padding para o gráfico encostar',

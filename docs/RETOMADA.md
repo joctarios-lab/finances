@@ -19,8 +19,8 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 119 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2265 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 120 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2282 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - Nada pendente no git
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
@@ -89,7 +89,8 @@ mão toda vez.
   medindo o investido pela mesma função que produziu o total decomposto.
 - A linha do gráfico do Extrato segue DB.previstoPorDia depois de hoje: a ponta
   dela tem de cair no saldo previsto escrito ao lado. Comparar com saldoNaData
-  deixou passar meses inteiros desenhados como reta.
+  deixou passar meses inteiros desenhados como reta. Realizado e previsto sao
+  DUAS series (cheia e tracejada), que se tocam no ponto de hoje.
 - Saldo só entende filtro de CONTA e de janela de dias. Com categoria, membro,
   etiqueta ou busca, o cartão mostra o movimento do filtro e avisa que o saldo não
   responde a ele.

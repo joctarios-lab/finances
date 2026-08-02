@@ -2276,11 +2276,33 @@ function serieDeSaldo(contas, dias, anterior) {
    A dica é própria porque tem de responder três coisas de uma vez: onde o saldo
    estava naquele dia, quanto entrou e quanto saiu. A nativa mostraria só a série
    desenhada, que é o saldo — e saldo sem o movimento do dia não explica o degrau. */
-function sparkArea(vals, dias, porDia) {
+function sparkArea(vals, dias, porDia, corte) {
   const n = vals.length;
   if (n < 2) return '';
   const rotulos = (dias || vals.map((_, i) => String(i + 1)));
   const min = Math.min(...vals), max = Math.max(...vals);
+
+  /* DUAS LINHAS, porque a curva muda de natureza no meio: até hoje ela é FATO,
+     daí em diante é projeção. Desenhar tudo com o mesmo traço fazia o previsto
+     passar por extrato — e o previsto é a parte que pode não acontecer.
+
+     `corte` é o índice do último dia já realizado. Elas se tocam nesse ponto (ele
+     entra nas duas séries): sem isso haveria um buraco de um dia entre as duas
+     metades, e a linha pareceria interrompida em vez de continuada.
+
+     Mês encerrado tem só a série cheia, e mês que ainda não chegou só a
+     tracejada — nesses casos não há emenda para desenhar. */
+  const inteiros = a => a.map(v => (v === null ? null : Math.round(Number(v) || 0)));
+  const temRealizado = corte >= 0, temPrevisto = corte === undefined ? false : corte < n - 1;
+  const series = [];
+  if (!temRealizado && !temPrevisto) series.push({ name: 'saldo', data: inteiros(vals) });
+  else {
+    if (temRealizado) series.push({ name: 'saldo', data: inteiros(vals.map((v, i) => (i <= corte ? v : null))) });
+    if (temPrevisto) series.push({ name: 'previsto', data: inteiros(vals.map((v, i) => (i >= corte ? v : null))) });
+  }
+  const cores = series.map(s => (s.name === 'previsto' ? clarear(Graficos.cor.azul, .42) : Graficos.cor.azul));
+  // Tracejado no previsto: é a convenção que dispensa legenda num gráfico de 130px
+  const tracos = series.map(s => (s.name === 'previsto' ? 5 : 0));
 
   const alt = 100;
   return Graficos.novo({
@@ -2290,9 +2312,9 @@ function sparkArea(vals, dias, porDia) {
       sparkline: { enabled: true },
       animations: { enabled: true, easing: 'easeout', speed: 320 },
     },
-    series: [{ name: 'saldo', data: vals.map(v => Math.round(Number(v) || 0)) }],
-    colors: [Graficos.cor.azul],
-    stroke: { curve: 'smooth', width: 2.5 },
+    series,
+    colors: cores,
+    stroke: { curve: 'smooth', width: 2.5, dashArray: tracos },
     /* Degradê que apaga para baixo. Lavagem chapada vira bloco e briga com a
        linha; o degradê dá volume e devolve o branco do cartão embaixo, que é o
        que faz o gráfico assentar em vez de flutuar. */
@@ -2312,10 +2334,15 @@ function sparkArea(vals, dias, porDia) {
       xaxis: { categories: rotulos },
       markers: { size: 0, hover: { size: 5 } },
     }, Graficos.cor.azul),
-    // A linha do zero só aparece quando a série de fato cruza: senão é tinta sem dado
-    annotations: min < 0 && max > 0
-      ? { yaxis: [{ y: 0, borderColor: '#c4cad4', strokeDashArray: 0 }] }
-      : {},
+    /* A linha do zero só aparece quando a série de fato cruza: senão é tinta sem
+       dado. A vertical marca ONDE O FATO ACABA — sem ela, o ponto em que o traço
+       muda seria a única pista, e num gráfico deste tamanho isso se perde. */
+    annotations: {
+      ...(min < 0 && max > 0
+        ? { yaxis: [{ y: 0, borderColor: '#c4cad4', strokeDashArray: 0 }] } : {}),
+      ...(temRealizado && temPrevisto
+        ? { xaxis: [{ x: rotulos[corte], borderColor: '#c4cad4', strokeDashArray: 3, opacity: .6 }] } : {}),
+    },
     tooltip: {
       style: { fontSize: Graficos.fonte.dica, fontFamily: 'inherit' },
       custom({ dataPointIndex }) {
@@ -2327,10 +2354,13 @@ function sparkArea(vals, dias, porDia) {
         // Linha só quando há movimento: "entrou R$ 0" é ruído, não informação
         const linha = (rot, v, cls) => (v
           ? `<span class="res-tip-l"><i>${rot}</i><b${cls ? ` class="${cls}"` : ''}>${fmtSemMoeda(v)}</b></span>` : '');
+        /* O balão diz de que lado da linha o ponto está. Sem isso, "saldo" num dia
+           que ainda não chegou se lê como extrato — e ali é projeção. */
+        const previsto = corte === undefined ? false : dataPointIndex > corte;
         return `<div class="res-tip-in"><span class="res-tip-d">${esc(dia)}</span>`
-          + linha('saldo', vals[dataPointIndex])
-          + linha('entrou', mov.entrou || 0, 'txt-green')
-          + linha('saiu', mov.saiu || 0, 'txt-red')
+          + linha(previsto ? 'saldo previsto' : 'saldo', vals[dataPointIndex])
+          + linha(previsto ? 'a receber' : 'entrou', mov.entrou || 0, 'txt-green')
+          + linha(previsto ? 'a pagar' : 'saiu', mov.saiu || 0, 'txt-red')
           + '</div>';
       },
     },
@@ -2512,6 +2542,11 @@ function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSa
   const variacao = saldo - anterior;
   const dia = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
   const intervalo = dias.length ? `${dia(dias[0])} a ${dia(dias[dias.length - 1])}` : '';
+  /* ONDE O FATO ACABA: o índice do último dia já vivido dentro do recorte. Todo
+     dia da janela conta, não só os que têm lançamento — o corte é uma data, não um
+     movimento, e usar o último dia COM movimento faria a parte tracejada começar
+     antes ou depois de hoje conforme o mês tivesse sido movimentado. */
+  const corteDeHoje = dias.reduce((ultimo, d, i) => (d <= DB.hojeISO() ? i : ultimo), -1);
 
   /* Anatomia do Mixed Widget 10 do Metronic: título e subtítulo à esquerda,
      valor à direita, gráfico generoso sangrando até a borda de baixo. A
@@ -2549,8 +2584,9 @@ function resumoExtrato({ titulo, saldo, anterior, entrou, saiu, rotEntrou, rotSa
            gráfico desenhado de um gráfico encaixotado, e é o padrão do Metronic
            (card-body p-0 + card-rounded-bottom). -->
       <div class="res-graf" id="res-graf"
-        role="img" aria-label="Saldo dia a dia de ${esc(intervalo)}, de ${fmtSemMoeda(anterior)} a ${fmtSemMoeda(saldo)}">
-        ${sparkArea(serie, dias, porDia)}
+        role="img" aria-label="Saldo dia a dia de ${esc(intervalo)}, de ${fmtSemMoeda(anterior)} a ${fmtSemMoeda(saldo)}${
+          corteDeHoje > -1 && corteDeHoje < dias.length - 1 ? ', com o trecho depois de hoje previsto' : ''}">
+        ${sparkArea(serie, dias, porDia, corteDeHoje)}
       </div>
     </div>`;
 }
