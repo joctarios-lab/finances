@@ -1187,6 +1187,7 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 .cc-alerta-val { font-size: 21px; font-weight: 800; color: #fff; margin-top: 2px; }
 .cc-acoes { display: flex; gap: 14px; margin-top: 8px; }
 .cc-limit-erro { font-size: 11.5px; color: #ffc7d2; line-height: 1.45; }
+.cc-limit-nota { margin-top: 5px; font-size: 11px; color: #9899ac; }
 
 /* Linhas de navegação abaixo do cartão: futuras e histórico. Botão de largura
    inteira porque a área de toque no celular é a linha, não o texto. */

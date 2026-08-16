@@ -22,9 +22,9 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 123 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2346 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
-- E a suíte inteira em 8 datas de calendário: `node tests/tempo.js`
+- Versão 124 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2348 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
@@ -107,8 +107,10 @@ mão toda vez.
 - Na tela de Cartões a ordem é patrimônio → o que eu TENHO → o que eu DEVO →
   custo fixo. Nunca listar N faturas: com parcelamento, as N últimas são todas
   futuras e escondem a atual (foi o defeito). Mostra-se a fechada não paga, a
-  aberta, e as futuras SOMADAS numa linha. Limite se diz pelo que sobra; limite
-  menor que a fatura é aviso de cadastro, não barra de 327%.
+  aberta, e as futuras SOMADAS numa linha. Limite se diz pelo que sobra, e o que
+  OCUPA o limite é a dívida INTEIRA — parcela em 10x trava o total na hora da
+  compra —, não só a fatura aberta: descontar só ela dava R$ 1.999,20 a mais de
+  limite do que existia. Limite menor que o comprometido é aviso de cadastro.
 - Projeção do mês = DB.projecaoDeGasto: só o gasto VARIÁVEL se extrapola. O
   run-rate antigo dava R$ 162.807 num mês de R$ 17.981 de renda.
 - Base das porcentagens = DB.rendaDoMes (o mês), não a renda declarada. Cuidado:

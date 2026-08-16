@@ -4967,11 +4967,24 @@ try {
     (histHtml.match(/class="invoice-row"/g) || []).length, todas.length);
   closeModal();
 
-  /* LIMITE: o que se quer saber é quanto AINDA dá para gastar. */
-  const emUsoC = todas.filter(i => (i.key === chaveAtualC || i.status === 'Fechada' || i.status === 'Parcial') && i.falta > 0.005)
-    .reduce((s, i) => s + i.falta, 0);
+  /* LIMITE: o que se quer saber é quanto AINDA dá para gastar.
+
+     O NÚMERO VEM LITERAL, não recalculado a partir das faturas. A primeira versão
+     deste teste refazia a conta do jeito que o código fazia — só a fatura aberta
+     mais as fechadas — e por isso passou com o código errado: o disponível saía
+     R$ 1.999,20 acima do real, o valor exato das parcelas ainda por faturar. Um
+     teste que copia a regra que deveria julgar não julga nada.
+
+     Aqui o cenário é conhecido: 700 na fechada + 300 na aberta + 8 × 250 nas
+     futuras = R$ 3.000 comprometidos num limite de R$ 4.000. Uma compra parcelada
+     trava o limite pelo total na hora da compra, então sobram R$ 1.000. */
   check('o limite é dito pelo que sobra', bloco.includes('Disponível no limite'), true);
-  check('  e o valor é limite menos o que está em uso', bloco.includes(fmt(4000 - emUsoC)), true);
+  check('  e as parcelas futuras JÁ estão descontadas dele',
+    bloco.includes(fmt(1000)), true);
+  check('  o que não é o mesmo que descontar só a fatura aberta',
+    bloco.includes(fmt(4000 - 300 - 700)), false);
+  check('  e a tela avisa que as parcelas entraram na conta',
+    bloco.includes('já descontadas as parcelas a faturar'), true);
 
   /* LIMITE MENOR QUE A FATURA quase sempre é cadastro errado. Na base real o
      cartão dizia limite R$ 110 com fatura de R$ 359,90, e a tela desenhava uma

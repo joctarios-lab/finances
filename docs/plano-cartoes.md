@@ -97,8 +97,36 @@ Três coisas, nesta ordem:
    deve a outra metade.
 2. **A fatura aberta** — valor, quando fecha, quando vence, ver itens e pagar.
 3. **O limite pelo que sobra**, não pela porcentagem usada. Quando o uso passa do
-   limite, a tela diz *"limite cadastrado (R$ 110) é menor que a fatura — confira
-   o cadastro"* em vez de desenhar 327%. Sem limite cadastrado, diz isso também.
+   limite, a tela diz *"limite cadastrado (R$ 110) é menor que os R$ 2.359,10 já
+   comprometidos — confira o cadastro"* em vez de desenhar 327%. Sem limite
+   cadastrado, diz isso também.
+
+### O que ocupa o limite: a dívida inteira, não a fatura aberta
+
+Isto saiu errado na primeira versão e foi pego por quem usa. Uma compra em 10x
+**trava o limite pelo valor total no momento da compra**; ele volta aos poucos,
+conforme cada parcela é paga. Descontar apenas a fatura em aberto dava:
+
+| limite cadastrado | a tela dizia | o correto |
+|---|---|---|
+| R$ 5.000 | R$ 4.640,10 | **R$ 2.640,90** |
+| R$ 3.000 | R$ 2.640,10 | **R$ 640,90** |
+
+Sempre R$ 1.999,20 a mais — o valor exato das oito parcelas ainda por faturar. E
+o erro era **para o lado perigoso**: a tela prometia um limite que o cartão não
+tem. Era também incoerente com o próprio cabeçalho, que já dizia "devo
+R$ 2.359,10".
+
+Agora `emUso` é a soma do que falta em **todas** as faturas não pagas, o mesmo
+número que o patrimônio usa. E, quando há parcelas, uma nota explica de onde vem
+a diferença — sem ela, quem olha só a fatura aberta acha que o disponível está
+errado.
+
+**O teste passou com o código errado**, e isso importa mais que o defeito: ele
+refazia a conta do mesmo jeito que o código fazia. Um teste que copia a regra que
+deveria julgar não julga nada. Agora o valor é literal — o cenário tem R$ 3.000
+comprometidos num limite de R$ 4.000, e o teste cobra R$ 1.000 —, e há uma
+asserção que reprova explicitamente o resultado da conta antiga.
 
 Abaixo, duas linhas de navegação:
 

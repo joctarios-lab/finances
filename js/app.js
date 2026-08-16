@@ -3191,7 +3191,18 @@ function cartaoBloco(card) {
   const totalFuturas = futuras.reduce((s, i) => s + i.falta, 0);
   const ultima = futuras.length ? futuras[futuras.length - 1] : null;
 
-  const emUso = (atual ? atual.falta : 0) + pendentes.reduce((s, i) => s + i.falta, 0);
+  /* O QUE OCUPA O LIMITE é a dívida INTEIRA do cartão, não só a fatura aberta.
+
+     Uma compra em 10x trava o limite pelo valor total no momento da compra; ele
+     volta aos poucos, conforme cada parcela é paga. Descontar só a fatura em
+     aberto dava um disponível maior do que o real — na base própria, R$ 4.640,10
+     contra R$ 2.640,90 num limite de R$ 5.000, os R$ 1.999,20 das oito parcelas
+     ainda por faturar. Errar aqui é errar para o lado perigoso: a tela prometeria
+     um limite que o cartão não tem.
+
+     É também o mesmo número que o cabeçalho da tela já mostra em "devo", e dois
+     valores discordando sobre a mesma dívida destroem a confiança nos dois. */
+  const emUso = invoices.reduce((s, i) => s + (i.falta > 0.005 ? i.falta : 0), 0);
   const limite = Number(card.limit_amount) || 0;
   const sobra = limite - emUso;
 
@@ -3220,11 +3231,15 @@ function cartaoBloco(card) {
      cadastro errado, e a resposta útil é dizer isso em vez de pintar a barra. */
   if (limite > 0 && sobra >= 0) {
     const pct = Math.round(emUso / limite * 100);
+    /* A nota das parcelas existe para o disponível não parecer errado: quem olha
+       só a fatura aberta estranha um número menor do que esperava, e a diferença
+       é justamente o que já foi comprado e ainda não faturou. */
     html += `<div class="cc-limit">
       <div class="budget-head"><span class="muted">Disponível no limite</span><span class="num">${fmt(sobra)} <span class="muted">de ${fmtShort(limite)}</span></span></div>
-      <div class="bar ${barClass(pct)}"><i style="width:${Math.min(100, pct)}%"></i></div></div>`;
+      <div class="bar ${barClass(pct)}"><i style="width:${Math.min(100, pct)}%"></i></div>
+      ${totalFuturas > 0.005 ? `<div class="cc-limit-nota">já descontadas as parcelas a faturar (${fmt(totalFuturas)})</div>` : ''}</div>`;
   } else if (limite > 0) {
-    html += `<div class="cc-limit cc-limit-erro">Limite cadastrado (${fmtShort(limite)}) é menor que a fatura — confira o cadastro do cartão.</div>`;
+    html += `<div class="cc-limit cc-limit-erro">Limite cadastrado (${fmtShort(limite)}) é menor que os ${fmt(emUso)} já comprometidos — confira o cadastro do cartão.</div>`;
   } else {
     html += `<div class="cc-limit cc-limit-erro">Limite não cadastrado — sem ele não dá para avisar quando o cartão estourar.</div>`;
   }
