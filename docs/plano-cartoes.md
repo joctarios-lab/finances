@@ -128,6 +128,38 @@ deveria julgar não julga nada. Agora o valor é literal — o cenário tem R$ 3
 comprometidos num limite de R$ 4.000, e o teste cobra R$ 1.000 —, e há uma
 asserção que reprova explicitamente o resultado da conta antiga.
 
+### E as duas partes aparecem separadas
+
+Somar tudo num número só corrigia a conta e apagava a leitura: **consumido** já é
+fatura e sai neste ciclo; **comprometido** é parcela que ainda vai faturar, sai ao
+longo dos meses e libera limite conforme cada uma é paga. As duas pedem decisões
+diferentes — contra o consumido só resta pagar a fatura; contra o comprometido,
+dá para não parcelar a próxima compra.
+
+```
+Disponível no limite            R$ 2.640,90 de R$ 5.000
+[███░░░░░░░░░░░░································]
+■ consumido R$ 359,90   ■ comprometido R$ 1.999,20
+```
+
+A barra tem duas faixas na **mesma família de cor, com intensidades diferentes** —
+azul cheio e azul a 42%. É a convenção que o app já usa no gráfico do Extrato,
+onde o realizado é sólido e o previsto é claro. Duas cores sem parentesco fariam
+parecer duas medidas distintas, quando as duas faixas medem a mesma coisa: quanto
+do limite não está livre. Os cantos internos não são arredondados — um vão entre
+as faixas leria como espaço livre.
+
+**A divisão entre as duas muda com o dia, e é correto que mude.** Quando a fatura
+fecha, a próxima parcela entra na fatura corrente e deixa de ser futura. Medido no
+cenário de teste: antes do fechamento, R$ 1.000 e R$ 2.000; depois, R$ 1.250 e
+R$ 1.750.
+
+Isso derrubou a primeira versão deste teste, que fixava um dos dois pares —
+passava na âncora e reprovava em **seis das nove datas** de `tests/tempo.js`. O
+que não muda é a soma (R$ 3.000) e o disponível (R$ 1.000), e é isso que o teste
+cobra como número fixo; a proporção de cada faixa é conferida contra o valor que
+a própria legenda mostra.
+
 Abaixo, duas linhas de navegação:
 
 - **"Ainda vai faturar · 8 faturas até mai/2027 — R$ 1.999,20"**. As parcelas já

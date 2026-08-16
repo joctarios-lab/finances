@@ -4983,8 +4983,38 @@ try {
     bloco.includes(fmt(1000)), true);
   check('  o que não é o mesmo que descontar só a fatura aberta',
     bloco.includes(fmt(4000 - 300 - 700)), false);
-  check('  e a tela avisa que as parcelas entraram na conta',
-    bloco.includes('já descontadas as parcelas a faturar'), true);
+
+  /* CONSUMIDO E COMPROMETIDO SÃO COISAS DIFERENTES, e o total sozinho apagava a
+     diferença: contra o consumido não há o que fazer além de pagar a fatura;
+     contra o comprometido, dá para não parcelar a próxima compra.
+
+     A DIVISÃO ENTRE OS DOIS MUDA COM O DIA, e é correto que mude: quando a fatura
+     fecha, a próxima parcela entra na fatura corrente e deixa de ser futura.
+     Medido neste mesmo cenário — antes do fechamento (dia 13) são 1.000 e 2.000;
+     depois, 1.250 e 1.750. Fixar um dos dois pares era fotografar um dia: a
+     primeira versão deste teste passava na âncora e reprovava em seis das nove
+     datas de tests/tempo.js. O que NÃO muda é a soma e o disponível, e é isso que
+     se cobra como número. */
+  const valorNaLegenda = rot => {
+    const m = bloco.match(new RegExp(rot + ' <i>([^<]+)</i>'));
+    return m ? Number(m[1].replace(/[^\d,]/g, '').replace(/\./g, '').replace(',', '.')) : null;
+  };
+  const vCons = valorNaLegenda('consumido'), vComp = valorNaLegenda('comprometido');
+  check('  o consumido aparece separado', vCons > 0, true);
+  check('  e o comprometido também', vComp > 0, true);
+  check('  e as duas somam a dívida inteira do cartão', Math.round((vCons + vComp) * 100), 300000);
+
+  /* A BARRA desenha as duas faixas, cada uma na proporção do que representa —
+     juntas, ocupam os 75% do limite que não estão livres. */
+  const faixa = cls => {
+    const m = bloco.match(new RegExp(`class="${cls}" style="width:([\\d.]+)%`));
+    return m ? Number(m[1]) : null;
+  };
+  check('a barra tem duas faixas', /bar-usado[\s\S]*?bar-futuro/.test(bloco), true);
+  check('  a do consumido na proporção dele', Math.round(faixa('bar-usado') * 100) / 100, Math.round(vCons / 4000 * 10000) / 100);
+  check('  a do comprometido na dele', Math.round(faixa('bar-futuro') * 100) / 100, Math.round(vComp / 4000 * 10000) / 100);
+  check('  e juntas elas medem o que não está livre',
+    Math.round((faixa('bar-usado') + faixa('bar-futuro')) * 100) / 100, 75);
 
   /* LIMITE MENOR QUE A FATURA quase sempre é cadastro errado. Na base real o
      cartão dizia limite R$ 110 com fatura de R$ 359,90, e a tela desenhava uma

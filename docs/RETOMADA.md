@@ -22,8 +22,8 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 124 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2348 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 125 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2354 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
@@ -111,6 +111,10 @@ mão toda vez.
   OCUPA o limite é a dívida INTEIRA — parcela em 10x trava o total na hora da
   compra —, não só a fatura aberta: descontar só ela dava R$ 1.999,20 a mais de
   limite do que existia. Limite menor que o comprometido é aviso de cadastro.
+  A barra tem DUAS faixas: consumido (já é fatura) e comprometido (parcela que
+  ainda vai faturar), mesma cor em intensidades diferentes. A divisão entre as
+  duas muda conforme a fatura fecha, e é correto que mude — teste não pode fixar
+  os dois valores, só a soma e o disponível.
 - Projeção do mês = DB.projecaoDeGasto: só o gasto VARIÁVEL se extrapola. O
   run-rate antigo dava R$ 162.807 num mês de R$ 17.981 de renda.
 - Base das porcentagens = DB.rendaDoMes (o mês), não a renda declarada. Cuidado:

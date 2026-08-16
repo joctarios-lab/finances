@@ -1187,7 +1187,23 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 .cc-alerta-val { font-size: 21px; font-weight: 800; color: #fff; margin-top: 2px; }
 .cc-acoes { display: flex; gap: 14px; margin-top: 8px; }
 .cc-limit-erro { font-size: 11.5px; color: #ffc7d2; line-height: 1.45; }
-.cc-limit-nota { margin-top: 5px; font-size: 11px; color: #9899ac; }
+
+/* Barra do limite em DUAS faixas: o que já é fatura e o que ainda vai faturar.
+   As duas se encostam dentro do mesmo trilho, então a barra deixa de arredondar
+   cada pedaço — cantos internos abririam um vão que leria como espaço livre. */
+.bar-2 { display: flex; }
+.bar-2 > i { border-radius: 0; transition: width .5s ease; }
+.bar-2 > i:first-child { border-radius: 4px 0 0 4px; }
+.bar-2 > i:last-child { border-radius: 0 4px 4px 0; }
+/* --gold é o azul primário (#009ef7); --blue aqui é o roxo do Metronic. */
+.bar-usado { background: var(--gold); }
+.bar-futuro { background: rgba(0, 158, 247, .42); }
+.cc-legenda { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 7px; font-size: 11px; color: #9899ac; }
+.cc-legenda span { display: inline-flex; align-items: center; gap: 5px; }
+.cc-legenda i { font-style: normal; font-weight: 700; color: #e6e7f0; font-variant-numeric: tabular-nums; }
+.cc-legenda b { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.pt-usado { background: var(--gold); }
+.pt-futuro { background: rgba(0, 158, 247, .42); }
 
 /* Linhas de navegação abaixo do cartão: futuras e histórico. Botão de largura
    inteira porque a área de toque no celular é a linha, não o texto. */

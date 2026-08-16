@@ -3201,8 +3201,17 @@ function cartaoBloco(card) {
      um limite que o cartão não tem.
 
      É também o mesmo número que o cabeçalho da tela já mostra em "devo", e dois
-     valores discordando sobre a mesma dívida destroem a confiança nos dois. */
-  const emUso = invoices.reduce((s, i) => s + (i.falta > 0.005 ? i.falta : 0), 0);
+     valores discordando sobre a mesma dívida destroem a confiança nos dois.
+
+     MAS AS DUAS PARTES NÃO SÃO A MESMA COISA, e somá-las num número só apagava a
+     diferença: o CONSUMIDO já é fatura e sai do bolso neste ciclo; o COMPROMETIDO
+     é parcela que ainda vai faturar, sai ao longo dos meses e vai liberando
+     limite conforme cada uma é paga. Quem vê só o total não sabe quanto do aperto
+     é de agora e quanto é de depois. Por isso as duas aparecem separadas, e a
+     barra mostra as duas faixas. */
+  const consumido = (atual ? atual.falta : 0) + pendentes.reduce((s, i) => s + i.falta, 0);
+  const comprometido = totalFuturas;
+  const emUso = consumido + comprometido;
   const limite = Number(card.limit_amount) || 0;
   const sobra = limite - emUso;
 
@@ -3230,14 +3239,27 @@ function cartaoBloco(card) {
      de "327%" como se fosse informação. Uso acima do limite quase sempre é
      cadastro errado, e a resposta útil é dizer isso em vez de pintar a barra. */
   if (limite > 0 && sobra >= 0) {
-    const pct = Math.round(emUso / limite * 100);
-    /* A nota das parcelas existe para o disponível não parecer errado: quem olha
-       só a fatura aberta estranha um número menor do que esperava, e a diferença
-       é justamente o que já foi comprado e ainda não faturou. */
+    /* A BARRA EM DUAS FAIXAS. Uma barra só, com o total, dizia "o limite está
+       cheio até aqui" sem dizer de quê — e as duas metades pedem decisões
+       diferentes: contra o consumido não há o que fazer além de pagar a fatura;
+       contra o comprometido, dá para não parcelar a próxima compra.
+
+       Mesma família de cor, intensidades diferentes: é a convenção que o app já
+       usa no gráfico do Extrato, onde o realizado é cheio e o previsto é claro.
+       Duas cores sem parentesco fariam parecer duas medidas distintas, quando as
+       duas faixas medem a mesma coisa — quanto do limite não está livre. */
+    const pctC = Math.min(100, consumido / limite * 100);
+    const pctF = Math.min(100 - pctC, comprometido / limite * 100);
     html += `<div class="cc-limit">
       <div class="budget-head"><span class="muted">Disponível no limite</span><span class="num">${fmt(sobra)} <span class="muted">de ${fmtShort(limite)}</span></span></div>
-      <div class="bar ${barClass(pct)}"><i style="width:${Math.min(100, pct)}%"></i></div>
-      ${totalFuturas > 0.005 ? `<div class="cc-limit-nota">já descontadas as parcelas a faturar (${fmt(totalFuturas)})</div>` : ''}</div>`;
+      <div class="bar bar-2">
+        <i class="bar-usado" style="width:${pctC}%"></i>
+        <i class="bar-futuro" style="width:${pctF}%"></i>
+      </div>
+      <div class="cc-legenda">
+        <span><b class="pt-usado"></b>consumido <i>${fmt(consumido)}</i></span>
+        ${comprometido > 0.005 ? `<span><b class="pt-futuro"></b>comprometido <i>${fmt(comprometido)}</i></span>` : ''}
+      </div></div>`;
   } else if (limite > 0) {
     html += `<div class="cc-limit cc-limit-erro">Limite cadastrado (${fmtShort(limite)}) é menor que os ${fmt(emUso)} já comprometidos — confira o cadastro do cartão.</div>`;
   } else {
