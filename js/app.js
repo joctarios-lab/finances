@@ -3203,15 +3203,26 @@ function cartaoBloco(card) {
      É também o mesmo número que o cabeçalho da tela já mostra em "devo", e dois
      valores discordando sobre a mesma dívida destroem a confiança nos dois.
 
-     MAS AS DUAS PARTES NÃO SÃO A MESMA COISA, e somá-las num número só apagava a
-     diferença: o CONSUMIDO já é fatura e sai do bolso neste ciclo; o COMPROMETIDO
-     é parcela que ainda vai faturar, sai ao longo dos meses e vai liberando
-     limite conforme cada uma é paga. Quem vê só o total não sabe quanto do aperto
-     é de agora e quanto é de depois. Por isso as duas aparecem separadas, e a
-     barra mostra as duas faixas. */
-  const consumido = (atual ? atual.falta : 0) + pendentes.reduce((s, i) => s + i.falta, 0);
-  const comprometido = totalFuturas;
-  const emUso = consumido + comprometido;
+     E ELE SE PARTE EM DUAS NATUREZAS, que é o corte por STATUS — o mesmo do
+     Extrato, onde o que separa "já aconteceu" de "ainda vem" nunca foi a data:
+
+       UTILIZADO     a compra foi efetivada e o limite já foi tomado. Uma compra
+                     em 10x entra INTEIRA aqui no dia em que foi feita, mesmo com
+                     parcelas caindo daqui a nove meses — o cartão travou o valor
+                     todo naquele momento.
+       COMPROMETIDO  foi lançado e ainda NÃO se efetivou. Vai tomar limite quando
+                     acontecer, e até lá é uma reserva, não uma dívida.
+
+     A primeira versão cortava por DATA da fatura — a atual contra as futuras —, e
+     isso classificava as parcelas de uma compra já feita como se ainda não
+     tivessem tomado limite. Na base real dava "consumido R$ 359,90, comprometido
+     R$ 1.999,20" quando o certo é R$ 2.249,10 utilizados (nove parcelas de uma TV
+     já comprada) contra R$ 110,00 comprometidos (uma assinatura lançada e ainda
+     não efetivada).
+
+     Fatura quitada devolve o limite, então só as não pagas entram. */
+  const { utilizado, comprometido } = usoDoLimite(card, invoices);
+  const emUso = utilizado + comprometido;
   const limite = Number(card.limit_amount) || 0;
   const sobra = limite - emUso;
 
@@ -3248,7 +3259,7 @@ function cartaoBloco(card) {
        usa no gráfico do Extrato, onde o realizado é cheio e o previsto é claro.
        Duas cores sem parentesco fariam parecer duas medidas distintas, quando as
        duas faixas medem a mesma coisa — quanto do limite não está livre. */
-    const pctC = Math.min(100, consumido / limite * 100);
+    const pctC = Math.min(100, utilizado / limite * 100);
     const pctF = Math.min(100 - pctC, comprometido / limite * 100);
     html += `<div class="cc-limit">
       <div class="budget-head"><span class="muted">Disponível no limite</span><span class="num">${fmt(sobra)} <span class="muted">de ${fmtShort(limite)}</span></span></div>
@@ -3257,7 +3268,7 @@ function cartaoBloco(card) {
         <i class="bar-futuro" style="width:${pctF}%"></i>
       </div>
       <div class="cc-legenda">
-        <span><b class="pt-usado"></b>consumido <i>${fmt(consumido)}</i></span>
+        <span><b class="pt-usado"></b>utilizado <i>${fmt(utilizado)}</i></span>
         ${comprometido > 0.005 ? `<span><b class="pt-futuro"></b>comprometido <i>${fmt(comprometido)}</i></span>` : ''}
       </div></div>`;
   } else if (limite > 0) {
@@ -3274,6 +3285,45 @@ function cartaoBloco(card) {
   }
   html += `<button class="cc-linha" data-hist="${card.id}"><span>Histórico de faturas</span><span data-ico="chev"></span></button>`;
   return html;
+}
+
+/* Quanto do limite está tomado, e em que natureza.
+
+   UTILIZADO é compra efetivada (status Pago): o cartão já travou o valor. Uma
+   compra em 10x conta inteira desde o dia em que foi feita — as nove parcelas que
+   ainda vão cair já ocuparam limite, e ele só volta quando cada fatura é paga.
+
+   COMPROMETIDO é o que foi lançado e ainda não se efetivou (A Pagar): vai tomar
+   limite quando acontecer. É reserva, não dívida.
+
+   Fatura QUITADA devolveu o limite e fica de fora. Em pagamento parcial, o abate
+   entra primeiro no utilizado — é a parte que já é dívida de verdade —, e só o
+   que sobrar desconta do comprometido.
+
+   Estorno no cartão entra com sinal negativo, como em `invoicesOf`: uma devolução
+   libera limite do mesmo jeito que a compra tomou. */
+function usoDoLimite(card, invoices) {
+  const porFatura = {};
+  for (const t of DB.all('transactions')) {
+    if (t.card_id !== card.id || !t.invoice_key) continue;
+    const v = (DB.isExpense(t) ? 1 : -1) * (Number(t.amount) || 0);
+    const b = (porFatura[t.invoice_key] = porFatura[t.invoice_key] || { efetivado: 0, previsto: 0 });
+    if (t.status === 'Pago') b.efetivado += v; else b.previsto += v;
+  }
+  let utilizado = 0, comprometido = 0;
+  for (const inv of invoices) {
+    /* O STATUS entra junto com o `falta` porque o app aceita MARCAR a fatura como
+       paga sem registrar o lançamento — atalho de quem quitou por fora. Nesse
+       caminho `falta` continua cheio, e olhar só para ele deixava a fatura
+       ocupando limite para sempre. */
+    if (inv.status === 'Paga' || !(inv.falta > 0.005)) continue;
+    const b = porFatura[inv.key] || { efetivado: 0, previsto: 0 };
+    let abate = Math.max(0, (Number(inv.total) || 0) - inv.falta);   // o que já foi pago desta fatura
+    utilizado += Math.max(0, b.efetivado - abate);
+    abate = Math.max(0, abate - b.efetivado);
+    comprometido += Math.max(0, b.previsto - abate);
+  }
+  return { utilizado, comprometido };
 }
 
 /* "vence em 4 dias" responde a pergunta; "vence 20/08" faz o leitor calcular. */

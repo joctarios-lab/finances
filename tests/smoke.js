@@ -113,7 +113,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE, prazoDaMeta, custoFixoCard, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  cartaoBloco, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
+  cartaoBloco, usoDoLimite, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
@@ -4921,8 +4921,8 @@ try {
   const contaC = DB.upsert('accounts', { name: 'Conta Cartao', type: 'Conta Corrente', balance: 5000, active: true });
   const cartaoC = DB.upsert('cards', { name: 'Cartao Teste', closing_day: 13, due_day: 20, limit_amount: 4000, account_id: contaC, active: true });
   const objCartao = DB.get('cards', cartaoC);
-  const nova = (desc, valor, data) => DB.upsert('transactions', {
-    description: desc, amount: valor, date: data, type: 'Despesa', status: 'Pago',
+  const nova = (desc, valor, data, situacao) => DB.upsert('transactions', {
+    description: desc, amount: valor, date: data, type: 'Despesa', status: situacao || 'Pago',
     scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito',
     card_id: cartaoC, invoice_key: DB.invoiceKeyFor(objCartao, data),
   });
@@ -4938,6 +4938,10 @@ try {
     const p = DB.monthPeriod(new Date(), i);
     nova(`Parcela TV (${i}/8)`, 250, DB.somarDiasISO(DB.inicioISO(p), 2));
   }
+  /* Uma compra LANÇADA E NÃO EFETIVADA, que é o que separa comprometido de
+     utilizado. Sem ela o cenário só teria uma das duas naturezas e a distinção
+     passaria sem ser exercitada. */
+  nova('Assinatura prevista', 200, DB.somarDiasISO(DB.inicioISO(DB.monthPeriod(new Date(), 1)), 4), 'A Pagar');
 
   const bloco = cartaoBloco(objCartao);
   const chaveAtualC = DB.invoiceKeyFor(objCartao, todayISO());
@@ -4978,43 +4982,52 @@ try {
      Aqui o cenário é conhecido: 700 na fechada + 300 na aberta + 8 × 250 nas
      futuras = R$ 3.000 comprometidos num limite de R$ 4.000. Uma compra parcelada
      trava o limite pelo total na hora da compra, então sobram R$ 1.000. */
-  check('o limite é dito pelo que sobra', bloco.includes('Disponível no limite'), true);
-  check('  e as parcelas futuras JÁ estão descontadas dele',
-    bloco.includes(fmt(1000)), true);
-  check('  o que não é o mesmo que descontar só a fatura aberta',
-    bloco.includes(fmt(4000 - 300 - 700)), false);
+  /* O QUE OCUPA O LIMITE, e em duas naturezas — o corte é por STATUS, não por
+     data da fatura:
 
-  /* CONSUMIDO E COMPROMETIDO SÃO COISAS DIFERENTES, e o total sozinho apagava a
-     diferença: contra o consumido não há o que fazer além de pagar a fatura;
-     contra o comprometido, dá para não parcelar a próxima compra.
+       UTILIZADO     compra efetivada. A parcelada entra INTEIRA no dia em que foi
+                     feita: aqui, 700 + 300 + oito parcelas de 250 = R$ 3.000.
+       COMPROMETIDO  lançado e ainda não efetivado: a assinatura de R$ 200.
 
-     A DIVISÃO ENTRE OS DOIS MUDA COM O DIA, e é correto que mude: quando a fatura
-     fecha, a próxima parcela entra na fatura corrente e deixa de ser futura.
-     Medido neste mesmo cenário — antes do fechamento (dia 13) são 1.000 e 2.000;
-     depois, 1.250 e 1.750. Fixar um dos dois pares era fotografar um dia: a
-     primeira versão deste teste passava na âncora e reprovava em seis das nove
-     datas de tests/tempo.js. O que NÃO muda é a soma e o disponível, e é isso que
-     se cobra como número. */
+     Sobram R$ 800 de um limite de R$ 4.000. E nada disso depende do dia em que a
+     suíte roda: status não muda com o calendário — foi justamente cortar por data
+     que fez a primeira versão deste teste reprovar em seis das nove datas. */
   const valorNaLegenda = rot => {
     const m = bloco.match(new RegExp(rot + ' <i>([^<]+)</i>'));
     return m ? Number(m[1].replace(/[^\d,]/g, '').replace(/\./g, '').replace(',', '.')) : null;
   };
-  const vCons = valorNaLegenda('consumido'), vComp = valorNaLegenda('comprometido');
-  check('  o consumido aparece separado', vCons > 0, true);
-  check('  e o comprometido também', vComp > 0, true);
-  check('  e as duas somam a dívida inteira do cartão', Math.round((vCons + vComp) * 100), 300000);
+  check('o limite é dito pelo que sobra', bloco.includes('Disponível no limite'), true);
+  check('  e o que sobra desconta as duas naturezas', bloco.includes(fmt(800)), true);
+  check('o utilizado é a compra efetivada, parcela futura incluída',
+    valorNaLegenda('utilizado'), 3000);
+  check('  a parcelada conta inteira, não só a fatura do mês',
+    valorNaLegenda('utilizado') >= 250 * 8, true);
+  check('o comprometido é o que foi lançado e não efetivado',
+    valorNaLegenda('comprometido'), 200);
+  check('  e as duas somam a dívida inteira do cartão',
+    Math.round((valorNaLegenda('utilizado') + valorNaLegenda('comprometido')) * 100), 320000);
 
   /* A BARRA desenha as duas faixas, cada uma na proporção do que representa —
-     juntas, ocupam os 75% do limite que não estão livres. */
+     juntas, ocupam os 80% do limite que não estão livres. */
   const faixa = cls => {
     const m = bloco.match(new RegExp(`class="${cls}" style="width:([\\d.]+)%`));
     return m ? Number(m[1]) : null;
   };
   check('a barra tem duas faixas', /bar-usado[\s\S]*?bar-futuro/.test(bloco), true);
-  check('  a do consumido na proporção dele', Math.round(faixa('bar-usado') * 100) / 100, Math.round(vCons / 4000 * 10000) / 100);
-  check('  a do comprometido na dele', Math.round(faixa('bar-futuro') * 100) / 100, Math.round(vComp / 4000 * 10000) / 100);
+  check('  a do utilizado na proporção dele', Math.round(faixa('bar-usado') * 100) / 100, 75);
+  check('  a do comprometido na dele', Math.round(faixa('bar-futuro') * 100) / 100, 5);
   check('  e juntas elas medem o que não está livre',
-    Math.round((faixa('bar-usado') + faixa('bar-futuro')) * 100) / 100, 75);
+    Math.round((faixa('bar-usado') + faixa('bar-futuro')) * 100) / 100, 80);
+
+  /* FATURA QUITADA DEVOLVE O LIMITE. Sem isto, o disponível encolheria para
+     sempre a cada fatura paga — o cartão nunca mais teria limite. */
+  const usoAntes = usoDoLimite(objCartao, DB.invoicesOf(objCartao));
+  const fechadaQ = DB.invoicesOf(objCartao).find(i => i.status === 'Fechada');
+  const marca = DB.upsert('invoice_status', { invoice_key: fechadaQ.key, paid: true });
+  const usoDepois = usoDoLimite(objCartao, DB.invoicesOf(objCartao));
+  check('fatura paga devolve o limite que ocupava',
+    Math.round((usoAntes.utilizado - usoDepois.utilizado) * 100), Math.round(fechadaQ.total * 100));
+  DB.remove('invoice_status', marca);
 
   /* LIMITE MENOR QUE A FATURA quase sempre é cadastro errado. Na base real o
      cartão dizia limite R$ 110 com fatura de R$ 359,90, e a tela desenhava uma

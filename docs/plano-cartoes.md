@@ -128,19 +128,42 @@ deveria julgar não julga nada. Agora o valor é literal — o cenário tem R$ 3
 comprometidos num limite de R$ 4.000, e o teste cobra R$ 1.000 —, e há uma
 asserção que reprova explicitamente o resultado da conta antiga.
 
-### E as duas partes aparecem separadas
+### E as duas partes aparecem separadas — o corte é o STATUS
 
-Somar tudo num número só corrigia a conta e apagava a leitura: **consumido** já é
-fatura e sai neste ciclo; **comprometido** é parcela que ainda vai faturar, sai ao
-longo dos meses e libera limite conforme cada uma é paga. As duas pedem decisões
-diferentes — contra o consumido só resta pagar a fatura; contra o comprometido,
-dá para não parcelar a próxima compra.
+Somar tudo num número só corrigia a conta e apagava a leitura. Mas a primeira
+tentativa de separar cortou pelo critério errado — **data da fatura**, a atual
+contra as futuras —, e isso classificava as parcelas de uma compra **já feita**
+como se ainda não tivessem tomado limite.
+
+O corte certo é o mesmo do Extrato, onde o que separa "já aconteceu" de "ainda
+vem" nunca foi a data:
+
+| | |
+|---|---|
+| **utilizado** | a compra foi efetivada e o cartão já travou o valor. Uma compra em 10x entra **inteira** no dia em que foi feita, mesmo com parcelas caindo daqui a nove meses. |
+| **comprometido** | foi lançado e ainda **não** se efetivou. Vai tomar limite quando acontecer; até lá é reserva, não dívida. |
+
+Na base real, a diferença entre os dois critérios:
+
+| | por data (errado) | por status (certo) |
+|---|---|---|
+| utilizado | R$ 359,90 | **R$ 2.249,10** |
+| comprometido | R$ 1.999,20 | **R$ 110,00** |
+
+Os R$ 2.249,10 são as nove parcelas de uma TV **já comprada**; os R$ 110 são uma
+assinatura lançada e ainda não efetivada.
 
 ```
 Disponível no limite            R$ 2.640,90 de R$ 5.000
-[███░░░░░░░░░░░░································]
-■ consumido R$ 359,90   ■ comprometido R$ 1.999,20
+[██████████████████░░···························]
+■ utilizado R$ 2.249,10   ■ comprometido R$ 110,00
 ```
+
+**Fatura quitada devolve o limite** e fica de fora da conta. Isso inclui a fatura
+apenas *marcada* como paga — atalho de quem quitou por fora, em que `falta`
+continua cheio. Olhar só para `falta` deixava essa fatura ocupando limite para
+sempre; foi um defeito encontrado pelo teste ao escrever esta parte. Em pagamento
+parcial, o abate entra primeiro no utilizado, que é a parte que já é dívida.
 
 A barra tem duas faixas na **mesma família de cor, com intensidades diferentes** —
 azul cheio e azul a 42%. É a convenção que o app já usa no gráfico do Extrato,
@@ -149,16 +172,13 @@ parecer duas medidas distintas, quando as duas faixas medem a mesma coisa: quant
 do limite não está livre. Os cantos internos não são arredondados — um vão entre
 as faixas leria como espaço livre.
 
-**A divisão entre as duas muda com o dia, e é correto que mude.** Quando a fatura
-fecha, a próxima parcela entra na fatura corrente e deixa de ser futura. Medido no
-cenário de teste: antes do fechamento, R$ 1.000 e R$ 2.000; depois, R$ 1.250 e
-R$ 1.750.
-
-Isso derrubou a primeira versão deste teste, que fixava um dos dois pares —
-passava na âncora e reprovava em **seis das nove datas** de `tests/tempo.js`. O
-que não muda é a soma (R$ 3.000) e o disponível (R$ 1.000), e é isso que o teste
-cobra como número fixo; a proporção de cada faixa é conferida contra o valor que
-a própria legenda mostra.
+**E o corte por status não depende do calendário**, o que é uma vantagem que o
+corte por data não tinha: enquanto a divisão era feita por fatura, ela mudava
+quando a fatura fechava — a próxima parcela entrava na corrente e deixava de ser
+futura (R$ 1.000/2.000 antes do dia 13, R$ 1.250/1.750 depois). Aquela versão do
+teste fixava um dos dois pares, passava na âncora e reprovava em **seis das nove
+datas** de `tests/tempo.js`. Status não muda com o dia, então os números do teste
+agora valem em qualquer data.
 
 Abaixo, duas linhas de navegação:
 
