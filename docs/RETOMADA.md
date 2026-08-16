@@ -16,12 +16,14 @@ Leia primeiro, nesta ordem:
   docs/plano-graficos.md                ← ApexCharts e o que continua SVG à mão
   docs/plano-disponivel-e-recorrencia.md
   docs/plano-gestao-eficiente.md      ← auditoria das telas e as 6 contas novas
+  docs/plano-testes.md                  ← por que o relógio da suíte é congelado
   docs/plano-extrato.md
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 121 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2321 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 122 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2323 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- E a suíte inteira em 8 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
@@ -34,6 +36,10 @@ funciona — mas sem a garantia contra perda de registro.
 
 ## Como trabalhamos aqui (siga)
 - Diagnostique medindo, não supondo. Reproduza o defeito antes de corrigir.
+- NUNCA escreva data absoluta em teste. Escreva a relação ("faz 60 dias", "o
+  último dia deste ciclo"). A suíte já apodreceu uma vez por isso: ficou verde no
+  dia em que foi escrita e reprovava 13 vezes no dia 31, sem defeito nenhum.
+  Antes de dar por bom, rode `node tests/tempo.js` — verde num dia só não é verde.
 - Depois de corrigir, SABOTE o código e confirme que o teste reprova. Teste que
   não pega regressão não vale. Todo script de sabotagem restaura num `finally` —
   um deles foi interrompido nesta sessão e deixou a alteração aplicada no código.
@@ -92,6 +98,11 @@ mão toda vez.
   dela tem de cair no saldo previsto escrito ao lado. Comparar com saldoNaData
   deixou passar meses inteiros desenhados como reta. Realizado e previsto sao
   DUAS series (cheia e tracejada), que se tocam no ponto de hoje.
+- No ÚLTIMO dia do ciclo não há "primeiro dia por vir": o vencido entra no próprio
+  ponto de hoje, que ali é o fechamento que o cartão anuncia. E o gráfico tem uma
+  linha só, sem a vertical — não há emenda a desenhar.
+- O relógio da suíte é congelado (`HOJE` no ambiente, âncora em tests/smoke.js).
+  Trocar por `new Date()` de verdade traz de volta a suíte que apodrece.
 - Projeção do mês = DB.projecaoDeGasto: só o gasto VARIÁVEL se extrapola. O
   run-rate antigo dava R$ 162.807 num mês de R$ 17.981 de renda.
 - Base das porcentagens = DB.rendaDoMes (o mês), não a renda declarada. Cuidado:

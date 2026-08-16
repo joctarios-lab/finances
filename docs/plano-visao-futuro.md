@@ -241,6 +241,27 @@ O corte é **hoje**, não o último dia com lançamento: ele é uma data, não u
 movimento. Do contrário o tracejado começaria antes ou depois de hoje conforme o
 mês tivesse sido mais ou menos movimentado.
 
+#### A borda que só existe um dia por mês: a janela que acaba hoje
+
+No **último dia do ciclo** a linha voltava a discordar do número ao lado dela. O
+vencido entra "no primeiro dia ainda por vir", e ali esse dia não existe: o
+`if (d > hoje)` não casava com nenhum ponto, então o vencido e o que vence hoje
+sem estar pago simplesmente sumiam da curva. Medido no cenário da suíte, em
+31/08: a linha terminava em **R$ 17.000** com **R$ 16.550** escritos ao lado.
+
+Agora, quando o último ponto da janela **é** hoje, ele recebe o vencido — porque
+é esse ponto que o cartão nomeia, e enquanto o ciclo não fecha o número dele é
+*previsto*. É o mesmo raciocínio de sempre: a ponta cai no valor que está escrito
+ao lado.
+
+No mesmo dia, o gráfico passa a ter **uma linha só**, sem a vertical de hoje: não
+há metade prevista para tracejar, e marcar uma emenda encostada na borda direita
+seria ruído. É a mesma regra do mês encerrado.
+
+**Por que isso passou meses despercebido:** a suíte só rodava no dia em que
+alguém a executava, e nunca calhou de ser o dia 31. Ver
+[plano-testes.md](plano-testes.md).
+
 O teste que deveria ter pego isso comparava a ponta com `saldoNaData` — um número
 que a tela não mostra num mês em aberto. Agora compara com `saldoPrevistoNaData`,
 que é o que está escrito ao lado do gráfico, e cobra que a linha **não seja uma

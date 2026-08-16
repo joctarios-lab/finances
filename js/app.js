@@ -2310,12 +2310,27 @@ function serieDeSaldo(contas, dias, anterior) {
 
   let acumulado = Number(anterior) || 0;
   let primeiroFuturo = true;
-  return dias.map(d => {
+  const ultimo = dias.length - 1;
+  return dias.map((d, i) => {
     acumulado += (delta[d] || 0);
     if (d > hoje) {
       if (primeiroFuturo) { acumulado += atrasado; primeiroFuturo = false; }
       const m = previsto[d];
       if (m) acumulado += m.entra - m.sai;
+    } else if (i === ultimo && d === hoje) {
+      /* A JANELA QUE ACABA HOJE — o último dia do ciclo.
+
+         Não existe "primeiro dia por vir" dentro dela, e sem este ramo o vencido
+         e o que vence hoje sem estar pago sumiam da linha: no dia 31 a curva
+         parava no saldo realizado enquanto o cartão logo acima anunciava o saldo
+         PREVISTO do fechamento, que conta os dois. Medido no cenário da suíte:
+         linha em R$ 17.000 contra R$ 16.550 escritos ao lado.
+
+         É o mesmo defeito que fazia a linha virar reta, só que numa borda que só
+         aparece um dia por mês — e a suíte não o via porque nunca rodava nesse
+         dia. O ponto de hoje é, aqui, também o fechamento que o cartão nomeia:
+         enquanto o ciclo não fecha, o número dele é previsto. */
+      acumulado += atrasado;
     }
     return acumulado;
   });

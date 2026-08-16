@@ -1,4 +1,28 @@
 /* Teste de fumaça: roda o app sem navegador e valida as correlações entre os módulos. */
+
+/* ---- RELOGIO CONGELADO ----
+
+   "Hoje" era uma entrada NAO controlada: o cenario ancora lancamentos em dias
+   fixos do mes (dia 3, dia 10), entao a relacao entre eles e o dia de execucao
+   mudava sozinha. A suite ficava verde no dia em que era escrita e apodrecia:
+   medido, 4 falhas duas semanas depois e 13 no ultimo dia do mes, nenhuma delas
+   defeito do app. Uma rede que reprova sem regressao para de ser lida.
+
+   Agora a data e um parametro. O padrao e a ancora abaixo, o que torna a suite
+   deterministica; `tests/tempo.js` roda esta mesma suite em varias datas de
+   calendario (virada de mes, ultimo dia, fevereiro, ano novo) para que congelar
+   nao vire desculpa para nao testar o calendario. */
+const ANCORA = process.env.HOJE || '2026-08-12T10:00:00-03:00';
+const DataReal = Date;
+const instante = new DataReal(ANCORA).getTime();
+class DataCongelada extends DataReal {
+  // Só o construtor vazio muda: `new Date(x)` continua sendo o Date de sempre
+  constructor(...a) { if (a.length === 0) super(instante); else super(...a); }
+  static now() { return instante; }
+}
+DataCongelada.parse = DataReal.parse;
+DataCongelada.UTC = DataReal.UTC;
+global.Date = DataCongelada;
 const fs = require('fs');
 const BASE = 'D:/Projetos/meus-projetos/financas/';
 
@@ -248,9 +272,16 @@ check('e a projeção fecha em "Livre ao fim"', inicio.includes('= Livre ao fim'
      frente os dois COINCIDEM — foi assim que a primeira versão deste teste passou
      mesmo com o hero sabotado de volta para `available`. Uma entrada prevista os
      separa, que é justamente o caso real: o salário que ainda vai cair. */
+  /* A receita tem de cair DENTRO do ciclo, senão ela não entra na previsão dele e
+     os dois números voltam a coincidir — o teste passaria a reprovar todo fim de
+     mês, quando "daqui a três dias" já é o mês que vem. No último dia do ciclo
+     não há amanhã: ela fica em hoje, ainda "A Pagar", que é o que a separa do
+     saldo em conta. */
+  const ultimoDiaA = somarDias(DB.fimISO(perA), -1);
+  const venceSalario = somarDias(todayISO(), 3) > ultimoDiaA ? ultimoDiaA : somarDias(todayISO(), 3);
   const idSal = DB.upsert('transactions', {
     description: 'Salário previsto', amount: 5000,
-    date: somarDias(todayISO(), 3), type: 'Receita', status: 'A Pagar',
+    date: venceSalario, type: 'Receita', status: 'A Pagar',
     scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: DB.all('accounts')[0].id,
   });
   const comSalario = renderInicio(DB.monthPeriod(new Date()));
@@ -960,7 +991,12 @@ try {
     let n = 0;
     let d = DB.somarDiasISO(DB.inicioISO(DB.monthPeriod(new Date())), 19);
     while (d < ateISO) {
-      if (d >= DB.hojeISO()) n++;
+      /* Estritamente DEPOIS de hoje: previsão de contrato que vence hoje e não
+         virou lançamento não entra na projeção — ela é "contrato atrasado", que é
+         outro aviso (decisão 3 do plano-disponivel-e-recorrencia). Com `>=` o
+         teste contava uma ocorrência a mais exatamente no dia 20 de cada mês, que
+         é o dia da ocorrência deste cenário. */
+      if (d > DB.hojeISO()) n++;
       const x = new Date(d + 'T12:00:00');
       x.setMonth(x.getMonth() + 1);
       d = DB.paraISO(x);
@@ -2095,9 +2131,31 @@ try {
   check('a curva é escalar, nunca array', Array.isArray(cBu.stroke.curve), false);
   check('e é suave', cBu.stroke.curve, 'smooth');
   /* 2. A cor do traço declarada em `stroke.colors`, como o widget 29 faz — é o
-        que garante que a trilha receba a cor dela. */
+        que garante que a trilha receba a cor dela.
+
+        OS DOIS CASOS, EXPLÍCITOS. A cor do gasto não é fixa: ela vira vermelha
+        quando o ritmo estoura o limite. Afirmar "é azul" sobre um limite qualquer
+        fazia o teste capturar um dos dois lados conforme o dia — no começo do mês
+        o pró-rata ainda cabia, no meio já não cabia, e a suíte reprovava sozinha
+        sem defeito nenhum. Os limites abaixo decidem o resultado em qualquer data:
+        um bilhão nunca é alcançado, um centavo é sempre estourado. O gasto no
+        primeiro dia existe para que haja o que estourar mesmo se a suíte rodar
+        no dia 1º. */
+  const gastoDoDiaUm = DB.upsert('transactions', {
+    description: 'Gasto do primeiro dia', amount: 10, date: DB.inicioISO(p),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito',
+  });
+  let cFolga, cEstouro;
+  try {
+    zeraFila(); svgBurnup(p, 1e9); cFolga = cfgDo();
+    zeraFila(); svgBurnup(p, 0.01); cEstouro = cfgDo();
+  } finally {
+    DB.remove('transactions', gastoDoDiaUm);   // o cenário volta como estava
+  }
   check('cada série declara a cor do próprio traço',
-    cBu.stroke.colors.join(','), Graficos.cor.azul + ',' + Graficos.cor.cinza);
+    cFolga.stroke.colors.join(','), Graficos.cor.azul + ',' + Graficos.cor.cinza);
+  check('  e o gasto fica vermelho quando o ritmo estoura o limite',
+    cEstouro.stroke.colors[0], Graficos.cor.vermelho);
   check('e a espessura por série', cBu.stroke.width.join(','), '3,2');
   /* Opacidade 0 na segunda série saiu: o path da linha nasce com fill "none", ela
      não fazia nada e só escondia a intenção de quem lê o código. */
@@ -2117,7 +2175,11 @@ try {
   check('há mira vertical seguindo o cursor', cBu.xaxis.crosshairs.position, 'front');
   check('tracejada, para não ser confundida com dado', cBu.xaxis.crosshairs.stroke.dashArray, 3);
   check('e na cor da série que ela está medindo',
-    cBu.xaxis.crosshairs.stroke.color, Graficos.cor.azul);
+    cFolga.xaxis.crosshairs.stroke.color, Graficos.cor.azul);
+  /* E ela SEGUE a série: quando o gasto vira vermelho, a mira vai junto. Fixar o
+     azul nos dois casos deixaria passar uma mira que ignora o estouro. */
+  check('  inclusive quando a série muda de cor',
+    cEstouro.xaxis.crosshairs.stroke.color, cEstouro.stroke.colors[0]);
   /* Numa área com degradê o clareamento da lib come o próprio degradê: a forma
      "pisca" no hover e o olho perde a referência. */
   check('o hover não repinta a série', cBu.states.hover.filter.type, 'none');
@@ -3213,9 +3275,20 @@ try {
   /* O CORTE É HOJE, não o último dia com movimento: ele é uma data, não um
      lançamento. Do contrário o tracejado começaria antes ou depois de hoje
      conforme o mês tivesse sido mais ou menos movimentado. */
-  check('o extrato parte a curva exatamente em hoje',
-    (cReal.opts.annotations.xaxis || [{}])[0].x, DB.hojeISO());
-  check('  e desenha as duas naturezas', cReal.opts.series.length, 2);
+  const diasPD = diasDoPeriodo(pD);
+  if (diasPD.indexOf(DB.hojeISO()) < diasPD.length - 1) {
+    check('o extrato parte a curva exatamente em hoje',
+      (cReal.opts.annotations.xaxis || [{}])[0].x, DB.hojeISO());
+    check('  e desenha as duas naturezas', cReal.opts.series.length, 2);
+  } else {
+    /* NO ÚLTIMO DIA DO CICLO não há metade prevista para tracejar: a emenda cairia
+       em cima da borda direita. Uma série só é o certo aqui — e é a mesma regra do
+       mês encerrado. O teste exigia duas em qualquer dia, então reprovava um dia
+       por mês sem que nada estivesse errado. */
+    check('no último dia do ciclo a curva é uma só', cReal.opts.series.length, 1);
+    check('  e sem vertical marcando uma emenda que não existe',
+      (cReal.opts.annotations.xaxis || []).length, 0);
+  }
   const balReal = cReal.opts.tooltip.custom({ dataPointIndex: 1 });
   check('e a dica nomeia um dia de verdade, não um índice',
     /\d{2} de |\d{2}\/|jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez/.test(balReal), true);
@@ -3726,12 +3799,40 @@ try {
     cent(serieM[serieM.length - 1]), cent(DB.saldoPrevistoNaData([cE], DB.fimISO(mesAtual))));
   check('  e deixou de ser uma reta', new Set(serieM.map(cent)).size > 1, true);
   const iHoje = diasM.indexOf(DB.hojeISO());
-  check('  no ponto de hoje ela vale o saldo de hoje',
-    cent(serieM[iHoje]), cent(DB.saldoNaData([cE], somarDias(DB.hojeISO(), 1))));
-  /* O vencido cai no primeiro dia AINDA POR VIR: a data dele já passou, e o
-     passado da linha é fato. Aqui são os R$ 90 do "Atrasado ponte". */
-  check('  o vencido entra no primeiro dia por vir, não no passado',
-    cent(serieM[iHoje] - serieM[iHoje + 1]), 90);
+  const saldoDeHoje = cent(DB.saldoNaData([cE], somarDias(DB.hojeISO(), 1)));
+  /* DUAS REGRAS, e qual delas vale depende de haver dia por vir na janela. O
+     teste antes só conhecia a primeira e indexava `iHoje + 1` às cegas: no último
+     dia do ciclo esse índice não existe e a comparação virava NaN — uma reprovação
+     por dia de calendário, não por defeito. */
+  if (iHoje >= 0 && iHoje < diasM.length - 1) {
+    check('  no ponto de hoje ela vale o saldo de hoje', cent(serieM[iHoje]), saldoDeHoje);
+    /* O vencido cai no primeiro dia AINDA POR VIR: a data dele já passou, e o
+       passado da linha é fato. Aqui são os R$ 90 do "Atrasado ponte".
+
+       O degrau desse dia traz DUAS coisas — o vencido e o que vence nele —, então
+       o movimento próprio do dia é descontado para isolar o vencido. Sem isso a
+       igualdade só valia quando o dia seguinte a hoje estava vazio, o que deixa de
+       ser verdade perto do fim do mês: medido em 30/08, o degrau dava −210 porque
+       o último dia do ciclo tem previsão própria. Ele vem de `previstoPorDia`, a
+       mesma varredura que a linha usa — é leitura do dado, não uma segunda cópia
+       da regra de onde o vencido entra. */
+    const diaPorVir = diasM[iHoje + 1];
+    const movDoDia = DB.previstoPorDia([cE], somarDias(diaPorVir, 1))[diaPorVir] || { entra: 0, sai: 0 };
+    check('  o vencido entra no primeiro dia por vir, não no passado',
+      cent(serieM[iHoje] - serieM[iHoje + 1] + (movDoDia.entra - movDoDia.sai)), 90);
+  } else {
+    /* JANELA QUE ACABA HOJE. Não há primeiro dia por vir, e o vencido tem de sair
+       antes do fechamento que o cartão anuncia — então ele entra no próprio ponto
+       de hoje, que ali é o fechamento previsto. Sem isso a ponta da linha ficava
+       R$ 90 acima do número escrito ao lado dela. */
+    check('  na janela que acaba hoje, o ponto de hoje é o fechamento previsto',
+      cent(serieM[iHoje]), cent(DB.saldoPrevistoNaData([cE], DB.fimISO(mesAtual))));
+    /* E a igualdade acima não vale de graça: se o cenário não tivesse nada em
+       aberto, previsto e realizado coincidiriam e o teste passaria sem exercitar
+       nada. Aqui há o vencido, então os dois TÊM de diferir. */
+    check('  e ele difere do realizado, porque carrega o que ainda vai sair',
+      cent(serieM[iHoje]) !== saldoDeHoje, true);
+  }
 
   const diasF = diasDoPeriodo(mesQueVem);
   const serieF = serieDeSaldo([cE], diasF, DB.saldoPrevistoNaData([cE], DB.inicioISO(mesQueVem)));
@@ -5844,10 +5945,15 @@ check('função is_member definida antes das policies', schema.indexOf('function
          ficou offline alguns dias, mas não um buraco mais ANTIGO — e buraco antigo
          é o que ninguém descobre, porque o dado não está lá para ser procurado.
          Uma vez por semana o pull relê tudo, e a divergência se fecha sozinha. */
+      /* Os carimbos são contados a partir de HOJE, nunca escritos por extenso: a
+         regra que está sob teste é "faz mais de uma semana?", e uma data fixa
+         responde isso diferente a cada dia em que a suíte roda — foi assim que
+         este teste começou a reprovar sozinho, sem ninguém mexer no sync. */
+      const diasAtras = n => new Date(Date.now() - n * 86400000).toISOString();
       noServidor.transactions = [
-        { id: 'tx-muito-antigo', family_id: 'fam-1', updated_at: '2026-01-05T10:00:00.000Z',
-          server_at: '2026-01-05T10:00:00.000Z',
-          deleted: false, description: 'Some há meses', amount: 99, date: '2026-08-15',
+        { id: 'tx-muito-antigo', family_id: 'fam-1', updated_at: diasAtras(200),
+          server_at: diasAtras(200),
+          deleted: false, description: 'Some há meses', amount: 99, date: diasAtras(200).slice(0, 10),
           type: 'Despesa', status: 'A Pagar', scope: 'Família', method: 'PIX' },
       ];
       const zerar = marcadores => {
@@ -5855,22 +5961,25 @@ check('função is_member definida antes das policies', schema.indexOf('function
         for (const t of ['transactions', 'accounts', 'categories', 'cards', 'goals',
           'goal_entries', 'invoice_status', 'recurrences', 'family_settings']) DB.data[t] = [];
       };
-      // Releitura recente: a janela de 7 dias não alcança um registro de janeiro
-      zerar({ serverAt: '2026-07-30T15:00:00.000Z', lastFull: '2026-07-29T00:00:00.000Z' });
+      // Releitura recente: a janela de 7 dias não alcança um registro de 200 dias atrás
+      zerar({ serverAt: diasAtras(1), lastFull: diasAtras(2) });
       await S.syncAll(false).catch(() => {});
       clearTimeout(S._debounce);
       check('com releitura recente, o registro antigo fica fora da janela',
         (DB.data.transactions || []).length, 0);
       // Releitura vencida: o pull relê tudo e o registro volta
-      zerar({ serverAt: '2026-07-30T15:00:00.000Z', lastFull: '2026-06-01T00:00:00.000Z' });
+      zerar({ serverAt: diasAtras(1), lastFull: diasAtras(60) });
       await S.syncAll(false).catch(() => {});
       clearTimeout(S._debounce);
       check('com a releitura vencida, ele é recuperado',
         (DB.data.transactions || []).some(r => r.id === 'tx-muito-antigo'), true);
+      /* O marcador tem de ter avançado para AGORA — comparado contra um instante
+         recente, não contra uma data escrita à mão, que decide sozinha o resultado
+         conforme o mês em que a suíte roda. */
       check('e a releitura fica registrada para não repetir toda hora',
-        !!DB.data.meta.lastFull && DB.data.meta.lastFull > '2026-06-01', true);
+        !!DB.data.meta.lastFull && DB.data.meta.lastFull > diasAtras(1), true);
       // Sem marcador nenhum (instalação nova, ou app atualizado) também relê tudo
-      zerar({ serverAt: '2026-07-30T15:00:00.000Z' });
+      zerar({ serverAt: diasAtras(1) });
       await S.syncAll(false).catch(() => {});
       clearTimeout(S._debounce);
       check('aparelho sem releitura registrada lê tudo',
@@ -6234,10 +6343,16 @@ check('função is_member definida antes das policies', schema.indexOf('function
          porque o cenário não tinha nada pendente com data à frente — e passou a
          mentir quando um boleto sem conta escolhida entrou na projeção (ele era
          ignorado, e o saldo previsto saía otimista). A relação abaixo é a que vale
-         sempre, e é mais forte: diz de quanto é a diferença, não só que existe. */
+         sempre, e é mais forte: diz de quanto é a diferença, não só que existe.
+
+         SEM PISO EM "HOJE". O que venceu e não foi pago continua por sair, e
+         `saldoPrevistoNaData` conta todo "A Pagar" em aberto — é a regra escrita
+         em plano-visao-futuro.md. Enquanto o piso esteve aqui, a soma só batia
+         nos dias em que o cenário ainda não tinha vencido nada: o IPTU do dia 10
+         era futuro no começo do mês e sumia da conta do teste depois dele. */
       const pendenteAteLa = DB.all('transactions')
         .filter(t => t.status === 'A Pagar' && !t.card_id && !DB.isNeutral(t)
-          && String(t.date) < DB.inicioISO(proxP) && String(t.date) > todayISO())
+          && String(t.date) < DB.inicioISO(proxP))
         .reduce((s, t) => s + (DB.isExpense(t) ? -1 : 1) * (Number(t.amount) || 0), 0);
       check('  o abre do mês seguinte é o saldo de hoje mais o que vence até lá',
         Math.round(DB.saldoPrevistoNaData(null, DB.inicioISO(proxP))),
@@ -6791,7 +6906,12 @@ check('função is_member definida antes das policies', schema.indexOf('function
 
     /* 6. VIGIA DOS CONTRATOS. O gerador criou a parcela do Fiat 500 duas vezes e
        quem percebeu foi o dono da casa, um mês depois. */
-    const dupA = { ...baseG, description: 'Parcela Gestao', amount: 500, date: somarDias(hojeG, 1),
+    /* A duplicata tem de cair DENTRO do ciclo que está sendo vigiado: no último
+       dia do mês, "amanhã" já é o mês que vem e o alerta não teria por que
+       aparecer aqui — o teste reprovava por causa do calendário, não do vigia. */
+    const ultimoDiaG = somarDias(DB.fimISO(pG), -1);
+    const venceDup = somarDias(hojeG, 1) > ultimoDiaG ? ultimoDiaG : somarDias(hojeG, 1);
+    const dupA = { ...baseG, description: 'Parcela Gestao', amount: 500, date: venceDup,
       type: 'Despesa', status: 'A Pagar', method: 'Boleto' };
     DB.upsert('transactions', { ...dupA });
     check('um lançamento só do contrato não é duplicata',
