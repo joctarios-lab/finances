@@ -111,8 +111,9 @@ eval(appSrc + `; Object.assign(global, {
   openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
-  serieDeSaldo, sparkArea, PALETTE, prazoDaMeta, patrimonioCard, custoFixoCard, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
+  serieDeSaldo, sparkArea, PALETTE, prazoDaMeta, custoFixoCard, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
+  cartaoBloco, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
@@ -4872,8 +4873,11 @@ try {
 console.log('\n=== Ações de contas e cartões ===');
 try {
   const tela = renderCartoes();
-  check('contas ganham cabeçalho de seção', /sec-tit[\s\S]*?Contas e saldos/.test(tela), true);
-  check('com o total somado nele', /Contas e saldos<\/b>\s*<small>R\$/.test(tela), true);
+  /* Os títulos mudaram com a reestruturação: a tela deixou de ser uma pilha de
+     blocos ("Contas e saldos", "Cartões de crédito") e passou a decompor o
+     patrimônio em "o que eu tenho" e "o que eu devo". */
+  check('contas ganham cabeçalho de seção', /sec-tit[\s\S]*?O que eu tenho/.test(tela), true);
+  check('com o total somado nele', /O que eu tenho<\/b>\s*<small>R\$/.test(tela), true);
   check('transferir virou ação da seção', /sec-btn" id="btn-transfer"/.test(tela), true);
   check('gerenciar contas também', /sec-btn" data-setup="accounts"/.test(tela), true);
   check('e saíram de dentro do cartão',
@@ -4884,11 +4888,113 @@ try {
   /* Com cartões cadastrados não havia como gerenciá-los daqui — o botão só
      existia no estado vazio, então quem já tinha cartão precisava ir às
      Configurações para mexer em qualquer um. */
-  check('cartões ganham cabeçalho próprio', tela.includes('Cartões de crédito'), true);
+  check('cartões ganham cabeçalho próprio', tela.includes('O que eu devo'), true);
   check('e agora dá para gerenciá-los daqui', /sec-btn" data-setup="cards"/.test(tela), true);
   check('o cabeçalho de cartões vem antes dos cartões',
-    tela.indexOf('Cartões de crédito') < tela.indexOf('class="credit-card"'), true);
+    tela.indexOf('O que eu devo') < tela.indexOf('class="credit-card"'), true);
+
+  /* ---- A ORDEM DA TELA ----
+     Patrimônio, depois o que se tem, depois o que se deve. Antes o cartão — que
+     dá nome à aba — vinha depois de quatro blocos; a ordem é a queixa que
+     originou a reestruturação, então ela é o que se testa. */
+  check('o patrimônio abre a tela', tela.indexOf('pat-capa') < tela.indexOf('O que eu tenho'), true);
+  check('  e o que eu tenho vem antes do que eu devo',
+    tela.indexOf('O que eu tenho') < tela.indexOf('O que eu devo'), true);
+  /* "Compromissos futuros" somava água, energia e parcela de carro — numa tela de
+     cartões esse número passava por dívida de fatura. Ele vive no Painel. */
+  check('  e sem o bloco de compromissos, que não é de cartão',
+    tela.includes('Compromissos futuros'), false);
+  check('o patrimônio mostra as duas metades',
+    /tenho <b>/.test(tela) && /devo <b>/.test(tela), true);
 } catch (e) { console.log(` FALHA | contas e cartões: ${e.message}`); fail++; }
+
+/* ---- A TELA DE CARTÕES: qual fatura aparece ----
+
+   O defeito que motivou a reestruturação, reproduzido: a lista mostrava as SEIS
+   ÚLTIMAS faturas por data. Com uma compra parcelada em 10x, as seis últimas são
+   todas do futuro distante — na base real, dezembro/2026 a maio/2027, idênticas,
+   cada uma com botão "pagar" —, e a fatura ATUAL e a que acabou de fechar não
+   apareciam em lugar nenhum. A tela oferecia pagar maio de 2027 e escondia o mês
+   corrente. Quanto mais se parcela, pior fica. */
+console.log('\n=== Cartão: a fatura que aparece é a que importa ===');
+try {
+  const contaC = DB.upsert('accounts', { name: 'Conta Cartao', type: 'Conta Corrente', balance: 5000, active: true });
+  const cartaoC = DB.upsert('cards', { name: 'Cartao Teste', closing_day: 13, due_day: 20, limit_amount: 4000, account_id: contaC, active: true });
+  const objCartao = DB.get('cards', cartaoC);
+  const nova = (desc, valor, data) => DB.upsert('transactions', {
+    description: desc, amount: valor, date: data, type: 'Despesa', status: 'Pago',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Cartão de Crédito',
+    card_id: cartaoC, invoice_key: DB.invoiceKeyFor(objCartao, data),
+  });
+
+  const mesPassadoC = DB.monthPeriod(new Date(), -1);
+  const esteMesC = DB.monthPeriod(new Date());
+  // fecha no ciclo passado e ninguém pagou: é a fatura que cobra ação hoje
+  nova('Compra vencida', 700, DB.somarDiasISO(DB.inicioISO(mesPassadoC), 3));
+  // esta cai na fatura que ainda está acumulando
+  nova('Compra do mês', 300, DB.somarDiasISO(DB.inicioISO(esteMesC), 2));
+  // e oito parcelas nos meses seguintes, que era o que expulsava as duas de cima
+  for (let i = 1; i <= 8; i++) {
+    const p = DB.monthPeriod(new Date(), i);
+    nova(`Parcela TV (${i}/8)`, 250, DB.somarDiasISO(DB.inicioISO(p), 2));
+  }
+
+  const bloco = cartaoBloco(objCartao);
+  const chaveAtualC = DB.invoiceKeyFor(objCartao, todayISO());
+  const todas = DB.invoicesOf(objCartao);
+  const fechada = todas.find(i => i.status === 'Fechada' && i.key !== chaveAtualC);
+
+  check('a fatura ATUAL está na tela', bloco.includes(`data-inv-detail="${chaveAtualC}"`), true);
+  check('  e é ela que o botão de pagar oferece', bloco.includes(`data-pay="${chaveAtualC}"`), true);
+  check('a fatura fechada e não paga também', !!fechada && bloco.includes(`data-pay="${fechada.key}"`), true);
+  check('  e ela vem ANTES da aberta, porque cobra ação hoje',
+    bloco.indexOf('cc-alerta') < bloco.indexOf('cc-invoice'), true);
+  check('  com o prazo dito em dias, não em data solta', /vence(u)? (em|hoje|amanhã|há)/.test(bloco), true);
+
+  /* AS FUTURAS NÃO VIRAM LINHA CADA UMA. Elas são oito faturas idênticas; somadas,
+     respondem a única pergunta que importa delas — quanto já está comprometido. */
+  const futurasC = todas.filter(i => i.key !== chaveAtualC && i.closing > new Date() && i.falta > 0.005);
+  check('as futuras somam numa linha só', (bloco.match(/data-futuras=/g) || []).length, 1);
+  check('  com o total do que já foi comprado', bloco.includes(fmt(futurasC.reduce((s, i) => s + i.falta, 0))), true);
+  check('  e nenhuma delas ganha botão de pagar na tela',
+    futurasC.some(i => bloco.includes(`data-pay="${i.key}"`)), false);
+
+  // O histórico existe, e é lá que estão TODAS — inclusive as pagas
+  check('há um caminho para o histórico', (bloco.match(/data-hist=/g) || []).length, 1);
+  openHistoricoFaturas(cartaoC);
+  const histHtml = els['#modal'] ? els['#modal'].innerHTML : '';
+  check('  e o histórico traz todas as faturas',
+    (histHtml.match(/class="invoice-row"/g) || []).length, todas.length);
+  closeModal();
+
+  /* LIMITE: o que se quer saber é quanto AINDA dá para gastar. */
+  const emUsoC = todas.filter(i => (i.key === chaveAtualC || i.status === 'Fechada' || i.status === 'Parcial') && i.falta > 0.005)
+    .reduce((s, i) => s + i.falta, 0);
+  check('o limite é dito pelo que sobra', bloco.includes('Disponível no limite'), true);
+  check('  e o valor é limite menos o que está em uso', bloco.includes(fmt(4000 - emUsoC)), true);
+
+  /* LIMITE MENOR QUE A FATURA quase sempre é cadastro errado. Na base real o
+     cartão dizia limite R$ 110 com fatura de R$ 359,90, e a tela desenhava uma
+     barra de "327%" como se aquilo fosse informação. */
+  DB.upsert('cards', { ...objCartao, limit_amount: 100 });
+  const blocoEstourado = cartaoBloco(DB.get('cards', cartaoC));
+  check('limite menor que a fatura vira aviso, não barra de 327%',
+    blocoEstourado.includes('confira o cadastro'), true);
+  check('  e a barra estourada não é desenhada', /class="bar /.test(blocoEstourado), false);
+  DB.upsert('cards', { ...objCartao, limit_amount: 0 });
+  check('sem limite cadastrado, a tela diz o que falta',
+    cartaoBloco(DB.get('cards', cartaoC)).includes('Limite não cadastrado'), true);
+
+  /* CARTÃO SEM MOVIMENTO vira uma linha: ele não pode pesar como um que deve. */
+  const cartaoVazio = DB.upsert('cards', { name: 'Nunca Usado', closing_day: 5, due_day: 12, limit_amount: 0, active: true });
+  const blocoVazio = cartaoBloco(DB.get('cards', cartaoVazio));
+  check('cartão sem lançamento vira uma linha', blocoVazio.includes('cc-vazio'), true);
+  check('  sem bloco de fatura', blocoVazio.includes('cc-invoice'), false);
+  check('  e é bem menor que o de um cartão com fatura', blocoVazio.length < bloco.length / 3, true);
+
+  for (const t of DB.all('transactions').filter(t => t.card_id === cartaoC)) DB.remove('transactions', t.id);
+  DB.remove('cards', cartaoC); DB.remove('cards', cartaoVazio); DB.remove('accounts', contaC);
+} catch (e) { console.log(` FALHA | tela de cartões: ${e.message}`); fail++; }
 
 console.log('\n=== Puxar para atualizar desligado ===');
 {
@@ -6903,6 +7009,14 @@ check('função is_member definida antes das policies', schema.indexOf('function
     check('  contrato de receita não entra no custo fixo',
       DB.custoFixoMensal().itens.some(i => i.descricao === 'Salario Gestao'), false);
     check('  e a tela mostra quando um contrato acaba', renderCartoes().includes('libera'), true);
+    /* O custo fixo fica no FIM da tela, depois dos cartões: ele é planejamento de
+       mês, não a pergunta que traz alguém à aba de cartões. Aqui há contrato
+       cadastrado, então o bloco existe e a ordem pode ser cobrada de verdade. */
+    {
+      const telaCf = renderCartoes();
+      check('  e o custo fixo fica no fim, depois dos cartões',
+        telaCf.indexOf('Custo fixo') > telaCf.indexOf('O que eu devo'), true);
+    }
 
     /* 6. VIGIA DOS CONTRATOS. O gerador criou a parcela do Fiat 500 duas vezes e
        quem percebeu foi o dono da casa, um mês depois. */

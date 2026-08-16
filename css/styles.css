@@ -1163,6 +1163,55 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 .cc-limit .muted { color: #9899ac; }
 .credit-card .bar { background: rgba(255, 255, 255, .12); }
 
+/* CAPA DA TELA: o patrimônio e as duas metades que o compõem. Sem moldura de
+   card — ela é o cabeçalho da tela, não mais um bloco na pilha; uma borda aqui
+   faria competir com as seções que ela apresenta. */
+.pat-capa { padding: 4px 2px 14px; }
+.pat-rot {
+  display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--paper-dim); font-weight: 600;
+}
+.pat-val { display: block; font-size: 30px; font-weight: 800; letter-spacing: -.02em; margin-top: 2px; }
+.pat-partes { display: flex; gap: 8px; align-items: baseline; margin-top: 4px; font-size: 12.5px; color: var(--paper-dim); }
+.pat-partes b { font-weight: 700; color: var(--paper); }
+.pat-sep { opacity: .5; }
+
+/* A FATURA FECHADA E NÃO PAGA. Ela vive dentro do cartão escuro, então a cor de
+   alerta é um fundo translúcido — vermelho chapado sobre o gradiente escuro
+   vibra e fica ilegível. */
+.cc-alerta {
+  margin-top: 12px; padding: 10px 12px; border-radius: 10px;
+  background: rgba(241, 65, 108, .18); border: 1px solid rgba(241, 65, 108, .45);
+}
+.cc-alerta-top { display: flex; justify-content: space-between; gap: 10px; font-size: 11.5px; color: #ffd7e0; }
+.cc-alerta-val { font-size: 21px; font-weight: 800; color: #fff; margin-top: 2px; }
+.cc-acoes { display: flex; gap: 14px; margin-top: 8px; }
+.cc-limit-erro { font-size: 11.5px; color: #ffc7d2; line-height: 1.45; }
+
+/* Linhas de navegação abaixo do cartão: futuras e histórico. Botão de largura
+   inteira porque a área de toque no celular é a linha, não o texto. */
+.cc-linha {
+  display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 8px;
+  padding: 12px 14px; background: var(--ink-2); border: 1px solid var(--line);
+  border-radius: 10px; font-size: 13px; color: var(--paper); text-align: left; cursor: pointer;
+}
+.cc-linha > span:first-child { flex: 1; }
+.cc-linha i { display: block; font-style: normal; font-size: 11.5px; color: var(--paper-dim); margin-top: 1px; }
+.cc-linha b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.cc-linha svg { width: 15px; height: 15px; color: var(--paper-dim); flex: none; }
+.cc-linha:hover { border-color: var(--gold); }
+.cc-linha:active { transform: scale(.99); }
+
+/* Cartão sem movimento: uma linha, não um bloco. */
+.cc-vazio {
+  display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 8px;
+  padding: 13px 14px; background: var(--ink-2); border: 1px dashed var(--line);
+  border-radius: 12px; font-size: 13px; color: var(--paper); text-align: left; cursor: pointer;
+}
+.cc-vazio-nome { font-weight: 600; }
+.cc-vazio .muted { flex: 1; font-size: 11.5px; }
+.cc-vazio svg { width: 15px; height: 15px; color: var(--paper-dim); flex: none; }
+
 .invoice-row {
   display: flex; align-items: center; gap: 10px; padding: 11px 14px;
   background: var(--ink-2); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;
@@ -1198,6 +1247,12 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
   min-height: 40px; padding: 0 10px; border-radius: 8px;
 }
 .link-btn:hover { background: rgba(0, 158, 247, .08); }
+/* Dentro do cartão escuro o dourado padrão some no gradiente. A especialização
+   vem DEPOIS da regra base de propósito: antes dela, era a primeira ocorrência de
+   ".link-btn {" no arquivo, e a checagem de alvo de toque passava a ler um bloco
+   sem altura — o teste reprovava por ordem de CSS, não por alvo pequeno. */
+.cc-acoes .link-btn { color: #cfd2e6; }
+.cc-acoes .link-btn.forte { color: #fff; font-weight: 700; }
 
 /* Metas */
 .goal-head { display: flex; align-items: center; gap: 10px; }

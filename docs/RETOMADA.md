@@ -17,12 +17,13 @@ Leia primeiro, nesta ordem:
   docs/plano-disponivel-e-recorrencia.md
   docs/plano-gestao-eficiente.md      ← auditoria das telas e as 6 contas novas
   docs/plano-testes.md                  ← por que o relógio da suíte é congelado
+  docs/plano-cartoes.md                 ← a tela de Cartões e qual fatura aparece
   docs/plano-extrato.md
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 122 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2323 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 123 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2346 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - E a suíte inteira em 8 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
@@ -103,6 +104,11 @@ mão toda vez.
   linha só, sem a vertical — não há emenda a desenhar.
 - O relógio da suíte é congelado (`HOJE` no ambiente, âncora em tests/smoke.js).
   Trocar por `new Date()` de verdade traz de volta a suíte que apodrece.
+- Na tela de Cartões a ordem é patrimônio → o que eu TENHO → o que eu DEVO →
+  custo fixo. Nunca listar N faturas: com parcelamento, as N últimas são todas
+  futuras e escondem a atual (foi o defeito). Mostra-se a fechada não paga, a
+  aberta, e as futuras SOMADAS numa linha. Limite se diz pelo que sobra; limite
+  menor que a fatura é aviso de cadastro, não barra de 327%.
 - Projeção do mês = DB.projecaoDeGasto: só o gasto VARIÁVEL se extrapola. O
   run-rate antigo dava R$ 162.807 num mês de R$ 17.981 de renda.
 - Base das porcentagens = DB.rendaDoMes (o mês), não a renda declarada. Cuidado:

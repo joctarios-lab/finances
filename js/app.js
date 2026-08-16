@@ -3037,36 +3037,6 @@ function renderExtrato(period) {
 }
 
 /* ---------- Cartões ---------- */
-/* PATRIMÔNIO: o que há menos o que se deve.
-
-   Esta tela listava saldos e faturas em blocos separados, e a subtração entre eles
-   não era feita em lugar nenhum — medido na base real: R$ 169,70 em conta contra
-   R$ 2.179,22 de cartão, ou seja, patrimônio de −R$ 2.009,52 que nenhuma tela
-   dizia. Ela mora aqui porque é aqui que estão as duas metades.
-
-   A dívida vem PARTIDA em duas porque as duas doem em momentos diferentes: a que
-   vence neste ciclo é caixa do mês e já aparece no disponível; a que já foi
-   comprada e ainda vai faturar (R$ 1.800 espalhados até maio de 2027) não aparecia
-   em número nenhum do app. */
-function patrimonioCard() {
-  const p = DB.patrimonio();
-  const deve = p.cartaoAgora + p.cartaoDepois;
-  if (!(p.emContas > 0.005 || deve > 0.005)) return '';
-  const l = (rot, nota, valor, cls) =>
-    `<div class="hc-l${cls ? ' ' + cls : ''}"><span>${rot}${nota ? ` <i>${nota}</i>` : ''}</span><b>${fmt(valor)}</b></div>`;
-  return `
-    <div class="card">
-      <div class="card-head" style="margin-bottom:6px"><div><b>Patrimônio</b><small>o que há hoje menos o que já foi comprado</small></div>
-        <span class="num ${p.liquido >= 0 ? 'txt-green' : 'txt-red'}" style="font-size:18px">${fmtShort(p.liquido)}</span></div>
-      <div class="res-conta" style="border-top:0;padding:0">
-        ${l('Em contas', p.investido > 0.005 ? `${fmtShort(p.investido)} investido` : '', p.emContas)}
-        ${p.cartaoAgora > 0.005 ? l('− Fatura que vence neste ciclo', '', p.cartaoAgora) : ''}
-        ${p.cartaoDepois > 0.005 ? l('− Já comprado, fatura depois', 'parcelas em aberto', p.cartaoDepois) : ''}
-        <div class="hc-l hc-total"><span>= Patrimônio líquido</span><b class="${p.liquido >= 0 ? '' : 'txt-red'}">${fmt(p.liquido)}</b></div>
-      </div>
-    </div>`;
-}
-
 /* O CUSTO FIXO e a data em que cada pedaço dele acaba.
 
    "A parcela do FordKa acaba em 9 meses e libera R$ 500 por mês" é a informação
@@ -3095,19 +3065,58 @@ function custoFixoCard() {
     </div>`;
 }
 
+/* A tela de Cartões & Faturas.
+
+   REESTRUTURADA a pedido de quem usa. O que havia antes: Contas, Patrimônio,
+   Custo fixo e "Compromissos futuros" vinham PRIMEIRO, e o cartão — o assunto da
+   aba — só aparecia depois de quatro blocos. Medido na base real: 40 linhas de
+   conteúdo antes do primeiro cartão.
+
+   A ordem agora conta uma história só, que é como os apps de patrimônio fazem
+   (Monarch, Copilot) e como o Nubank organiza a tela do cartão:
+
+     patrimônio  →  o que eu TENHO (contas)  →  o que eu DEVO (cartões)
+
+   O patrimônio deixa de ser um bloco no meio repetindo números e vira o
+   cabeçalho: as duas seções abaixo dele são as suas parcelas. Cartão de crédito
+   não é assunto paralelo, é o passivo do mesmo patrimônio.
+
+   "Compromissos futuros" saiu: ele somava água, energia e parcela de carro, que
+   não são cartão — numa tela de cartões o número parecia dívida de fatura. Ele
+   continua no Painel, que é onde a pergunta "o que devo este mês" pertence. */
 function renderCartoes() {
   const cards = DB.all('cards').filter(c => c.active !== false);
   const contas = DB.all('accounts').filter(a => a.active !== false);
+  const pat = DB.patrimonio();
+  const deve = pat.cartaoAgora + pat.cartaoDepois;
+
+  /* O patrimônio como capa, e as duas metades que o compõem logo abaixo do
+     número. Elas são os títulos das seções seguintes, para que se saiba de
+     antemão que a tela inteira é a decomposição deste valor.
+
+     Ele nasceu porque a tela listava saldos e faturas em blocos separados e a
+     subtração não era feita em lugar nenhum: R$ 169,70 em conta contra
+     R$ 2.179,22 de cartão davam um patrimônio de −R$ 2.009,52 que nenhuma tela
+     dizia. Era um card no meio da pilha, repetindo números que já estavam acima
+     e abaixo dele; como capa, ele deixa de repetir e passa a apresentar.
+
+     A dívida aparece SOMADA aqui e PARTIDA lá embaixo, e é de propósito: as duas
+     metades doem em momentos diferentes — a fatura em aberto cobra ação nesta
+     semana, o que já foi comprado e ainda vai faturar é compromisso de meses. No
+     bloco do cartão cada uma tem o seu lugar e o seu botão. */
+  const capa = (pat.emContas > 0.005 || deve > 0.005) ? `
+    <div class="pat-capa">
+      <span class="pat-rot">Patrimônio líquido</span>
+      <b class="pat-val ${pat.liquido >= 0 ? '' : 'txt-red'}">${fmt(pat.liquido)}</b>
+      <div class="pat-partes"><span>tenho <b>${fmt(pat.emContas)}</b></span><span class="pat-sep">·</span><span>devo <b>${fmt(deve)}</b></span></div>
+    </div>` : '';
+
   const totalContas = contas.reduce((s, a) => s + (Number(a.balance) || 0), 0);
-  /* As ações saem de dentro do cartão e sobem para o cabeçalho da seção. Empilhadas
-     no rodapé, em largura inteira, elas fechavam a lista com dois blocos que
-     pesavam mais que as próprias contas — e ficavam longe do título que dizia do
-     que se tratava. */
-  const contasHtml = `
+  const contasHtml = capa + `
     <div class="sec-cab">
       <div class="sec-tit">
-        <b>Contas e saldos</b>
-        <small>${fmtShort(totalContas)} · toque numa conta para conciliar</small>
+        <b>O que eu tenho</b>
+        <small>${fmt(totalContas)}${pat.investido > 0.005 ? ` · ${fmtShort(pat.investido)} em investimento` : ''} · toque para conciliar</small>
       </div>
       <div class="sec-acoes">
         ${contas.length > 1 ? '<button class="sec-btn" id="btn-transfer"><span data-ico="sync"></span>Transferir</button>' : ''}
@@ -3121,70 +3130,194 @@ function renderCartoes() {
           <span class="acc-info"><b>${esc(a.name)}</b><small>${esc(a.type)}${a.institution ? ' · ' + esc(a.institution) : ''}</small></span>
           <span class="num">${fmt(a.balance)}</span>
         </div>`).join('') : '<div class="empty">Nenhuma conta cadastrada. Adicione em Configurações → Contas.</div>'}
-    </div>` + patrimonioCard() + custoFixoCard();
+    </div>`;
 
   if (!cards.length) {
     return contasHtml + `<div class="card"><div class="empty"><b>Nenhum cartão cadastrado</b>Cadastre seus cartões para o app controlar faturas e parcelas automaticamente.</div>
-      <button class="btn ghost" id="go-cards">Cadastrar cartão</button></div>`;
+      <button class="btn ghost" id="go-cards">Cadastrar cartão</button></div>` + custoFixoCard();
   }
 
-  const committed = DB.committed();
-  const totalFaturas = cards.reduce((s, c) => {
-    const inv = DB.invoicesOf(c).find(i => i.key === DB.invoiceKeyFor(c, todayISO()));
-    return s + (inv ? inv.total : 0);
-  }, 0);
-  let html = contasHtml + (committed > 0 ? `
-    <div class="card">
-      <div class="card-head" style="margin-bottom:4px"><div><b>Compromissos futuros</b><small>faturas não pagas + contas a pagar — já descontados do seu disponível</small></div>
-      <span class="num txt-red" style="font-size:18px">${fmtShort(committed)}</span></div>
-    </div>` : '')
-    /* Com cartões cadastrados não havia como gerenciá-los daqui: o botão só
-       existia no estado vazio, então quem já tinha um cartão precisava ir às
-       Configurações para mexer em qualquer um. O cabeçalho da seção resolve. */
-    + `<div class="sec-cab">
+  let html = contasHtml + `
+    <div class="sec-cab">
       <div class="sec-tit">
-        <b>Cartões de crédito</b>
-        <small>${fmtShort(totalFaturas)} nas faturas abertas</small>
+        <b>O que eu devo</b>
+        <small>${fmt(deve)} em faturas e parcelas já compradas</small>
       </div>
       <div class="sec-acoes">
         <button class="sec-btn" data-setup="cards"><span data-ico="settings"></span>Gerenciar</button>
       </div>
     </div>`;
-  for (const card of cards) {
-    const invoices = DB.invoicesOf(card);
-    const currentKey = DB.invoiceKeyFor(card, todayISO());
-    const open = invoices.find(i => i.key === currentKey) || { total: 0, status: 'Aberta', ...(() => { const d = DB.invoiceDates(card, currentKey); return d; })() };
-    const usePct = card.limit_amount > 0 ? Math.round(open.total / card.limit_amount * 100) : 0;
 
-    let invList = '';
-    for (const inv of invoices.slice(-6).reverse()) {
-      invList += `<div class="invoice-row">
-        <span class="badge ${inv.status.toLowerCase()}">${inv.status}</span>
-        <span class="muted">fecha ${fmtDate(inv.closing)} · vence ${fmtDate(inv.due)}${
-          inv.status === 'Parcial' ? ` · faltam ${fmtShort(inv.falta)}` : ''}</span>
-        <span style="flex:1"></span>
-        <button class="link-btn" data-inv-detail="${inv.key}">${inv.count} itens</button>
-        <span class="num">${fmtShort(inv.total)}</span>
-        ${inv.status !== 'Paga'
-          ? `<button class="link-btn" data-pay="${inv.key}">pagar</button>`
-          : `<button class="link-btn" data-unpay="${inv.key}">↺</button>`}
-      </div>`;
-    }
+  for (const card of cards) html += cartaoBloco(card);
+  return html + custoFixoCard();
+}
 
-    html += `
-      <div class="credit-card">
-        <div class="cc-head"><span class="cc-name">${esc(card.name)}</span><span class="cc-brand">${esc(card.brand || '')}</span></div>
-        <div class="cc-invoice"><div class="cc-invoice-label">Fatura atual (${open.status})</div>
-        <div class="cc-invoice-val">${fmt(open.total)}</div></div>
-        <div class="cc-dates"><span>Fecha dia ${card.closing_day}</span><span>Vence dia ${card.due_day}</span></div>
-        ${card.limit_amount ? `<div class="cc-limit">
-          <div class="budget-head"><span class="muted">Uso do limite</span><span class="num">${usePct}% <span class="muted">de ${fmtShort(card.limit_amount)}</span></span></div>
-          <div class="bar ${barClass(usePct)}"><i style="width:${Math.min(100, usePct)}%"></i></div></div>` : ''}
-      </div>
-      ${invList ? `<p class="section-title">Faturas — ${esc(card.name)}</p>${invList}` : ''}
-    `;
+/* Um cartão: a fatura que cobra ação, a que está acumulando, e o resto
+   condensado. Separado de renderCartoes porque a regra de QUAL fatura mostrar é
+   justamente a parte que tinha defeito, e ela merece ser lida e testada sozinha. */
+function cartaoBloco(card) {
+  const invoices = DB.invoicesOf(card);
+
+  /* CARTÃO SEM MOVIMENTO vira UMA LINHA. Antes ele ocupava o mesmo bloco de um
+     cartão com fatura em aberto: na base real, um cartão zerado e sem limite
+     cadastrado pesava tanto quanto outro com R$ 613 a pagar. */
+  if (!invoices.length) {
+    return `<button class="cc-vazio" data-setup="cards">
+      <span class="cc-vazio-nome">${esc(card.name)}</span>
+      <span class="muted">sem lançamentos${card.limit_amount > 0 ? '' : ' · limite não cadastrado'}</span>
+      <span data-ico="chev"></span>
+    </button>`;
   }
+
+  const chaveAtual = DB.invoiceKeyFor(card, todayISO());
+  const atual = invoices.find(i => i.key === chaveAtual);
+
+  /* A FATURA FECHADA E NÃO PAGA é o item mais urgente da tela, e por isso não
+     pode ficar atrás de um link de histórico — é o que o Nubank faz ao mostrar a
+     fechada e a aberta lado a lado. "Parcial" entra junto: quem pagou metade
+     ainda deve a outra metade. */
+  const pendentes = invoices.filter(i => i.key !== chaveAtual
+    && (i.status === 'Fechada' || i.status === 'Parcial') && i.falta > 0.005)
+    .sort((a, b) => a.due - b.due);
+
+  /* AS FUTURAS viram UMA linha. São as parcelas já compradas, e na base real eram
+     oito faturas idênticas de R$ 249,90 que empurravam a fatura atual para fora
+     da lista: a tela oferecia "pagar" para maio de 2027 e escondia o mês
+     corrente. Somadas, elas respondem a única pergunta que importa delas —
+     quanto do futuro já está comprometido. */
+  const agora = new Date();
+  const futuras = invoices.filter(i => i.key !== chaveAtual && i.closing > agora
+    && !pendentes.includes(i) && i.falta > 0.005);
+  const totalFuturas = futuras.reduce((s, i) => s + i.falta, 0);
+  const ultima = futuras.length ? futuras[futuras.length - 1] : null;
+
+  const emUso = (atual ? atual.falta : 0) + pendentes.reduce((s, i) => s + i.falta, 0);
+  const limite = Number(card.limit_amount) || 0;
+  const sobra = limite - emUso;
+
+  let html = `<div class="credit-card">
+    <div class="cc-head"><span class="cc-name">${esc(card.name)}</span><span class="cc-brand">${esc(card.brand || '')}</span></div>`;
+
+  // A pendente vem ANTES da aberta: é ela que tem data marcada e cobra ação hoje
+  for (const p of pendentes) {
+    html += `<div class="cc-alerta">
+      <div class="cc-alerta-top"><span>⚠ Fatura fechada · ${esc(rotuloDaFatura(p.key))}</span><span>${prazoDeVencimento(p.due)}</span></div>
+      <div class="cc-alerta-val">${fmt(p.falta)}</div>
+      <div class="cc-acoes"><button class="link-btn" data-inv-detail="${p.key}">ver ${p.count} ${p.count === 1 ? 'item' : 'itens'}</button><button class="link-btn forte" data-pay="${p.key}">pagar</button></div>
+    </div>`;
+  }
+
+  html += `<div class="cc-invoice">
+    <div class="cc-invoice-label">Fatura aberta${atual ? ' · ' + esc(rotuloDaFatura(atual.key)) : ''}</div>
+    <div class="cc-invoice-val">${fmt(atual ? atual.falta : 0)}</div>
+    <div class="cc-dates"><span>fecha ${atual ? fmtDate(atual.closing) : 'dia ' + card.closing_day}</span><span>vence ${atual ? fmtDate(atual.due) : 'dia ' + card.due_day}</span></div>
+    ${atual && atual.count ? `<div class="cc-acoes"><button class="link-btn" data-inv-detail="${atual.key}">ver ${atual.count} ${atual.count === 1 ? 'item' : 'itens'}</button><button class="link-btn" data-pay="${atual.key}">pagar</button></div>` : ''}
+  </div>`;
+
+  /* LIMITE: quanto AINDA DÁ para gastar, não a porcentagem já usada. Na base real
+     o cadastro dizia R$ 110 com fatura de R$ 359,90 e a tela desenhava uma barra
+     de "327%" como se fosse informação. Uso acima do limite quase sempre é
+     cadastro errado, e a resposta útil é dizer isso em vez de pintar a barra. */
+  if (limite > 0 && sobra >= 0) {
+    const pct = Math.round(emUso / limite * 100);
+    html += `<div class="cc-limit">
+      <div class="budget-head"><span class="muted">Disponível no limite</span><span class="num">${fmt(sobra)} <span class="muted">de ${fmtShort(limite)}</span></span></div>
+      <div class="bar ${barClass(pct)}"><i style="width:${Math.min(100, pct)}%"></i></div></div>`;
+  } else if (limite > 0) {
+    html += `<div class="cc-limit cc-limit-erro">Limite cadastrado (${fmtShort(limite)}) é menor que a fatura — confira o cadastro do cartão.</div>`;
+  } else {
+    html += `<div class="cc-limit cc-limit-erro">Limite não cadastrado — sem ele não dá para avisar quando o cartão estourar.</div>`;
+  }
+  html += '</div>';
+
+  if (totalFuturas > 0.005) {
+    html += `<button class="cc-linha" data-futuras="${card.id}">
+      <span>Ainda vai faturar <i>${futuras.length} ${futuras.length === 1 ? 'fatura' : 'faturas'}${ultima ? ' até ' + mesAno(ultima.due) : ''}</i></span>
+      <b>${fmt(totalFuturas)}</b><span data-ico="chev"></span></button>`;
+  }
+  html += `<button class="cc-linha" data-hist="${card.id}"><span>Histórico de faturas</span><span data-ico="chev"></span></button>`;
   return html;
+}
+
+/* "vence em 4 dias" responde a pergunta; "vence 20/08" faz o leitor calcular. */
+function prazoDeVencimento(due) {
+  const dias = Math.round((new Date(DB.paraISO(due) + 'T12:00:00') - new Date(todayISO() + 'T12:00:00')) / 86400000);
+  if (dias < 0) return `venceu há ${-dias} ${-dias === 1 ? 'dia' : 'dias'}`;
+  if (dias === 0) return 'vence hoje';
+  if (dias === 1) return 'vence amanhã';
+  return `vence em ${dias} dias`;
+}
+
+/* "mai/2027" — o formato curto que cabe numa linha de resumo. O toLocaleDateString
+   devolve "mai. de 2027", que gasta espaço para dizer o mesmo. */
+function mesAno(d) {
+  const x = new Date(d);
+  const mes = x.toLocaleDateString('pt-BR', { month: 'short' }).replace('.', '');
+  return `${mes}/${x.getFullYear()}`;
+}
+
+/* O histórico completo, atrás de um toque. Ele existe para conferir o que já foi
+   pago — pergunta legítima, mas que não disputa espaço com a fatura de agora.
+   Ordem inversa: o mais recente primeiro, porque é o que se vem conferir. */
+function openHistoricoFaturas(cardId) {
+  const card = DB.get('cards', cardId);
+  if (!card) return toast('Cartão não encontrado');
+  const invoices = DB.invoicesOf(card).slice().reverse();
+  openModal(`
+    <div class="modal-title">${esc(card.name)} — histórico<button class="close-x" id="hf-back"><span data-ico="back"></span></button></div>
+    ${invoices.map(inv => `<div class="invoice-row">
+      <span class="badge ${inv.status.toLowerCase()}">${inv.status}</span>
+      <span class="muted">${esc(rotuloDaFatura(inv.key))} · vence ${fmtDate(inv.due)}${inv.status === 'Parcial' ? ` · faltam ${fmt(inv.falta)}` : ''}</span>
+      <span style="flex:1"></span>
+      <button class="link-btn" data-inv-detail="${inv.key}">${inv.count} ${inv.count === 1 ? 'item' : 'itens'}</button>
+      <span class="num">${fmt(inv.total)}</span>
+      ${inv.status !== 'Paga' ? `<button class="link-btn" data-pay="${inv.key}">pagar</button>` : `<button class="link-btn" data-unpay="${inv.key}">↺</button>`}
+    </div>`).join('') || '<div class="empty">Nenhuma fatura ainda.</div>'}
+  `);
+  $('#hf-back').onclick = closeModal;
+  ligarAcoesDeFatura(document.querySelector('#modal') || document);
+}
+
+/* As futuras, abertas para conferência. Elas são parcelas de compras que já
+   aconteceram: não se paga uma fatura que ainda não fechou, então aqui não há
+   botão de pagar — só o detalhe de cada uma. */
+function openFaturasFuturas(cardId) {
+  const card = DB.get('cards', cardId);
+  if (!card) return toast('Cartão não encontrado');
+  const chaveAtual = DB.invoiceKeyFor(card, todayISO());
+  const agora = new Date();
+  const futuras = DB.invoicesOf(card).filter(i => i.key !== chaveAtual && i.closing > agora && i.falta > 0.005);
+  const total = futuras.reduce((s, i) => s + i.falta, 0);
+  openModal(`
+    <div class="modal-title">${esc(card.name)} — ainda vai faturar<button class="close-x" id="ff-back"><span data-ico="back"></span></button></div>
+    <div class="card" style="margin-bottom:14px">
+      <div class="proj-row"><span>Total já comprado</span><b>${fmt(total)}</b></div>
+      <div class="proj-row"><span>Faturas</span><b>${futuras.length}</b></div>
+    </div>
+    ${futuras.map(inv => `<div class="invoice-row">
+      <span class="muted">${esc(rotuloDaFatura(inv.key))} · vence ${fmtDate(inv.due)}</span>
+      <span style="flex:1"></span>
+      <button class="link-btn" data-inv-detail="${inv.key}">${inv.count} ${inv.count === 1 ? 'item' : 'itens'}</button>
+      <span class="num">${fmt(inv.falta)}</span>
+    </div>`).join('') || '<div class="empty">Nada comprado para os próximos meses.</div>'}
+  `);
+  $('#ff-back').onclick = closeModal;
+  ligarAcoesDeFatura(document.querySelector('#modal') || document);
+}
+
+/* Pagar, desfazer e abrir o detalhe valem na tela e dentro das duas folhas. Uma
+   função só para os três, senão o botão funciona num lugar e é inerte no outro —
+   que foi o que aconteceu quando o histórico virou folha. */
+function ligarAcoesDeFatura(escopo) {
+  if (!escopo || !escopo.querySelectorAll) return;
+  escopo.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => openPagarFaturaSheet(b.dataset.pay));
+  escopo.querySelectorAll('[data-inv-detail]').forEach(b => b.onclick = () => openInvoiceDetail(b.dataset.invDetail));
+  escopo.querySelectorAll('[data-unpay]').forEach(b => b.onclick = () => {
+    if (!confirm('Desfazer o pagamento desta fatura?\n\nOs lançamentos somem e o saldo da conta é devolvido.')) return;
+    desfazerPagamentosDaFatura(b.dataset.unpay);
+    Sync.autoSync(); render();
+    toast('Pagamento desfeito');
+  });
 }
 
 /* ---------- Metas ---------- */
@@ -4157,19 +4290,18 @@ function bindView() {
     toast('Reserva criada — agora é só ir guardando 🛡️');
     openAporteSheet(id);
   };
-  v.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => openPagarFaturaSheet(b.dataset.pay));
-  v.querySelectorAll('[data-unpay]').forEach(b => b.onclick = () => {
-    if (!confirm('Desfazer o pagamento desta fatura?\n\nOs lançamentos somem e o saldo da conta é devolvido.')) return;
-    desfazerPagamentosDaFatura(b.dataset.unpay);
-    Sync.autoSync(); render();
-    toast('Pagamento desfeito');
-  });
+  /* Pagar, desfazer e abrir o detalhe da fatura: a mesma função que as folhas de
+     histórico e de futuras usam. Duas cópias divergiriam na primeira correção que
+     entrasse só de um lado — os botões funcionariam na tela e ficariam inertes
+     dentro da folha, que é o tipo de defeito que ninguém reporta. */
+  ligarAcoesDeFatura(v);
+  v.querySelectorAll('[data-hist]').forEach(b => b.onclick = () => openHistoricoFaturas(b.dataset.hist));
+  v.querySelectorAll('[data-futuras]').forEach(b => b.onclick = () => openFaturasFuturas(b.dataset.futuras));
   const ng = $('#btn-new-goal');
   if (ng) ng.onclick = () => openGoalSheet(null);
   v.querySelectorAll('[data-editgoal]').forEach(b => b.onclick = () => openGoalSheet(DB.get('goals', b.dataset.editgoal)));
   v.querySelectorAll('[data-aporte]').forEach(b => b.onclick = () => openAporteSheet(b.dataset.aporte));
   v.querySelectorAll('[data-goal-detail]').forEach(b => b.onclick = () => openGoalDetail(b.dataset.goalDetail));
-  v.querySelectorAll('[data-inv-detail]').forEach(b => b.onclick = () => openInvoiceDetail(b.dataset.invDetail));
 }
 
 /* ---------- Sheet: lançamento rápido ---------- */
