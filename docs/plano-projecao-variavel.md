@@ -74,45 +74,122 @@ diz *"Aperto no variável"*.
 Trocar o protagonista por uma faixa poria uma estimativa no lugar mais visível do
 app, e mudar a cor do hero inteiro daria ao palpite o peso de um fato.
 
-## Os três estados: fixo, variável e pontual
+## Uma fonte só para movimentação futura: o contrato
 
-Dois não davam conta. O caso é o gasto que **aconteceu e não volta** — a
-dentadura de R$ 770, a matrícula da escola, o empréstimo cedido a um parente:
+Decidido por quem usa, depois de uma pergunta que expôs o problema: *"os itens
+marcados como fixos não aparecem na seção de configuração de contas fixas,
+deveria aparecer?"*
 
-- como **variável**, ele entra no ritmo e é multiplicado pelos dias que faltam,
-  inflando o mês inteiro por causa de uma compra que não se repete;
-- como **fixo**, sai do ritmo — mas `recurring` faz muito mais que isso.
+Deveria — e a resposta certa não era mostrá-los lá. Era **eliminar a segunda
+fonte**.
 
-Medido na base real, marcando a dentadura como fixa:
+### Havia dois mecanismos para a mesma pergunta
 
-| | antes | depois |
+| | contrato (`recurrences`) | marca (`recurring`) |
 |---|---|---|
-| ritmo do variável | R$ 816,67/dia | R$ 768,54/dia ✔ |
-| "Contas do mês" de **setembro** | R$ 10.754,70 | **R$ 11.524,70** |
-| "Contas do mês" de **outubro** | R$ 6.490,70 | **R$ 7.260,70** |
-| saldo previsto no fim de setembro | R$ 12.439,42 | **R$ 11.669,42** |
+| gera o lançamento | **sozinho, na data certa** | à mão, pelo botão "Custos fixos" |
+| periodicidade | mensal, semanal, quinzenal, anual | só mensal, implícita |
+| prazo | sem prazo, N vezes, até data | nenhum |
+| valor médio | sim (luz, água) | não |
+| pausar / cancelar | sim | não |
+| vínculo no lançamento | `recurrence_id` | nenhum |
+| aparece em "Contas fixas" | sim | **não** |
 
-Tirar do ritmo custava criar um compromisso eterno. **Pontual** fica fora dos
-dois: não entra no ritmo e não vira previsão de nada.
+O próprio código já chamava a marca de legado, e o formulário havia deixado de
+oferecê-la. Ela sobrevivia sustentando três comportamentos, e a combinação era a
+pior possível: um lançamento marcado pesava no comprometido de **todos** os meses
+à frente e não aparecia na única tela onde se gerencia custo fixo.
 
-Os três se excluem, e isso é garantido num ponto só — `classificarGasto`. Gravar
-`pontual` sem limpar `recurring` deixaria o lançamento fixo *e* pontual ao mesmo
-tempo, e cada leitor do app decidiria sozinho qual dos dois vale.
+### O que saiu
 
-### As nove pernas
+- `previstosNaoLancados` deixou de replicar transações marcadas nos meses futuros;
+- `custoFixoMensal` voltou a ler só contratos — e agora bate com a tela "Contas
+  fixas", que sempre leu só eles;
+- o botão **"Custos fixos"** do Extrato foi removido: ele existia apenas para
+  materializar a marca;
+- o filtro "Recorrentes" passou a filtrar por **vínculo**, não pela marca;
+- a edição em massa deixou de oferecer "fixo".
 
-Levantei cada ponto do código que lê a classificação, porque uma sozinha esquecida
-faz o número mentir em silêncio:
+`recurring` continua no banco e no sync. Apagar dado de base antiga seria pior que
+ignorá-lo — ele só deixou de ser **lido** como fonte de repetição, e há teste
+exigindo que um lançamento marcado continue sendo gasto variável.
 
-| ponto | fixo | variável | pontual |
+### "Conta fixa" deixou de ser estado e virou vínculo
+
+Com a previsão vindo só de contratos, "fixo" e "pontual" colapsariam: os dois
+significariam apenas "não extrapole". Então a folha do Painel passou a ter **dois
+estados e uma ação**:
+
+```
+Aluguel                    R$ 3.300,00
+[ variável ] [ pontual ] [ é contrato › ]
+```
+
+- **variável** — entra na projeção do mês;
+- **pontual** — aconteceu e não volta, fica fora;
+- **é contrato** — abre a lista de contratos ativos e grava o `recurrence_id`.
+  O lançamento sai do ritmo pelo vínculo, e os próximos meses são do contrato.
+
+Quem já é de contrato ou parcela não recebe botão: a repetição se decide no
+contrato, e alternar ali criaria um estado que o próximo cálculo desfaz.
+
+### As sugestões de vínculo
+
+Medido na base real: **8 lançamentos de agosto, R$ 5.400,90**, com o nome exato de
+um contrato ativo e sem vínculo — lidos como gasto variável e multiplicados pelos
+dias restantes. Eles nasceram assim porque os contratos foram criados depois, com
+início em setembro; agosto foi lançado à mão.
+
+A folha os junta num aviso no topo, **um botão por linha**. Aplicar sozinho não:
+casar descrição contra nome de contrato já errou 19 lançamentos aqui, porque a
+descrição do Pix traz o nome do banco. `contratoSugeridoPara` compara o nome
+**inteiro** — não um trecho — e mesmo assim só sugere.
+
+### Por que isto não vai voltar a acontecer
+
+De setembro em diante o contrato gera a ocorrência sozinho, já com
+`recurrence_id`. O caso de agosto foi de transição: contratos novos sobre um mês
+já lançado à mão.
+
+## As duas classes que decidem a projeção
+
+Só o gasto **variável** é extrapolado. Duas coisas ficam fora do ritmo, e por
+motivos diferentes:
+
+| | o que é | de onde sai a repetição |
+|---|---|---|
+| **contrato** | tem `recurrence_id` ou é parcela | do contrato, que gera sozinho |
+| **pontual** | aconteceu e não volta | de lugar nenhum |
+
+**Pontual** precisou existir. O caso é a dentadura de R$ 770, a matrícula da
+escola, o empréstimo cedido a um parente — e antes dele não havia onde caber:
+
+- como **variável**, o gasto único é multiplicado pelos dias que faltam e infla o
+  mês inteiro;
+- como **fixo** (a marca `recurring`, antes de sair de cena), ele saía do ritmo mas
+  passava a ser cobrado todo mês. Medido: marcar a dentadura como fixa somava
+  R$ 770 às contas de setembro **e** de outubro, e derrubava o saldo previsto do
+  mês seguinte.
+
+Os estados se excluem, e isso é garantido em dois pontos únicos:
+`classificarGasto` grava só `variavel` ou `pontual`; `vincularAContrato` grava o
+vínculo e limpa `pontual`. Deixar duas marcas ligadas faria cada leitor do app
+decidir sozinho qual vale.
+
+### As pernas, uma a uma
+
+Levantei cada ponto do código que lê a classificação, porque a esquecida faz o
+número mentir em silêncio:
+
+| ponto | contrato | pontual | variável |
 |---|---|---|---|
-| ritmo do hero (`variavelProjetado`) | fora | **entra** | fora |
-| projeção do mês (`projecaoDeGasto`) | fora | **entra** | fora |
-| previsão dos meses seguintes | **replica** | não | **não** |
-| botão "Custos fixos" | copia | não | não |
+| ritmo do hero (`variavelProjetado`) | fora | fora | **entra** |
+| projeção do mês (`projecaoDeGasto`) | fora | fora | **entra** |
+| previsão dos meses seguintes | **do contrato** | não | não |
 | seção "Custo fixo mensal" | **entra** | não | não |
-| filtro "Recorrentes" | entra | não | não |
-| edição em massa | os três estados num campo só |
+| tela "Contas fixas" | **entra** | não | não |
+| filtro "Recorrentes" | entra (por vínculo) | não | não |
+| edição em massa | — | os dois estados num campo |
 | sincronização | coluna `pontual`, com recuo se o banco não a tiver |
 | defaults de criação | quatro pontos, todos com `pontual: false` |
 
@@ -128,68 +205,33 @@ desenho do fallback de `server_at` no pull — detectar em vez de exigir. Rodar 
 SQL só melhora: a classificação passa a acompanhar a família em vez de ficar num
 aparelho só.
 
-## Custo fixo: contratos e marcados na mesma lista
+## Custo fixo: uma fonte, um número
 
-A seção lia **só a tabela de contratos**. O lançamento marcado como fixo já era
-tratado como fixo em toda parte — saía do ritmo e virava previsão dos meses
-seguintes — e não aparecia na única tela onde se gerencia custo fixo. A pior
-combinação: pesa no comprometido de todos os meses à frente e não tem onde ser
-encontrado.
+A seção lia só contratos; passou a somar também os lançamentos marcados; e voltou
+a ler só contratos quando a marca saiu de cena. O caminho todo cabe numa frase: o
+problema nunca foi **qual** das duas fontes mostrar, era **haver duas**.
 
-Agora entram os dois, com a **origem em cada linha**: `contrato` se gera sozinho
-na data certa; `marcado` depende do botão "Custos fixos". São compromissos iguais
-com manutenção diferente, e sem a marca não há como saber qual precisa de ação.
-
-Um lançamento com o **nome de um contrato** não cria linha nova — é a
-materialização dele, e somar os dois cobraria o aluguel duas vezes.
-
-## O que conta como gasto fixo: só o que foi marcado
-
-A projeção depende de saber o que é fixo — só o variável se extrapola. São três
-sinais explícitos: vínculo com contrato, marca de custo fixo, e parcela.
-
-**Adivinhar pelo nome do contrato foi tentado e recusado.** A ideia resolveria o
-fato de que quase nenhum lançamento tem vínculo (1 em 60 na base real), mas casar
-a descrição contra o nome do contrato erra feio no que vem de extrato bancário.
-Medido: **19 lançamentos reclassificados errado, R$ 5.322** —
-
-- R$ 1.400 pagos a uma oficina viraram "internet fixa", porque a descrição do Pix
-  traz `PAGSEGURO INTERNET IP S.A.`;
-- uma compra em `ARAGUARI` virou conta de água.
-
-Um palpite que acerta às vezes é pior que a ausência dele: quem confere não tem
-como saber quais linhas o app adivinhou.
-
-A consequência aceita é que o ritmo fica **alto** enquanto os lançamentos não
-estiverem marcados — a projeção erra para o lado pessimista, que é o lado seguro.
-
-## Marcar fixo ou variável, do próprio Painel
-
-A marca existia e estava inalcançável: saiu do formulário de lançamento e só
-sobrevivia dentro da edição em massa, a três telas do Painel. Quem estranha a
-projeção não tinha como agir dali — e é ali que a dúvida nasce.
-
-A linha "− Variável estimado" virou um botão. Ele abre a lista dos gastos do mês,
-**ordenada por valor** (o que distorce a projeção são os poucos lançamentos
-grandes lidos como variável), com dois botões por linha e o ritmo recalculado a
-cada toque.
-
-Lançamento de contrato e parcela **não** oferecem os botões: são fixos por origem,
-e alternar ali criaria um estado que o app desfaz sozinho no cálculo seguinte. A
-linha diz que está travada.
+Agora o card "Custo fixo mensal" e a tela "Contas fixas" leem a mesma tabela, e há
+teste exigindo que as duas mostrem o mesmo item.
 
 ## O que os testes travam
 
-- o fixo marcado não entra no ritmo, e marcar pela folha muda a projeção;
-- o contido é mediana e o ritmo é média — com a ressalva de que, com poucos dias
-  de amostra, os dois coincidem por aritmética;
-- a conta fecha: `livre ao fim − variável = fecha em`;
-- o selo aparece **num cenário construído para isso**, e some quando o estouro sai;
-- descrição de extrato que cita o nome de um contrato **não** vira fixo;
-- último dia do ciclo: sem futuro, as duas linhas somem e o total continua.
+- o gasto de contrato e o pontual ficam fora do ritmo; o variável entra;
+- a marca antiga `recurring` **não** move nada — nem ritmo, nem previsão;
+- vincular grava o `recurrence_id`, limpa `pontual` e tira o gasto do ritmo;
+- descrição de extrato que cita o nome de um contrato **não** vira fixa, e não é
+  nem sugerida;
+- o nome exato **sugere** o contrato, e quem já tem vínculo não é sugerido de novo;
+- a escolha de contrato não lista cancelado;
+- lançamento de contrato ou parcela não recebe botão de classe;
+- o botão "Custos fixos" não volta, nem com dado legado na base;
+- card e tela de contas fixas mostram o mesmo item;
+- último dia do ciclo: sem futuro, as duas linhas do hero somem e o total fica.
 
-Duas sabotagens passaram despercebidas na primeira rodada e o registro fica: o
-teste do selo vivia dentro de um `if` que nunca era verdadeiro, e o da gravação
-chamava `DB.upsert` em vez do que o botão chama. Os dois foram refeitos — a
-gravação saiu para `marcarComoFixo`, que é o que a folha usa e o que o teste
-exercita.
+Dez sabotagens confirmaram que cada uma dessas regras reprova quando revertida.
+
+E vale registrar o que **duas rodadas de sabotagem encontraram**: três testes que
+passavam sem exercitar nada — o do selo vivia dentro de um `if` nunca verdadeiro,
+o da gravação chamava `DB.upsert` em vez do que o botão chama, e o da duplicação no
+custo fixo dependia de um contrato que naquele ponto da suíte ainda não existia.
+Os três foram refeitos.

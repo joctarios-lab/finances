@@ -1224,24 +1224,43 @@ const DB = {
      fixo (o formulário e a edição em massa já fazem isso), e aí a projeção
      melhora sozinha. */
   testadorDeGastoFixo() {
-    return t => !!t.recurrence_id || t.recurring === true || !!t.installment;
+    return t => !!t.recurrence_id || !!t.installment;
   },
 
-  /* OS TRÊS ESTADOS, e eles se excluem:
+  /* O CONTRATO ATIVO com o mesmo nome deste lançamento, ou null.
 
-       fixo      contrato, marca de custo fixo, ou parcela. Sai uma vez por ciclo,
-                 com dia marcado, e VIRA PREVISÃO nos meses seguintes.
+     Serve para OFERECER o vínculo, nunca para aplicá-lo sozinho. A diferença é
+     tudo: casar automaticamente por texto já foi tentado e errou 19 lançamentos
+     na base real, porque a descrição do extrato traz o nome do banco — "PAGSEGURO
+     INTERNET IP S.A." virava internet fixa. Aqui a comparação é do nome INTEIRO,
+     não de um trecho, e mesmo assim quem decide é quem usa.
+
+     Ignora o que já tem vínculo ou é parcela: esses já são de contrato. */
+  contratoSugeridoPara(t) {
+    if (!t || t.recurrence_id || t.installment || t.card_id) return null;
+    if (!this.isExpense(t) || this.isNeutral(t)) return null;
+    const norm = s => String(s || '').trim().toLowerCase();
+    const nome = norm(t.description);
+    if (!nome) return null;
+    return this.all('recurrences').find(r => r.status === 'ativa' && norm(r.description) === nome) || null;
+  },
+
+  /* A CLASSE DE UM GASTO, e o que cada uma decide:
+
+       contrato  veio de `recurrences` (tem `recurrence_id`) ou é parcela. Sai do
+                 ritmo e a repetição dele é do CONTRATO, não deste lançamento.
        pontual   aconteceu e não volta — a dentadura, a matrícula, o empréstimo
-                 cedido. Não entra no ritmo e não vira previsão de nada.
-       variável  o resto: mercado, combustível, restaurante. É o único que se
-                 extrapola pelos dias que faltam.
+                 cedido. Sai do ritmo e não repete nada.
+       variável  o resto: mercado, combustível, restaurante. É o único extrapolado
+                 pelos dias que faltam no mês.
 
-     `pontual` precisou existir porque os dois primeiros não davam conta do gasto
-     único: como variável ele infla o mês inteiro; como fixo ele deixa de ser
-     extrapolado mas passa a ser cobrado todo mês. Medido — marcar uma dentadura
-     de R$ 770 como fixa somava R$ 770 às contas de setembro E de outubro. */
+     "Conta fixa" NÃO é um estado do lançamento: é o vínculo com o contrato. Havia
+     uma marca paralela (`recurring`) fazendo esse papel, e ela criava duas fontes
+     para a mesma pergunta — com o efeito medido de somar uma dentadura de R$ 770
+     às contas de setembro E de outubro. Quem é conta fixa se vincula ao contrato,
+     que é quem sabe periodicidade, prazo e valor. */
   classeDoGasto(t) {
-    if (this.testadorDeGastoFixo()(t)) return 'fixo';
+    if (this.testadorDeGastoFixo()(t)) return 'contrato';
     return t.pontual === true ? 'pontual' : 'variavel';
   },
 
@@ -1398,37 +1417,9 @@ const DB = {
       itens.push({ id: r.id, descricao: r.description, mensal, restam, periodicidade: r.periodicidade, origem: 'contrato' });
     }
 
-    /* OS LANÇAMENTOS MARCADOS COMO CUSTO FIXO entram aqui também.
-
-       Eles já eram tratados como fixos em toda parte — saíam do ritmo do variável
-       e viravam previsão nos meses seguintes —, mas esta seção lia SÓ a tabela de
-       contratos. O resultado é a pior combinação possível: o gasto pesa no
-       comprometido de todos os meses à frente e não aparece na única tela onde se
-       gerencia custo fixo. Quem marcasse um por engano não teria onde encontrá-lo.
-
-       Casa por DESCRIÇÃO com os contratos, a mesma chave que o resto do app usa:
-       um lançamento marcado que tenha o nome de um contrato é a materialização
-       dele, não um custo a mais — somar os dois dobraria o aluguel.
-
-       O molde é o mais RECENTE de cada nome, como em `previstosNaoLancados`: o
-       valor da conta de agora, não o de um ano atrás. */
-    const jaTem = new Set(itens.map(i => String(i.descricao).trim().toLowerCase()));
-    const moldes = {};
-    for (const t of this.all('transactions')) {
-      if (t.recurring !== true || this.isNeutral(t) || t.deleted) continue;
-      if (t.card_id || t.group_id) continue;   // fatura e parcela não são custo fixo solto
-      if (!this.isExpense(t)) continue;        // receita recorrente não é custo
-      const k = String(t.description || '').trim().toLowerCase();
-      if (!k || jaTem.has(k)) continue;
-      if (!moldes[k] || String(t.date) > String(moldes[k].date)) moldes[k] = t;
-    }
-    for (const molde of Object.values(moldes)) {
-      itens.push({
-        id: molde.id, descricao: molde.description, mensal: Number(molde.amount) || 0,
-        restam: null, periodicidade: 'mensal', origem: 'marcado',
-      });
-    }
-
+    /* SÓ CONTRATOS. Os lançamentos marcados `recurring` chegaram a entrar aqui,
+       quando eram tratados como fixos; com o contrato virando fonte única eles
+       saíram, e com eles a divergência entre esta seção e a tela "Contas fixas". */
     itens.sort((a, b) => b.mensal - a.mensal);
     return { total: itens.reduce((s, i) => s + i.mensal, 0), itens };
   },
@@ -2284,46 +2275,22 @@ const DB = {
       }
     }
 
-    /* CUSTOS FIXOS (transações marcadas `recurring`).
+    /* MOVIMENTAÇÃO FUTURA VEM SÓ DE CONTRATO.
 
-       O app tem dois mecanismos de repetição: o contrato em `recurrences`, lido
-       acima, e o custo fixo — uma transação marcada como recorrente que o botão
-       "Custos fixos" copia para o mês corrente, um mês por vez. Só o primeiro
-       entrava aqui, e o resultado era que quem usa o segundo (que é o caminho
-       oferecido no próprio formulário de lançamento) via previsão VAZIA de dois
-       meses à frente em diante: nada tinha sido copiado ainda, e o contrato não
-       existia. O único item que aparecia era fatura de cartão.
+       Havia um segundo mecanismo aqui: a transação marcada `recurring`, que o
+       botão "Custos fixos" copiava para o mês. Duas fontes para a mesma pergunta
+       — "o que se repete?" — e foi delas que nasceu a pior combinação medida
+       nesta base: marcar uma dentadura de R$ 770 como fixa acrescentava R$ 770 às
+       contas de setembro E de outubro, e o item não aparecia na tela "Contas
+       fixas", que lia só os contratos.
 
-       Casa por DESCRIÇÃO, a mesma chave que o botão usa para não duplicar. Se já
-       existe lançamento com aquele nome no mês — materializado ou vindo do
-       contrato —, o custo fixo não entra de novo. */
-    const jaNoMes = new Set(itens.map(i => String(i.titulo).toLowerCase()));
-    const moldes = {};
-    for (const t of this.all('transactions')) {
-      if (!t.recurring || this.isNeutral(t)) continue;
-      if (t.card_id) continue;      // compra no cartão pesa na fatura, não solta
-      if (t.group_id) continue;     // parcela já nasce em todas as faturas
-      // O molde mais recente manda: o valor do aluguel de agora, não o de um ano atrás
-      const k = String(t.description).toLowerCase();
-      if (!moldes[k] || String(t.date) > String(moldes[k].date)) moldes[k] = t;
-    }
-    for (const [k, molde] of Object.entries(moldes)) {
-      if (jaNoMes.has(k)) continue;
-      // Já existe no mês com esse nome, em qualquer situação? Então não é previsão
-      const existe = this.all('transactions').some(t =>
-        String(t.description).toLowerCase() === k
-        && String(t.date) >= de && String(t.date) < ate);
-      if (existe) continue;
-      // Mesmo dia do mês do molde, preso ao último dia quando o mês é mais curto
-      const base = new Date(String(molde.date) + 'T12:00:00');
-      const ref = period.start;
-      const ultimo = new Date(ref.getFullYear(), ref.getMonth() + 1, 0).getDate();
-      const quando = this.paraISO(new Date(ref.getFullYear(), ref.getMonth(),
-        Math.min(base.getDate(), ultimo)));
-      if (quando < de || quando >= ate) continue;
-      add(molde.description, Number(molde.amount) || 0, !this.isExpense(molde), quando, 'custo fixo', molde);
-    }
+       O contrato ganha porque faz mais e faz sozinho: tem periodicidade, prazo,
+       valor médio, pausar e cancelar, e gera o lançamento na data certa já com
+       `recurrence_id`. A marca não tinha nada disso — o próprio formulário já
+       tinha deixado de oferecê-la.
 
+       `recurring` continua no banco e no sync: apagar dado de base antiga seria
+       pior que ignorá-lo. Ele só deixou de ser LIDO como fonte de repetição. */
     /* APORTE AGENDADO: compromisso do mês, mas NÃO é saída.
 
        Guardar dinheiro é transferência entre contas próprias — o valor continua

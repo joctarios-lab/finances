@@ -113,7 +113,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE, prazoDaMeta, custoFixoCard, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  cartaoBloco, usoDoLimite, linhasDaPrevisao, openClassificarGastos, linhaDeClassificacao, ligarClassificacao, classificarGasto, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
+  cartaoBloco, usoDoLimite, linhasDaPrevisao, openClassificarGastos, linhaDeClassificacao, ligarClassificacao, classificarGasto, vincularAContrato, openEscolherContrato, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
@@ -415,10 +415,18 @@ console.log('\n=== Cenários futuros (até 6 meses) ===');
 try {
   const ctaFut = DB.all('accounts')[0];
   const mesAnterior = DB.inicioISO(DB.monthPeriod(new Date(), -1));
-  const molde = (desc, valor, tipo) => DB.upsert('transactions', {
-    description: desc, amount: valor, date: mesAnterior, type: tipo, status: 'Pago',
-    scope: 'Família', member: MEMBRO_COMUM, method: tipo === 'Receita' ? 'PIX' : 'Boleto',
-    account_id: ctaFut.id, recurring: true,
+  /* O MOLDE É O CONTRATO, não uma transação marcada.
+
+     Este cenário nasceu quando havia dois mecanismos de repetição: a tabela
+     `recurrences` e a marca `recurring` numa transação, que o botão "Custos
+     fixos" copiava. O contrato virou fonte ÚNICA — ele faz mais e faz sozinho —,
+     então o molde daqui passou a ser um contrato. As asserções não mudaram: a
+     previsão de qualquer mês à frente tem de conhecer o custo fixo. */
+  const molde = (desc, valor, tipo) => DB.upsert('recurrences', {
+    description: desc, amount: valor, type: tipo, valor_tipo: 'fixo',
+    periodicidade: 'mensal', dia: 4, inicio: mesAnterior, fim_tipo: 'sem_prazo',
+    status: 'ativa', geradas: 0, scope: 'Família', member: MEMBRO_COMUM,
+    method: tipo === 'Receita' ? 'PIX' : 'Boleto', account_id: ctaFut.id,
   });
   molde('Aluguel FUT', 2500, 'Despesa');
   molde('Salario FUT', 9000, 'Receita');
@@ -465,22 +473,24 @@ try {
     prevPago.sai < 2500, true);
   DB.remove('transactions', idPago);
 
-  /* NEM COM CONTRATO: se alguém tem os dois mecanismos para a mesma conta — um
-     contrato "Se repete?" e o custo fixo legado com o mesmo nome —, o item entra
-     UMA vez. Contar os dois somaria o aluguel duas vezes e inflaria a previsão de
-     todos os meses à frente. */
-  const contratoDup = DB.upsert('recurrences', {
-    description: 'Aluguel FUT', valor: 2500, valor_tipo: 'fixo', type: 'Despesa',
-    periodicidade: 'mensal', dia: 5, inicio: DB.inicioISO(DB.monthPeriod(new Date(), 1)),
-    fim_tipo: 'sempre', status: 'ativa', scope: 'Família', member: MEMBRO_COMUM,
+  /* O LANÇAMENTO VINCULADO não é projetado de novo.
+
+     Este teste nasceu para o caso de alguém ter os DOIS mecanismos para a mesma
+     conta — um contrato e o custo fixo legado com o mesmo nome. O mecanismo legado
+     saiu de cena, então o cenário mudou: o que resta verificar é a dedupe que
+     importa, entre a ocorrência prevista e o lançamento que já a materializou. */
+  const mes3 = DB.monthPeriod(new Date(), 3);
+  const idVinculado = DB.upsert('transactions', {
+    description: 'Aluguel FUT', amount: 2500, date: DB.somarDiasISO(DB.inicioISO(mes3), 3),
+    type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM,
     method: 'Boleto', account_id: ctaFut.id,
   });
-  const comAmbos = DB.previsaoDoMes(DB.monthPeriod(new Date(), 3));
-  check('contrato e custo fixo com o mesmo nome não somam em dobro',
-    comAmbos.itens.filter(i => i.titulo === 'Aluguel FUT').length, 1);
-  check('e quem manda é o contrato, que é o caminho novo',
-    comAmbos.itens.find(i => i.titulo === 'Aluguel FUT').origem, 'prevista');
-  DB.remove('recurrences', contratoDup);
+  const comLancado = DB.previsaoDoMes(mes3);
+  check('ocorrência já lançada não é prevista de novo',
+    comLancado.itens.filter(i => i.titulo === 'Aluguel FUT').length, 1);
+  check('e ela conta como lançada, não como previsão',
+    comLancado.itens.find(i => i.titulo === 'Aluguel FUT').origem, 'lançado');
+  DB.remove('transactions', idVinculado);
 
   /* ---- Contrato criado A PARTIR de um lançamento que já existe ----
      Encontrado nos dados reais: das 11 recorrências cadastradas, NENHUMA tinha
@@ -855,6 +865,11 @@ try {
   state.monthOffset = offSalvoFut; state.repOffset = repSalvoFut;
   state.filtros = filtrosVazios();
   for (const t of DB.all('transactions').filter(t => / FUT$/.test(t.description || ''))) DB.remove('transactions', t.id);
+  /* Os CONTRATOS do cenário saem junto. Quando o molde era uma transação marcada,
+     limpar as transações bastava; com o contrato virando fonte única, deixá-los
+     para trás faz o cenário vazar — e os blocos seguintes passam a ver contratos
+     sem categoria, que era o que quebrava o teste do donut de mês futuro. */
+  for (const r of DB.all('recurrences').filter(r => / FUT$/.test(r.description || ''))) DB.remove('recurrences', r.id);
   DB.save();
 } catch (e) { console.log(` FALHA | cenários futuros: ${e.message}`); fail++; }
 
@@ -872,10 +887,15 @@ try {
   const ctaV = DB.all('accounts')[0];
   const catsV = DB.rootCategories('Despesa');
   const mesAntV = DB.inicioISO(DB.monthPeriod(new Date(), -1));
-  const fixV = (d, v, tipo, cat) => DB.upsert('transactions', {
-    description: d, amount: v, date: mesAntV, type: tipo, status: 'Pago',
-    scope: 'Família', member: MEMBRO_COMUM, method: tipo === 'Receita' ? 'PIX' : 'Boleto',
-    account_id: ctaV.id, recurring: true, category_id: cat,
+  /* O CUSTO FIXO DAQUI É CONTRATO. Era uma transação marcada `recurring`, quando
+     havia dois mecanismos de repetição; o contrato virou fonte única e o cenário
+     acompanhou. As identidades sob teste não mudaram — o que se verifica é que
+     todos os objetos da tela contam a mesma história num mês futuro. */
+  const fixV = (d, v, tipo, cat) => DB.upsert('recurrences', {
+    description: d, amount: v, type: tipo, valor_tipo: 'fixo',
+    periodicidade: 'mensal', dia: 4, inicio: mesAntV, fim_tipo: 'sem_prazo',
+    status: 'ativa', geradas: 0, scope: 'Família', member: MEMBRO_COMUM,
+    method: tipo === 'Receita' ? 'PIX' : 'Boleto', account_id: ctaV.id, category_id: cat,
   });
   fixV('Salario VIS', 9000, 'Receita', null);
   fixV('Aluguel VIS', 2500, 'Despesa', catsV[0].id);
@@ -968,11 +988,13 @@ try {
      sobre a janela dos previstos: salário, aluguel e internet vencem no dia 1, e o
      IPVA é transação real (cortada por outro caminho) — nenhum previsto ficaria de
      fora do dia 5, e remover o corte não mudaria número nenhum. */
-  const idTardio = DB.upsert('transactions', {
-    description: 'Seguro VIS', amount: 400,
-    date: DB.somarDiasISO(DB.inicioISO(DB.monthPeriod(new Date(), -1)), 19),
-    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
-    method: 'Boleto', account_id: ctaV.id, recurring: true, category_id: catsV[0].id,
+  const idTardio = DB.upsert('recurrences', {
+    description: 'Seguro VIS', amount: 400, type: 'Despesa', valor_tipo: 'fixo',
+    periodicidade: 'mensal', dia: 20,
+    inicio: DB.somarDiasISO(DB.inicioISO(DB.monthPeriod(new Date(), -1)), 19),
+    fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0,
+    scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Boleto', account_id: ctaV.id, category_id: catsV[0].id,
   });
   const comTardio5 = DB.saldoPrevistoNaData(null, dia5);
   const comTardioFim = DB.saldoPrevistoNaData(null, DB.fimISO(setV));
@@ -1009,7 +1031,7 @@ try {
     Math.round(saldoDia5 - comTardio5), nDia5 * 400);
   check('e no fim do mês entra mais uma',
     Math.round(fimV - comTardioFim), (nDia5 + 1) * 400);
-  DB.remove('transactions', idTardio);
+  DB.remove('recurrences', idTardio);
 
   /* AS TELAS. Cada objeto que antes aparecia vazio. */
   const paV = renderInicio(setV), exV = renderExtrato(setV), reV = renderRelatorios();
@@ -4657,23 +4679,21 @@ try {
     comSec.indexOf('sec-acoes') > comSec.indexOf('sec-tit')
     && comSec.indexOf('sec-acoes') < comSec.indexOf('id="tx-list"'), true);
   check('editar virou botão da seção', /sec-btn" id="btn-massa"/.test(comSec), true);
-  /* "Custos fixos" é o caminho LEGADO: copia à mão os lançamentos marcados como
-     recorrentes. O formulário não oferece mais essa marca — quem repete agora vira
-     contrato em "Se repete?", que se gera sozinho. Então o botão só aparece
-     enquanto existir dado antigo para materializar: um botão que não faz nada é
-     pior que botão nenhum. */
-  check('sem custo fixo legado, o botão não aparece',
-    /sec-btn" id="btn-recur"/.test(comSec), false);
+  /* O BOTÃO "CUSTOS FIXOS" NÃO EXISTE MAIS. Ele copiava à mão os lançamentos
+     marcados como recorrentes, um mês por vez — o mecanismo antigo de repetição.
+     Com o CONTRATO virando fonte única de movimentação futura ele deixou de ter o
+     que fazer: o contrato gera sozinho, na data certa, já com vínculo.
+
+     O teste continua aqui, invertido, para o botão não voltar por engano junto com
+     alguma outra mudança no cabeçalho da seção. */
   const idLegado = DB.upsert('transactions', {
     description: 'Legado CF', amount: 100, date: DB.inicioISO(pM), type: 'Despesa',
     status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto',
     account_id: DB.all('accounts')[0].id, recurring: true,
   });
-  check('com dado legado, ele volta — e como botão da seção',
-    /sec-btn" id="btn-recur"/.test(renderExtrato(pM)), true);
+  check('nem com dado legado o botão "Custos fixos" aparece',
+    /id="btn-recur"/.test(renderExtrato(pM)), false);
   DB.remove('transactions', idLegado);
-  check('e some de novo quando o legado sai',
-    /sec-btn" id="btn-recur"/.test(renderExtrato(pM)), false);
   check('e não sobrou botão de largura inteira',
     /btn ghost" id="btn-(massa|recur)"/.test(comSec), false);
   // O lote é o filtro; editar só aparece quando há o que editar
@@ -4727,8 +4747,11 @@ try {
   check('todo campo do formulário tem interruptor',
     ['type', 'category_id', 'tags', 'status', 'scope', 'member', 'method', 'account_id', 'classe', 'notes']
       .every(c => formM.includes(`data-liga="${c}"`)), true);
-  check('e a classe do gasto oferece os três estados',
-    ['variavel', 'fixo', 'pontual'].every(v => formM.includes(`value="${v}"`)), true);
+  /* DUAS classes, não três: "conta fixa" é o vínculo com o contrato, e vincular em
+     lote casando pelo nome é justamente o automático que erra no extrato. */
+  check('e a classe do gasto oferece variável e pontual',
+    ['variavel', 'pontual'].every(v => formM.includes(`value="${v}"`)), true);
+  check('  e não oferece "fixo" em massa', formM.includes('value="fixo"'), false);
   check('o lote também troca o tipo', formM.includes('id="ma-tipo"'), true);
   check('e pede o destino ao virar transferência', formM.includes('id="ma-destino"'), true);
   check('e os controles nascem escondidos',
@@ -5088,8 +5111,15 @@ try {
   gastoV('Mercado var', 100, cabe(0));
   gastoV('Mercado var', 100, cabe(1));
   gastoV('Pico var', 900, cabe(2));            // o atípico que a mediana ignora
-  // Um FIXO marcado: ele não pode entrar no ritmo, senão o mês inteiro se extrapola
-  gastoV('Aluguel marcado', 3000, cabe(1), { recurring: true });
+  /* Um gasto DE CONTRATO: ele não pode entrar no ritmo, senão o mês inteiro se
+     extrapola. O vínculo é o que diz isso — a marca `recurring` deixou de ser
+     fonte de repetição quando o contrato virou a única. */
+  const ctrV = DB.upsert('recurrences', {
+    description: 'Aluguel do contrato', amount: 3000, type: 'Despesa', valor_tipo: 'fixo',
+    periodicidade: 'mensal', dia: 4, inicio: DB.inicioISO(pV), fim_tipo: 'sem_prazo',
+    status: 'ativa', geradas: 0, scope: 'Família', member: MEMBRO_COMUM, method: 'Débito',
+  });
+  gastoV('Aluguel do contrato', 3000, cabe(1), { recurrence_id: ctrV });
 
   const v = DB.variavelProjetado(pV);
   check('há dias decorridos para medir o ritmo', v.decorridos >= 1, true);
@@ -5104,7 +5134,7 @@ try {
   const temFuturoV = v.dias > 0;
   const acrescentado = (v.diaRitmo - antesV.diaRitmo) * v.decorridos;
   if (temFuturoV) {
-    check('o fixo marcado não entra no ritmo', acrescentado < 3000, true);
+    check('o gasto de contrato não entra no ritmo', acrescentado < 3000, true);
     check('  e o variável entra inteiro', Math.round(acrescentado), 1100);
   } else {
     check('no último dia do ciclo não há variável a projetar', v.ritmo, 0);
@@ -5174,154 +5204,21 @@ try {
     check('  e o total continua lá', heroV.includes('= Livre ao fim'), true);
   }
 
-  for (const t of DB.all('transactions').filter(t => / var$| marcado$/.test(String(t.description)))) DB.remove('transactions', t.id);
+  for (const t of DB.all('transactions').filter(t => / var$| contrato$/.test(String(t.description)))) DB.remove('transactions', t.id);
+  DB.remove('recurrences', ctrV);
   DB.remove('accounts', contaV);
 } catch (e) { console.log(` FALHA | variável projetado: ${e.message}`); fail++; }
 
-/* ---- O QUE CONTA COMO FIXO: só o que foi MARCADO ----
-
-   Adivinhar pelo nome do contrato foi tentado e recusado. Medido na base real, o
-   casamento por trecho de texto reclassificou 19 lançamentos errado, R$ 5.322 no
-   total: R$ 1.400 pagos a uma oficina viraram "internet fixa" porque a descrição
-   do Pix traz "PAGSEGURO INTERNET IP S.A.", e uma compra em "ARAGUARI" virou
-   conta de água. Um palpite que acerta às vezes é pior que a ausência dele —
-   quem confere não tem como saber quais linhas o app adivinhou. */
-console.log('\n=== Gasto fixo: só o que está marcado ===');
-try {
-  DB.upsert('recurrences', { description: 'Internet', amount: 149, type: 'Despesa',
-    periodicidade: 'mensal', dia: 10, inicio: DB.inicioISO(DB.monthPeriod(new Date())),
-    fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0 });
-  const ehFixo = DB.testadorDeGastoFixo();
-  const falso = { description: 'Transferência enviada pelo Pix - OFICINA - PAGSEGURO INTERNET IP S.A.', amount: 1400 };
-  check('descrição de extrato que CITA o contrato não vira fixo', ehFixo(falso), false);
-  check('  nem um nome que contém o do contrato por acaso',
-    ehFixo({ description: 'Compra no débito - ARAGUARI II', amount: 7 }), false);
-  check('  e nem o lançamento com o nome exato, se não estiver marcado',
-    ehFixo({ description: 'Internet', amount: 149 }), false);
-  check('marcado como custo fixo, é fixo', ehFixo({ description: 'Internet', recurring: true }), true);
-  check('  vinculado ao contrato, também', ehFixo({ description: 'x', recurrence_id: 'r1' }), true);
-  check('  e parcela, também', ehFixo({ description: 'TV', installment: '3/10' }), true);
-  for (const r of DB.all('recurrences').filter(r => r.description === 'Internet')) DB.remove('recurrences', r.id);
-} catch (e) { console.log(` FALHA | regra de gasto fixo: ${e.message}`); fail++; }
-
-/* ---- CLASSIFICAR FIXO OU VARIÁVEL, do próprio Painel ----
-
-   A projeção depende de o app saber o que é fixo, e o único sinal confiável é a
-   marcação. Só que ela vivia escondida: fora do formulário de lançamento e
-   dentro da edição em massa, a três telas do Painel — onde a dúvida nasce. */
-console.log('\n=== Classificar gastos em fixo ou variável ===');
-try {
-  const contaK = DB.upsert('accounts', { name: 'Conta Class', type: 'Conta Corrente', balance: 9000, active: true });
-  const pK = DB.monthPeriod(new Date());
-  const diaK = Math.max(0, DB.elapsedDays(pK) - 1);
-  const idGrande = DB.upsert('transactions', {
-    description: 'Aluguel nao marcado', amount: 2500, date: DB.somarDiasISO(DB.inicioISO(pK), diaK),
-    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaK,
-  });
-
-  /* A linha do hero leva à folha: sem esse caminho a marca continua inalcançável.
-     Ela só existe quando há variável a estimar — no último dia do ciclo não há, e
-     a folha continua alcançável pela edição em massa do Extrato. */
-  const heroK = renderInicio(pK);
-  const projetaK = DB.variavelProjetado(pK).dias > 0;
-  check(projetaK ? 'a linha do variável abre a classificação' : 'sem projeção, o hero não oferece o atalho',
-    heroK.includes('data-classificar'), projetaK);
-
-  openClassificarGastos(pK);
-  const folha = els['#modal'] ? els['#modal'].innerHTML : '';
-  check('a folha lista os gastos do mês', folha.includes('Aluguel nao marcado'), true);
-  check('  com os dois estados à vista', folha.includes('>fixo<') && folha.includes('>variável<'), true);
-  check('  e o maior valor no topo, que é o que distorce a projeção',
-    folha.indexOf('Aluguel nao marcado') < folha.indexOf('Mercado'), true);
-
-  /* MARCAR TEM DE MUDAR A PROJEÇÃO — é o ponto inteiro da tela. No último dia do
-     ciclo não há projeção para mudar, e a marcação segue valendo para o mês que
-     vem; o que se cobra ali é que ela seja gravada. */
-  const antesK = DB.variavelProjetado(pK);
-  /* Chama o que o BOTÃO chama. Gravar por `DB.upsert` aqui testaria o banco, não a
-     tela: a sabotagem que tirava a gravação da folha passou despercebida
-     justamente porque o teste não passava por ela. */
-  check('marcar pela folha grava a classificação', classificarGasto(idGrande, 'fixo'), true);
-  const depoisK = DB.variavelProjetado(pK);
-  check('  e a marca fica no lançamento',
-    !!DB.get('transactions', idGrande).recurring, true);
-  check('  marcar o que não existe não quebra', classificarGasto('nao-existe', 'fixo'), false);
-  if (projetaK) {
-    check('marcar como fixo tira o gasto do ritmo',
-      Math.round((antesK.diaRitmo - depoisK.diaRitmo) * antesK.decorridos), 2500);
-    check('  e o hero passa a estimar menos variável',
-      depoisK.ritmo < antesK.ritmo, true);
-  }
-  /* E DESMARCAR VOLTA: a classificação é uma decisão de quem usa, não um caminho
-     de mão única. */
-  classificarGasto(idGrande, 'variavel');
-  check('  desmarcar devolve o gasto ao ritmo',
-    Math.round(DB.variavelProjetado(pK).diaRitmo * 100), Math.round(antesK.diaRitmo * 100));
-
-  /* ---- O SELO DO HERO ----
-     Ele avisa quando a estimativa derruba um mês que estava no azul. O cenário é
-     CONSTRUÍDO para isso: sem forçar a condição, o teste ficava dentro de um `if`
-     que nunca era verdadeiro, e a sabotagem que desligava o selo passou. */
-  if (projetaK) {
-    const vBase = DB.variavelProjetado(pK);
-    const fimK = DB.fimISO(pK);
-    const livreK = DB.saldoPrevistoNaData(null, fimK) - DB.guardadoPrevisto(fimK);
-    if (livreK >= 0) {
-      /* Um gasto PAGO num dia já decorrido move o ritmo sem mexer no saldo das
-         contas — é o que permite derrubar a estimativa deixando o "Livre ao fim"
-         positivo, que é exatamente a situação que o selo existe para sinalizar. */
-      /* O estado ANTES, porque em algumas datas o cenário da suíte já derruba o
-         mês sozinho — afirmar "volta ao normal" seria supor um normal que não
-         existe naquele dia. */
-      const seloAntes = renderInicio(pK).includes('Aperto no variável');
-      const precisa = (livreK + 500) * vBase.decorridos / vBase.dias;
-      const idEstouro = DB.upsert('transactions', {
-        description: 'Estouro do variavel', amount: Math.max(precisa, 10),
-        date: DB.somarDiasISO(DB.inicioISO(pK), Math.max(0, DB.elapsedDays(pK) - 1)),
-        type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
-        method: 'Débito', account_id: contaK,
-      });
-      const heroSelo = renderInicio(pK);
-      check('o selo avisa quando o variável derruba um mês no azul',
-        heroSelo.includes('Aperto no variável'), true);
-      check('  e o número grande continua sendo o valor firme',
-        heroSelo.includes(`hero-value">${fmt(livreK)}`), true);
-      DB.remove('transactions', idEstouro);
-      check('  e sem o estouro ele volta ao que era',
-        renderInicio(pK).includes('Aperto no variável'), seloAntes);
-    }
-  }
-
-  /* O QUE JÁ É FIXO POR ORIGEM não vira botão: contrato e parcela são fixos pelo
-     que são, e deixar alternar criaria um estado que o app desfaz sozinho. */
-  const comContrato = { id: 'x1', description: 'Do contrato', amount: 10, date: todayISO(), recurrence_id: 'r9' };
-  const comParcela = { id: 'x2', description: 'Parcelado', amount: 10, date: todayISO(), installment: '2/5' };
-  check('lançamento de contrato não oferece o botão',
-    linhaDeClassificacao(comContrato, 'fixo').includes('data-classe'), false);
-  check('  e diz que está travado', linhaDeClassificacao(comContrato, 'fixo').includes('cg-travado'), true);
-  check('parcela também não oferece', linhaDeClassificacao(comParcela, 'fixo').includes('data-classe'), false);
-  const linhaComum = linhaDeClassificacao({ id: 'x3', description: 'Mercado', amount: 10, date: todayISO() }, 'variavel');
-  check('  já um gasto comum oferece os TRÊS',
-    ['fixo', 'variavel', 'pontual'].every(c => linhaComum.includes(`data-classe="${c}"`)), true);
-  check('  com o estado atual em destaque',
-    (linhaComum.match(/class="cg-b on"/g) || []).length, 1);
-
-  closeModal();
-  DB.remove('transactions', idGrande);
-  DB.remove('accounts', contaK);
-} catch (e) { console.log(` FALHA | classificar gastos: ${e.message}`); fail++; }
-
-/* ---- PONTUAL: o gasto que aconteceu e não volta ----
-
-   Os dois estados que havia não davam conta dele. Medido na base real, marcando
-   uma dentadura de R$ 770 como FIXA: o ritmo do variável caía (certo), mas as
-   contas de setembro subiam R$ 770 e as de outubro também, e o saldo previsto do
-   mês seguinte caía junto. Tirar do ritmo custava criar um compromisso eterno. */
-console.log('\n=== Pontual: fora do ritmo e fora da previsão ===');
+console.log('\n=== O que fica fora do ritmo: contrato e pontual ===');
 try {
   const contaP = DB.upsert('accounts', { name: 'Conta Pontual', type: 'Conta Corrente', balance: 9000, active: true });
   const pP = DB.monthPeriod(new Date());
   const proxP2 = DB.monthPeriod(new Date(), 1);
+  const contratoP = DB.upsert('recurrences', {
+    description: 'Ginastica mensal', amount: 300, type: 'Despesa', valor_tipo: 'fixo',
+    periodicidade: 'mensal', dia: 6, inicio: DB.inicioISO(pP), fim_tipo: 'sem_prazo',
+    status: 'ativa', geradas: 0, scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaP,
+  });
   const idUnico = DB.upsert('transactions', {
     description: 'Dentadura unica', amount: 770,
     date: DB.somarDiasISO(DB.inicioISO(pP), Math.max(0, DB.elapsedDays(pP) - 1)),
@@ -5333,116 +5230,232 @@ try {
     saiProx: DB.previsaoDoMes(proxP2).sai,
     projeta: (DB.previstosNaoLancados(proxP2) || []).some(i => /dentadura unica/i.test(String(i.descricao || i.titulo || ''))),
   });
-
-  /* No ÚLTIMO dia do ciclo não há ritmo — não sobra dia para extrapolar —, então
-     as comparações de ritmo não se aplicam. O que vale ali é o outro lado da
-     regra: o pontual não virar previsão, e isso é cobrado em qualquer data. */
+  /* No ÚLTIMO dia do ciclo não sobra dia para extrapolar, então comparações de
+     ritmo não se aplicam. O que vale em qualquer data é o outro lado da regra: o
+     que sai do ritmo não pode virar previsão. */
   const temRitmoP = DB.variavelProjetado(pP).dias > 0;
+
   const comoVariavel = foto();
   if (temRitmoP) check('como variável, ele entra no ritmo', comoVariavel.ritmo > 0, true);
   check('  e não vira previsão do mês que vem', comoVariavel.projeta, false);
 
-  classificarGasto(idUnico, 'fixo');
-  const comoFixo = foto();
-  if (temRitmoP) check('como fixo, sai do ritmo', comoFixo.ritmo < comoVariavel.ritmo, true);
-  /* E ESTE É O PREÇO que o pontual existe para não pagar. */
-  check('  mas passa a ser previsto no mês que vem', comoFixo.projeta, true);
-  check('  somando ao que se deve lá', Math.round(comoFixo.saiProx - comoVariavel.saiProx), 770);
-
+  /* PONTUAL sai do ritmo e não repete. É o gasto que aconteceu e não volta — e o
+     motivo de existir: como variável ele seria multiplicado pelos dias que faltam,
+     inflando o mês por causa de uma compra única. */
   classificarGasto(idUnico, 'pontual');
   const comoPontual = foto();
-  check('como pontual, sai do ritmo igual ao fixo',
-    Math.round(comoPontual.ritmo * 100), Math.round(comoFixo.ritmo * 100));
-  check('  e NÃO vira previsão de mês nenhum', comoPontual.projeta, false);
+  if (temRitmoP) check('como pontual, sai do ritmo', comoPontual.ritmo < comoVariavel.ritmo, true);
+  check('  e não vira previsão de mês nenhum', comoPontual.projeta, false);
   check('  nem soma às contas do mês que vem',
     Math.round(comoPontual.saiProx * 100), Math.round(comoVariavel.saiProx * 100));
+  check('  a classe lida de volta é a que foi gravada',
+    DB.classeDoGasto(DB.get('transactions', idUnico)), 'pontual');
 
-  /* OS TRÊS SE EXCLUEM. Gravar `pontual` sem limpar `recurring` deixaria o
-     lançamento fixo E pontual ao mesmo tempo, e cada leitor decidiria sozinho
-     qual dos dois vale. */
-  const depoisPontual = DB.get('transactions', idUnico);
-  check('marcar pontual desliga a marca de fixo', !!depoisPontual.recurring, false);
-  check('  e a classe lida de volta é a que foi gravada', DB.classeDoGasto(depoisPontual), 'pontual');
-  classificarGasto(idUnico, 'fixo');
-  check('marcar fixo desliga a marca de pontual', !!DB.get('transactions', idUnico).pontual, false);
-  classificarGasto(idUnico, 'variavel');
-  check('  e variável desliga as duas', DB.classeDoGasto(DB.get('transactions', idUnico)), 'variavel');
+  /* CONTA FIXA é o VÍNCULO com o contrato, não uma marca no lançamento. Ele sai do
+     ritmo pelo vínculo, e a repetição dos próximos meses é do contrato. */
+  check('vincular ao contrato devolve verdadeiro', vincularAContrato(idUnico, contratoP), true);
+  const comoContrato = foto();
+  check('  e a classe passa a ser de contrato',
+    DB.classeDoGasto(DB.get('transactions', idUnico)), 'contrato');
+  if (temRitmoP) check('  saindo do ritmo igual ao pontual',
+    Math.round(comoContrato.ritmo * 100), Math.round(comoPontual.ritmo * 100));
+  check('  e vincular limpa a marca de pontual',
+    !!DB.get('transactions', idUnico).pontual, false);
+
+  /* A MARCA ANTIGA não move mais nada: `recurring` deixou de ser fonte de
+     repetição quando o contrato passou a ser a única. Um lançamento marcado
+     continua sendo gasto variável para todos os efeitos. */
+  const idMarcaVelha = DB.upsert('transactions', {
+    description: 'Marca legada', amount: 500,
+    date: DB.somarDiasISO(DB.inicioISO(pP), Math.max(0, DB.elapsedDays(pP) - 1)),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Débito', account_id: contaP, recurring: true,
+  });
+  check('a marca antiga não faz o gasto sair do ritmo',
+    DB.classeDoGasto(DB.get('transactions', idMarcaVelha)), 'variavel');
+  check('  nem vira previsão do mês que vem',
+    (DB.previstosNaoLancados(proxP2) || []).some(i => /marca legada/i.test(String(i.descricao || i.titulo || ''))), false);
+  DB.remove('transactions', idMarcaVelha);
+
   check('classe inválida não grava nada', classificarGasto(idUnico, 'inventada'), false);
+  check('vincular a contrato que não existe também não', vincularAContrato(idUnico, 'nao-existe'), false);
 
   DB.remove('transactions', idUnico);
+  DB.remove('recurrences', contratoP);
   DB.remove('accounts', contaP);
-} catch (e) { console.log(` FALHA | pontual: ${e.message}`); fail++; }
+} catch (e) { console.log(` FALHA | fora do ritmo: ${e.message}`); fail++; }
 
-/* ---- A SEÇÃO DE CUSTO FIXO MOSTRA O QUE FOI MARCADO ----
+/* ---- O QUE É CONTA FIXA: o vínculo com o contrato ----
 
-   Ela lia SÓ a tabela de contratos. O lançamento marcado como fixo já era tratado
-   como fixo em toda parte — saía do ritmo e virava previsão dos meses seguintes —,
-   mas não aparecia na única tela onde se gerencia custo fixo. Quem marcasse um por
-   engano não teria onde encontrá-lo. */
-console.log('\n=== Custo fixo: contratos e lançamentos marcados ===');
+   Adivinhar pelo nome foi tentado e recusado: casar a descrição contra o nome do
+   contrato errou 19 lançamentos na base real, porque a descrição do extrato traz
+   o nome do banco — "PAGSEGURO INTERNET IP S.A." virava internet fixa e uma
+   compra em "ARAGUARI" virava conta de água. */
+console.log('\n=== Conta fixa é vínculo, não palpite ===');
+try {
+  const idCtr = DB.upsert('recurrences', { description: 'Internet', amount: 149, type: 'Despesa',
+    periodicidade: 'mensal', dia: 10, inicio: DB.inicioISO(DB.monthPeriod(new Date())),
+    fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0 });
+  const ehFixo = DB.testadorDeGastoFixo();
+  check('descrição de extrato que CITA o contrato não é fixa',
+    ehFixo({ description: 'Transferência enviada pelo Pix - OFICINA - PAGSEGURO INTERNET IP S.A.', amount: 1400 }), false);
+  check('  nem um nome que contém o do contrato por acaso',
+    ehFixo({ description: 'Compra no débito - ARAGUARI II', amount: 7 }), false);
+  check('  e nem o lançamento com o nome EXATO, sem vínculo',
+    ehFixo({ description: 'Internet', amount: 149 }), false);
+  check('a marca antiga também não basta',
+    ehFixo({ description: 'Internet', recurring: true }), false);
+  check('vinculado ao contrato, é fixo', ehFixo({ description: 'x', recurrence_id: idCtr }), true);
+  check('  e parcela, também', ehFixo({ description: 'TV', installment: '3/10' }), true);
+
+  /* O nome exato SUGERE o vínculo — e só sugere. É o que a folha usa para mostrar
+     o aviso, com um botão por linha; aplicar sozinho é o que já deu errado. */
+  const sug = DB.contratoSugeridoPara({ description: 'Internet', amount: 149, type: 'Despesa', status: 'Pago' });
+  check('o nome exato sugere o contrato', sug ? sug.id : null, idCtr);
+  check('  mas a descrição de extrato não sugere nada',
+    DB.contratoSugeridoPara({ description: 'Pix - PAGSEGURO INTERNET IP S.A.', amount: 10, type: 'Despesa' }), null);
+  check('  e quem já tem vínculo não é sugerido de novo',
+    DB.contratoSugeridoPara({ description: 'Internet', amount: 149, type: 'Despesa', recurrence_id: idCtr }), null);
+  DB.remove('recurrences', idCtr);
+} catch (e) { console.log(` FALHA | conta fixa é vínculo: ${e.message}`); fail++; }
+
+/* ---- A FOLHA DE CLASSIFICAÇÃO ----
+
+   A dúvida nasce no Painel e de lá não havia como agir: o formulário não mostra a
+   marca e a edição em massa fica a três telas. */
+console.log('\n=== Classificar: variável, pontual e vincular ===');
+try {
+  const contaK = DB.upsert('accounts', { name: 'Conta Class', type: 'Conta Corrente', balance: 9000, active: true });
+  const pK = DB.monthPeriod(new Date());
+  const diaK = Math.max(0, DB.elapsedDays(pK) - 1);
+  const ctrK = DB.upsert('recurrences', { description: 'Aluguel Class', amount: 2500, type: 'Despesa',
+    periodicidade: 'mensal', dia: 5, inicio: DB.inicioISO(pK), fim_tipo: 'sem_prazo',
+    status: 'ativa', geradas: 0, scope: 'Família', member: MEMBRO_COMUM, method: 'Débito' });
+  const idGrande = DB.upsert('transactions', {
+    description: 'Aluguel Class', amount: 2500, date: DB.somarDiasISO(DB.inicioISO(pK), diaK),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaK,
+  });
+
+  const heroK = renderInicio(pK);
+  const projetaK = DB.variavelProjetado(pK).dias > 0;
+  check(projetaK ? 'a linha do variável abre a classificação' : 'sem projeção, o hero não oferece o atalho',
+    heroK.includes('data-classificar'), projetaK);
+
+  openClassificarGastos(pK);
+  const folha = els['#modal'] ? els['#modal'].innerHTML : '';
+  check('a folha lista os gastos do mês', folha.includes('Aluguel Class'), true);
+  check('  com os dois estados à vista', folha.includes('>variável<') && folha.includes('>pontual<'), true);
+  check('  e o maior valor no topo, que é o que distorce a projeção',
+    folha.indexOf('Aluguel Class') < folha.indexOf('Mercado'), true);
+  /* A SUGESTÃO DE VÍNCULO: nome igual ao de um contrato ativo, sem vínculo. É o
+     caso dos nove lançamentos de agosto que somavam R$ 5.460,80 no ritmo. */
+  check('  e sugere o vínculo com o contrato de mesmo nome',
+    folha.includes(`data-vincular="${idGrande}"`), true);
+  check('  dizendo a qual contrato', folha.includes(`data-contrato="${ctrK}"`), true);
+
+  const antesK = DB.variavelProjetado(pK);
+  check('vincular pela folha grava', vincularAContrato(idGrande, ctrK), true);
+  check('  e o vínculo fica no lançamento',
+    DB.get('transactions', idGrande).recurrence_id, ctrK);
+  if (projetaK) {
+    check('  tirando o gasto do ritmo',
+      Math.round((antesK.diaRitmo - DB.variavelProjetado(pK).diaRitmo) * antesK.decorridos), 2500);
+  }
+  /* Vinculado, ele sai da lista de sugestões: não há mais o que oferecer. */
+  openClassificarGastos(pK);
+  check('  e a sugestão desaparece',
+    (els['#modal'].innerHTML || '').includes(`data-vincular="${idGrande}"`), false);
+
+  /* Quem já é de contrato não oferece botão de classe: a repetição é decidida no
+     contrato, e alternar aqui criaria um estado que o próximo cálculo desfaz. */
+  const doContrato = { id: 'x1', description: 'Do contrato', amount: 10, date: todayISO(), recurrence_id: 'r9' };
+  const comParcela = { id: 'x2', description: 'Parcelado', amount: 10, date: todayISO(), installment: '2/5' };
+  check('lançamento de contrato não oferece os botões',
+    linhaDeClassificacao(doContrato, 'contrato').includes('data-classe'), false);
+  check('  e diz que está fora da projeção',
+    linhaDeClassificacao(doContrato, 'contrato').includes('fora da projeção'), true);
+  check('parcela também não oferece',
+    linhaDeClassificacao(comParcela, 'contrato').includes('data-classe'), false);
+  const linhaComum = linhaDeClassificacao({ id: 'x3', description: 'Mercado', amount: 10, date: todayISO(), type: 'Despesa' }, 'variavel');
+  check('  já um gasto comum oferece variável e pontual',
+    ['variavel', 'pontual'].every(c => linhaComum.includes(`data-classe="${c}"`)), true);
+  check('  e nunca um botão de "fixo", que não existe mais',
+    linhaComum.includes('data-classe="fixo"'), false);
+  check('  com o estado atual em destaque',
+    (linhaComum.match(/class="cg-b on"/g) || []).length, 1);
+
+  /* Escolher o contrato: só os ATIVOS aparecem. Vincular a um cancelado não faria
+     o gasto se repetir, e a tela prometeria o contrário. */
+  const idOutro = DB.upsert('transactions', {
+    description: 'Gasto solto', amount: 90, date: DB.somarDiasISO(DB.inicioISO(pK), diaK),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaK,
+  });
+  DB.upsert('recurrences', { ...DB.get('recurrences', ctrK), status: 'cancelada' });
+  openEscolherContrato(idOutro, pK);
+  check('a escolha de contrato não lista cancelado',
+    (els['#modal'].innerHTML || '').includes(`data-contrato="${ctrK}"`), false);
+  DB.upsert('recurrences', { ...DB.get('recurrences', ctrK), status: 'ativa' });
+  openEscolherContrato(idOutro, pK);
+  check('  e lista o ativo', (els['#modal'].innerHTML || '').includes(`data-contrato="${ctrK}"`), true);
+  closeModal();
+
+  DB.remove('transactions', idOutro);
+  DB.remove('transactions', idGrande);
+  DB.remove('recurrences', ctrK);
+  DB.remove('accounts', contaK);
+} catch (e) { console.log(` FALHA | classificar gastos: ${e.message}`); fail++; }
+
+/* ---- CUSTO FIXO: SÓ CONTRATOS ----
+
+   A seção chegou a somar os lançamentos marcados `recurring`, quando eles eram
+   tratados como fixos. Com o contrato virando fonte única eles saíram — e com
+   eles a divergência entre este card e a tela "Contas fixas", que sempre leu só
+   contratos. Uma fonte, um número. */
+console.log('\n=== Custo fixo mensal: uma fonte só ===');
 try {
   const pC = DB.monthPeriod(new Date());
   const antesCF = DB.custoFixoMensal();
   const contaCF = DB.upsert('accounts', { name: 'Conta CF', type: 'Conta Corrente', balance: 5000, active: true });
+
+  /* Lançamento com a marca antiga NÃO entra: se entrasse, o card diria um total
+     que a tela "Contas fixas" não confirma. */
   const idMarcado = DB.upsert('transactions', {
     description: 'Academia marcada', amount: 200, date: DB.somarDiasISO(DB.inicioISO(pC), 1),
     type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
     method: 'Débito', account_id: contaCF, recurring: true,
   });
-  const cf = DB.custoFixoMensal();
-  const achado = cf.itens.find(i => i.descricao === 'Academia marcada');
-  check('o lançamento marcado aparece no custo fixo', !!achado, true);
-  check('  com o valor dele', achado ? achado.mensal : 0, 200);
-  check('  e dizendo que veio de marcação, não de contrato', achado ? achado.origem : '', 'marcado');
-  check('  o total cresce exatamente esse valor',
-    Math.round((cf.total - antesCF.total) * 100), 20000);
-  check('os contratos continuam marcados como contrato',
-    cf.itens.filter(i => i.origem === 'contrato').length, antesCF.itens.length);
-  check('e a tela mostra a origem em cada linha', custoFixoCard().includes('marcado'), true);
-
-  /* NÃO PODE DOBRAR: um lançamento com o nome de um contrato é a materialização
-     dele. Somar os dois cobraria o aluguel duas vezes no custo fixo.
-
-     O CONTRATO É CRIADO AQUI. A primeira versão pegava um contrato existente no
-     cenário — e neste ponto da suíte ainda não há nenhum, então o `if` nunca
-     rodava e a sabotagem que removia a proteção passou despercebida. */
-  const nomeDeContrato = 'Streaming Dobra';
-  const idContratoCF = DB.upsert('recurrences', {
-    description: nomeDeContrato, amount: 120, type: 'Despesa', periodicidade: 'mensal',
-    dia: 8, inicio: DB.inicioISO(pC), fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0,
-  });
-  const comContratoCF = DB.custoFixoMensal();
-  check('o contrato entra no custo fixo', comContratoCF.itens.some(i => i.descricao === nomeDeContrato), true);
-
-  const idDobra = DB.upsert('transactions', {
-    description: nomeDeContrato, amount: 999, date: DB.somarDiasISO(DB.inicioISO(pC), 1),
-    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
-    method: 'Débito', account_id: contaCF, recurring: true,
-  });
-  const cfDobra = DB.custoFixoMensal();
-  check('  e o lançamento com o mesmo nome não duplica a linha',
-    cfDobra.itens.filter(i => String(i.descricao).toLowerCase() === nomeDeContrato.toLowerCase()).length, 1);
-  check('  nem soma duas vezes no total',
-    Math.round(cfDobra.total * 100), Math.round(comContratoCF.total * 100));
-  check('  e o valor que fica é o do contrato',
-    (cfDobra.itens.find(i => i.descricao === nomeDeContrato) || {}).mensal, 120);
-  DB.remove('transactions', idDobra);
-  DB.remove('recurrences', idContratoCF);
-
-  /* Fatura e parcela não são custo fixo solto: a compra no cartão pesa na fatura,
-     e a parcela já nasce em todas elas. */
-  const idNoCartao = DB.upsert('transactions', {
-    description: 'Assinatura no cartao', amount: 50, date: DB.somarDiasISO(DB.inicioISO(pC), 1),
-    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
-    method: 'Cartão de Crédito', card_id: (DB.all('cards')[0] || {}).id, recurring: true,
-  });
-  check('compra no cartão marcada não entra no custo fixo',
-    DB.custoFixoMensal().itens.some(i => i.descricao === 'Assinatura no cartao'), false);
-  DB.remove('transactions', idNoCartao);
-
+  const cfMarcado = DB.custoFixoMensal();
+  check('lançamento com a marca antiga não entra no custo fixo',
+    cfMarcado.itens.some(i => i.descricao === 'Academia marcada'), false);
+  check('  e o total não muda por causa dele',
+    Math.round(cfMarcado.total * 100), Math.round(antesCF.total * 100));
   DB.remove('transactions', idMarcado);
+
+  /* O CONTRATO entra, e é a única fonte. */
+  const idCtrCF = DB.upsert('recurrences', {
+    description: 'Academia contrato', amount: 200, type: 'Despesa', valor_tipo: 'fixo',
+    periodicidade: 'mensal', dia: 8, inicio: DB.inicioISO(pC), fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0,
+  });
+  const cfCtr = DB.custoFixoMensal();
+  const achado = cfCtr.itens.find(i => i.descricao === 'Academia contrato');
+  check('o contrato entra no custo fixo', !!achado, true);
+  check('  com o valor dele', achado ? achado.mensal : 0, 200);
+  check('  e o total cresce exatamente esse valor',
+    Math.round((cfCtr.total - antesCF.total) * 100), 20000);
+  check('todo item do custo fixo vem de contrato',
+    cfCtr.itens.every(i => i.origem === 'contrato'), true);
+
+  /* AS DUAS TELAS CONTAM A MESMA HISTÓRIA — é o que a fonte única compra. */
+  const naTela = renderCartoes();
+  check('o card mostra o contrato', naTela.includes('Academia contrato'), true);
+  openRecorrencias();
+  check('  e a tela "Contas fixas" mostra o mesmo',
+    (els['#modal'].innerHTML || '').includes('Academia contrato'), true);
+  closeModal();
+
+  DB.remove('recurrences', idCtrCF);
   DB.remove('accounts', contaCF);
-} catch (e) { console.log(` FALHA | custo fixo com marcados: ${e.message}`); fail++; }
+} catch (e) { console.log(` FALHA | custo fixo uma fonte: ${e.message}`); fail++; }
 
 console.log('\n=== Puxar para atualizar desligado ===');
 {
@@ -7375,8 +7388,11 @@ check('função is_member definida antes das policies', schema.indexOf('function
        gastos em 2 dias viravam projeção de R$ 162.807, e daí saía "poupança
        projetada −671%" que o Conselheiro repetia como alerta. */
     const antesProj = DB.projecaoDeGasto(pG).total;
+    const ctrGestao = DB.upsert('recurrences', { description: 'Aluguel Gestao', amount: 3000,
+      type: 'Despesa', valor_tipo: 'fixo', periodicidade: 'mensal', dia: 5, inicio: DB.inicioISO(pG),
+      fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0, ...baseG });
     DB.upsert('transactions', { ...baseG, description: 'Aluguel Gestao', amount: 3000, date: hojeG,
-      type: 'Despesa', status: 'Pago', recurring: true });
+      type: 'Despesa', status: 'Pago', recurrence_id: ctrGestao });
     const comFixo = DB.projecaoDeGasto(pG).total;
     check('gasto fixo entra pelo valor, não pelo ritmo', Math.round(comFixo - antesProj), 3000);
     DB.upsert('transactions', { ...baseG, description: 'Mercado Gestao', amount: 120, date: hojeG,

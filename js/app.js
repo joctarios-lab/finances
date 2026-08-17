@@ -2129,7 +2129,10 @@ function passaNosFiltros(t, ignorarJanela) {
     }
     if (f.valorMin && Number(t.amount) < Number(f.valorMin)) return false;
     if (f.valorMax && Number(t.amount) > Number(f.valorMax)) return false;
-    if (f.recorrente && !t.recurring) return false;
+    /* "Recorrente" passou a ser o VÍNCULO com o contrato, não a marca antiga:
+       com o contrato como fonte única de repetição, filtrar por `recurring`
+       devolveria lista vazia numa base onde ninguém mais usa a marca. */
+    if (f.recorrente && !t.recurrence_id) return false;
     if (busca) {
       const alvo = DB._semAcento([
         t.description, t.notes, t.member, t.method, t.installment,
@@ -3061,13 +3064,11 @@ function renderExtrato(period) {
           ativos.length ? ` de ${DB.txOfPeriod(period).length} no período` : ''}` : 'nada no período'}</small>
       </div>
       <div class="sec-acoes">
-        <!-- "Custos fixos" é o caminho LEGADO: copia à mão os lançamentos marcados
-             como recorrentes. O formulário não oferece mais essa marca — quem repete
-             agora vira contrato em "Se repete?", que se gera sozinho. O botão fica
-             enquanto existir dado antigo para materializar, e some quando não houver:
-             um botão que não faz nada é pior que botão nenhum. -->
-        ${isCurrent && DB.all('transactions').some(t => t.recurring && !DB.isNeutral(t))
-          ? '<button class="sec-btn" id="btn-recur" title="Lançar os custos fixos que ainda faltam neste mês"><span data-ico="sync"></span>Custos fixos</button>' : ''}
+        <!-- O botão "Custos fixos" morava aqui. Ele copiava à mão os lançamentos
+             marcados como recorrentes, um mês por vez — o mecanismo antigo de repetição.
+             Com o CONTRATO virando a fonte única de movimentação futura ele deixou
+             de ter o que fazer: o contrato gera sozinho, na data certa, já com
+             vínculo. Um botão que não faz nada é pior que botão nenhum. -->
         ${txs.length ? '<button class="sec-btn" id="btn-massa"><span data-ico="edit"></span>Editar</button>' : ''}
       </div>
     </div>
@@ -3451,21 +3452,27 @@ function ligarAcoesDeFatura(escopo) {
   });
 }
 
-/* Classificar os gastos do mês em fixo ou variável, um toque por linha.
+/* Classificar os gastos do mês: o que entra na projeção e o que não entra.
 
    A projeção do fim do mês extrapola o gasto VARIÁVEL, então ela depende de o app
-   saber o que é fixo. O único sinal confiável para isso é a marcação — adivinhar
-   pelo nome do contrato foi tentado e recusado, porque errava feio no que vem de
-   extrato bancário (ver `testadorDeGastoFixo`).
+   saber o que NÃO é variável. São duas coisas diferentes:
 
-   Só que a marca vivia escondida: o formulário de lançamento não a mostra mais e
-   a edição em massa exige ir ao Extrato, montar um filtro e abrir a tela do lote.
-   Quem vê a projeção estranha no Painel não tem como agir dali — e é ali que a
-   dúvida nasce. Esta folha é o caminho curto: a lista do mês, o estado de cada
-   linha à vista, e o ritmo recalculado a cada toque.
+     conta fixa  o vínculo com o CONTRATO diz isso. Não é marca no lançamento —
+                 é o contrato que sabe periodicidade, prazo e valor, e é ele que
+                 gera a ocorrência dos meses seguintes.
+     pontual     aconteceu e não volta. Sai do ritmo e não repete nada.
 
-   Ordena pelo VALOR, não pela data: o que distorce a projeção são os poucos
-   lançamentos grandes lidos como variável, e eles precisam estar no topo. */
+   Havia uma marca paralela (`recurring`) fazendo o papel de "conta fixa", e ela
+   criava duas fontes para a mesma pergunta. Medido nesta base: marcar uma
+   dentadura de R$ 770 como fixa somava R$ 770 às contas de setembro E de outubro,
+   e o item não aparecia na tela "Contas fixas", que lê só contratos. Por isso a
+   folha não marca "fixo": ela OFERECE o vínculo com o contrato.
+
+   A folha existe porque a dúvida nasce no Painel, e de lá não havia como agir: o
+   formulário não mostra mais a marca e a edição em massa fica a três telas.
+
+   Ordena pelo VALOR: o que distorce a projeção são os poucos lançamentos grandes
+   lidos como variável, e eles precisam estar no topo. */
 function openClassificarGastos(period) {
   const p = period || DB.monthPeriod(new Date());
   const itens = DB.expensesOf(p)
@@ -3474,18 +3481,35 @@ function openClassificarGastos(period) {
 
   const v = DB.variavelProjetado(p);
   const conta = classe => itens.filter(t => DB.classeDoGasto(t) === classe).length;
-  /* Os três, ditos pelo EFEITO e não pelo nome: o rótulo sozinho não avisa que
-     marcar como fixo faz o gasto voltar todo mês, e foi justamente esse efeito
-     escondido que criou a necessidade do "pontual". */
+
+  /* SUGESTÕES DE VÍNCULO: lançamento com o nome INTEIRO de um contrato ativo e sem
+     vínculo. Aparecem em bloco no topo porque são o que mais distorce o ritmo — na
+     base real, nove lançamentos de agosto somando R$ 5.460,80 que o app lia como
+     gasto variável e multiplicava pelos dias restantes.
+
+     Cada um pede confirmação. Casar sozinho por texto já errou 19 lançamentos aqui
+     (a descrição do Pix traz o nome do banco), e o fato de a comparação agora ser
+     do nome inteiro reduz o risco sem eliminá-lo. */
+  const sugestoes = itens
+    .map(t => ({ tx: t, contrato: DB.contratoSugeridoPara(t) }))
+    .filter(s => s.contrato);
+
   openModal(`
-    <div class="modal-title">Fixo, variável ou pontual — ${esc(p.label)}<button class="close-x" id="cg-back"><span data-ico="back"></span></button></div>
+    <div class="modal-title">O que entra na projeção — ${esc(p.label)}<button class="close-x" id="cg-back"><span data-ico="back"></span></button></div>
     <div class="cg-ajuda">
-      <p><b>Fixo</b> — conta que se repete. Sai do ritmo do variável e passa a ser
-        prevista nos próximos meses.</p>
       <p><b>Variável</b> — o dia a dia. É o único que entra na projeção do fim do mês.</p>
-      <p><b>Pontual</b> — aconteceu e não volta. Não entra na projeção nem se repete.</p>
-      <p class="cg-conta">${conta('fixo')} fixos · ${conta('variavel')} variáveis · ${conta('pontual')} pontuais</p>
+      <p><b>Pontual</b> — aconteceu e não volta. Fica fora da projeção e não repete.</p>
+      <p><b>É contrato</b> — conta fixa. Vincula ao contrato, que cuida dos próximos meses.</p>
+      <p class="cg-conta">${conta('variavel')} variáveis · ${conta('pontual')} pontuais · ${conta('contrato')} de contrato</p>
     </div>
+    ${sugestoes.length ? `<div class="cg-sug">
+      <p class="cg-sug-tit">${sugestoes.length} ${sugestoes.length === 1 ? 'lançamento parece ser' : 'lançamentos parecem ser'} de conta fixa</p>
+      <p class="muted">Têm o nome de um contrato ativo e estão contando como gasto variável. Vincular tira do ritmo e deixa o contrato cuidar dos próximos meses.</p>
+      ${sugestoes.map(s => `<div class="cg-sug-l">
+        <span><b>${esc(s.tx.description)}</b> <i>${fmtDay(s.tx.date)} · ${fmt(s.tx.amount)}</i></span>
+        <button class="sec-btn" data-vincular="${s.tx.id}" data-contrato="${s.contrato.id}">vincular</button>
+      </div>`).join('')}
+    </div>` : ''}
     <div class="card" style="margin-bottom:12px">
       <div class="proj-row"><span>Variável até hoje</span><b>${fmt(v.diaRitmo * v.decorridos)}</b></div>
       <div class="proj-row"><span>Ritmo</span><b>${fmt(v.diaRitmo)}/dia</b></div>
@@ -3498,50 +3522,94 @@ function openClassificarGastos(period) {
   ligarClassificacao(p);
 }
 
-/* Uma linha: o lançamento e os dois estados, com o atual destacado. Dois botões
-   em vez de um interruptor porque "fixo" e "variável" são nomes que o leitor
-   precisa ver — um interruptor sozinho obrigaria a lembrar qual lado é qual.
+/* Uma linha: o lançamento e o que fazer com ele.
 
-   O vínculo com contrato e a parcela NÃO viram botão: eles já são fixos por
-   origem, e deixar alternar ali criaria um estado que o app desfaz sozinho no
-   próximo cálculo. A linha diz por que está travada. */
+   Quem já é de CONTRATO não oferece botão: a repetição dele é decidida no
+   contrato, e alternar aqui criaria um estado que o próximo cálculo desfaz. A
+   linha diz de onde vem, e a tela "Contas fixas" é onde se mexe.
+
+   "É contrato" é AÇÃO, não estado: abre a escolha do contrato. Sem contrato
+   cadastrado ela não aparece — não há a que vincular, e um botão que não leva a
+   nada é pior que botão nenhum. */
 function linhaDeClassificacao(t, classe) {
-  const travado = !!t.recurrence_id || !!t.installment;
+  if (classe === 'contrato') {
+    return `<div class="cg-linha">
+      <span class="cg-info"><b>${esc(t.description)}</b><small>${fmtDay(t.date)} · ${
+        t.recurrence_id ? 'de contrato' : 'parcela ' + esc(t.installment)}</small></span>
+      <span class="cg-val">${fmt(t.amount)}</span>
+      <span class="cg-travado">fora da projeção</span>
+    </div>`;
+  }
   const b = (valor, rot) => `<button class="cg-b ${classe === valor ? 'on' : ''}" data-classe="${valor}" data-tx="${t.id}">${rot}</button>`;
+  const temContrato = DB.all('recurrences').some(r => r.status === 'ativa' && DB.isExpense(t));
   return `<div class="cg-linha">
-    <span class="cg-info"><b>${esc(t.description)}</b><small>${fmtDay(t.date)}${
-      t.recurrence_id ? ' · contrato' : t.installment ? ' · parcela ' + esc(t.installment) : ''}</small></span>
+    <span class="cg-info"><b>${esc(t.description)}</b><small>${fmtDay(t.date)}</small></span>
     <span class="cg-val">${fmt(t.amount)}</span>
-    ${travado
-      ? '<span class="cg-travado">fixo</span>'
-      : `<span class="cg-botoes">${b('fixo', 'fixo')}${b('variavel', 'variável')}${b('pontual', 'pontual')}</span>`}
+    <span class="cg-botoes">${b('variavel', 'variável')}${b('pontual', 'pontual')}${
+      temContrato ? `<button class="cg-b" data-escolher="${t.id}">é contrato</button>` : ''}</span>
   </div>`;
 }
 
-/* Marcar redesenha a folha inteira, e é de propósito: o cartão do topo mostra o
-   ritmo, e ele muda a cada toque. Uma atualização só da linha deixaria o número
-   do resumo mentindo até alguém fechar e reabrir. */
+/* Escolher a qual contrato o lançamento pertence. Lista só os ATIVOS: vincular a
+   um cancelado não faria o gasto se repetir, e a tela prometeria o contrário. */
+function openEscolherContrato(txId, period) {
+  const t = DB.get('transactions', txId);
+  if (!t) return toast('Lançamento não encontrado');
+  const ativos = DB.all('recurrences').filter(r => r.status === 'ativa' && r.type !== 'Receita');
+  openModal(`
+    <div class="modal-title">De qual conta fixa?<button class="close-x" id="ec-back"><span data-ico="back"></span></button></div>
+    <p class="muted" style="margin-bottom:12px"><b>${esc(t.description)}</b> · ${fmt(t.amount)} · ${fmtDay(t.date)}<br>
+      Vincular tira este lançamento do ritmo do variável. Os próximos meses passam a
+      vir do contrato, que já se lança sozinho na data certa.</p>
+    ${ativos.map(r => `<button class="cg-esc" data-vincular="${t.id}" data-contrato="${r.id}">
+      <span><b>${esc(r.description)}</b><i>dia ${esc(String(r.dia))} · ${fmt(DB.valorDaRecorrencia(r))}</i></span>
+      <span data-ico="chev"></span>
+    </button>`).join('') || '<div class="empty">Nenhuma conta fixa cadastrada. Crie em Configurações → Contas fixas.</div>'}
+  `);
+  $('#ec-back').onclick = () => openClassificarGastos(period);
+  ligarClassificacao(period);
+}
+
 function ligarClassificacao(period) {
   document.querySelectorAll('#modal [data-classe]').forEach(b => b.onclick = () => {
     classificarGasto(b.dataset.tx, b.dataset.classe);
     openClassificarGastos(period);
   });
+  document.querySelectorAll('#modal [data-escolher]').forEach(b => b.onclick = () =>
+    openEscolherContrato(b.dataset.escolher, period));
+  document.querySelectorAll('#modal [data-vincular]').forEach(b => b.onclick = () => {
+    vincularAContrato(b.dataset.vincular, b.dataset.contrato);
+    openClassificarGastos(period);
+  });
 }
 
-/* A gravação em si, fora do handler. O DOM falso da suíte não entrega elementos
-   para `querySelectorAll`, então um teste que dependesse do clique não exercitaria
-   nada — foi o que aconteceu: a sabotagem que removia a gravação passou
-   despercebida. Com a regra numa função própria, o teste chama o que o botão
-   chama.
+/* A gravação, fora do handler: o DOM falso da suíte não entrega elementos para
+   `querySelectorAll`, então um teste que dependesse do clique não exercitaria
+   nada — foi o que aconteceu antes, e a sabotagem passou despercebida.
 
-   OS TRÊS ESTADOS SE EXCLUEM, e é aqui que isso é garantido: gravar `pontual`
-   sem limpar `recurring` deixaria um lançamento fixo E pontual ao mesmo tempo, e
-   cada leitor do app decidiria por conta própria qual dos dois vale. */
+   Só duas classes se gravam. "Conta fixa" não é classe: é vínculo, e mora em
+   `vincularAContrato`. */
 function classificarGasto(id, classe) {
   const t = DB.get('transactions', id);
-  if (!t || !['fixo', 'variavel', 'pontual'].includes(classe)) return false;
-  DB.upsert('transactions', { ...t, recurring: classe === 'fixo', pontual: classe === 'pontual' });
+  if (!t || !['variavel', 'pontual'].includes(classe)) return false;
+  DB.upsert('transactions', { ...t, pontual: classe === 'pontual' });
   Sync.autoSync();
+  return true;
+}
+
+/* Vincula um lançamento ao contrato. É o que faz dele "conta fixa": o vínculo sai
+   do ritmo do variável por `testadorDeGastoFixo`, e a repetição passa a ser
+   responsabilidade do contrato.
+
+   Limpa `pontual` de propósito: um lançamento de contrato não é gasto único, e
+   deixar as duas marcas faria cada leitor decidir sozinho qual vale. */
+function vincularAContrato(txId, recId) {
+  const t = DB.get('transactions', txId);
+  const r = DB.get('recurrences', recId);
+  if (!t || !r) return false;
+  DB.upsert('transactions', { ...t, recurrence_id: r.id, pontual: false });
+  Sync.autoSync();
+  toast(`"${t.description}" agora vem de ${r.description} ✓`);
   return true;
 }
 
@@ -4423,33 +4491,6 @@ function bindView() {
   v.querySelectorAll('[data-ver-tag]').forEach(el =>
     el.onclick = () => verLancamentosDaTag(el.dataset.verTag));
 
-  // Custos fixos do mês em 1 clique: copia recorrentes que ainda não existem no período
-  const recurBtn = $('#btn-recur');
-  if (recurBtn) recurBtn.onclick = () => {
-    const period = DB.monthPeriod(new Date());
-    const inPeriodDesc = new Set(DB.txOfPeriod(period).map(t => t.description.toLowerCase()));
-    const templates = {};
-    for (const t of DB.all('transactions').filter(t => t.recurring).sort((a, b) => a.date.localeCompare(b.date)))
-      templates[t.description.toLowerCase()] = t;
-    let n = 0;
-    for (const t of Object.values(templates)) {
-      if (inPeriodDesc.has(t.description.toLowerCase())) continue;
-      if (t.group_id) continue;                       // parcelas já nascem em todas as faturas
-      const novo = { ...t, id: null, date: todayISO(), status: 'A Pagar' };
-      if (novo.card_id) {
-        const card = DB.get('cards', novo.card_id);
-        novo.invoice_key = card ? DB.invoiceKeyFor(card, novo.date) : '';
-      }
-      // A cópia não herda o vínculo com o extrato nem com o parcelamento do original
-      delete novo.updated_at; delete novo.dirty; delete novo.fitid;
-      delete novo.group_id; delete novo.installment;
-      DB.upsert('transactions', novo);
-      n++;
-    }
-    Sync.autoSync(); render();
-    toast(n ? `${n} custo(s) fixo(s) lançado(s) como "A Pagar" ✓` : 'Todos os custos fixos já estão lançados neste mês');
-  };
-
   // Exportar CSV do período (Relatórios)
   const csvBtn = $('#btn-csv');
   if (csvBtn) csvBtn.onclick = () => {
@@ -5255,14 +5296,13 @@ function openMassaEditSheet() {
     ${campo('account_id', 'Conta',
       `<select id="ma-conta">${contas.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>`,
       `Move dinheiro entre os saldos das duas contas. ${nota('account_id')}`)}
-    ${/* Os três estados, não mais "Custo fixo sim/não". Deixar o interruptor
-          binário aqui faria a edição em massa gravar `recurring` sem tocar em
-          `pontual`, e um lote poderia sair com as duas marcas ligadas — os dois
-          caminhos de classificação precisam obedecer à mesma exclusão. */
-      campo('classe', 'Fixo, variável ou pontual',
+    ${/* DUAS classes, não três: "conta fixa" não é marca no lançamento, é o vínculo
+          com o contrato — e vincular em lote, casando pelo nome, é justamente o
+          automático que erra no que vem de extrato bancário. Aqui fica só o que
+          decide a projeção; o vínculo se faz um a um, na folha do Painel. */
+      campo('classe', 'Entra na projeção?',
       `<select id="ma-classe">
         <option value="variavel">Variável — entra na projeção do mês</option>
-        <option value="fixo">Fixo — repete e vira previsão dos próximos meses</option>
         <option value="pontual">Pontual — aconteceu e não volta</option>
       </select>`)}
     ${campo('notes', 'Observações', `
@@ -5299,11 +5339,7 @@ function openMassaEditSheet() {
     if (ligado('member')) campos.member = $('#ma-membro').value;
     if (ligado('method')) campos.method = $('#ma-metodo').value;
     if (ligado('account_id')) campos.account_id = $('#ma-conta').value;
-    if (ligado('classe')) {
-      const classe = $('#ma-classe').value;
-      campos.recurring = classe === 'fixo';
-      campos.pontual = classe === 'pontual';
-    }
+    if (ligado('classe')) campos.pontual = $('#ma-classe').value === 'pontual';
     const extras = {};
     if (ligado('tags')) {
       extras.tags = {
@@ -5348,8 +5384,8 @@ function confirmarMassa(campos, extras) {
   if ('member' in campos) linhas.push([`Passa a ser de <b>${esc(campos.member)}</b>`, alvos.length]);
   if ('method' in campos) linhas.push([`Forma de pagamento vira <b>${esc(campos.method)}</b>`, alvos.length]);
   if ('account_id' in campos) linhas.push([`Conta vira <b>${esc((DB.get('accounts', campos.account_id) || {}).name || '?')}</b> — move os saldos`, conta('account_id')]);
-  if ('recurring' in campos) linhas.push([`Passam a ser <b>${
-    campos.recurring ? 'fixos — e previstos nos próximos meses' : campos.pontual ? 'pontuais' : 'variáveis'}</b>`, alvos.length]);
+  if ('pontual' in campos) linhas.push([`Passam a ser <b>${
+    campos.pontual ? 'pontuais — fora da projeção do mês' : 'variáveis — entram na projeção'}</b>`, alvos.length]);
   if (extras.notes) linhas.push([`Observações ${extras.notes.modo === 'substituir' ? 'viram' : 'ganham'} o texto informado`, alvos.length]);
 
   openSheet(`
