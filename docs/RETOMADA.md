@@ -23,13 +23,16 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 127 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2393 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 128 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2425 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
-Rodar o bloco "CARIMBO DO SERVIDOR" de supabase/schema.sql. É idempotente.
+Rodar supabase/schema.sql (é idempotente). São DUAS coisas agora:
+1. o bloco "CARIMBO DO SERVIDOR" — garantia contra perda de registro;
+2. a coluna "pontual" em transactions — sem ela a classificação de gasto pontual
+   fica só neste aparelho (o push recua sozinho, nada quebra).
 Conferência:
   select event_object_table, trigger_name from information_schema.triggers
    where trigger_name = 'trg_server_at' order by event_object_table;
@@ -117,6 +120,15 @@ mão toda vez.
   COMPROMETIDO é o que foi lançado e ainda não se efetivou. Cortar por data dava
   R$ 359,90/1.999,20 onde o certo é R$ 2.249,10/110,00. Fatura quitada devolve o
   limite — inclusive a só MARCADA como paga, em que `falta` continua cheio.
+- TRÊS estados de gasto, exclusivos: FIXO (contrato, marca ou parcela) sai do
+  ritmo E vira previsão dos meses seguintes; PONTUAL (aconteceu e não volta) sai
+  do ritmo e NÃO vira previsão de nada; VARIÁVEL é o resto e é o único
+  extrapolado. Marcar a dentadura como fixa somava R$ 770 a setembro E outubro —
+  foi por isso que o pontual existe. A exclusão mútua vive em classificarGasto.
+- A coluna `pontual` pode não existir no banco: o push detecta a recusa, reenvia
+  sem ela e registra pela sessão. Nunca exigir migração para o app funcionar.
+- "Custo fixo mensal" mostra contratos E lançamentos marcados, com a origem em
+  cada linha. Lançamento com nome de contrato não duplica: é a materialização.
 - Gasto FIXO é só o que foi MARCADO: vínculo com contrato, marca de custo fixo
   ou parcela. Adivinhar pelo nome do contrato foi tentado e RECUSADO — errou 19
   lançamentos (R$ 5.322) no que vem de extrato: "PAGSEGURO INTERNET IP S.A."

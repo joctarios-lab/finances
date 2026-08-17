@@ -113,7 +113,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE, prazoDaMeta, custoFixoCard, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  cartaoBloco, usoDoLimite, linhasDaPrevisao, openClassificarGastos, linhaDeClassificacao, ligarClassificacao, marcarComoFixo, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
+  cartaoBloco, usoDoLimite, linhasDaPrevisao, openClassificarGastos, linhaDeClassificacao, ligarClassificacao, classificarGasto, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
@@ -4720,9 +4720,15 @@ try {
 
   openMassaEditSheet();
   const formM = els['#sheet'].innerHTML;
+  /* `recurring` virou `classe`: o campo deixou de ser "custo fixo sim/não" e
+     passou a escolher entre fixo, variável e pontual — um interruptor binário
+     gravaria `recurring` sem tocar em `pontual`, e o lote sairia com as duas
+     marcas ligadas. */
   check('todo campo do formulário tem interruptor',
-    ['type', 'category_id', 'tags', 'status', 'scope', 'member', 'method', 'account_id', 'recurring', 'notes']
+    ['type', 'category_id', 'tags', 'status', 'scope', 'member', 'method', 'account_id', 'classe', 'notes']
       .every(c => formM.includes(`data-liga="${c}"`)), true);
+  check('e a classe do gasto oferece os três estados',
+    ['variavel', 'fixo', 'pontual'].every(v => formM.includes(`value="${v}"`)), true);
   check('o lote também troca o tipo', formM.includes('id="ma-tipo"'), true);
   check('e pede o destino ao virar transferência', formM.includes('id="ma-destino"'), true);
   check('e os controles nascem escondidos',
@@ -5235,11 +5241,11 @@ try {
   /* Chama o que o BOTÃO chama. Gravar por `DB.upsert` aqui testaria o banco, não a
      tela: a sabotagem que tirava a gravação da folha passou despercebida
      justamente porque o teste não passava por ela. */
-  check('marcar pela folha grava a classificação', marcarComoFixo(idGrande, true), true);
+  check('marcar pela folha grava a classificação', classificarGasto(idGrande, 'fixo'), true);
   const depoisK = DB.variavelProjetado(pK);
   check('  e a marca fica no lançamento',
     !!DB.get('transactions', idGrande).recurring, true);
-  check('  marcar o que não existe não quebra', marcarComoFixo('nao-existe', true), false);
+  check('  marcar o que não existe não quebra', classificarGasto('nao-existe', 'fixo'), false);
   if (projetaK) {
     check('marcar como fixo tira o gasto do ritmo',
       Math.round((antesK.diaRitmo - depoisK.diaRitmo) * antesK.decorridos), 2500);
@@ -5248,7 +5254,7 @@ try {
   }
   /* E DESMARCAR VOLTA: a classificação é uma decisão de quem usa, não um caminho
      de mão única. */
-  marcarComoFixo(idGrande, false);
+  classificarGasto(idGrande, 'variavel');
   check('  desmarcar devolve o gasto ao ritmo',
     Math.round(DB.variavelProjetado(pK).diaRitmo * 100), Math.round(antesK.diaRitmo * 100));
 
@@ -5291,16 +5297,152 @@ try {
   const comContrato = { id: 'x1', description: 'Do contrato', amount: 10, date: todayISO(), recurrence_id: 'r9' };
   const comParcela = { id: 'x2', description: 'Parcelado', amount: 10, date: todayISO(), installment: '2/5' };
   check('lançamento de contrato não oferece o botão',
-    linhaDeClassificacao(comContrato, true).includes('data-fixo'), false);
-  check('  e diz que está travado', linhaDeClassificacao(comContrato, true).includes('cg-travado'), true);
-  check('parcela também não oferece', linhaDeClassificacao(comParcela, true).includes('data-var'), false);
-  check('  já um gasto comum oferece os dois',
-    /data-fixo[\s\S]*data-var/.test(linhaDeClassificacao({ id: 'x3', description: 'Mercado', amount: 10, date: todayISO() }, false)), true);
+    linhaDeClassificacao(comContrato, 'fixo').includes('data-classe'), false);
+  check('  e diz que está travado', linhaDeClassificacao(comContrato, 'fixo').includes('cg-travado'), true);
+  check('parcela também não oferece', linhaDeClassificacao(comParcela, 'fixo').includes('data-classe'), false);
+  const linhaComum = linhaDeClassificacao({ id: 'x3', description: 'Mercado', amount: 10, date: todayISO() }, 'variavel');
+  check('  já um gasto comum oferece os TRÊS',
+    ['fixo', 'variavel', 'pontual'].every(c => linhaComum.includes(`data-classe="${c}"`)), true);
+  check('  com o estado atual em destaque',
+    (linhaComum.match(/class="cg-b on"/g) || []).length, 1);
 
   closeModal();
   DB.remove('transactions', idGrande);
   DB.remove('accounts', contaK);
 } catch (e) { console.log(` FALHA | classificar gastos: ${e.message}`); fail++; }
+
+/* ---- PONTUAL: o gasto que aconteceu e não volta ----
+
+   Os dois estados que havia não davam conta dele. Medido na base real, marcando
+   uma dentadura de R$ 770 como FIXA: o ritmo do variável caía (certo), mas as
+   contas de setembro subiam R$ 770 e as de outubro também, e o saldo previsto do
+   mês seguinte caía junto. Tirar do ritmo custava criar um compromisso eterno. */
+console.log('\n=== Pontual: fora do ritmo e fora da previsão ===');
+try {
+  const contaP = DB.upsert('accounts', { name: 'Conta Pontual', type: 'Conta Corrente', balance: 9000, active: true });
+  const pP = DB.monthPeriod(new Date());
+  const proxP2 = DB.monthPeriod(new Date(), 1);
+  const idUnico = DB.upsert('transactions', {
+    description: 'Dentadura unica', amount: 770,
+    date: DB.somarDiasISO(DB.inicioISO(pP), Math.max(0, DB.elapsedDays(pP) - 1)),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Débito', account_id: contaP,
+  });
+  const foto = () => ({
+    ritmo: DB.variavelProjetado(pP).diaRitmo,
+    saiProx: DB.previsaoDoMes(proxP2).sai,
+    projeta: (DB.previstosNaoLancados(proxP2) || []).some(i => /dentadura unica/i.test(String(i.descricao || i.titulo || ''))),
+  });
+
+  /* No ÚLTIMO dia do ciclo não há ritmo — não sobra dia para extrapolar —, então
+     as comparações de ritmo não se aplicam. O que vale ali é o outro lado da
+     regra: o pontual não virar previsão, e isso é cobrado em qualquer data. */
+  const temRitmoP = DB.variavelProjetado(pP).dias > 0;
+  const comoVariavel = foto();
+  if (temRitmoP) check('como variável, ele entra no ritmo', comoVariavel.ritmo > 0, true);
+  check('  e não vira previsão do mês que vem', comoVariavel.projeta, false);
+
+  classificarGasto(idUnico, 'fixo');
+  const comoFixo = foto();
+  if (temRitmoP) check('como fixo, sai do ritmo', comoFixo.ritmo < comoVariavel.ritmo, true);
+  /* E ESTE É O PREÇO que o pontual existe para não pagar. */
+  check('  mas passa a ser previsto no mês que vem', comoFixo.projeta, true);
+  check('  somando ao que se deve lá', Math.round(comoFixo.saiProx - comoVariavel.saiProx), 770);
+
+  classificarGasto(idUnico, 'pontual');
+  const comoPontual = foto();
+  check('como pontual, sai do ritmo igual ao fixo',
+    Math.round(comoPontual.ritmo * 100), Math.round(comoFixo.ritmo * 100));
+  check('  e NÃO vira previsão de mês nenhum', comoPontual.projeta, false);
+  check('  nem soma às contas do mês que vem',
+    Math.round(comoPontual.saiProx * 100), Math.round(comoVariavel.saiProx * 100));
+
+  /* OS TRÊS SE EXCLUEM. Gravar `pontual` sem limpar `recurring` deixaria o
+     lançamento fixo E pontual ao mesmo tempo, e cada leitor decidiria sozinho
+     qual dos dois vale. */
+  const depoisPontual = DB.get('transactions', idUnico);
+  check('marcar pontual desliga a marca de fixo', !!depoisPontual.recurring, false);
+  check('  e a classe lida de volta é a que foi gravada', DB.classeDoGasto(depoisPontual), 'pontual');
+  classificarGasto(idUnico, 'fixo');
+  check('marcar fixo desliga a marca de pontual', !!DB.get('transactions', idUnico).pontual, false);
+  classificarGasto(idUnico, 'variavel');
+  check('  e variável desliga as duas', DB.classeDoGasto(DB.get('transactions', idUnico)), 'variavel');
+  check('classe inválida não grava nada', classificarGasto(idUnico, 'inventada'), false);
+
+  DB.remove('transactions', idUnico);
+  DB.remove('accounts', contaP);
+} catch (e) { console.log(` FALHA | pontual: ${e.message}`); fail++; }
+
+/* ---- A SEÇÃO DE CUSTO FIXO MOSTRA O QUE FOI MARCADO ----
+
+   Ela lia SÓ a tabela de contratos. O lançamento marcado como fixo já era tratado
+   como fixo em toda parte — saía do ritmo e virava previsão dos meses seguintes —,
+   mas não aparecia na única tela onde se gerencia custo fixo. Quem marcasse um por
+   engano não teria onde encontrá-lo. */
+console.log('\n=== Custo fixo: contratos e lançamentos marcados ===');
+try {
+  const pC = DB.monthPeriod(new Date());
+  const antesCF = DB.custoFixoMensal();
+  const contaCF = DB.upsert('accounts', { name: 'Conta CF', type: 'Conta Corrente', balance: 5000, active: true });
+  const idMarcado = DB.upsert('transactions', {
+    description: 'Academia marcada', amount: 200, date: DB.somarDiasISO(DB.inicioISO(pC), 1),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Débito', account_id: contaCF, recurring: true,
+  });
+  const cf = DB.custoFixoMensal();
+  const achado = cf.itens.find(i => i.descricao === 'Academia marcada');
+  check('o lançamento marcado aparece no custo fixo', !!achado, true);
+  check('  com o valor dele', achado ? achado.mensal : 0, 200);
+  check('  e dizendo que veio de marcação, não de contrato', achado ? achado.origem : '', 'marcado');
+  check('  o total cresce exatamente esse valor',
+    Math.round((cf.total - antesCF.total) * 100), 20000);
+  check('os contratos continuam marcados como contrato',
+    cf.itens.filter(i => i.origem === 'contrato').length, antesCF.itens.length);
+  check('e a tela mostra a origem em cada linha', custoFixoCard().includes('marcado'), true);
+
+  /* NÃO PODE DOBRAR: um lançamento com o nome de um contrato é a materialização
+     dele. Somar os dois cobraria o aluguel duas vezes no custo fixo.
+
+     O CONTRATO É CRIADO AQUI. A primeira versão pegava um contrato existente no
+     cenário — e neste ponto da suíte ainda não há nenhum, então o `if` nunca
+     rodava e a sabotagem que removia a proteção passou despercebida. */
+  const nomeDeContrato = 'Streaming Dobra';
+  const idContratoCF = DB.upsert('recurrences', {
+    description: nomeDeContrato, amount: 120, type: 'Despesa', periodicidade: 'mensal',
+    dia: 8, inicio: DB.inicioISO(pC), fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0,
+  });
+  const comContratoCF = DB.custoFixoMensal();
+  check('o contrato entra no custo fixo', comContratoCF.itens.some(i => i.descricao === nomeDeContrato), true);
+
+  const idDobra = DB.upsert('transactions', {
+    description: nomeDeContrato, amount: 999, date: DB.somarDiasISO(DB.inicioISO(pC), 1),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Débito', account_id: contaCF, recurring: true,
+  });
+  const cfDobra = DB.custoFixoMensal();
+  check('  e o lançamento com o mesmo nome não duplica a linha',
+    cfDobra.itens.filter(i => String(i.descricao).toLowerCase() === nomeDeContrato.toLowerCase()).length, 1);
+  check('  nem soma duas vezes no total',
+    Math.round(cfDobra.total * 100), Math.round(comContratoCF.total * 100));
+  check('  e o valor que fica é o do contrato',
+    (cfDobra.itens.find(i => i.descricao === nomeDeContrato) || {}).mensal, 120);
+  DB.remove('transactions', idDobra);
+  DB.remove('recurrences', idContratoCF);
+
+  /* Fatura e parcela não são custo fixo solto: a compra no cartão pesa na fatura,
+     e a parcela já nasce em todas elas. */
+  const idNoCartao = DB.upsert('transactions', {
+    description: 'Assinatura no cartao', amount: 50, date: DB.somarDiasISO(DB.inicioISO(pC), 1),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Cartão de Crédito', card_id: (DB.all('cards')[0] || {}).id, recurring: true,
+  });
+  check('compra no cartão marcada não entra no custo fixo',
+    DB.custoFixoMensal().itens.some(i => i.descricao === 'Assinatura no cartao'), false);
+  DB.remove('transactions', idNoCartao);
+
+  DB.remove('transactions', idMarcado);
+  DB.remove('accounts', contaCF);
+} catch (e) { console.log(` FALHA | custo fixo com marcados: ${e.message}`); fail++; }
 
 console.log('\n=== Puxar para atualizar desligado ===');
 {
@@ -7382,6 +7524,86 @@ check('função is_member definida antes das policies', schema.indexOf('function
 
   for (const k of Object.keys(store)) delete store[k];
   Object.assign(store, storeAntes);
+
+/* ---- PUSH SEM A COLUNA NOVA ----
+
+   `pontual` depende de rodar o SQL. Sem um caminho de recuo, publicar uma versão
+   que usa a coluna pararia a sincronização de TRANSAÇÕES em todo aparelho até
+   alguém executar a migração — e o app é offline-first justamente para não
+   depender disso. É o mesmo desenho do fallback de `server_at` no pull: detectar
+   em vez de exigir. */
+console.log('\n=== Push com coluna que o banco ainda não tem ===');
+{
+  const guardaFetch = global.fetch;
+  const guardaOnline = global.navigator.onLine;
+  const guardaDados = DB.data;
+  try {
+    const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S.cfg = { url: 'https://x.supabase.co', anonKey: 'k', access_token: 't',
+      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: FAM_TESTE };
+    S.saveCfg = () => {};
+    global.navigator.onLine = true;
+    S.temServerAt = false;
+    S._semColuna = new Set();
+
+    const enviados = [];
+    let recusas = 0;
+    global.fetch = async (url, opt = {}) => {
+      const u = String(url);
+      if ((opt.method || 'GET') !== 'POST' || !/\/rest\/v1\/transactions/.test(u)) {
+        return { ok: true, status: 200, json: async () => [], text: async () => '' };
+      }
+      const corpo = JSON.parse(opt.body || '[]');
+      enviados.push(corpo);
+      /* O que o PostgREST responde quando a coluna não existe: a mensagem cita o
+         nome dela, e é por esse nome que o push sabe o que remover. */
+      if (corpo.some(r => 'pontual' in r)) {
+        recusas++;
+        return { ok: false, status: 400, json: async () => ({}),
+          text: async () => JSON.stringify({ code: 'PGRST204', message: "Could not find the 'pontual' column of 'transactions' in the schema cache" }) };
+      }
+      return { ok: true, status: 200, json: async () => [], text: async () => '' };
+    };
+
+    DB.data = { meta: {} };
+    for (const t of ['transactions', 'accounts', 'categories', 'cards', 'goals',
+      'goal_entries', 'invoice_status', 'recurrences', 'family_settings']) DB.data[t] = [];
+    DB.data.transactions = [{
+      id: '55555555-5555-4555-8555-555555555555', description: 'Gasto pontual', amount: 12,
+      date: todayISO(), type: 'Despesa', status: 'Pago', scope: 'Família', method: 'PIX',
+      pontual: true, recurring: false, updated_at: new Date().toISOString(), dirty: true,
+    }];
+    await S.syncAll(false).catch(() => {});
+    clearTimeout(S._debounce);
+
+    check('o banco recusa a coluna que não existe', recusas >= 1, true);
+    check('  e o push tenta de novo sem ela', enviados.length >= 2, true);
+    check('  o reenvio não leva mais o campo',
+      enviados.length >= 2 && !('pontual' in enviados[enviados.length - 1][0]), true);
+    check('  e o resto do lançamento chega inteiro',
+      enviados[enviados.length - 1][0].description, 'Gasto pontual');
+    check('a recusa fica registrada para a sessão',
+      S._semColuna.has('transactions.pontual'), true);
+    /* Registrado, o campo nem é montado nas próximas vezes: insistir gastaria uma
+       ida ao servidor por lote, para receber a mesma recusa. */
+    const antes = enviados.length;
+    DB.data.transactions[0].dirty = true;
+    DB.data.transactions[0].updated_at = new Date().toISOString();
+    await S.syncAll(false).catch(() => {});
+    clearTimeout(S._debounce);
+    check('  e não insiste a cada envio',
+      enviados.slice(antes).every(l => !('pontual' in l[0])), true);
+    S._semColuna = new Set();
+  } catch (e) {
+    console.log(` FALHA | push sem coluna: ${e.message}`); fail++;
+  } finally {
+    global.fetch = guardaFetch;
+    global.navigator.onLine = guardaOnline;
+    DB.data = guardaDados;
+    Sync._semColuna = new Set();
+  }
+}
+
 
   console.log(`\n${fail === 0 ? '✅ TUDO CERTO' : '❌ PROBLEMAS ENCONTRADOS'} — ${ok} passaram, ${fail} falharam\n`);
   process.exit(fail ? 1 : 0);

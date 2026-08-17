@@ -110,6 +110,26 @@ create table if not exists transactions (
 alter table transactions add column if not exists pays_invoice text default '';
 create index if not exists idx_tx_pays_invoice on transactions(pays_invoice);
 
+/* PONTUAL: aconteceu, não se repete — a dentadura, a matrícula da escola, o
+   empréstimo cedido a um parente.
+
+   Terceiro estado ao lado de fixo (`recurring`) e variável, e os três se excluem.
+   Existe porque os dois que havia não davam conta de um gasto único:
+
+     variável  entra no ritmo e é extrapolado pelos dias que faltam — infla a
+               projeção do mês inteiro por causa de uma compra que não volta;
+     fixo      não é extrapolado, MAS `recurring` também replica o lançamento nos
+               meses seguintes e alimenta o botão "Custos fixos". Medido: marcar
+               uma dentadura de R$ 770 como fixa acrescentava R$ 770 às contas de
+               setembro E de outubro, e derrubava o saldo previsto do mês que vem.
+
+   Pontual fica fora dos dois: não entra no ritmo e não vira previsão de nada.
+
+   O app FUNCIONA SEM esta coluna: o push detecta a ausência e reenvia sem ela,
+   pelo mesmo caminho que o pull usa com `server_at`. Rodar isto só melhora — a
+   classificação passa a acompanhar a família em vez de ficar num aparelho só. */
+alter table transactions add column if not exists pontual boolean not null default false;
+
 /* Recorrência: o CONTRATO de uma transação que se repete.
 
    Separada das transações de propósito. O modelo antigo copiava o último

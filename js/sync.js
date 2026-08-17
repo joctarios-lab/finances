@@ -44,7 +44,7 @@ const SYNC_TABLES = {
   accounts: ['name', 'type', 'institution', 'balance', 'active', 'is_reserve'],
   cards: ['name', 'brand', 'limit_amount', 'closing_day', 'due_day', 'account_id', 'active'],
   categories: ['name', 'icon', 'scope', 'monthly_budget', 'kind', 'parent_id', 'type'],
-  transactions: ['description', 'amount', 'date', 'scope', 'member', 'method', 'status', 'recurring', 'category_id', 'account_id', 'card_id', 'invoice_key', 'notes', 'type', 'fitid', 'group_id', 'installment', 'adjustment', 'tags', 'to_account', 'pays_invoice', 'recurrence_id'],
+  transactions: ['description', 'amount', 'date', 'scope', 'member', 'method', 'status', 'recurring', 'category_id', 'account_id', 'card_id', 'invoice_key', 'notes', 'type', 'fitid', 'group_id', 'installment', 'adjustment', 'tags', 'to_account', 'pays_invoice', 'recurrence_id', 'pontual'],
   goals: ['name', 'icon', 'target_amount', 'target_date', 'done', 'kind'],
   goal_entries: ['goal_id', 'description', 'amount', 'date', 'from_account', 'to_account', 'status'],
   invoice_status: ['invoice_key', 'paid'],
@@ -87,9 +87,18 @@ const COLUNAS = {
   inicio: 'date!', fim_data: 'date', ultima_geracao: 'date', period_start: 'date!',
   date: 'date!', target_date: 'date',
   deleted: 'bool', active: 'bool', is_reserve: 'bool', recurring: 'bool',
-  adjustment: 'bool', paid: 'bool', done: 'bool',
+  adjustment: 'bool', paid: 'bool', done: 'bool', pontual: 'bool',
   members: 'json', tags: 'json',
 };
+
+/* Colunas que o app usa e o banco PODE ainda não ter, porque dependem de rodar o
+   SQL. Sem esta lista, um schema desatualizado derrubaria o push da tabela
+   inteira — e transações é justamente a que não pode parar.
+
+   Na primeira recusa o nome da coluna sai da montagem e o lote é reenviado sem
+   ele; enquanto durar a sessão, os próximos nem a incluem. É o mesmo desenho do
+   fallback de `server_at` no pull: detectar em vez de exigir. */
+const COLUNAS_OPCIONAIS = { transactions: ['pontual'] };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -143,6 +152,35 @@ const Sync = {
      antigo. Não é persistido de propósito: se o SQL for rodado, basta reabrir o
      app para ele voltar a tentar. */
   temServerAt: null,
+
+  /* Colunas que o banco recusou nesta sessão, como "transactions.pontual".
+     Não é persistido, pelo mesmo motivo de `temServerAt`: se o SQL for rodado,
+     basta reabrir o app para ele voltar a tentar. */
+  _semColuna: new Set(),
+
+  /* Envia um lote e, se o banco recusar por causa de uma coluna OPCIONAL, tira a
+     coluna e reenvia. Sem isto, publicar uma versão que usa coluna nova pararia a
+     sincronização de transações em todo aparelho até alguém rodar a migração —
+     e o app é offline-first justamente para não depender disso.
+
+     Só colunas declaradas em COLUNAS_OPCIONAIS entram nesse caminho: qualquer
+     outra recusa é erro de verdade e precisa aparecer. */
+  async enviarLote(table, lote) {
+    const enviar = corpo => this.rest(`${table}?on_conflict=id`, {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates' },
+      body: JSON.stringify(corpo),
+    });
+    try {
+      return await enviar(lote);
+    } catch (e) {
+      const msg = String(e && e.message || '');
+      const col = (COLUNAS_OPCIONAIS[table] || []).find(c => msg.includes(c));
+      if (!col) throw e;
+      this._semColuna.add(table + '.' + col);
+      return await enviar(lote.map(r => { const c = { ...r }; delete c[col]; return c; }));
+    }
+  },
 
   /* Já baixamos tudo o que a família tem, nesta sessão?
 
@@ -409,6 +447,8 @@ const Sync = {
           if (vivo) {
             for (const c of cols) {
               if (r[c] === undefined) continue;      // ausente segue ausente: default do banco
+              // Coluna que o banco já recusou nesta sessão: nem tenta de novo
+              if (this._semColuna.has(table + '.' + c)) continue;
               const h = higienizar(c, r[c]);
               if (h.omitir) continue;                // NOT NULL com default: o banco preenche
               if (!h.ok) { vivo = false; break; }
@@ -425,13 +465,7 @@ const Sync = {
         }
 
         try {
-          for (const lote of lotes.values()) {
-            await this.rest(`${table}?on_conflict=id`, {
-              method: 'POST',
-              headers: { 'Prefer': 'resolution=merge-duplicates' },
-              body: JSON.stringify(lote),
-            });
-          }
+          for (const lote of lotes.values()) await this.enviarLote(table, lote);
           enviados += enviaveis.length;
           for (const r of enviaveis) delete r.dirty;
         } catch (e) {

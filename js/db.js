@@ -375,7 +375,7 @@ const DB = {
       scope: i.scope,
       member: i.member,
       tags: '',
-      recurring: false,
+      recurring: false, pontual: false,
       adjustment: false,
       invoice_key: '',
       origemPrevista: i.origem,
@@ -1227,6 +1227,33 @@ const DB = {
     return t => !!t.recurrence_id || t.recurring === true || !!t.installment;
   },
 
+  /* OS TRÊS ESTADOS, e eles se excluem:
+
+       fixo      contrato, marca de custo fixo, ou parcela. Sai uma vez por ciclo,
+                 com dia marcado, e VIRA PREVISÃO nos meses seguintes.
+       pontual   aconteceu e não volta — a dentadura, a matrícula, o empréstimo
+                 cedido. Não entra no ritmo e não vira previsão de nada.
+       variável  o resto: mercado, combustível, restaurante. É o único que se
+                 extrapola pelos dias que faltam.
+
+     `pontual` precisou existir porque os dois primeiros não davam conta do gasto
+     único: como variável ele infla o mês inteiro; como fixo ele deixa de ser
+     extrapolado mas passa a ser cobrado todo mês. Medido — marcar uma dentadura
+     de R$ 770 como fixa somava R$ 770 às contas de setembro E de outubro. */
+  classeDoGasto(t) {
+    if (this.testadorDeGastoFixo()(t)) return 'fixo';
+    return t.pontual === true ? 'pontual' : 'variavel';
+  },
+
+  /* Quem NÃO entra no ritmo: fixo e pontual. É o testador que a projeção usa, e
+     existe separado de `testadorDeGastoFixo` porque as duas perguntas são
+     diferentes — "isto se repete?" e "isto se extrapola?". Confundir as duas foi
+     o que fez o gasto único não ter onde caber. */
+  testadorForaDoRitmo() {
+    const ehFixo = this.testadorDeGastoFixo();
+    return t => ehFixo(t) || t.pontual === true;
+  },
+
   /* O gasto VARIÁVEL que ainda vai acontecer, em DOIS cenários.
 
      Um número só fingiria uma precisão que não existe: medido na base real, o
@@ -1250,10 +1277,10 @@ const DB = {
     const dias = this.periodDays(period) - decorridos;
     if (decorridos === 0 || dias <= 0) return { ...vazio, decorridos };
 
-    const ehFixo = this.testadorDeGastoFixo();
+    const foraDoRitmo = this.testadorForaDoRitmo();
     const porDia = {};
     for (const t of this.expensesOf(period)) {
-      if (String(t.date) > hoje || ehFixo(t)) continue;
+      if (String(t.date) > hoje || foraDoRitmo(t)) continue;
       porDia[t.date] = (porDia[t.date] || 0) + (Number(t.amount) || 0);
     }
     /* A série cobre TODOS os dias decorridos, inclusive os sem gasto: a mediana
@@ -1294,7 +1321,7 @@ const DB = {
        o porquê, e é a mesma que `variavelProjetado` usa: duas cópias divergiriam
        na primeira correção que entrasse só de um lado, e aí a projeção de gasto e
        a do hero passariam a discordar sobre o que é fixo. */
-    const ehFixo = this.testadorDeGastoFixo();
+    const ehFixo = this.testadorForaDoRitmo();
     const decorridos = Math.max(1, this.elapsedDays(period));
     const restantes = Math.max(0, this.periodDays(period) - this.elapsedDays(period));
     const ritmoDiario = soma(t => String(t.date) <= hoje && !ehFixo(t)) / decorridos;
@@ -1368,8 +1395,40 @@ const DB = {
           + (Number(String(r.fim_data).slice(5, 7)) - Number(hoje.slice(5, 7)));
         restam = Math.max(0, meses);
       }
-      itens.push({ id: r.id, descricao: r.description, mensal, restam, periodicidade: r.periodicidade });
+      itens.push({ id: r.id, descricao: r.description, mensal, restam, periodicidade: r.periodicidade, origem: 'contrato' });
     }
+
+    /* OS LANÇAMENTOS MARCADOS COMO CUSTO FIXO entram aqui também.
+
+       Eles já eram tratados como fixos em toda parte — saíam do ritmo do variável
+       e viravam previsão nos meses seguintes —, mas esta seção lia SÓ a tabela de
+       contratos. O resultado é a pior combinação possível: o gasto pesa no
+       comprometido de todos os meses à frente e não aparece na única tela onde se
+       gerencia custo fixo. Quem marcasse um por engano não teria onde encontrá-lo.
+
+       Casa por DESCRIÇÃO com os contratos, a mesma chave que o resto do app usa:
+       um lançamento marcado que tenha o nome de um contrato é a materialização
+       dele, não um custo a mais — somar os dois dobraria o aluguel.
+
+       O molde é o mais RECENTE de cada nome, como em `previstosNaoLancados`: o
+       valor da conta de agora, não o de um ano atrás. */
+    const jaTem = new Set(itens.map(i => String(i.descricao).trim().toLowerCase()));
+    const moldes = {};
+    for (const t of this.all('transactions')) {
+      if (t.recurring !== true || this.isNeutral(t) || t.deleted) continue;
+      if (t.card_id || t.group_id) continue;   // fatura e parcela não são custo fixo solto
+      if (!this.isExpense(t)) continue;        // receita recorrente não é custo
+      const k = String(t.description || '').trim().toLowerCase();
+      if (!k || jaTem.has(k)) continue;
+      if (!moldes[k] || String(t.date) > String(moldes[k].date)) moldes[k] = t;
+    }
+    for (const molde of Object.values(moldes)) {
+      itens.push({
+        id: molde.id, descricao: molde.description, mensal: Number(molde.amount) || 0,
+        restam: null, periodicidade: 'mensal', origem: 'marcado',
+      });
+    }
+
     itens.sort((a, b) => b.mensal - a.mensal);
     return { total: itens.reduce((s, i) => s + i.mensal, 0), itens };
   },

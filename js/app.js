@@ -3091,11 +3091,16 @@ function custoFixoCard() {
   return `
     <div class="card">
       <div class="card-head" style="margin-bottom:6px"><div><b>Custo fixo mensal</b><small>${
-        cf.itens.length} contrato(s)${pct !== null ? ` — ${pct}% da renda média` : ''}</small></div>
+        cf.itens.length} ${cf.itens.length === 1 ? 'item' : 'itens'}${pct !== null ? ` — ${pct}% da renda média` : ''}</small></div>
         <span class="num txt-red" style="font-size:18px">${fmtShort(cf.total)}</span></div>
       <div class="res-conta" style="border-top:0;padding:0">
-        ${cf.itens.slice(0, 4).map(i => `<div class="hc-l"><span>${esc(i.descricao)}${
-          i.periodicidade !== 'mensal' ? ` <i>${esc(i.periodicidade)}, por mês</i>` : ''}</span><b>${fmt(i.mensal)}</b></div>`).join('')}
+        ${/* A ORIGEM em cada linha. Contrato se gera sozinho na data certa;
+              lançamento marcado depende do botão "Custos fixos" para virar conta
+              do mês. São compromissos iguais com manutenção diferente, e sem a
+              marca o leitor não tem como saber qual dos dois precisa de ação. */
+          cf.itens.slice(0, 4).map(i => `<div class="hc-l"><span>${esc(i.descricao)} <i>${
+          i.origem === 'marcado' ? 'marcado' : 'contrato'}${
+          i.periodicidade !== 'mensal' ? ` · ${esc(i.periodicidade)}, por mês` : ''}</i></span><b>${fmt(i.mensal)}</b></div>`).join('')}
         ${cf.itens.length > 4 ? `<div class="hc-l hc-d"><span>e mais ${cf.itens.length - 4}</span><b>${
           fmt(cf.itens.slice(4).reduce((s, i) => s + i.mensal, 0))}</b></div>` : ''}
       </div>
@@ -3463,23 +3468,30 @@ function ligarAcoesDeFatura(escopo) {
    lançamentos grandes lidos como variável, e eles precisam estar no topo. */
 function openClassificarGastos(period) {
   const p = period || DB.monthPeriod(new Date());
-  const ehFixo = DB.testadorDeGastoFixo();
   const itens = DB.expensesOf(p)
     .filter(t => t.id && !t.virtual)          // previsão não se edita: não tem o que marcar
     .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0));
 
   const v = DB.variavelProjetado(p);
-  const marcados = itens.filter(ehFixo).length;
+  const conta = classe => itens.filter(t => DB.classeDoGasto(t) === classe).length;
+  /* Os três, ditos pelo EFEITO e não pelo nome: o rótulo sozinho não avisa que
+     marcar como fixo faz o gasto voltar todo mês, e foi justamente esse efeito
+     escondido que criou a necessidade do "pontual". */
   openModal(`
-    <div class="modal-title">Fixo ou variável — ${esc(p.label)}<button class="close-x" id="cg-back"><span data-ico="back"></span></button></div>
-    <p class="muted" style="margin-bottom:12px">O que for <b>variável</b> entra na projeção do fim do mês, no ritmo em que
-      está saindo. O que for <b>fixo</b> conta uma vez só. ${marcados} de ${itens.length} marcados como fixos.</p>
+    <div class="modal-title">Fixo, variável ou pontual — ${esc(p.label)}<button class="close-x" id="cg-back"><span data-ico="back"></span></button></div>
+    <div class="cg-ajuda">
+      <p><b>Fixo</b> — conta que se repete. Sai do ritmo do variável e passa a ser
+        prevista nos próximos meses.</p>
+      <p><b>Variável</b> — o dia a dia. É o único que entra na projeção do fim do mês.</p>
+      <p><b>Pontual</b> — aconteceu e não volta. Não entra na projeção nem se repete.</p>
+      <p class="cg-conta">${conta('fixo')} fixos · ${conta('variavel')} variáveis · ${conta('pontual')} pontuais</p>
+    </div>
     <div class="card" style="margin-bottom:12px">
       <div class="proj-row"><span>Variável até hoje</span><b>${fmt(v.diaRitmo * v.decorridos)}</b></div>
       <div class="proj-row"><span>Ritmo</span><b>${fmt(v.diaRitmo)}/dia</b></div>
       <div class="proj-row"><span>Estimado até o fim do mês</span><b>${fmt(Math.min(v.contido, v.ritmo))} a ${fmt(Math.max(v.contido, v.ritmo))}</b></div>
     </div>
-    <div id="cg-lista">${itens.map(t => linhaDeClassificacao(t, ehFixo(t))).join('')
+    <div id="cg-lista">${itens.map(t => linhaDeClassificacao(t, DB.classeDoGasto(t))).join('')
       || '<div class="empty">Nenhum gasto lançado neste mês.</div>'}</div>
   `);
   $('#cg-back').onclick = closeModal;
@@ -3493,18 +3505,16 @@ function openClassificarGastos(period) {
    O vínculo com contrato e a parcela NÃO viram botão: eles já são fixos por
    origem, e deixar alternar ali criaria um estado que o app desfaz sozinho no
    próximo cálculo. A linha diz por que está travada. */
-function linhaDeClassificacao(t, fixo) {
+function linhaDeClassificacao(t, classe) {
   const travado = !!t.recurrence_id || !!t.installment;
+  const b = (valor, rot) => `<button class="cg-b ${classe === valor ? 'on' : ''}" data-classe="${valor}" data-tx="${t.id}">${rot}</button>`;
   return `<div class="cg-linha">
     <span class="cg-info"><b>${esc(t.description)}</b><small>${fmtDay(t.date)}${
       t.recurrence_id ? ' · contrato' : t.installment ? ' · parcela ' + esc(t.installment) : ''}</small></span>
     <span class="cg-val">${fmt(t.amount)}</span>
     ${travado
       ? '<span class="cg-travado">fixo</span>'
-      : `<span class="cg-botoes">
-          <button class="cg-b ${fixo ? 'on' : ''}" data-fixo="${t.id}">fixo</button>
-          <button class="cg-b ${fixo ? '' : 'on'}" data-var="${t.id}">variável</button>
-        </span>`}
+      : `<span class="cg-botoes">${b('fixo', 'fixo')}${b('variavel', 'variável')}${b('pontual', 'pontual')}</span>`}
   </div>`;
 }
 
@@ -3512,20 +3522,25 @@ function linhaDeClassificacao(t, fixo) {
    ritmo, e ele muda a cada toque. Uma atualização só da linha deixaria o número
    do resumo mentindo até alguém fechar e reabrir. */
 function ligarClassificacao(period) {
-  const marca = (id, valor) => { marcarComoFixo(id, valor); openClassificarGastos(period); };
-  document.querySelectorAll('#modal [data-fixo]').forEach(b => b.onclick = () => marca(b.dataset.fixo, true));
-  document.querySelectorAll('#modal [data-var]').forEach(b => b.onclick = () => marca(b.dataset.var, false));
+  document.querySelectorAll('#modal [data-classe]').forEach(b => b.onclick = () => {
+    classificarGasto(b.dataset.tx, b.dataset.classe);
+    openClassificarGastos(period);
+  });
 }
 
 /* A gravação em si, fora do handler. O DOM falso da suíte não entrega elementos
    para `querySelectorAll`, então um teste que dependesse do clique não exercitaria
    nada — foi o que aconteceu: a sabotagem que removia a gravação passou
    despercebida. Com a regra numa função própria, o teste chama o que o botão
-   chama. */
-function marcarComoFixo(id, valor) {
+   chama.
+
+   OS TRÊS ESTADOS SE EXCLUEM, e é aqui que isso é garantido: gravar `pontual`
+   sem limpar `recurring` deixaria um lançamento fixo E pontual ao mesmo tempo, e
+   cada leitor do app decidiria por conta própria qual dos dois vale. */
+function classificarGasto(id, classe) {
   const t = DB.get('transactions', id);
-  if (!t) return false;
-  DB.upsert('transactions', { ...t, recurring: !!valor });
+  if (!t || !['fixo', 'variavel', 'pontual'].includes(classe)) return false;
+  DB.upsert('transactions', { ...t, recurring: classe === 'fixo', pontual: classe === 'pontual' });
   Sync.autoSync();
   return true;
 }
@@ -5240,8 +5255,16 @@ function openMassaEditSheet() {
     ${campo('account_id', 'Conta',
       `<select id="ma-conta">${contas.map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>`,
       `Move dinheiro entre os saldos das duas contas. ${nota('account_id')}`)}
-    ${campo('recurring', 'Custo fixo',
-      `<select id="ma-rec"><option value="1">Sim</option><option value="">Não</option></select>`)}
+    ${/* Os três estados, não mais "Custo fixo sim/não". Deixar o interruptor
+          binário aqui faria a edição em massa gravar `recurring` sem tocar em
+          `pontual`, e um lote poderia sair com as duas marcas ligadas — os dois
+          caminhos de classificação precisam obedecer à mesma exclusão. */
+      campo('classe', 'Fixo, variável ou pontual',
+      `<select id="ma-classe">
+        <option value="variavel">Variável — entra na projeção do mês</option>
+        <option value="fixo">Fixo — repete e vira previsão dos próximos meses</option>
+        <option value="pontual">Pontual — aconteceu e não volta</option>
+      </select>`)}
     ${campo('notes', 'Observações', `
       ${chipGroup('ma-notamodo', [
         { value: 'substituir', label: 'Substituir' },
@@ -5276,7 +5299,11 @@ function openMassaEditSheet() {
     if (ligado('member')) campos.member = $('#ma-membro').value;
     if (ligado('method')) campos.method = $('#ma-metodo').value;
     if (ligado('account_id')) campos.account_id = $('#ma-conta').value;
-    if (ligado('recurring')) campos.recurring = !!$('#ma-rec').value;
+    if (ligado('classe')) {
+      const classe = $('#ma-classe').value;
+      campos.recurring = classe === 'fixo';
+      campos.pontual = classe === 'pontual';
+    }
     const extras = {};
     if (ligado('tags')) {
       extras.tags = {
@@ -5321,7 +5348,8 @@ function confirmarMassa(campos, extras) {
   if ('member' in campos) linhas.push([`Passa a ser de <b>${esc(campos.member)}</b>`, alvos.length]);
   if ('method' in campos) linhas.push([`Forma de pagamento vira <b>${esc(campos.method)}</b>`, alvos.length]);
   if ('account_id' in campos) linhas.push([`Conta vira <b>${esc((DB.get('accounts', campos.account_id) || {}).name || '?')}</b> — move os saldos`, conta('account_id')]);
-  if ('recurring' in campos) linhas.push([`Custo fixo: <b>${campos.recurring ? 'sim' : 'não'}</b>`, alvos.length]);
+  if ('recurring' in campos) linhas.push([`Passam a ser <b>${
+    campos.recurring ? 'fixos — e previstos nos próximos meses' : campos.pontual ? 'pontuais' : 'variáveis'}</b>`, alvos.length]);
   if (extras.notes) linhas.push([`Observações ${extras.notes.modo === 'substituir' ? 'viram' : 'ganham'} o texto informado`, alvos.length]);
 
   openSheet(`
@@ -6164,7 +6192,7 @@ function openTxSheet(tx, asNew) {
         type: 'Transferência', status: 'Pago', method: 'Transferência',
         account_id: de, to_account: para,
         scope: 'Família', member: MEMBRO_COMUM,
-        category_id: null, card_id: null, invoice_key: '', recurring: false, adjustment: false,
+        category_id: null, card_id: null, invoice_key: '', recurring: false, pontual: false, adjustment: false,
         tags: tagsEscolhidas(),
       };
       if (orig) applyTxEffect(orig, -1);
@@ -8322,7 +8350,7 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
           account_id: isExp ? daqui : outroId,
           to_account: isExp ? outroId : daqui,
           category_id: null, card_id: null, invoice_key: '',
-          recurring: false, adjustment: false,
+          recurring: false, pontual: false, adjustment: false,
           fitid: t.fitid, tags,
         };
         DB.upsert('transactions', transf);
@@ -8345,7 +8373,7 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
         card_id: card ? card.id : null,
         account_id: account ? account.id : null,
         invoice_key: card ? DB.invoiceKeyFor(card, t.date) : '',
-        recurring: false,
+        recurring: false, pontual: false,
         tags,
       });
       n++;
