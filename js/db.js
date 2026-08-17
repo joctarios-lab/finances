@@ -392,7 +392,24 @@ const DB = {
      também o pagamento somaria o mesmo dinheiro duas vezes — o gasto e a quitação
      da dívida dele. Ele mexe no saldo da conta e aparece no extrato; só não é
      gasto novo. */
-  isNeutral(t) { return !!t && (!!t.adjustment || !!t.pays_invoice || this.isTransfer(t)); },
+  /* A SEMANADA NÃO É GASTO, é troca de dono dentro de casa.
+
+     O dinheiro fica na conta da família e passa a ser da criança. Debitar o saldo
+     aqui faria a conta divergir do extrato do banco em uma semanada por semana,
+     acumulando — e o defeito só apareceria na conciliação, meses depois, sem
+     ninguém ligar à causa.
+
+     Então ela entra na mesma família de `adjustment`, `pays_invoice` e
+     transferência: aparece, é registrada, e não move dinheiro. O que reduz o
+     dinheiro livre da família é o ACUMULADO no cofrinho (ver `dosFilhos`), que é
+     derivado dos lançamentos da criança e por isso nunca desalinha.
+
+     O CICLO FECHA quando a criança gasta: aí o dinheiro sai da casa de verdade, e
+     é uma despesa comum, lançada como qualquer outra. Os dois efeitos se cancelam
+     no dinheiro livre — o acumulado cai e a despesa entra —, que é exatamente o
+     que aconteceu na realidade. */
+  isSemanada(t) { return !!t && !!t.kid_id; },
+  isNeutral(t) { return !!t && (!!t.adjustment || !!t.pays_invoice || this.isSemanada(t) || this.isTransfer(t)); },
   expensesOf(period) { return this.txOfPeriod(period).filter(t => this.isExpense(t) && !this.isNeutral(t)); },
   incomesOf(period) { return this.txOfPeriod(period).filter(t => !this.isExpense(t) && !this.isNeutral(t)); },
   // Renda que realmente entrou na família. Estorno de cartão é receita no modelo
@@ -636,6 +653,14 @@ const DB = {
         else if (praca && !daqui) mov.entra += v;
         continue;
       }
+      /* A SEMANADA NÃO É CAIXA. Este laço fala de dinheiro que atravessou a conta,
+         e o dela não atravessou: ficou no banco e trocou de dono.
+
+         Contá-la aqui romperia a identidade que a própria função promete acima —
+         `saldoNaData(fim) − saldoNaData(início) = entra − sai`. O saldo não se
+         mexe com a semanada (ver txEffect), então somá-la em "saiu" faria o cartão
+         do Extrato mostrar uma saída que o saldo abaixo não confirma. */
+      if (this.isSemanada(t)) continue;
       if (!dentro(t.account_id)) continue;
       if (this.isExpense(t)) mov.sai += v; else mov.entra += v;
     }
@@ -1958,7 +1983,19 @@ const DB = {
     const janela = this.janelaDaOcorrencia(r);
     const alvo = Date.parse(String(dataISO) + 'T12:00:00');
     for (const t of this.all('transactions')) {
-      if (this.isNeutral(t)) continue;
+      /* A SEMANADA É NEUTRA E PRECISA SER RECONHECIDA AQUI.
+
+         `isNeutral` está nesta linha para não confundir uma conciliação ou um
+         pagamento de fatura com a ocorrência de um contrato — nenhum dos dois
+         nasce de contrato, e tratá-los como ocorrência impediria a geração.
+
+         A semanada nasce de contrato, e virou neutra quando deixou de mexer no
+         saldo. Sem esta exceção o gerador nunca a reconhece e a CRIA DE NOVO a
+         cada execução: uma semanada por abertura do app, empilhando no extrato. E
+         `dosFilhosAVir` contava o mesmo compromisso duas vezes — como lançamento
+         e como ocorrência por vir. Foi assim que apareceu, num total que pulou de
+         R$ 108 para R$ 168 só por gerar. */
+      if (this.isNeutral(t) && !this.isSemanada(t)) continue;
       if (t.recurrence_id === r.id && String(t.date) === String(dataISO)) return t;
       if (t.recurrence_id && t.recurrence_id !== r.id) continue;   // é de outro contrato
       if (String(t.description || '').trim().toLowerCase() !== nome) continue;
@@ -2052,6 +2089,11 @@ const DB = {
       tags: Array.isArray(r.tags) ? r.tags : [],
       notes: r.notes || '',
       recurrence_id: r.id,
+      /* Contrato de semanada carimba o lançamento com a criança, e é isso que o
+         torna NEUTRO no saldo — ver isSemanada. Sem o carimbo, o lançamento seria
+         indistinguível de uma despesa e debitaria a conta de um dinheiro que não
+         saiu do banco. */
+      ...(r.kid_id ? { kid_id: r.kid_id } : {}),
     };
     // Recorrência no cartão cai na FATURA do período, não na conta
     if (tx.card_id) {
@@ -2228,6 +2270,64 @@ const DB = {
       }
     }
     return out;
+  },
+
+  /* ---------- O DINHEIRO QUE JÁ É DOS FILHOS ----------
+
+     Está na conta da família e não é da família. Sai do "livre" por isso, e a
+     distinção com o GUARDADO não é preciosismo:
+
+       guardado    — dinheiro SEU que você decidiu não gastar. Você pode mudar de
+                     ideia, e o app usa esse número para calcular quantos meses a
+                     reserva de emergência cobre.
+       dos filhos  — dinheiro que já tem OUTRO DONO. Não é decisão sua, e numa
+                     emergência a família não vai usar a mesada da criança.
+
+     Somá-lo ao guardado inflaria a reserva de emergência com dinheiro que não é
+     da família, e diria que o patrimônio dela inclui o dos filhos. A definição
+     que encaixa é a que o app já usa para `committed`: "quanto já é de outra
+     pessoa".
+
+     DERIVADO, nunca materializado — a mesma regra de todo saldo aqui. É a soma dos
+     três potes de cada criança, calculada dos lançamentos dela. Um total guardado
+     à parte divergiria no primeiro erro e ninguém perceberia. */
+  dosFilhos() {
+    return this.kids().reduce((s, k) => s + this.kidPotes(k.id).total, 0);
+  },
+
+  /* O que ainda VAI virar dinheiro dos filhos até uma data.
+
+     Sem isto, o "Livre ao fim" ignoraria as semanadas que ainda serão dadas neste
+     mês: elas não entram em "Contas do mês" (a previsão as exclui, ver
+     `previsaoDoMes`) e ainda não estão no acumulado, porque não foram dadas.
+     Ficariam invisíveis nas duas pontas.
+
+     CONTA AS DUAS FORMAS, e é isso que impede o número de oscilar. Uma semanada
+     do mês está em um de dois estados: já virou lançamento em aberto, ou ainda é
+     só uma ocorrência futura do contrato. Contar só a primeira faria o total
+     crescer sozinho conforme o gerador rodasse; contar só a segunda o faria
+     encolher. Os dois juntos dão sempre o mesmo compromisso, e a regra de não
+     duplicar é a mesma do resto do app: `ocorrenciaJaLancada`. */
+  dosFilhosAVir(ateISO) {
+    const hoje = this.hojeISO();
+    const limite = ateISO || this.fimISO(this.monthPeriod(new Date()));
+    let total = this.all('transactions')
+      .filter(t => this.isSemanada(t) && t.status === 'A Pagar'
+        && String(t.date) >= hoje && String(t.date) < limite)
+      .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
+    for (const r of this.all('recurrences')) {
+      if (!r.kid_id || r.status !== 'ativa') continue;
+      for (let n = 0; n < 400; n++) {
+        const data = this.dataDaOcorrencia(r, n);
+        if (data >= limite) break;
+        if (this.recorrenciaEncerrada(r, data, n)) break;
+        if (data < hoje) continue;
+        if (this.ocorrenciaJaLancada(r, data)) continue;   // já contada acima
+        total += this.valorDaRecorrencia(r);
+      }
+    }
+    return total;
   },
 
   /* ---------- A SEMANADA NO ORÇAMENTO DE QUEM PAGA ----------
@@ -2462,10 +2562,20 @@ const DB = {
 
     for (const t of this.all('transactions')) {
       if (t.status !== 'A Pagar' || t.card_id) continue;   // compra no cartão vence junto da fatura
-      if (this.isNeutral(t)) continue;
+      /* A SEMANADA É NEUTRA E MESMO ASSIM ENTRA NA FILA.
+
+         Neutro não move dinheiro, e por isso normalmente não é pendência: não há
+         nada a decidir sobre uma conciliação ou o pagamento de uma fatura já
+         registrado. A semanada é a exceção, porque o que ela espera não é uma
+         decisão de dinheiro — é um ATO: alguém precisa entregar, e a criança
+         precisa dividir nos potes. Sem a linha, o ritual da semana depende de
+         alguém lembrar.
+
+         Marcar como feita não move saldo nenhum; só registra que foi entregue. */
+      if (this.isNeutral(t) && !this.isSemanada(t)) continue;
       if (String(t.date) > hoje) continue;                  // ainda não chegou a hora
       itens.push({
-        tipo: this.isExpense(t) ? 'despesa' : 'receita',
+        tipo: this.isSemanada(t) ? 'semanada' : this.isExpense(t) ? 'despesa' : 'receita',
         id: t.id, tx: t, data: String(t.date),
         valor: Number(t.amount) || 0,
         titulo: t.description,
@@ -2637,6 +2747,18 @@ const DB = {
     // Recorrências ativas: as ocorrências que caem neste mês
     for (const r of this.all('recurrences')) {
       if (r.status !== 'ativa') continue;
+      /* SEMANADA NÃO É CONTA DO MÊS, em nenhuma das duas formas.
+
+         O lançamento já materializado é neutro e foi filtrado acima; o contrato
+         precisa sair aqui pelo mesmo motivo. Sem esta linha, as semanadas do mês
+         saíam DUAS vezes do "Livre ao fim": as já lançadas pela linha "Dos
+         filhos" e as ainda por lançar por "Contas do mês" — e qual das duas
+         pesava dependia de o gerador ter rodado, o que muda ao longo do mês.
+
+         Um número que se altera conforme a hora em que se abre o app não serve
+         para decidir nada. Todas as semanadas passam pela mesma porta: a linha
+         "Dos filhos". Ver `dosFilhosAVir`. */
+      if (r.kid_id) continue;
       for (let n = 0; n < 400; n++) {
         const data = this.dataDaOcorrencia(r, n);
         if (data >= ate) break;

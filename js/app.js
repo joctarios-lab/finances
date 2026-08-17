@@ -199,8 +199,22 @@ function adjustBalance(accountId, delta) {
   const a = DB.get('accounts', accountId);
   if (a) DB.upsert('accounts', { ...a, balance: (Number(a.balance) || 0) + delta });
 }
+/* "NEUTRO" TEM DOIS SENTIDOS NESTE APP, e eles não coincidem.
+
+   `DB.isNeutral` responde "isto conta como despesa ou receita da família?" —
+   conciliação, pagamento de fatura e transferência não contam, porque somá-las
+   inflaria o gasto do mês com dinheiro que só mudou de lugar.
+
+   Aqui a pergunta é outra: "isto move o saldo da conta?". E a resposta divide o
+   grupo: conciliação e pagamento de fatura MOVEM (é o que eles existem para
+   fazer), transferência move duas contas de uma vez, e a semanada não move nada —
+   o dinheiro fica no banco e só troca de dono.
+
+   Usar `isNeutral` aqui zeraria a conciliação e o pagamento de fatura, que é o
+   oposto do que eles fazem. Por isso a semanada é nomeada, uma a uma. */
 function txEffect(t) {
-  if (!t || t.status !== 'Pago' || !t.account_id || t.card_id || DB.isTransfer(t)) return 0;
+  if (!t || t.status !== 'Pago' || !t.account_id || t.card_id) return 0;
+  if (DB.isTransfer(t) || DB.isSemanada(t)) return 0;
   const v = Number(t.amount) || 0;
   return DB.isExpense(t) ? -v : v;   // despesa debita, receita credita
 }
@@ -1355,7 +1369,7 @@ function healthOf(stats, refLimit, available) {
    ciclos anteriores. Sem expor essa parcela, a soma das linhas não bateria com o
    total logo abaixo — e um total que não se confere não serve para decidir nada.
    Ela só aparece quando existe: no mês em dia, some. */
-function linhasDaPrevisao({ abreRotulo, abreNota, abre, previsto, atrasado, emContasFim, guardadoFim, livreAoFim, variavel }) {
+function linhasDaPrevisao({ abreRotulo, abreNota, abre, previsto, atrasado, emContasFim, guardadoFim, dosFilhos, livreAoFim, variavel }) {
   /* O GASTO VARIÁVEL QUE AINDA VEM, quando há ritmo para estimá-lo.
 
      Sem estas duas linhas o hero respondia "quanto sobra do que está LANÇADO" e
@@ -1386,6 +1400,7 @@ function linhasDaPrevisao({ abreRotulo, abreNota, abre, previsto, atrasado, emCo
         <div class="hc-l hc-sub"><span>= Em contas ao fim</span><b>${fmt(emContasFim)}</b></div>
         ${guardadoFim > 0.005 ? `<div class="hc-l"><span>− Guardado${
           previsto.investe > 0.005 ? ` <i>+${fmtShort(previsto.investe)} no mês</i>` : ''}</span><b>${fmt(guardadoFim)}</b></div>` : ''}
+        ${dosFilhos > 0.005 ? `<div class="hc-l"><span>− Dos filhos <i>no cofrinho, já é deles</i></span><b>${fmt(dosFilhos)}</b></div>` : ''}
         <div class="hc-l hc-total"><span>= Livre ao fim</span><b>${fmt(livreAoFim)}</b></div>
         ${temVariavel ? `
         <button class="hc-l hc-acao" data-classificar="1"><span>− Variável estimado <i>${fmtShort(variavel.diaContido)} a ${fmtShort(variavel.diaRitmo)}/dia · ${variavel.dias} dias · ajustar</i></span><b>${faixa(menor, maior)}</b></button>
@@ -1813,7 +1828,11 @@ function renderInicio(period) {
      mesmo mês mostra no topo — e dois números com o mesmo nome e valores
      diferentes destroem a confiança nos dois. O extrato mostra CAIXA; aqui é
      PLANEJAMENTO. É a linha "Em contas ao fim" que faz a ponte entre eles. */
-  const livreAoFim = emContasFim - guardadoFim;
+  /* O DINHEIRO DOS FILHOS sai do livre porque ja tem outro dono. Ver DB.dosFilhos:
+     nao entra no guardado de proposito — guardado e dinheiro da familia com plano, e
+     alimenta a cobertura da reserva de emergencia. */
+  const dosFilhosFim = DB.dosFilhos() + DB.dosFilhosAVir(fimP);
+  const livreAoFim = emContasFim - guardadoFim - dosFilhosFim;
   const noAzul = livreAoFim >= 0;
   /* Em MÊS FUTURO os KPIs mudam de pergunta: o número grande passa a ser onde se
      CHEGA e o sub-rótulo diz de onde se parte. Sem isso a tela mostrava o saldo de
@@ -1844,7 +1863,7 @@ function renderInicio(period) {
         ${linhasDaPrevisao({
           abreRotulo: 'Abre em contas', abreNota: `em ${fmtDate(new Date(inicioP + 'T12:00:00'))}`,
           abre: abreEmContas, previsto, atrasado: DB.pendenteDeCiclosAnteriores(period),
-          emContasFim, guardadoFim, livreAoFim,
+          emContasFim, guardadoFim, dosFilhos: dosFilhosFim, livreAoFim,
         })}
       </div>
       <!-- A ponte com o Extrato continua dita por escrito, mas agora ela aponta
@@ -1882,7 +1901,8 @@ function renderInicio(period) {
   const atrasadoAtual = DB.pendenteDeCiclosAnteriores(period);
   const emContasFimAtual = DB.saldoPrevistoNaData(null, fimCicloAtual);
   const guardadoFimAtual = DB.guardadoPrevisto(fimCicloAtual);
-  const livreAoFimAtual = emContasFimAtual - guardadoFimAtual;
+  const dosFilhosFimAtual = DB.dosFilhos() + DB.dosFilhosAVir(fimCicloAtual);
+  const livreAoFimAtual = emContasFimAtual - guardadoFimAtual - dosFilhosFimAtual;
   const fechaNoAzul = livreAoFimAtual >= 0;
   /* O NÚMERO GRANDE CONTINUA SENDO O LANÇADO — firme, sem estimativa. O gasto
      variável entra na última linha da conta, e o SELO é quem avisa quando ele
@@ -1925,7 +1945,7 @@ function renderInicio(period) {
         ${linhasDaPrevisao({
           abreRotulo: 'Em contas hoje', abreNota: '',
           abre: saldo, previsto, atrasado: atrasadoAtual,
-          emContasFim: emContasFimAtual, guardadoFim: guardadoFimAtual, livreAoFim: livreAoFimAtual,
+          emContasFim: emContasFimAtual, guardadoFim: guardadoFimAtual, dosFilhos: dosFilhosFimAtual, livreAoFim: livreAoFimAtual,
           /* Só no mês corrente: um mês que ainda não começou não tem ritmo para
              extrapolar, e um encerrado não tem o que projetar. `variavelProjetado`
              devolve zero nos dois casos, e as linhas somem sozinhas. */

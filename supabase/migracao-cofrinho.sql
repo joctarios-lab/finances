@@ -23,12 +23,17 @@
 -- Classificação pontual de um gasto: o terceiro estado, além de fixo e variável
 alter table transactions add column if not exists pontual boolean not null default false;
 
--- A semanada e um contrato como qualquer outro, e esta coluna e o que a liga a
--- crianca dona do cofrinho. Sem ela, o dinheiro que sai toda semana para as
--- criancas nao existe no orcamento da familia — nem no custo fixo, nem no
--- comprometido, nem na projecao.
+-- A semanada e um contrato, ligado a crianca por esta coluna.
 alter table recurrences add column if not exists kid_id uuid;
 create index if not exists idx_rec_kid on recurrences(kid_id);
+
+-- E o LANCAMENTO da semanada tambem se identifica, porque isso muda o que ele
+-- faz: dar a semanada nao e gastar. O dinheiro fica na conta da familia e passa a
+-- ter outro dono, entao o lancamento e NEUTRO no saldo. Debita-lo faria a conta
+-- divergir do extrato do banco em uma semanada por semana, acumulando — e o
+-- defeito so apareceria na conciliacao, meses depois.
+alter table transactions add column if not exists kid_id uuid;
+create index if not exists idx_tx_kid on transactions(kid_id);
 
 
 /* ---------------------------------------------------------------------------

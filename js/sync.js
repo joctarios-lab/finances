@@ -44,7 +44,7 @@ const SYNC_TABLES = {
   accounts: ['name', 'type', 'institution', 'balance', 'active', 'is_reserve'],
   cards: ['name', 'brand', 'limit_amount', 'closing_day', 'due_day', 'account_id', 'active'],
   categories: ['name', 'icon', 'scope', 'monthly_budget', 'kind', 'parent_id', 'type'],
-  transactions: ['description', 'amount', 'date', 'scope', 'member', 'method', 'status', 'recurring', 'category_id', 'account_id', 'card_id', 'invoice_key', 'notes', 'type', 'fitid', 'group_id', 'installment', 'adjustment', 'tags', 'to_account', 'pays_invoice', 'recurrence_id', 'pontual'],
+  transactions: ['description', 'amount', 'date', 'scope', 'member', 'method', 'status', 'recurring', 'category_id', 'account_id', 'card_id', 'invoice_key', 'notes', 'type', 'fitid', 'group_id', 'installment', 'adjustment', 'tags', 'to_account', 'pays_invoice', 'recurrence_id', 'pontual', 'kid_id'],
   goals: ['name', 'icon', 'target_amount', 'target_date', 'done', 'kind'],
   goal_entries: ['goal_id', 'description', 'amount', 'date', 'from_account', 'to_account', 'status'],
   invoice_status: ['invoice_key', 'paid'],
@@ -95,8 +95,12 @@ const COLUNAS = {
   inicio: 'date!', fim_data: 'date', ultima_geracao: 'date', period_start: 'date!',
   date: 'date!', target_date: 'date',
   kid_id: 'uuid!', task_id: 'uuid', kid_goal_id: 'uuid',
-  // Em recurrences só o contrato da semanada tem criança: ali a coluna é opcional
+  /* kid_id é NOT NULL nas tabelas do cofrinho, onde todo registro é de uma
+     criança. Em recurrences e transactions é o contrário: só o contrato e o
+     lançamento da semanada a preenchem, e a marca global de obrigatório faria o
+     push descartar todo contrato e todo lançamento comum da família. */
   'recurrences.kid_id': 'uuid',
+  'transactions.kid_id': 'uuid',
   semanada_valor: 'num#', rendimento_valor: 'num#', semanada_dia: 'int#', nascimento_ano: 'int',
   done_at: 'date', confirmada: 'bool',
   deleted: 'bool', active: 'bool', is_reserve: 'bool', recurring: 'bool',
@@ -112,7 +116,7 @@ const COLUNAS = {
    ele; enquanto durar a sessão, os próximos nem a incluem. É o mesmo desenho do
    fallback de `server_at` no pull: detectar em vez de exigir. */
 const COLUNAS_OPCIONAIS = {
-  transactions: ['pontual'],
+  transactions: ['pontual', 'kid_id'],
   /* `kid_id` liga o contrato da semanada à criança, e chegou depois. Sem entrar
      aqui, um banco sem a coluna derrubaria o push de recorrências INTEIRO — todos
      os contratos da família, por causa de uma coluna que só existe quando há

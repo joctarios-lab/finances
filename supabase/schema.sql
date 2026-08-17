@@ -185,6 +185,22 @@ create index if not exists idx_tx_recurrence on transactions(recurrence_id);
 alter table recurrences add column if not exists kid_id uuid;
 create index if not exists idx_rec_kid on recurrences(kid_id);
 
+/* O LANÇAMENTO DA SEMANADA DIZ DE QUEM ELE É, e isso muda o que ele faz.
+
+   Dar a semanada não é gastar: o dinheiro fica na conta da família e passa a ter
+   outro dono. Debitar o saldo aqui faria a conta divergir do extrato do banco em
+   R$ 8 por semana, acumulando — e o defeito só apareceria na conciliação, meses
+   depois, sem ninguém ligar à causa.
+
+   Com esta coluna o lançamento se identifica: continua na fila (o adulto precisa
+   lembrar de entregar) e é NEUTRO no saldo. O que reduz o dinheiro livre da
+   família é o acumulado no cofrinho, calculado dos lançamentos da criança.
+
+   Quando a criança GASTA de verdade, o dinheiro sai da casa — e aí é uma despesa
+   comum, lançada como qualquer outra. É esse par que fecha a conta. */
+alter table transactions add column if not exists kid_id uuid;
+create index if not exists idx_tx_kid on transactions(kid_id);
+
 create table if not exists goals (
   id uuid primary key,
   family_id uuid not null references families(id) on delete cascade,

@@ -120,6 +120,15 @@ eval(appSrc + `; Object.assign(global, {
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, blocoDaSemanada, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
 
+/* 'R$ 1.234,56' de volta para 1234.56.
+
+   Serve para conferir a conta que a TELA mostra, em vez de refazer a conta certa
+   ao lado da errada — que é o jeito de um teste passar verde enquanto a tela
+   mostra outra coisa. */
+function desmoeda(s) {
+  return Number(String(s).replace(/[^0-9,\-]/g, '').replace(',', '.')) || 0;
+}
+
 // ---- monta um cenário de família ----
 DB.load();
 const cat = n => DB.all('categories').find(c => c.name.includes(n));
@@ -5886,6 +5895,257 @@ try {
 
   DB.remove('recurrences', idCF);
 } catch (e) { console.log(` FALHA | custo fixo e status: ${e.message}`); fail++; }
+
+/* ---- A SEMANADA NÃO MOVE O SALDO, E O COFRINHO SAI DO LIVRE ----
+
+   Dar a semanada não é gastar: o dinheiro fica na conta da família e passa a ter
+   outro dono. Antes o lançamento debitava o saldo, e a conta divergia do extrato
+   do banco em uma semanada por semana, acumulando — um defeito que só apareceria
+   na conciliação, meses depois, sem ninguém ligar à causa.
+
+   E o dinheiro do cofrinho NÃO é guardado. Guardado é dinheiro da família com
+   plano, e é o que alimenta a cobertura da reserva de emergência; o do cofrinho
+   já tem outro dono, e numa emergência a família não vai usar a mesada da
+   criança. A definição que encaixa é a que o app já usa para `committed`:
+   "quanto já é de outra pessoa". */
+console.log('\n=== O dinheiro dos filhos sai do livre, não do saldo ===');
+try {
+  const hojeF = DB.hojeISO();
+  const diaF = new Date(hojeF + 'T12:00:00').getDay();
+  const contaF = DB.upsert('accounts', { name: 'Conta do teste dos filhos', type: 'Conta Corrente', balance: 1000, active: true });
+  const idF = DB.upsert('kids', {
+    name: 'Filho Saldo', avatar: '🐢', semanada_valor: 8, semanada_dia: diaF,
+    rendimento_tipo: 'moeda', rendimento_valor: 0, active: true,
+  });
+
+  /* O SALDO NÃO SE MEXE. É o defeito que motivou tudo isto: o app debitava a
+     conta de um dinheiro que continua no banco. */
+  const idContrato = DB.acertarContratoDaSemanada(idF, { account_id: contaF });
+  DB.gerarRecorrencias();
+  const sem = DB.all('transactions').filter(t => t.recurrence_id === idContrato);
+  check('o contrato gerou a semanada', sem.length >= 1, true);
+  check('  e ela se identifica pela criança', sem[0].kid_id, idF);
+  check('  o app a reconhece como semanada', DB.isSemanada(sem[0]), true);
+
+  /* NEUTRA: não move saldo nem ao ser marcada como entregue. É o mesmo tratamento
+     de conciliação, pagamento de fatura e transferência. */
+  check('a semanada é neutra', DB.isNeutral(sem[0]), true);
+  check('  então não tem efeito no saldo', txEffect({ ...sem[0], status: 'Pago' }), 0);
+  const saldoAntes = DB.get('accounts', contaF).balance;
+  applyTxEffect({ ...sem[0], status: 'Pago' }, 1);
+  check('  e marcar como entregue não debita a conta', DB.get('accounts', contaF).balance, saldoAntes);
+
+  /* O EXTRATO CONTINUA FECHANDO COM O SALDO.
+
+     O cartão do Extrato promete uma identidade: saldo do fim menos saldo do
+     início é igual a "entrou" menos "saiu". Se a semanada entrasse em "saiu" sem
+     mexer no saldo, a linha deixaria de fechar — e o sintoma seria o pior tipo,
+     duas partes da mesma tela discordando sobre o mesmo mês. */
+  DB.upsert('transactions', { ...sem[0], status: 'Pago', date: hojeF });
+  const movF = DB.movimentoRealizadoAte([contaF], null, DB.somarDiasISO(hojeF, 1));
+  const saldoIni = DB.saldoNaData([contaF], hojeF);
+  const saldoFim = DB.saldoNaData([contaF], DB.somarDiasISO(hojeF, 1));
+  check('o extrato fecha com o saldo, mesmo com semanada entregue',
+    Math.round((saldoFim - saldoIni) * 100) / 100,
+    Math.round((movF.entra - movF.sai) * 100) / 100);
+  check('  e a semanada não aparece como saída de caixa', movF.sai, 0);
+
+  /* NÃO É DESPESA no patrimônio: contá-la faria a família parecer mais pobre por
+     um dinheiro que ainda está na conta dela. */
+  DB.upsert('transactions', { ...sem[0], status: 'Pago' });
+  const periodoF = DB.monthPeriod(new Date(hojeF + 'T12:00:00'));
+  check('não entra nas despesas do mês',
+    DB.expensesOf(periodoF).some(t => t.id === sem[0].id), false);
+
+  /* MAS CONTINUA NA FILA, porque o que ela espera não é uma decisão de dinheiro —
+     é um ato: alguém precisa entregar, e a criança precisa dividir nos potes. */
+  DB.upsert('transactions', { ...sem[0], status: 'A Pagar', date: hojeF });
+  const naFila = DB.pendencias(hojeF).find(p => p.id === sem[0].id);
+  check('a semanada aparece na fila de pendências', !!naFila, true);
+  check('  identificada como semanada, não como despesa', naFila.tipo, 'semanada');
+
+  /* ---- O ACUMULADO SAI DO LIVRE ---- */
+  DB.upsert('kid_entries', { kid_id: idF, tipo: 'semanada', pote: 'gastar', amount: 8, date: hojeF, confirmada: true });
+  DB.upsert('kid_entries', { kid_id: idF, tipo: 'presente', pote: 'guardar', amount: 42, date: hojeF, confirmada: true });
+  check('o acumulado dos filhos é a soma dos potes', DB.dosFilhos(), 50);
+
+  /* NÃO É GUARDADO. Esta é a distinção que o pedido original propunha juntar, e
+     juntar teria dois efeitos ruins: a reserva de emergência infla com dinheiro
+     que não é da família, e o patrimônio dela passa a incluir o dos filhos. */
+  const guardadoAntes = DB.guardado();
+  DB.upsert('kid_entries', { kid_id: idF, tipo: 'presente', pote: 'guardar', amount: 100, date: hojeF, confirmada: true });
+  check('o cofrinho não entra no guardado da família', DB.guardado(), guardadoAntes);
+  check('  nem na reserva', DB.guardadoReserva(), DB.guardadoReserva());
+  check('  e o acumulado acompanhou', DB.dosFilhos(), 150);
+
+  /* ---- A CONTA DA HERO FECHA, SEM CONTAR DUAS VEZES ----
+
+     Este é o teste central. Uma semanada do mês está em um de dois estados: já
+     virou lançamento em aberto, ou ainda é ocorrência futura do contrato. Se as
+     duas portas contassem — "Contas do mês" e "Dos filhos" —, o mesmo compromisso
+     sairia duas vezes do livre, e qual delas pesava dependeria de o gerador ter
+     rodado. Um número que muda conforme a hora em que se abre o app não serve
+     para decidir nada. */
+  const fimF = DB.fimISO(periodoF);
+  const previstoF = DB.previsaoDoMes(periodoF);
+  check('a semanada não entra nas contas do mês',
+    previstoF.itens.some(i => /Filho Saldo/.test(i.titulo)), false);
+
+  const aVir = DB.dosFilhosAVir(fimF);
+  check('as semanadas ainda por dar entram em "dos filhos"', aVir > 0, true);
+
+  /* CONTRATO AINDA NÃO MATERIALIZADO também conta.
+
+     Todo cenário acima gerava as ocorrências antes de medir, e por isso o laço que
+     varre os CONTRATOS ficava sem exercício: o total vinha inteiro dos lançamentos
+     já criados. Sabotar esse laço passava verde.
+
+     Aqui o contrato existe e nada foi gerado — é o estado de quem acabou de
+     cadastrar a criança, ou de qualquer mês futuro. Se o laço não contar, a
+     semanada fica invisível nas duas pontas: não é conta do mês (excluída da
+     previsão) e não está no acumulado (não foi dada). */
+  const idV = DB.upsert('kids', {
+    name: 'Filho A Vir', semanada_valor: 20, semanada_dia: diaF,
+    rendimento_tipo: 'moeda', rendimento_valor: 0, active: true,
+  });
+  DB.acertarContratoDaSemanada(idV);
+  const contratoV = DB.contratoDaSemanada(idV);
+  check('o contrato existe e nada foi gerado ainda',
+    DB.all('transactions').some(t => t.recurrence_id === contratoV.id), false);
+  check('  e a semanada dele já aparece como compromisso',
+    DB.dosFilhosAVir(fimF) - aVir >= 20, true);
+  /* E gerar não muda o total: o que sai de "por lançar" entra em "lançado". */
+  const antesV = DB.dosFilhosAVir(fimF);
+  DB.gerarRecorrencias(fimF);
+  check('  e materializar não altera o valor',
+    Math.round(DB.dosFilhosAVir(fimF) * 100) / 100, Math.round(antesV * 100) / 100);
+  for (const t of DB.all('transactions').filter(t => t.kid_id === idV)) DB.remove('transactions', t.id);
+  DB.remove('recurrences', contratoV.id);
+  DB.remove('kids', idV);
+
+  /* O TOTAL NÃO OSCILA quando o gerador roda: o que sai da conta "ainda por
+     lançar" entra na conta "lançado em aberto", e a soma continua a mesma. */
+  const antesGerar = DB.dosFilhosAVir(fimF);
+  DB.gerarRecorrencias(fimF);
+  check('gerar as ocorrências não muda o total comprometido',
+    Math.round(DB.dosFilhosAVir(fimF) * 100) / 100, Math.round(antesGerar * 100) / 100);
+
+  /* E O LIVRE AO FIM desconta as duas coisas, cada uma na sua linha. */
+  const emContasFim = DB.saldoPrevistoNaData(null, fimF);
+  const guardadoFim = DB.guardadoPrevisto(fimF);
+  const dosFilhosFim = DB.dosFilhos() + DB.dosFilhosAVir(fimF);
+  const livre = emContasFim - guardadoFim - dosFilhosFim;
+  check('o livre ao fim desconta o dinheiro dos filhos', livre < emContasFim - guardadoFim, true);
+  check('  e a linha aparece na tela',
+    linhasDaPrevisao({ abreRotulo: 'x', abreNota: '', abre: 0,
+      previsto: { entra: 0, sai: 0, investe: 0, itens: [] }, atrasado: 0,
+      emContasFim, guardadoFim, dosFilhos: dosFilhosFim, livreAoFim: livre }).includes('Dos filhos'), true);
+  check('  dizendo que já é deles',
+    linhasDaPrevisao({ abreRotulo: 'x', abreNota: '', abre: 0,
+      previsto: { entra: 0, sai: 0, investe: 0, itens: [] }, atrasado: 0,
+      emContasFim, guardadoFim, dosFilhos: dosFilhosFim, livreAoFim: livre }).includes('já é deles'), true);
+
+  /* A TELA DE VERDADE, não a conta à mão.
+
+     As asserções acima montam o número aqui e conferem a si mesmas — isso prova a
+     fórmula e não prova a TELA. Sabotar o `livreAoFim` dos dois heros passava
+     verde justamente por isso: o teste refazia a conta certa ao lado da errada.
+
+     Aqui é o painel renderizado, e o que se mede é o que a pessoa lê. */
+  const heroAtual = renderInicio(periodoF);
+  check('o painel mostra a linha dos filhos', heroAtual.includes('Dos filhos'), true);
+  /* O TOTAL DA TELA tem de ser o de baixo, não o de cima: se o "Livre ao fim"
+     ignorasse os filhos, ele ficaria igual ao "Em contas ao fim" menos guardado —
+     e a linha "Dos filhos" apareceria sem efeito nenhum, decorativa. */
+  /* O rótulo pode conter um `<i>` com a nota da linha ("faturas incluídas", "no
+     cofrinho, já é deles"), então a captura precisa atravessar tags e limpá-las
+     depois. Com `[^<]` a primeira linha com nota já não casava, a lista saía vazia
+     e as asserções abaixo mediam `undefined` — teste vazio disfarçado de falha. */
+  const numeros = [...heroAtual.matchAll(/<span>([\s\S]*?)<\/span><b>([^<]*)<\/b>/g)]
+    .map(m => [m[1].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(), m[2]]);
+  const linhaFilhos = numeros.find(([r]) => r.includes('Dos filhos'));
+  const linhaLivre = numeros.find(([r]) => r.includes('Livre ao fim'));
+  const linhaContas = numeros.find(([r]) => r.includes('Em contas ao fim'));
+  check('  com valor de verdade na linha', !!linhaFilhos && linhaFilhos[1].includes('R$'), true);
+  check('  e o Livre ao fim é menor que o Em contas ao fim',
+    !!linhaLivre && !!linhaContas && desmoeda(linhaLivre[1]) < desmoeda(linhaContas[1]), true);
+  /* A conta da tela fecha: contas − guardado − filhos = livre. Uma soma que não se
+     confere na própria tela não serve para decidir nada. */
+  const linhaGuardado = numeros.find(([r]) => r.includes('Guardado'));
+  const gv = linhaGuardado ? desmoeda(linhaGuardado[1]) : 0;
+  check('  e a conta da tela fecha',
+    Math.round((desmoeda(linhaContas[1]) - gv - desmoeda(linhaFilhos[1])) * 100) / 100,
+    Math.round(desmoeda(linhaLivre[1]) * 100) / 100);
+
+  /* O MÊS QUE VEM, onde nada está materializado.
+
+     Tudo acima mede o mês corrente, com as semanadas já lançadas — e ali a
+     previsão exclui a semanada de duas formas ao mesmo tempo: porque o lançamento
+     é neutro e porque a ocorrência já foi lançada. Uma das duas proteções pode
+     cair sem o teste notar.
+
+     No mês que vem não há lançamento nenhum: a única coisa que impede a semanada
+     de virar "conta do mês" é o filtro por contrato. E é o mês futuro que se usa
+     para planejar. */
+  const periodoProx = DB.monthPeriod(new Date(DB.somarDiasISO(DB.fimISO(periodoF), 1) + 'T12:00:00'));
+  const previstoProx = DB.previsaoDoMes(periodoProx);
+  check('no mês que vem a semanada também não é conta do mês',
+    previstoProx.itens.some(i => /Filho Saldo/.test(i.titulo)), false);
+  check('  e ela aparece como compromisso dos filhos',
+    DB.dosFilhosAVir(DB.fimISO(periodoProx)) > DB.dosFilhosAVir(fimF), true);
+
+  /* O HERO DO MÊS FUTURO depende de state.monthOffset, não do período passado por
+     argumento: sem mexer nele, renderInicio devolve o hero do mês CORRENTE com
+     dados de outro mês, e a asserção mede a tela errada. Foi o que aconteceu — a
+     sabotagem do livreAoFim futuro passava verde porque aquele bloco nunca rodava. */
+  const offGuarda = state.monthOffset;
+  state.monthOffset = 1;
+  const heroProx = renderInicio(periodoProx);
+  state.monthOffset = offGuarda;
+  check('  e é de fato o hero do mês futuro', heroProx.includes('Abre em contas'), true);
+  check('o painel do mês que vem mostra a linha dos filhos', heroProx.includes('Dos filhos'), true);
+  const nProx = [...heroProx.matchAll(/<span>([\s\S]*?)<\/span><b>([^<]*)<\/b>/g)]
+    .map(m => [m[1].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim(), m[2]]);
+  const fProx = nProx.find(([r]) => r.includes('Dos filhos'));
+  const lProx = nProx.find(([r]) => r.includes('Livre ao fim'));
+  const cProx = nProx.find(([r]) => r.includes('Em contas ao fim'));
+  const gProx = nProx.find(([r]) => r.includes('Guardado'));
+  check('  e a conta dele fecha descontando os filhos',
+    Math.round((desmoeda(cProx[1]) - (gProx ? desmoeda(gProx[1]) : 0) - desmoeda(fProx[1])) * 100) / 100,
+    Math.round(desmoeda(lProx[1]) * 100) / 100);
+
+  /* SEM CRIANÇA, A LINHA SOME. Uma linha de valor zero num bloco de conta é
+     ruído: quem não tem filho cadastrado não deve ver a palavra "filhos". */
+  const semFilhos = linhasDaPrevisao({ abreRotulo: 'x', abreNota: '', abre: 0,
+    previsto: { entra: 0, sai: 0, investe: 0, itens: [] }, atrasado: 0,
+    emContasFim: 100, guardadoFim: 0, dosFilhos: 0, livreAoFim: 100 });
+  check('sem dinheiro de filho, a linha não aparece', semFilhos.includes('Dos filhos'), false);
+
+  /* ---- O CICLO FECHA QUANDO A CRIANÇA GASTA ----
+
+     Aí o dinheiro sai da casa de verdade. O acumulado cai (o pote dela diminui) e
+     a despesa entra na conta da família — os dois efeitos se cancelam no livre,
+     que é exatamente o que aconteceu na realidade: o dinheiro era dela, foi
+     gasto, e saiu do banco. */
+  const dosFilhosAntes = DB.dosFilhos();
+  DB.upsert('kid_entries', { kid_id: idF, tipo: 'gasto', pote: 'gastar', amount: 5, date: hojeF, confirmada: true });
+  check('quando a criança gasta, o acumulado cai', DB.dosFilhos(), dosFilhosAntes - 5);
+
+  const gasto = DB.upsert('transactions', {
+    description: 'Sorvete do Filho Saldo', amount: 5, date: hojeF,
+    type: 'Despesa', status: 'Pago', account_id: contaF,
+  });
+  check('  e a despesa da família entra normalmente',
+    DB.expensesOf(periodoF).some(t => t.id === gasto), true);
+
+  // Limpeza
+  DB.remove('transactions', gasto);
+  for (const t of DB.all('transactions').filter(t => t.kid_id === idF)) DB.remove('transactions', t.id);
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idF)) DB.remove('kid_entries', e.id);
+  for (const r of DB.all('recurrences').filter(r => r.kid_id === idF)) DB.remove('recurrences', r.id);
+  DB.remove('kids', idF);
+  DB.remove('accounts', contaF);
+} catch (e) { console.log(` FALHA | dinheiro dos filhos: ${e.message}`); fail++; }
 
 /* ---- A SEMANADA NO ORÇAMENTO DE QUEM PAGA ----
 
