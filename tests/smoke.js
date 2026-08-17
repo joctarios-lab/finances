@@ -118,7 +118,7 @@ eval(appSrc + `; Object.assign(global, {
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openEditarContrato, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
-  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
+  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -5839,6 +5839,96 @@ try {
   for (const e of DB.all('kid_entries').filter(e => e.kid_id === kidId)) DB.remove('kid_entries', e.id);
   DB.remove('kid_tasks', tarefaId); DB.remove('kid_goals', metaId); DB.remove('kids', kidId);
 } catch (e) { console.log(` FALHA | cofrinho dados: ${e.message}`); fail++; }
+
+/* ---- COFRINHO: a gestão no app de quem administra ----
+
+   A área dos pais mora AQUI, não no app da criança: o PIN daqui criptografa os
+   dados de verdade, e é onde o adulto já administra tudo. */
+console.log('\n=== Cofrinho: gestão no app da família ===');
+try {
+  const hojeG2 = DB.hojeISO();
+  const idG = DB.upsert('kids', {
+    name: 'Cofrinho Um', avatar: '🐢', cor: '#0984e3',
+    semanada_valor: 10, semanada_dia: new Date(hojeG2 + 'T12:00:00').getDay(),
+    rendimento_tipo: 'moeda', rendimento_valor: 2, active: true,
+  });
+
+  // Entrada pelas Configurações, no padrão de "Contas fixas"
+  openConfig();
+  const cfg = els['#modal'].innerHTML;
+  check('Configurações oferece a seção Crianças', cfg.includes('data-go="criancas"'), true);
+  check('  dizendo quem já está cadastrado', cfg.includes('Cofrinho Um'), true);
+
+  openCriancas();
+  const lista = els['#modal'].innerHTML;
+  check('a lista mostra a criança', lista.includes('Cofrinho Um'), true);
+  check('  com a semanada e o dia', lista.includes(fmt(10)), true);
+  check('  e um caminho para cadastrar outra', lista.includes('id="kd-nova"'), true);
+
+  /* O DETALHE é a auditoria: os três potes, a meta, as tarefas e todo o
+     movimento. É o que o app da criança NÃO mostra — lá a história é curta e
+     ilustrada; aqui é para conferir. */
+  DB.upsert('kid_entries', { kid_id: idG, tipo: 'semanada', pote: 'guardar', amount: 20, date: hojeG2, confirmada: true });
+  openCriancaDetalhe(idG);
+  const det = els['#modal'].innerHTML;
+  check('o detalhe abre os três potes', /Gastar agora[\s\S]*Guardar[\s\S]*Doar/.test(det), true);
+  check('  mostra o movimento', det.includes('Semanada'), true);
+  check('  e oferece editar, meta, tarefa e lançamento',
+    ['kdd-editar', 'kdd-meta', 'kdd-tarefa', 'kdd-lanc'].every(i => det.includes(i)), true);
+
+  /* PAGAR A SEMANADA nasce inteira no pote GASTAR: a divisão nos três é decisão
+     da criança, no app dela, e é ali que a lição acontece. */
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idG)) DB.remove('kid_entries', e.id);
+  check('a semanada é devida', !!DB.kidSemanadaDevida(DB.get('kids', idG)), true);
+  check('pagar a semanada funciona', pagarSemanada(idG), true);
+  const p2 = DB.kidPotes(idG);
+  check('  e ela cai inteira no pote gastar', p2.gastar, 10);
+  check('  sem o app dividir por ela', p2.guardar, 0);
+  check('  e não é devida de novo na mesma semana', DB.kidSemanadaDevida(DB.get('kids', idG)), null);
+  check('  pagar de novo não duplica', pagarSemanada(idG), false);
+
+  /* A FILA DO PAINEL: a semanada não é conta a pagar e a tarefa não vence, então
+     é bloco próprio — mas na mesma dobra, porque o que se esquece apodrece. */
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idG)) DB.remove('kid_entries', e.id);
+  const fila = filaDasCriancas();
+  check('a fila do Painel cobra a semanada', fila.includes(`data-semanada="${idG}"`), true);
+  check('  dizendo de quem é', fila.includes('Cofrinho Um'), true);
+  pagarSemanada(idG);
+  check('  e some quando ela é dada', filaDasCriancas().includes(`data-semanada="${idG}"`), false);
+
+  /* TAREFA: a criança marca, o adulto confirma, o dinheiro entra depois. */
+  const tG = DB.upsert('kid_tasks', { kid_id: idG, name: 'Regar as plantas', icon: '🪴', amount: 3, active: true });
+  const marcada = DB.upsert('kid_entries', {
+    kid_id: idG, tipo: 'tarefa', pote: 'gastar', amount: 3, date: hojeG2,
+    task_id: tG, confirmada: false,
+  });
+  check('tarefa marcada aparece na fila do adulto',
+    filaDasCriancas().includes(`data-ver-tarefas="${idG}"`), true);
+  const antesConf = DB.kidPotes(idG).gastar;
+  openConfirmarTarefas(idG);
+  check('  a tela de confirmar mostra a tarefa', els['#modal'].innerHTML.includes('Regar as plantas'), true);
+  check('confirmar credita o dinheiro', confirmarTarefa(marcada, true), true);
+  check('  e o pote cresce', DB.kidPotes(idG).gastar, antesConf + 3);
+  check('  saindo da fila', filaDasCriancas().includes(`data-ver-tarefas="${idG}"`), false);
+
+  /* RECUSAR apaga a marcação: a tarefa volta a poder ser feita, e não fica um
+     registro de "não fez" pendurado no histórico dela. */
+  const marcada2 = DB.upsert('kid_entries', {
+    kid_id: idG, tipo: 'tarefa', pote: 'gastar', amount: 3, date: hojeG2, task_id: tG, confirmada: false,
+  });
+  const antesRec = DB.kidPotes(idG).gastar;
+  check('recusar remove a marcação', confirmarTarefa(marcada2, false), true);
+  check('  sem creditar nada', DB.kidPotes(idG).gastar, antesRec);
+  check('  e o registro some de vez', DB.all('kid_entries').some(e => e.id === marcada2), false);
+
+  /* A FILA SOME quando não há nada — um bloco que vive dizendo "nada aqui" vira
+     paisagem e para de ser lido. */
+  check('sem pendências, a fila das crianças não aparece', filaDasCriancas(), '');
+
+  closeModal();
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idG)) DB.remove('kid_entries', e.id);
+  DB.remove('kid_tasks', tG); DB.remove('kids', idG);
+} catch (e) { console.log(` FALHA | gestão do cofrinho: ${e.message}`); fail++; }
 
 console.log('\n=== Puxar para atualizar desligado ===');
 {

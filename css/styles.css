@@ -1939,3 +1939,49 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
   .modal-inner { background: var(--ink); border-radius: 14px; padding: 24px; width: 100%; box-shadow: 0 20px 60px rgba(24, 28, 50, .25); }
   .sheet { bottom: auto; top: 6vh; border-radius: 16px; }
 }
+
+/* ---------- Cofrinho das crianças: a gestão, no app de quem administra ----------
+   O app DELAS tem visual próprio, claro e colorido, em cofrinho/. Aqui é a área
+   do adulto, e por isso segue a linguagem desta casa — mesma lista, mesmos pesos.
+   Só o avatar traz cor, porque é o que identifica de quem é o cofrinho num
+   relance quando há mais de uma criança. */
+.kid-item {
+  display: flex; align-items: center; gap: 12px; padding: 12px 0;
+  border-bottom: 1px dashed var(--line); cursor: pointer;
+}
+.kid-item:last-of-type { border-bottom: 0; }
+.kid-item.off { opacity: .5; }
+.kid-item:hover { background: var(--ink-3); border-radius: 8px; padding-left: 8px; padding-right: 8px; }
+.kid-av { font-size: 22px; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex: none; }
+.kid-info { flex: 1; min-width: 0; }
+.kid-info b { display: block; font-size: 14px; font-weight: 600; }
+.kid-info small { display: block; color: var(--paper-dim); font-size: 11.5px; }
+.kid-saldo { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.kid-item svg { width: 15px; height: 15px; color: var(--paper-dim); flex: none; }
+
+.kid-tarefa {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0;
+  border-bottom: 1px dashed var(--line); font-size: 13px;
+}
+.kid-tarefa:last-of-type { border-bottom: 0; }
+.kid-tarefa > span:first-child { flex: 1; }
+.kid-tarefa b { font-variant-numeric: tabular-nums; }
+
+.kid-mov { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px dashed var(--line); }
+.kid-mov:last-of-type { border-bottom: 0; }
+.kid-mov-ico { font-size: 18px; width: 34px; height: 34px; border-radius: 9px; background: var(--ink-3); display: grid; place-items: center; flex: none; }
+.kid-mov-info { flex: 1; min-width: 0; }
+.kid-mov-info b { display: block; font-size: 13px; font-weight: 600; }
+.kid-mov-info small { color: var(--paper-dim); font-size: 11px; }
+.kid-mov-val { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Escolher bichinho e cor: alvo grande, porque a lista é de tocar, não de ler. */
+.kd-escolha { display: flex; flex-wrap: wrap; gap: 8px; }
+.kd-op {
+  width: 46px; height: 46px; border-radius: 12px; cursor: pointer; font-size: 22px;
+  border: 2px solid var(--line); background: var(--ink-2); display: grid; place-items: center;
+  font-family: var(--font-body);
+}
+.kd-op.on { border-color: var(--gold); background: rgba(0, 158, 247, .12); }
+.kd-cor { border-width: 3px; }
+.kd-cor.on { border-color: var(--paper); transform: scale(1.08); }

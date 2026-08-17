@@ -1943,6 +1943,7 @@ function renderInicio(period) {
   return `
     ${setupCard}
     ${atual ? filaDePendencias() : ''}
+    ${atual ? filaDasCriancas() : ''}
     ${periodBar}
     ${atual ? heroAtual : state.monthOffset > 0 ? heroFuturo : heroFechado}
     ${atual ? avisoDeAperto() : ''}
@@ -4696,6 +4697,10 @@ function bindView() {
   /* A linha do variável no hero abre a classificação: é ali que a dúvida nasce, e
      sem esse caminho a marca de custo fixo só existia dentro da edição em massa,
      a três telas de distância. */
+  v.querySelectorAll('[data-semanada]').forEach(b => b.onclick = () => {
+    if (pagarSemanada(b.dataset.semanada)) { render(); toast('Semanada dada — o cofrinho encheu 🪙'); }
+  });
+  v.querySelectorAll('[data-ver-tarefas]').forEach(b => b.onclick = () => openConfirmarTarefas(b.dataset.verTarefas));
   v.querySelectorAll('[data-classificar]').forEach(b => b.onclick = () =>
     openClassificarGastos(DB.monthPeriod(new Date(), state.monthOffset || 0)));
   v.querySelectorAll('[data-hist]').forEach(b => b.onclick = () => openHistoricoFaturas(b.dataset.hist));
@@ -6887,6 +6892,74 @@ function filaDePendencias() {
     </div>`;
 }
 
+/* O QUE AS CRIANÇAS ESPERAM DE VOCÊ.
+
+   Bloco próprio, não misturado às contas: a semanada não é conta a pagar e a
+   tarefa não vence. Mas mora na mesma dobra da tela pelo mesmo motivo — o que se
+   esquece de fazer apodrece, e dar a semanada é semanal.
+
+   Aparece sozinho quando há o que fazer, e some quando não há: um bloco que vive
+   dizendo "nada aqui" vira paisagem e para de ser lido. */
+function filaDasCriancas() {
+  const semanadas = DB.kids().map(k => DB.kidSemanadaDevida(k)).filter(Boolean);
+  const tarefas = DB.kidTarefasAConfirmar();
+  if (!semanadas.length && !tarefas.length) return '';
+
+  const porKid = {};
+  for (const t of tarefas) (porKid[t.kid.id] = porKid[t.kid.id] || { kid: t.kid, itens: [] }).itens.push(t.entry);
+
+  return `
+    <div class="card pend kid-fila">
+      <div class="pend-cab">
+        <div><b>As crianças esperam você</b><small>semanada e tarefas para confirmar</small></div>
+        <span class="pend-selo">🦖</span>
+      </div>
+      ${semanadas.map(s => `<div class="pend-item">
+        <span class="pend-ico">${esc(s.kid.avatar || '🦖')}</span>
+        <span class="pend-info"><b>Semanada de ${esc(s.kid.name)}</b>
+          <small>${DIAS_SEMANA[Number(s.kid.semanada_dia) || 0]} · ainda não saiu</small></span>
+        <span class="pend-val">${fmt(s.valor)}</span>
+        <span class="pend-acoes"><button class="sec-btn" data-semanada="${s.kid.id}">Dar agora</button></span>
+      </div>`).join('')}
+      ${Object.values(porKid).map(g => `<div class="pend-item">
+        <span class="pend-ico">${esc(g.kid.avatar || '🦖')}</span>
+        <span class="pend-info"><b>${g.itens.length} tarefa(s) de ${esc(g.kid.name)}</b>
+          <small>ela marcou como feitas — confira</small></span>
+        <span class="pend-val txt-green">+${fmt(g.itens.reduce((s, e) => s + (Number(e.amount) || 0), 0))}</span>
+        <span class="pend-acoes"><button class="sec-btn" data-ver-tarefas="${g.kid.id}">Ver</button></span>
+      </div>`).join('')}
+    </div>`;
+}
+
+/* Conferir as tarefas marcadas, uma a uma. Aceitar ou recusar em bloco tiraria o
+   sentido do passo: confirmar é olhar o que foi feito, não carimbar. */
+function openConfirmarTarefas(kidId) {
+  const k = DB.get('kids', kidId);
+  if (!k) return toast('Criança não encontrada');
+  const pendentes = DB.kidTarefasAConfirmar().filter(x => x.kid.id === kidId);
+  const nomeDaTarefa = e => {
+    const t = DB.get('kid_tasks', e.task_id);
+    return t ? `${t.icon || '⭐'} ${t.name}` : (e.description || 'Tarefa');
+  };
+  openModal(`
+    <div class="modal-title">Tarefas de ${esc(k.name)}<button class="close-x" id="ct-back"><span data-ico="back"></span></button></div>
+    <p class="muted" style="margin-bottom:12px">Ela marcou como feitas. O dinheiro entra no cofrinho quando você confirmar.</p>
+    ${pendentes.map(x => `<div class="kid-tarefa">
+      <span>${esc(nomeDaTarefa(x.entry))}</span>
+      <b>${fmt(x.entry.amount)}</b>
+      <button class="link-btn" data-ok-tarefa="${x.entry.id}">confirmar</button>
+      <button class="link-btn t-danger" data-no-tarefa="${x.entry.id}">ainda não</button>
+    </div>`).join('') || '<div class="empty">Nada para confirmar agora.</div>'}
+  `);
+  $('#ct-back').onclick = closeModal;
+  document.querySelectorAll('#modal [data-ok-tarefa]').forEach(b => b.onclick = () => {
+    confirmarTarefa(b.dataset.okTarefa, true); render(); openConfirmarTarefas(kidId);
+  });
+  document.querySelectorAll('#modal [data-no-tarefa]').forEach(b => b.onclick = () => {
+    confirmarTarefa(b.dataset.noTarefa, false); render(); openConfirmarTarefas(kidId);
+  });
+}
+
 /* O aviso de aperto: em que dia o dinheiro acaba.
 
    O total do mês fechando positivo esconde exatamente isto — dá para terminar o
@@ -7218,6 +7291,338 @@ function openModal(html) {
 }
 function closeModal() { $('#modal').hidden = true; $('#modal-backdrop').hidden = true; render(); }
 
+/* ---------- COFRINHO: a gestão, no app de quem administra ----------
+
+   A área dos pais mora AQUI, não no app da criança. O PIN daqui criptografa os
+   dados de verdade; no app dela a senha só separa irmãos. E é aqui que o adulto
+   já administra tudo — pedir que ele vá a outro app para dar a semanada seria
+   inventar uma segunda casa para a mesma tarefa. */
+
+const AVATARES = ['🦖', '🦕', '🐢', '🦊', '🐨', '🦁', '🐼', '🐧', '🦉', '🐝', '🦄', '🐙'];
+const CORES_KID = ['#00b894', '#0984e3', '#e17055', '#6c5ce7', '#e84393', '#fdcb6e'];
+const DIAS_SEMANA = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+
+function openCriancas() {
+  const kids = DB.all('kids').filter(k => !k.deleted);
+  const linha = k => {
+    const potes = DB.kidPotes(k.id);
+    const meta = DB.kidMeta(k.id);
+    const pct = meta && meta.target_amount > 0
+      ? Math.min(100, Math.round(potes.guardar / meta.target_amount * 100)) : null;
+    return `<div class="kid-item${k.active === false ? ' off' : ''}" data-kid="${k.id}">
+      <span class="kid-av" style="background:${esc(k.cor || '#00b894')}22;color:${esc(k.cor || '#00b894')}">${esc(k.avatar || '🦖')}</span>
+      <span class="kid-info">
+        <b>${esc(k.name)}</b>
+        <small>${Number(k.semanada_valor) > 0
+          ? `${fmt(k.semanada_valor)} · ${DIAS_SEMANA[Number(k.semanada_dia) || 0]}`
+          : 'sem semanada'}${k.active === false ? ' · pausado' : ''}</small>
+        <small>${DB.kidTarefas(k.id).length} tarefa(s)${meta ? ` · ${esc(meta.icon || '🎁')} ${esc(meta.name)}${pct !== null ? ` (${pct}%)` : ''}` : ' · sem meta'}</small>
+      </span>
+      <span class="kid-saldo">${fmt(potes.total)}</span>
+      <span data-ico="chev"></span>
+    </div>`;
+  };
+  openModal(`
+    <div class="modal-title">Crianças<button class="close-x" id="kd-back"><span data-ico="back"></span></button></div>
+    <p class="muted" style="margin-bottom:12px">O cofrinho de cada criança. Elas acompanham pelo app próprio;
+      aqui você define a semanada, as tarefas e a meta — e vê tudo em detalhe.</p>
+    ${kids.map(linha).join('') || '<div class="empty"><b>Nenhuma criança ainda</b>Cadastre a primeira para começar o cofrinho dela.</div>'}
+    <button class="btn ghost" id="kd-nova" style="margin-top:12px">Adicionar criança</button>
+  `);
+  $('#kd-back').onclick = () => openConfig();
+  $('#kd-nova').onclick = () => openCriancaSheet(null);
+  document.querySelectorAll('#modal [data-kid]').forEach(el =>
+    el.onclick = () => openCriancaDetalhe(el.dataset.kid));
+}
+
+/* Cadastro. A senha é de QUATRO dígitos e o campo aceita só número: no app dela o
+   teclado é de criança, e uma senha com letra ali seria impossível de digitar. */
+function openCriancaSheet(kidId) {
+  const k = kidId ? DB.get('kids', kidId) : null;
+  const sel = (a, b) => (String(a) === String(b) ? ' selected' : '');
+  openSheet(`
+    <div class="sheet-title">${k ? 'Editar' : 'Nova'} criança<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="field"><label>Nome</label>
+      <input type="text" id="kd-nome" value="${esc(k ? k.name : '')}" autocomplete="off" placeholder="como ela é chamada"></div>
+    <div class="field"><label>Bichinho</label>
+      <div class="kd-escolha" id="kd-avatares">${AVATARES.map(a =>
+        `<button class="kd-op${(k ? k.avatar : AVATARES[0]) === a ? ' on' : ''}" data-av="${a}">${a}</button>`).join('')}</div></div>
+    <div class="field"><label>Cor</label>
+      <div class="kd-escolha" id="kd-cores">${CORES_KID.map(c =>
+        `<button class="kd-op kd-cor${(k ? k.cor : CORES_KID[0]) === c ? ' on' : ''}" data-cor="${c}" style="background:${c}"></button>`).join('')}</div></div>
+    <div class="field"><label>Semanada</label>
+      <input class="amount-input" id="kd-valor" type="text" inputmode="numeric" autocomplete="off"></div>
+    <div class="field"><label>Em que dia da semana?</label>
+      <select id="kd-dia">${DIAS_SEMANA.map((d, i) =>
+        `<option value="${i}"${sel(k ? k.semanada_dia : 5, i)}>${d}</option>`).join('')}</select></div>
+    <div class="field"><label>Moeda mágica</label>
+      <input class="amount-input" id="kd-rend" type="text" inputmode="numeric" autocomplete="off">
+      <p class="muted" style="margin-top:4px">Cai toda semana em que ela não mexer no que guardou.
+        É o rendimento em formato que a idade entende — zero desliga.</p></div>
+    <div class="field"><label>Senha do cofrinho (4 números)</label>
+      <input type="tel" id="kd-pin" maxlength="4" inputmode="numeric" autocomplete="off" placeholder="${k && k.pin_hash ? 'já tem senha — digite para trocar' : 'ex: dia e mês do aniversário'}">
+      <p class="muted" style="margin-top:4px">Só separa os cofrinhos entre irmãos. Não guarda dinheiro de verdade.</p></div>
+    <button class="btn" id="sh-save">Salvar</button>
+  `);
+  initMoney('#kd-valor', k ? k.semanada_valor : 0);
+  initMoney('#kd-rend', k ? k.rendimento_valor : 0);
+  let av = k ? (k.avatar || AVATARES[0]) : AVATARES[0];
+  let cor = k ? (k.cor || CORES_KID[0]) : CORES_KID[0];
+  const marcar = (sel2, attr, valor) => {
+    document.querySelectorAll(`#modal ${sel2} .kd-op, ${sel2} .kd-op`).forEach(b => {
+      if (b.dataset && b.dataset[attr] !== undefined) b.classList.toggle('on', b.dataset[attr] === valor);
+    });
+  };
+  document.querySelectorAll('[data-av]').forEach(b => b.onclick = () => { av = b.dataset.av; marcar('#kd-avatares', 'av', av); });
+  document.querySelectorAll('[data-cor]').forEach(b => b.onclick = () => { cor = b.dataset.cor; marcar('#kd-cores', 'cor', cor); });
+  $('#sh-close').onclick = closeSheet;
+  $('#sh-save').onclick = async () => {
+    const nome = ($('#kd-nome').value || '').trim();
+    if (!nome) return toast('Informe o nome');
+    const pin = ($('#kd-pin').value || '').trim();
+    const base = {
+      ...(k || {}), name: nome, avatar: av, cor,
+      semanada_valor: moneyVal('#kd-valor') || 0,
+      semanada_dia: Number($('#kd-dia').value) || 0,
+      rendimento_tipo: 'moeda', rendimento_valor: moneyVal('#kd-rend') || 0,
+      active: k ? k.active !== false : true,
+    };
+    if (pin) {
+      if (!/^\d{4}$/.test(pin)) return toast('A senha precisa ter 4 números');
+      const salt = String(Math.random()).slice(2, 12);
+      base.pin_salt = salt;
+      base.pin_hash = await hashDaSenha(pin, salt);
+    }
+    DB.upsert('kids', base);
+    closeSheet(); Sync.autoSync(); openCriancas();
+    toast(k ? 'Criança atualizada ✓' : 'Criança cadastrada ✓');
+  };
+}
+
+/* A senha do cofrinho é uma tranca entre irmãos, não um cofre: SHA-256 com sal
+   basta. Usar as 150 mil voltas de PBKDF2 do PIN da família seria proteger com
+   peso de banco algo que guarda quatro moedas — e travaria a abertura no tablet. */
+async function hashDaSenha(pin, salt) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + ':' + pin));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/* O detalhe: tudo da criança num lugar só, com o extrato completo. É o que o app
+   dela NÃO mostra — lá a história é ilustrada e curta; aqui é auditoria. */
+function openCriancaDetalhe(kidId) {
+  const k = DB.get('kids', kidId);
+  if (!k) return toast('Criança não encontrada');
+  const potes = DB.kidPotes(kidId);
+  const meta = DB.kidMeta(kidId);
+  const tarefas = DB.kidTarefas(kidId);
+  const entradas = DB.kidEntries(kidId).slice(0, 30);
+  const rotulo = { semanada: 'Semanada', tarefa: 'Tarefa', presente: 'Presente', gasto: 'Gasto', doacao: 'Doação', rendimento: 'Moeda mágica' };
+  const icone = { semanada: '🪙', tarefa: '⭐', presente: '🎁', gasto: '🛒', doacao: '❤️', rendimento: '✨' };
+  const potinho = { gastar: '🍭', guardar: '🎯', doar: '❤️' };
+
+  openModal(`
+    <div class="modal-title">${esc(k.avatar || '🦖')} ${esc(k.name)}<button class="close-x" id="kdd-back"><span data-ico="back"></span></button></div>
+
+    <div class="card" style="margin-bottom:12px">
+      <div class="proj-row"><span>🍭 Gastar agora</span><b>${fmt(potes.gastar)}</b></div>
+      <div class="proj-row"><span>🎯 Guardar</span><b>${fmt(potes.guardar)}</b></div>
+      <div class="proj-row"><span>❤️ Doar</span><b>${fmt(potes.doar)}</b></div>
+      <div class="proj-row" style="border-top:1px solid var(--line);font-weight:700"><span>Total</span><b>${fmt(potes.total)}</b></div>
+    </div>
+
+    <div class="sec-cab"><div class="sec-tit"><b>Meta</b><small>${meta
+      ? `${esc(meta.name)} · ${fmt(meta.target_amount)}` : 'nenhuma agora'}</small></div>
+      <div class="sec-acoes"><button class="sec-btn" id="kdd-meta">${meta ? 'Trocar' : 'Criar'}</button></div></div>
+    ${meta ? `<div class="card" style="margin-bottom:12px">
+      <div class="budget-head"><span class="muted">${esc(meta.icon || '🎁')} ${esc(meta.name)}</span><span class="num">${fmt(potes.guardar)} de ${fmt(meta.target_amount)}</span></div>
+      <div class="bar bar-green"><i style="width:${Math.min(100, meta.target_amount > 0 ? potes.guardar / meta.target_amount * 100 : 0)}%"></i></div>
+      ${DB.kidSemanadasParaMeta(kidId) !== null ? `<p class="muted" style="margin-top:6px">Faltam ${DB.kidSemanadasParaMeta(kidId)} semanada(s).</p>` : ''}
+    </div>` : ''}
+
+    <div class="sec-cab"><div class="sec-tit"><b>Tarefas</b><small>valem dinheiro extra</small></div>
+      <div class="sec-acoes"><button class="sec-btn" id="kdd-tarefa">Nova</button></div></div>
+    ${tarefas.map(t => `<div class="kid-tarefa">
+      <span>${esc(t.icon || '⭐')} ${esc(t.name)}</span>
+      <b>${fmt(t.amount)}</b>
+      <button class="link-btn t-danger" data-del-tarefa="${t.id}">tirar</button>
+    </div>`).join('') || '<div class="empty">Nenhuma tarefa cadastrada.</div>'}
+
+    <div class="sec-cab" style="margin-top:14px"><div class="sec-tit"><b>Movimento</b><small>tudo que entrou e saiu</small></div>
+      <div class="sec-acoes"><button class="sec-btn" id="kdd-lanc">Lançar</button></div></div>
+    ${entradas.map(e => `<div class="kid-mov">
+      <span class="kid-mov-ico">${icone[e.tipo] || '🪙'}</span>
+      <span class="kid-mov-info"><b>${esc(rotulo[e.tipo] || e.tipo)}${e.description && e.description !== e.tipo ? ' · ' + esc(e.description) : ''}</b>
+        <small>${fmtDay(e.date)} · ${potinho[e.pote] || ''} ${esc(e.pote)}</small></span>
+      <span class="kid-mov-val ${e.tipo === 'gasto' || e.tipo === 'doacao' ? 'txt-red' : 'txt-green'}">${
+        e.tipo === 'gasto' || e.tipo === 'doacao' ? '−' : '+'}${fmt(e.amount)}</span>
+    </div>`).join('') || '<div class="empty">Nada movimentado ainda.</div>'}
+
+    <div class="sec-cab" style="margin-top:14px"><div class="sec-tit"><b>Configurações</b><small>semanada, senha e bichinho</small></div>
+      <div class="sec-acoes"><button class="sec-btn" id="kdd-editar">Editar</button></div></div>
+    <button class="btn ghost t-danger" id="kdd-pausar" style="margin-top:8px">${k.active === false ? 'Reativar cofrinho' : 'Pausar cofrinho'}</button>
+  `);
+  $('#kdd-back').onclick = () => openCriancas();
+  $('#kdd-editar').onclick = () => openCriancaSheet(kidId);
+  $('#kdd-meta').onclick = () => openKidMetaSheet(kidId);
+  $('#kdd-tarefa').onclick = () => openKidTarefaSheet(kidId);
+  $('#kdd-lanc').onclick = () => openKidLancarSheet(kidId);
+  $('#kdd-pausar').onclick = () => {
+    DB.upsert('kids', { ...k, active: k.active === false });
+    Sync.autoSync(); openCriancaDetalhe(kidId);
+  };
+  document.querySelectorAll('#modal [data-del-tarefa]').forEach(b => b.onclick = () => {
+    DB.remove('kid_tasks', b.dataset.delTarefa);
+    Sync.autoSync(); openCriancaDetalhe(kidId);
+  });
+}
+
+/* A meta. Curta de propósito: 2 a 6 semanadas. Uma meta de seis meses aos 6 anos
+   não é meta, é frustração agendada — e o aviso aparece na hora de salvar. */
+function openKidMetaSheet(kidId) {
+  const k = DB.get('kids', kidId);
+  const atual = DB.kidMeta(kidId);
+  const ICONES_META = ['🚲', '🎮', '⚽', '🧸', '🎨', '📚', '🛴', '🦸', '🎧', '🍦'];
+  openSheet(`
+    <div class="sheet-title">Meta de ${esc(k.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="field"><label>O que ela quer?</label>
+      <input type="text" id="km-nome" value="${esc(atual ? atual.name : '')}" autocomplete="off" placeholder="uma bicicleta, um jogo…"></div>
+    <div class="field"><label>Desenho</label>
+      <div class="kd-escolha" id="km-icones">${ICONES_META.map(i =>
+        `<button class="kd-op${(atual ? atual.icon : ICONES_META[0]) === i ? ' on' : ''}" data-ic="${i}">${i}</button>`).join('')}</div></div>
+    <div class="field"><label>Quanto custa?</label>
+      <input class="amount-input" id="km-valor" type="text" inputmode="numeric" autocomplete="off"></div>
+    <p class="muted" id="km-aviso"></p>
+    <button class="btn" id="sh-save">Salvar</button>
+  `);
+  initMoney('#km-valor', atual ? atual.target_amount : 0);
+  let ic = atual ? (atual.icon || ICONES_META[0]) : ICONES_META[0];
+  document.querySelectorAll('[data-ic]').forEach(b => b.onclick = () => {
+    ic = b.dataset.ic;
+    document.querySelectorAll('[data-ic]').forEach(o => o.classList.toggle('on', o.dataset.ic === ic));
+  });
+  $('#sh-close').onclick = closeSheet;
+  $('#sh-save').onclick = () => {
+    const nome = ($('#km-nome').value || '').trim();
+    const valor = moneyVal('#km-valor');
+    if (!nome) return toast('Diga o que ela quer');
+    if (!valor) return toast('Informe quanto custa');
+    /* AVISO, não bloqueio: a decisão é da família, mas o app diz o que sabe.
+       Por semana entra a semanada mais a moeda mágica. */
+    const porSemana = (Number(k.semanada_valor) || 0) + (Number(k.rendimento_valor) || 0);
+    const semanas = porSemana > 0 ? Math.ceil(valor / porSemana) : 0;
+    if (semanas > 8) {
+      if (!confirm(`Nesse ritmo são ${semanas} semanadas — quase ${Math.round(semanas / 4)} meses.\n\nPara uma criança pequena, metas de 2 a 6 semanadas funcionam melhor: o que demora demais deixa de ser meta e vira desânimo.\n\nQuer salvar assim mesmo?`)) return;
+    }
+    if (atual) DB.upsert('kid_goals', { ...atual, done: true, done_at: todayISO() });
+    DB.upsert('kid_goals', { kid_id: kidId, name: nome, icon: ic, target_amount: valor, done: false });
+    closeSheet(); Sync.autoSync(); openCriancaDetalhe(kidId);
+    toast('Meta definida ✓');
+  };
+}
+
+function openKidTarefaSheet(kidId) {
+  const ICONES_T = ['🛏️', '🧸', '🪴', '🍽️', '🦷', '📚', '🐕', '🧹'];
+  openSheet(`
+    <div class="sheet-title">Nova tarefa<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="field"><label>Qual tarefa?</label>
+      <input type="text" id="kt-nome" autocomplete="off" placeholder="arrumar a cama…"></div>
+    <div class="field"><label>Desenho</label>
+      <div class="kd-escolha" id="kt-icones">${ICONES_T.map((i, n) =>
+        `<button class="kd-op${n === 0 ? ' on' : ''}" data-ic="${i}">${i}</button>`).join('')}</div></div>
+    <div class="field"><label>Quanto vale?</label>
+      <input class="amount-input" id="kt-valor" type="text" inputmode="numeric" autocomplete="off"></div>
+    <button class="btn" id="sh-save">Criar</button>
+  `);
+  initMoney('#kt-valor', 1);
+  let ic = ICONES_T[0];
+  document.querySelectorAll('[data-ic]').forEach(b => b.onclick = () => {
+    ic = b.dataset.ic;
+    document.querySelectorAll('[data-ic]').forEach(o => o.classList.toggle('on', o.dataset.ic === ic));
+  });
+  $('#sh-close').onclick = closeSheet;
+  $('#sh-save').onclick = () => {
+    const nome = ($('#kt-nome').value || '').trim();
+    if (!nome) return toast('Diga qual é a tarefa');
+    DB.upsert('kid_tasks', { kid_id: kidId, name: nome, icon: ic, amount: moneyVal('#kt-valor') || 0, active: true });
+    closeSheet(); Sync.autoSync(); openCriancaDetalhe(kidId);
+    toast('Tarefa criada ✓');
+  };
+}
+
+/* Lançar à mão: presente da avó, um gasto que ela fez, uma doação. O POTE é
+   obrigatório porque é ele que dá significado — gastar do "guardar" é outra
+   história, e a criança precisa ver a diferença. */
+function openKidLancarSheet(kidId) {
+  openSheet(`
+    <div class="sheet-title">Lançar movimento<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="field"><label>O que aconteceu?</label>
+      <select id="kl-tipo">
+        <option value="presente">Ganhou um presente em dinheiro</option>
+        <option value="gasto">Gastou com alguma coisa</option>
+        <option value="doacao">Doou para alguém</option>
+        <option value="semanada">Semanada</option>
+      </select></div>
+    <div class="field"><label>De qual pote?</label>
+      <select id="kl-pote">
+        <option value="gastar">🍭 Gastar agora</option>
+        <option value="guardar">🎯 Guardar</option>
+        <option value="doar">❤️ Doar</option>
+      </select></div>
+    <div class="field"><label>Quanto?</label>
+      <input class="amount-input" id="kl-valor" type="text" inputmode="numeric" autocomplete="off"></div>
+    <div class="field"><label>Descrição</label>
+      <input type="text" id="kl-desc" autocomplete="off" placeholder="opcional"></div>
+    <button class="btn" id="sh-save">Lançar</button>
+  `);
+  initMoney('#kl-valor', 0);
+  $('#sh-close').onclick = closeSheet;
+  $('#sh-save').onclick = () => {
+    const valor = moneyVal('#kl-valor');
+    if (!valor) return toast('Informe o valor');
+    DB.upsert('kid_entries', {
+      kid_id: kidId, tipo: $('#kl-tipo').value, pote: $('#kl-pote').value,
+      amount: valor, date: todayISO(), description: ($('#kl-desc').value || '').trim(), confirmada: true,
+    });
+    closeSheet(); Sync.autoSync(); openCriancaDetalhe(kidId);
+    toast('Lançado ✓');
+  };
+}
+
+/* PAGAR A SEMANADA. Nasce inteira no pote "gastar"; a divisão nos três potes é
+   decisão da criança, no app dela — e é ali que a lição acontece. Se ela não
+   dividir, fica em gastar mesmo: o app não decide por ela.
+
+   A moeda mágica sai junto quando é devida: as duas são do mesmo ritual semanal,
+   e separar em dois toques faria o adulto esquecer uma delas. */
+function pagarSemanada(kidId) {
+  const k = DB.get('kids', kidId);
+  if (!k) return false;
+  const devida = DB.kidSemanadaDevida(k);
+  if (!devida) return false;
+  DB.upsert('kid_entries', {
+    kid_id: kidId, tipo: 'semanada', pote: 'gastar', amount: devida.valor,
+    date: todayISO(), description: 'Semanada', confirmada: true,
+  });
+  const magica = DB.kidMoedaMagicaDevida(k);
+  if (magica) {
+    DB.upsert('kid_entries', {
+      kid_id: kidId, tipo: 'rendimento', pote: 'guardar', amount: magica.valor,
+      date: todayISO(), description: 'Moeda mágica', confirmada: true,
+    });
+  }
+  Sync.autoSync();
+  return true;
+}
+
+function confirmarTarefa(entryId, aceitar) {
+  const e = DB.get('kid_entries', entryId);
+  if (!e) return false;
+  if (aceitar) DB.upsert('kid_entries', { ...e, confirmada: true });
+  else DB.remove('kid_entries', entryId);
+  Sync.autoSync();
+  return true;
+}
+
 function openConfig() {
   const s = Sync.cfg || {};
   openModal(`
@@ -7229,6 +7634,10 @@ function openConfig() {
       const rs = DB.all('recurrences');
       const ativas = rs.filter(r => r.status === 'ativa').length;
       return ativas ? `${ativas} ativa(s)${rs.length > ativas ? ` · ${rs.length - ativas} parada(s)` : ''}` : 'nada se repete ainda';
+    })()}</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="criancas"><span class="cfg-left"><span class="cfg-ico">🦖</span><span>Crianças<br><small>${(() => {
+      const ks = DB.kids();
+      return ks.length ? ks.map(k => esc(k.name)).join(", ") : "o cofrinho delas, com semanada e metas";
     })()}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Família &amp; ciclo do mês<br><small>${esc(DB.familyLabel())}${Sync.hasFamily() ? ' · código para convidar' : ' · início no dia ' + DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="sync"><span class="cfg-left"><span class="cfg-ico" data-ico="cloud"></span><span>Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span></span><span class="chev" data-ico="chev"></span></div>
@@ -7471,6 +7880,7 @@ function openRecorrencias() {
 
 function openConfigSection(sec) {
   if (sec === 'recorrencias') return openRecorrencias();
+  if (sec === 'criancas') return openCriancas();
   if (sec === 'accounts') {
     crudList('accounts', 'Contas',
       a => `${esc(a.name)}<br><small>${esc(a.type)} · ${fmt(a.balance)}</small>`,
@@ -8703,7 +9113,7 @@ const Notif = {
   cfg: null,
   load() { try { this.cfg = JSON.parse(localStorage.getItem(this.key)) || {}; } catch (_) { this.cfg = {}; } },
   save() { localStorage.setItem(this.key, JSON.stringify(this.cfg)); },
-  enabled() { return this.cfg.enabled && 'Notification' in window && Notification.permission === 'granted'; },
+  enabled() { return !!this.cfg && this.cfg.enabled && 'Notification' in window && Notification.permission === 'granted'; },
   async enable() {
     if (!('Notification' in window)) { toast('Este navegador não suporta notificações'); return false; }
     const perm = await Notification.requestPermission();
