@@ -19,12 +19,13 @@ Leia primeiro, nesta ordem:
   docs/plano-testes.md                  ← por que o relógio da suíte é congelado
   docs/plano-cartoes.md                 ← a tela de Cartões e qual fatura aparece
   docs/plano-projecao-variavel.md       ← como o hero projeta o fim do mês
+  docs/plano-contas-fixas.md            ← editar um contrato e o que fica de fora
   docs/plano-extrato.md
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 131 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2455 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 132 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2478 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
@@ -120,6 +121,13 @@ mão toda vez.
   COMPROMETIDO é o que foi lançado e ainda não se efetivou. Cortar por data dava
   R$ 359,90/1.999,20 onde o certo é R$ 2.249,10/110,00. Fatura quitada devolve o
   limite — inclusive a só MARCADA como paga, em que `falta` continua cheio.
+- O contrato se edita inteiro na tela "Contas fixas" (openEditarContrato):
+  descrição, valor, periodicidade, dia, prazo, categoria, conta, método. O TIPO
+  (despesa/receita) fica fora — invertê-lo trocaria o sinal do que já entrou no
+  saldo. Vale das PRÓXIMAS ocorrências; o lançado fica como está.
+- fim_vezes é o TOTAL de ocorrências do contrato, não o que falta. O que falta é
+  restamDaRecorrencia = fim_vezes − geradas. Descontar antes de gravar faz o
+  desconto acontecer duas vezes (12 com 3 nascidas viravam "faltam 6").
 - UMA FONTE de movimentação futura: o CONTRATO (recurrences). A marca recurring
   saiu de cena — ela replicava o lançamento nos meses seguintes E não aparecia na
   tela "Contas fixas", que lê só contratos. Medido: marcar uma dentadura de R$ 770

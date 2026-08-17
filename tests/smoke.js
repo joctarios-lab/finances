@@ -116,7 +116,7 @@ eval(appSrc + `; Object.assign(global, {
   cartaoBloco, usoDoLimite, linhasDaPrevisao, openClassificarGastos, linhaDeClassificacao, ligarClassificacao, classificarGasto, vincularAContrato, desvincularDoContrato, openEscolherContrato, openCriarContrato, contratoDoLancamento, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
-  Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
+  Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openEditarContrato, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
   efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openEnvelopeDetail, catLabel });`);
 
@@ -5627,6 +5627,110 @@ try {
   closeModal();
 } catch (e) { console.log(` FALHA | criar e desvincular: ${e.message}`); fail++; }
 
+/* ---- EDITAR UM CONTRATO ----
+
+   A tela "Contas fixas" só oferecia mudar o VALOR e o status. Um aluguel que
+   passou do dia 10 para o 15 só podia ser cancelado e recriado — perdendo o
+   histórico de ocorrências, o vínculo dos lançamentos já gerados e a contagem de
+   quantas faltam. */
+console.log('\n=== Editar as configurações de um contrato ===');
+try {
+  const contaE = DB.upsert('accounts', { name: 'Conta Editar', type: 'Conta Corrente', balance: 4000, active: true });
+  const catE = (DB.rootCategories('Despesa')[0] || {}).id || null;
+  const idEd = DB.upsert('recurrences', {
+    description: 'Aluguel editavel', amount: 2000, valor_tipo: 'fixo', type: 'Despesa',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto',
+    category_id: null, account_id: contaE, card_id: null, tags: [], notes: '',
+    periodicidade: 'mensal', dia: 10, inicio: DB.inicioISO(DB.monthPeriod(new Date())),
+    fim_tipo: 'sem_prazo', fim_data: null, fim_vezes: null,
+    geradas: 3, status: 'ativa', ultima_geracao: null,
+  });
+
+  openEditarContrato(idEd);
+  const folhaEd = el('#sheet').innerHTML;
+  check('a folha abre com os campos do contrato', folhaEd.includes('Aluguel editavel'), true);
+  check('  a periodicidade atual vem selecionada', /value="mensal" selected/.test(folhaEd), true);
+  check('  o dia atual vem no campo', /id="ec-dia"[^>]*value="10"/.test(folhaEd), true);
+  check('  e o prazo atual também', /value="sem_prazo" selected/.test(folhaEd), true);
+  /* O TIPO fica fora: invertê-lo depois de gerar ocorrências trocaria o sinal do
+     que já entrou no saldo, e sobraria um contrato de receita com lançamentos de
+     despesa vinculados. */
+  check('  o tipo não é editável, de propósito', folhaEd.includes('id="ec-tipo"'), false);
+  check('  e a folha avisa que vale das próximas',
+    folhaEd.includes('Vale das próximas ocorrências em diante'), true);
+  check('  dizendo quantas já nasceram', folhaEd.includes('Já nasceram 3'), true);
+
+  /* SALVAR muda o contrato de verdade — é o ponto da tela. */
+  el('#ec-desc').value = 'Aluguel novo nome';
+  el('#ec-per').value = 'quinzenal';
+  el('#ec-dia').value = '15';
+  el('#ec-cat').value = catE || '';
+  el('#ec-metodo').value = 'PIX';
+  el('#ec-conta').value = contaE;
+  el('#ec-vtipo').value = 'media';
+  el('#ec-fim').value = 'sem_prazo';
+  el('#ec-amount').value = '2.500,00';
+  el('#sh-save').onclick();
+  const depoisEd = DB.get('recurrences', idEd);
+  check('salvar muda a descrição', depoisEd.description, 'Aluguel novo nome');
+  check('  a periodicidade', depoisEd.periodicidade, 'quinzenal');
+  check('  o dia do vencimento', Number(depoisEd.dia), 15);
+  check('  a categoria', depoisEd.category_id, catE);
+  check('  a forma de pagamento', depoisEd.method, 'PIX');
+  check('  o tipo de valor', depoisEd.valor_tipo, 'media');
+  /* E PRESERVA o que não estava na tela: o histórico de ocorrências é o que se
+     perderia ao recriar o contrato, e é justamente por isso que o editor existe. */
+  check('  e preserva quantas já nasceram', Number(depoisEd.geradas), 3);
+  check('  o início, que é histórico', depoisEd.inicio, DB.inicioISO(DB.monthPeriod(new Date())));
+  check('  e o tipo do contrato', depoisEd.type, 'Despesa');
+
+  /* O "N VEZES" É O PONTO DE ERRAR EM SILÊNCIO. A tela pergunta o TOTAL, contando
+     as que já nasceram; `fim_vezes` guarda as que FALTAM. Sem descontar, um
+     contrato de 12x recomeçaria em 12 a cada edição, e ninguém veria até ele
+     passar do fim. */
+  openEditarContrato(idEd);
+  el('#ec-fim').value = 'vezes';
+  el('#ec-vezes').value = '12';
+  el('#sh-save').onclick();
+  const comVezes = DB.get('recurrences', idEd);
+  check('o prazo por vezes guarda o TOTAL de ocorrências do contrato',
+    Number(comVezes.fim_vezes), 12);
+  /* E o que FALTA é derivado: restam = fim_vezes − geradas. A primeira versão do
+     editor descontava as já nascidas antes de gravar, e o desconto acontecia duas
+     vezes — 12 com 3 nascidas viravam "faltam 6" em vez de 9. O teste pegou. */
+  check('  e o que falta sai por subtração', DB.restamDaRecorrencia(comVezes), 9);
+  /* Reabrir mostra o TOTAL de novo: senão cada abertura encolheria o número na
+     tela sem ninguém ter mexido nele. */
+  openEditarContrato(idEd);
+  check('  reabrindo, o campo mostra o total, não o que falta',
+    /id="ec-vezes"[^>]*value="12"/.test(el('#sheet').innerHTML), true);
+  closeSheet();
+
+  /* CARTÃO E CONTA se excluem: a compra no cartão pesa na fatura, não sai da conta
+     direto, e guardar os dois deixaria o app decidindo sozinho qual vale. */
+  const cartaoE = DB.all('cards')[0];
+  if (cartaoE) {
+    openEditarContrato(idEd);
+    el('#ec-metodo').value = 'Cartão de Crédito';
+    el('#ec-cartao').value = cartaoE.id;
+    el('#sh-save').onclick();
+    const noCartao = DB.get('recurrences', idEd);
+    check('contrato no cartão guarda o cartão', noCartao.card_id, cartaoE.id);
+    check('  e solta a conta, que não é usada ali', noCartao.account_id, null);
+  }
+
+  check('descrição vazia não salva', (() => {
+    openEditarContrato(idEd);
+    el('#ec-desc').value = '   ';
+    el('#sh-save').onclick();
+    return DB.get('recurrences', idEd).description;
+  })(), 'Aluguel novo nome');
+  closeSheet();
+
+  DB.remove('recurrences', idEd);
+  DB.remove('accounts', contaE);
+} catch (e) { console.log(` FALHA | editar contrato: ${e.message}`); fail++; }
+
 console.log('\n=== Puxar para atualizar desligado ===');
 {
   const cssP = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
@@ -8891,7 +8995,11 @@ try {
   check('e que não tem prazo', tela.includes('sem prazo'), true);
   check('com botão de pausar', tela.includes(`data-rec-pausa="${rid}"`), true);
   check('e de cancelar', tela.includes(`data-rec-cancela="${rid}"`), true);
-  check('e de mexer no valor', tela.includes(`data-rec-val="${rid}"`), true);
+  /* O botão "Valor" virou "Editar": ele mexia só no valor, e não havia caminho
+     nenhum para dia, periodicidade, prazo, categoria, conta ou método. */
+  check('e de editar a conta fixa', tela.includes(`data-rec-edit="${rid}"`), true);
+  check('  e o botão que só mexia no valor não existe mais',
+    tela.includes('data-rec-val'), false);
 
   // Financiamento: a tela precisa dizer quanto falta, não só "ativa"
   const rFin = DB.upsert('recurrences', {
@@ -8920,8 +9028,11 @@ try {
   check('avisando que o pago fica', corpoU.includes('continuam no extrato, como histórico'), true);
   check('pausada pode ser reativada', corpoU.includes("{ status: 'ativa' }"), true);
   /* Reajuste vale da PRÓXIMA em diante: o aluguel de janeiro não passa a custar
-     o preço de fevereiro. */
-  check('mudar o valor não reescreve o passado', corpoU.includes('Vale das próximas em diante'), true);
+     o preço de fevereiro. O aviso mora no editor, que é onde a edição acontece —
+     antes vivia na folha só de valor, dentro de `openRecorrencias`. */
+  const corpoEd = apU.slice(apU.indexOf('function openEditarContrato'), apU.indexOf('function openRecorrencias'));
+  check('mudar o contrato não reescreve o passado',
+    corpoEd.includes('Vale das próximas ocorrências em diante'), true);
 
   // A entrada existe nas Configurações
   check('as contas fixas têm entrada nas configurações', apU.includes('data-go="recorrencias"'), true);

@@ -7261,6 +7261,135 @@ function crudList(store, title, renderRow, openEditor) {
    Sem esta tela, "até eu cancelar" seria uma armadilha — a recorrência nasceria
    sem botão de cancelar. Editar o valor aqui vale da PRÓXIMA em diante: o que já
    foi lançado é histórico, e reajuste de aluguel não reescreve o passado. */
+/* Editar um contrato inteiro.
+
+   A tela "Contas fixas" só oferecia mudar o VALOR e o status. Faltava o resto —
+   descrição, periodicidade, dia, prazo, categoria, conta, método —, e sem isso a
+   única saída para um aluguel que passou do dia 10 para o 15 era cancelar e criar
+   de novo: perde o histórico de ocorrências, o vínculo dos lançamentos já gerados
+   e a contagem de quantas faltam.
+
+   MUDA DAQUI PARA A FRENTE. O que já foi lançado fica como está, e é de propósito:
+   lançamento pago é histórico, e reescrever o passado mexeria em saldos já
+   conciliados. O aviso na folha diz isso, porque a expectativa natural de quem
+   corrige o dia é que "agora está certo" — e está, para as próximas.
+
+   O TIPO (despesa ou receita) fica FORA. Invertê-lo depois de gerar ocorrências
+   trocaria o sinal do que já entrou no saldo, e o app teria um contrato de receita
+   com lançamentos de despesa vinculados. Quem errou o tipo cria outro contrato: é
+   raro, e o estrago do contrário é grande. */
+function openEditarContrato(recId) {
+  const r = DB.get('recurrences', recId);
+  if (!r) return toast('Conta fixa não encontrada');
+  const contas = DB.all('accounts').filter(a => a.active !== false);
+  const metodos = ['PIX', 'Débito', 'Cartão de Crédito', 'Dinheiro', 'Boleto'];
+  const cartoes = DB.all('cards').filter(c => c.active !== false);
+  const sel = (v, alvo) => (String(v) === String(alvo) ? ' selected' : '');
+  const restam = DB.restamDaRecorrencia(r);
+
+  openSheet(`
+    <div class="sheet-title">Editar — ${esc(r.description)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <p class="muted" style="margin:-4px 0 12px">Vale das próximas ocorrências em diante. O que já foi lançado
+      continua como está.${r.geradas ? ` Já nasceram ${r.geradas}${restam !== null ? ` e faltam ${restam}` : ''}.` : ''}</p>
+
+    <div class="field"><label>Descrição</label>
+      <input type="text" id="ec-desc" value="${esc(r.description)}" autocomplete="off"></div>
+
+    <div class="field"><label>Valor</label>
+      <input class="amount-input" id="ec-amount" type="text" inputmode="numeric" autocomplete="off"></div>
+    <div class="field"><label>O valor muda todo mês?</label>
+      <select id="ec-vtipo">
+        <option value="fixo"${sel(r.valor_tipo !== 'media', true)}>Não, é sempre o mesmo</option>
+        <option value="media"${sel(r.valor_tipo, 'media')}>Sim — usar a mediana do que já foi pago</option>
+      </select></div>
+
+    <div class="field"><label>Com que frequência?</label>
+      <select id="ec-per">
+        <option value="mensal"${sel(r.periodicidade, 'mensal')}>Todo mês</option>
+        <option value="semanal"${sel(r.periodicidade, 'semanal')}>Toda semana</option>
+        <option value="quinzenal"${sel(r.periodicidade, 'quinzenal')}>A cada 15 dias</option>
+        <option value="anual"${sel(r.periodicidade, 'anual')}>Todo ano</option>
+      </select></div>
+    <div class="field"><label>Em que dia?</label>
+      <input type="number" id="ec-dia" min="1" max="31" value="${esc(String(r.dia || 1))}"></div>
+
+    <div class="field"><label>Até quando?</label>
+      <select id="ec-fim">
+        <option value="sem_prazo"${sel(r.fim_tipo, 'sem_prazo')}>Até eu cancelar</option>
+        <option value="vezes"${sel(r.fim_tipo, 'vezes')}>Por um número de vezes</option>
+        <option value="data"${sel(r.fim_tipo, 'data')}>Até uma data</option>
+      </select></div>
+    <div class="field" id="ec-campo-vezes"${r.fim_tipo === 'vezes' ? '' : ' hidden'}>
+      <label>Quantas ocorrências no total?</label>
+      <input type="number" id="ec-vezes" min="1" value="${esc(String(Number(r.fim_vezes) || 12))}">
+      <p class="muted" style="margin-top:4px">${r.geradas
+        ? `Contando as ${r.geradas} que já nasceram — faltariam ${Math.max(0, (Number(r.fim_vezes) || 0) - r.geradas)}.`
+        : 'Nenhuma nasceu ainda.'}</p></div>
+    <div class="field" id="ec-campo-data"${r.fim_tipo === 'data' ? '' : ' hidden'}>
+      <label>Até que data?</label>
+      <input type="date" id="ec-data" value="${esc(r.fim_data || '')}"></div>
+
+    <div class="field"><label>Categoria</label>
+      <select id="ec-cat"><option value="">— sem categoria —</option>${optionsCategorias(r.category_id || '', r.type || 'Despesa')}</select></div>
+    <div class="field"><label>Forma de pagamento</label>
+      <select id="ec-metodo">${metodos.map(m => `<option value="${esc(m)}"${sel(r.method, m)}>${esc(m)}</option>`).join('')}</select></div>
+    <div class="field" id="ec-campo-conta"><label>Conta</label>
+      <select id="ec-conta"><option value="">— não definida —</option>${
+        contas.map(a => `<option value="${a.id}"${sel(r.account_id, a.id)}>${esc(a.name)}</option>`).join('')}</select></div>
+    <div class="field" id="ec-campo-cartao"${r.method === 'Cartão de Crédito' ? '' : ' hidden'}><label>Cartão</label>
+      <select id="ec-cartao"><option value="">— não definido —</option>${
+        cartoes.map(c => `<option value="${c.id}"${sel(r.card_id, c.id)}>${esc(c.name)}</option>`).join('')}</select></div>
+
+    <button class="btn" id="sh-save">Salvar</button>
+  `);
+  initMoney('#ec-amount', r.amount);
+  $('#sh-close').onclick = closeSheet;
+
+  // Prazo e cartão só aparecem quando fazem sentido
+  const fim = $('#ec-fim');
+  fim.onchange = () => {
+    $('#ec-campo-vezes').hidden = fim.value !== 'vezes';
+    $('#ec-campo-data').hidden = fim.value !== 'data';
+  };
+  const met = $('#ec-metodo');
+  met.onchange = () => {
+    const noCartao = met.value === 'Cartão de Crédito';
+    $('#ec-campo-cartao').hidden = !noCartao;
+    $('#ec-campo-conta').hidden = noCartao;
+  };
+
+  $('#sh-save').onclick = () => {
+    const desc = ($('#ec-desc').value || '').trim();
+    if (!desc) return toast('Informe a descrição');
+    const valor = moneyVal('#ec-amount');
+    if (!valor) return toast('Informe o valor');
+    const noCartao = met.value === 'Cartão de Crédito';
+    /* `fim_vezes` é o TOTAL de ocorrências do contrato, não o que falta:
+       `restamDaRecorrencia` calcula `fim_vezes − geradas`. A primeira versão daqui
+       descontava `geradas` antes de gravar, e o desconto acontecia duas vezes — um
+       contrato de 12x com 3 nascidas passava a dizer que faltavam 6, e ninguém
+       veria até ele terminar antes da hora. O teste pegou. */
+    const total = Math.max(1, Number($('#ec-vezes').value) || 12);
+    DB.upsert('recurrences', {
+      ...r,
+      description: desc,
+      amount: valor,
+      valor_tipo: $('#ec-vtipo').value,
+      periodicidade: $('#ec-per').value,
+      dia: Math.min(31, Math.max(1, Number($('#ec-dia').value) || 1)),
+      fim_tipo: fim.value,
+      fim_vezes: fim.value === 'vezes' ? total : null,
+      fim_data: fim.value === 'data' ? ($('#ec-data').value || null) : null,
+      category_id: $('#ec-cat').value || null,
+      method: met.value,
+      account_id: noCartao ? null : ($('#ec-conta').value || null),
+      card_id: noCartao ? ($('#ec-cartao').value || null) : null,
+    });
+    closeSheet(); Sync.autoSync(); openRecorrencias();
+    toast('Conta fixa atualizada — vale das próximas ✓');
+  };
+}
+
 function openRecorrencias() {
   const rs = DB.all('recurrences').sort((a, b) =>
     (a.status === b.status ? 0 : a.status === 'ativa' ? -1 : 1) || Number(a.dia) - Number(b.dia));
@@ -7279,7 +7408,12 @@ function openRecorrencias() {
       <small class="muted">${r.type === 'Receita' ? '💰 entrada · ' : ''}${quando} · ${prazo}${
         r.status === 'pausada' ? ' · <b>pausada</b>' : r.status === 'cancelada' ? ' · <b>cancelada</b>' : ''}</small>
       <div class="rec-acoes">
-        <button class="sec-btn" data-rec-val="${r.id}">Valor</button>
+        ${/* "Editar" no lugar de "Valor": o botão antigo mexia só no valor e no tipo
+              dele, e não havia caminho nenhum para dia, periodicidade, prazo,
+              categoria, conta ou método. Um aluguel que passou do dia 10 para o 15
+              só podia ser cancelado e recriado — perdendo histórico, vínculo e a
+              contagem de quantas faltam. O valor continua ali dentro. */''}
+        <button class="sec-btn" data-rec-edit="${r.id}">Editar</button>
         ${r.status === 'ativa'
           ? `<button class="sec-btn" data-rec-pausa="${r.id}">Pausar</button>
              <button class="sec-btn t-danger" data-rec-cancela="${r.id}">Cancelar</button>`
@@ -7332,30 +7466,7 @@ function openRecorrencias() {
   document.querySelectorAll('[data-rec-apaga]').forEach(b => b.onclick = () => encerrar(b.dataset.recApaga, true));
   /* Reajuste: vale da PRÓXIMA em diante. O que já foi lançado é histórico — o
      aluguel de janeiro não passa a custar o preço de fevereiro. */
-  document.querySelectorAll('[data-rec-val]').forEach(b => b.onclick = () => {
-    const r = DB.get('recurrences', b.dataset.recVal);
-    if (!r) return;
-    openSheet(`
-      <div class="sheet-title">Valor — ${esc(r.description)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-      <p class="muted" style="margin:-4px 0 12px">Vale das próximas em diante. O que já foi lançado continua como está.</p>
-      <div class="field"><input class="amount-input" id="rv-amount" type="text" inputmode="numeric" autocomplete="off"></div>
-      <div class="field"><label>O valor muda todo mês?</label>
-        <select id="rv-tipo">
-          <option value="fixo"${r.valor_tipo !== 'media' ? ' selected' : ''}>Não, é sempre o mesmo</option>
-          <option value="media"${r.valor_tipo === 'media' ? ' selected' : ''}>Sim — usar a mediana do que já foi pago</option>
-        </select></div>
-      <button class="btn" id="sh-save">Salvar</button>
-    `);
-    initMoney('#rv-amount', r.amount);
-    $('#sh-close').onclick = closeSheet;
-    $('#sh-save').onclick = () => {
-      const v = moneyVal('#rv-amount');
-      if (!v) return toast('Informe o valor');
-      DB.upsert('recurrences', { ...r, amount: v, valor_tipo: $('#rv-tipo').value });
-      closeSheet(); Sync.autoSync(); openRecorrencias();
-      toast('Valor atualizado — vale das próximas ✓');
-    };
-  });
+  document.querySelectorAll('[data-rec-edit]').forEach(b => b.onclick = () => openEditarContrato(b.dataset.recEdit));
 }
 
 function openConfigSection(sec) {
