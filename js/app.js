@@ -1369,7 +1369,24 @@ function healthOf(stats, refLimit, available) {
    ciclos anteriores. Sem expor essa parcela, a soma das linhas não bateria com o
    total logo abaixo — e um total que não se confere não serve para decidir nada.
    Ela só aparece quando existe: no mês em dia, some. */
-function linhasDaPrevisao({ abreRotulo, abreNota, abre, previsto, atrasado, emContasFim, guardadoFim, dosFilhos, livreAoFim, variavel }) {
+/* A NOTA DA LINHA "DOS FILHOS" TEM DE SER HONESTA.
+
+   Ela dizia "no cofrinho, já é deles" e somava duas coisas diferentes: o que a
+   criança JÁ TEM e as semanadas que ainda vão ser dadas até o fim do mês. Numa
+   base real isso deu R$ 43 — R$ 10 no cofrinho e R$ 33 por vir — e a pessoa leu
+   que o filho tinha R$ 43 sem nunca ter recebido semanada. Um rótulo que afirma
+   algo falso é pior que nenhum: ele faz duvidar do resto da conta.
+
+   Agora a nota decompõe. As duas parcelas continuam na mesma linha porque as duas
+   saem do dinheiro livre — a diferença é só o tempo. */
+function notaDosFilhos(agora, aVir) {
+  const temAgora = agora > 0.005, temAVir = aVir > 0.005;
+  if (temAgora && temAVir) return `${fmtShort(agora)} no cofrinho + ${fmtShort(aVir)} até o fim do mês`;
+  if (temAVir) return 'semanadas até o fim do mês';
+  return 'no cofrinho, já é deles';
+}
+
+function linhasDaPrevisao({ abreRotulo, abreNota, abre, previsto, atrasado, emContasFim, guardadoFim, dosFilhos, dosFilhosAgora, livreAoFim, variavel }) {
   /* O GASTO VARIÁVEL QUE AINDA VEM, quando há ritmo para estimá-lo.
 
      Sem estas duas linhas o hero respondia "quanto sobra do que está LANÇADO" e
@@ -1400,7 +1417,7 @@ function linhasDaPrevisao({ abreRotulo, abreNota, abre, previsto, atrasado, emCo
         <div class="hc-l hc-sub"><span>= Em contas ao fim</span><b>${fmt(emContasFim)}</b></div>
         ${guardadoFim > 0.005 ? `<div class="hc-l"><span>− Guardado${
           previsto.investe > 0.005 ? ` <i>+${fmtShort(previsto.investe)} no mês</i>` : ''}</span><b>${fmt(guardadoFim)}</b></div>` : ''}
-        ${dosFilhos > 0.005 ? `<div class="hc-l"><span>− Dos filhos <i>no cofrinho, já é deles</i></span><b>${fmt(dosFilhos)}</b></div>` : ''}
+        ${dosFilhos > 0.005 ? `<div class="hc-l"><span>− Dos filhos <i>${notaDosFilhos(dosFilhosAgora, dosFilhos - dosFilhosAgora)}</i></span><b>${fmt(dosFilhos)}</b></div>` : ''}
         <div class="hc-l hc-total"><span>= Livre ao fim</span><b>${fmt(livreAoFim)}</b></div>
         ${temVariavel ? `
         <button class="hc-l hc-acao" data-classificar="1"><span>− Variável estimado <i>${fmtShort(variavel.diaContido)} a ${fmtShort(variavel.diaRitmo)}/dia · ${variavel.dias} dias · ajustar</i></span><b>${faixa(menor, maior)}</b></button>
@@ -1863,7 +1880,7 @@ function renderInicio(period) {
         ${linhasDaPrevisao({
           abreRotulo: 'Abre em contas', abreNota: `em ${fmtDate(new Date(inicioP + 'T12:00:00'))}`,
           abre: abreEmContas, previsto, atrasado: DB.pendenteDeCiclosAnteriores(period),
-          emContasFim, guardadoFim, dosFilhos: dosFilhosFim, livreAoFim,
+          emContasFim, guardadoFim, dosFilhos: dosFilhosFim, dosFilhosAgora: DB.dosFilhos(), livreAoFim,
         })}
       </div>
       <!-- A ponte com o Extrato continua dita por escrito, mas agora ela aponta
@@ -1945,7 +1962,7 @@ function renderInicio(period) {
         ${linhasDaPrevisao({
           abreRotulo: 'Em contas hoje', abreNota: '',
           abre: saldo, previsto, atrasado: atrasadoAtual,
-          emContasFim: emContasFimAtual, guardadoFim: guardadoFimAtual, dosFilhos: dosFilhosFimAtual, livreAoFim: livreAoFimAtual,
+          emContasFim: emContasFimAtual, guardadoFim: guardadoFimAtual, dosFilhos: dosFilhosFimAtual, dosFilhosAgora: DB.dosFilhos(), livreAoFim: livreAoFimAtual,
           /* Só no mês corrente: um mês que ainda não começou não tem ritmo para
              extrapolar, e um encerrado não tem o que projetar. `variavelProjetado`
              devolve zero nos dois casos, e as linhas somem sozinhas. */

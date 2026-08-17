@@ -1982,7 +1982,23 @@ const DB = {
     const nome = String(r.description || '').trim().toLowerCase();
     const janela = this.janelaDaOcorrencia(r);
     const alvo = Date.parse(String(dataISO) + 'T12:00:00');
-    for (const t of this.all('transactions')) {
+    /* A SEMANADA APAGADA CONTA COMO "JÁ LANÇADA". Os outros contratos, não.
+
+       `all()` esconde o que foi apagado, então o gerador não vê a exclusão e recria
+       a ocorrência na abertura seguinte. Para contratos comuns isso é PROPOSITAL e
+       está protegido por teste: remover o lançamento é como o app desfaz um
+       pagamento adiantado, e a previsão tem de voltar. Mudar isso para todos
+       quebraria o desfazer — cinco testes caíram quando tentei.
+
+       A semanada é diferente porque é neutra: não há pagamento a desfazer, e
+       apagá-la só pode querer dizer "não vou dar esta semanada". Recriá-la é o app
+       desfazendo a decisão da pessoa em silêncio, toda vez que o app abre.
+
+       Apareceu numa base real: três semanadas apagadas do extrato continuavam
+       pesando R$ 33 no "Dos filhos" do painel, e voltariam ao extrato na abertura
+       seguinte — apagar de novo nunca resolveria. */
+    const lista = r.kid_id ? this.data.transactions : this.all('transactions');
+    for (const t of lista) {
       /* A SEMANADA É NEUTRA E PRECISA SER RECONHECIDA AQUI.
 
          `isNeutral` está nesta linha para não confundir uma conciliação ou um

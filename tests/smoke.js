@@ -118,7 +118,7 @@ eval(appSrc + `; Object.assign(global, {
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openEditarContrato, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
-  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, blocoDaSemanada, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
+  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, blocoDaSemanada, notaDosFilhos, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
 
 /* 'R$ 1.234,56' de volta para 1234.56.
 
@@ -6113,6 +6113,75 @@ try {
   check('  e a conta dele fecha descontando os filhos',
     Math.round((desmoeda(cProx[1]) - (gProx ? desmoeda(gProx[1]) : 0) - desmoeda(fProx[1])) * 100) / 100,
     Math.round(desmoeda(lProx[1]) * 100) / 100);
+
+  /* ---- SEMANADA APAGADA NÃO VOLTA, NEM PESA ----
+
+     Cena real relatada: o painel dizia R$ 43 "do filho" sem nenhuma semanada ter
+     sido dada. Eram R$ 10 de uma semanada de verdade no cofrinho e R$ 33 de três
+     lançamentos APAGADOS do extrato — apagados e ainda contados, porque a conta os
+     buscava pelo contrato e o contrato não sabe da exclusão.
+
+     E pior que o número: o gerador ia recriá-los na abertura seguinte, porque
+     `all()` esconde o apagado. Apagar de novo nunca resolveria. */
+  const idAp = DB.upsert('kids', {
+    name: 'Filho Apagado', semanada_valor: 11, semanada_dia: diaF,
+    rendimento_tipo: 'moeda', rendimento_valor: 0, active: true,
+  });
+  DB.acertarContratoDaSemanada(idAp);
+  const contratoAp = DB.contratoDaSemanada(idAp);
+  DB.gerarRecorrencias(fimF);
+  const geradasAp = DB.all('transactions').filter(t => t.recurrence_id === contratoAp.id);
+  check('o contrato gerou as semanadas do mês', geradasAp.length >= 1, true);
+
+  const comSemanadas = DB.dosFilhosAVir(fimF);
+  for (const t of geradasAp) DB.remove('transactions', t.id);
+  check('apagadas do extrato, elas param de pesar no painel',
+    DB.dosFilhosAVir(fimF) < comSemanadas, true);
+  check('  e o contrato não as ressuscita ao gerar de novo',
+    DB.gerarRecorrencias(fimF).filter(t => t.kid_id === idAp).length, 0);
+  check('  o extrato continua sem elas',
+    DB.all('transactions').filter(t => t.recurrence_id === contratoAp.id).length, 0);
+
+  /* O CONTRATO CONTINUA VIVO, e isso é correto: apagar a ocorrência de uma semana
+     não é encerrar a semanada. As semanas SEGUINTES continuam previstas — quem
+     quer parar de vez pausa ou zera o contrato, que é uma decisão diferente. */
+  check('  mas o contrato segue ativo', DB.get('recurrences', contratoAp.id).status, 'ativa');
+  for (const t of DB.data.transactions.filter(t => t.kid_id === idAp)) DB.remove('transactions', t.id);
+  DB.remove('recurrences', contratoAp.id);
+  DB.remove('kids', idAp);
+
+  /* CONTRATO COMUM CONTINUA PODENDO VOLTAR. A exceção acima é só da semanada: nos
+     outros contratos, remover o lançamento é como o app desfaz um pagamento
+     adiantado, e a previsão tem de voltar. Tentei mudar para todos e cinco testes
+     caíram — esta linha é o que impede a tentação de "unificar". */
+  const contratoComum = DB.upsert('recurrences', {
+    description: 'Contrato comum do teste', amount: 300, type: 'Despesa',
+    periodicidade: 'mensal', dia: new Date(hojeF + 'T12:00:00').getDate(),
+    inicio: hojeF, fim_tipo: 'sempre', status: 'ativa', geradas: 0,
+  });
+  const criadas = DB.gerarRecorrencias(DB.somarDiasISO(hojeF, 2));
+  const doComum = criadas.filter(t => t.recurrence_id === contratoComum);
+  if (doComum.length) {
+    for (const t of doComum) DB.remove('transactions', t.id);
+    check('contrato comum: apagar o lançamento permite gerar de novo',
+      DB.gerarRecorrencias(DB.somarDiasISO(hojeF, 2)).filter(t => t.recurrence_id === contratoComum).length >= 1, true);
+  }
+  for (const t of DB.data.transactions.filter(t => t.recurrence_id === contratoComum)) DB.remove('transactions', t.id);
+  DB.remove('recurrences', contratoComum);
+
+  /* A NOTA DA LINHA NÃO PODE MENTIR. Ela dizia "já é deles" somando o acumulado
+     com o que ainda vai ser dado — foi exatamente o que fez alguém ler que o filho
+     tinha R$ 43 sem ter recebido nada. */
+  /* Compara por PARTES, não por string exata: `fmtShort` usa espaço não separável
+     entre "R$" e o número, e a igualdade literal falhava por um caractere que não
+     se vê. Um teste que reprova por invisibilidade ensina a ignorá-lo. */
+  const nota1033 = notaDosFilhos(10, 33);
+  check('a nota separa o que já é do que ainda vem',
+    /10[\s\S]*no cofrinho/.test(nota1033) && /33[\s\S]*até o fim do mês/.test(nota1033), true);
+  check('  só acumulado, diz que já é deles', notaDosFilhos(10, 0), 'no cofrinho, já é deles');
+  check('  só por vir, não afirma que já é deles', notaDosFilhos(0, 33), 'semanadas até o fim do mês');
+  check('  e nunca chama de "já é deles" o que ainda vem',
+    notaDosFilhos(10, 33).includes('já é deles'), false);
 
   /* SEM CRIANÇA, A LINHA SOME. Uma linha de valor zero num bloco de conta é
      ruído: quem não tem filho cadastrado não deve ver a palavra "filhos". */
