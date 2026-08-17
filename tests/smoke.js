@@ -113,7 +113,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE, prazoDaMeta, custoFixoCard, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  cartaoBloco, usoDoLimite, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
+  cartaoBloco, usoDoLimite, linhasDaPrevisao, openClassificarGastos, linhaDeClassificacao, ligarClassificacao, marcarComoFixo, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
@@ -5051,6 +5051,256 @@ try {
   for (const t of DB.all('transactions').filter(t => t.card_id === cartaoC)) DB.remove('transactions', t.id);
   DB.remove('cards', cartaoC); DB.remove('cards', cartaoVazio); DB.remove('accounts', contaC);
 } catch (e) { console.log(` FALHA | tela de cartões: ${e.message}`); fail++; }
+
+/* ---- O GASTO VARIÁVEL PROJETADO, e a linha que ele acrescenta ao hero ----
+
+   O hero respondia "quanto sobra do que está LANÇADO" e se calava sobre mercado,
+   combustível e restaurante — que no mês real são o maior gasto. Quem lia o
+   "Livre ao fim" como o saldo do dia 31 lia um número que ignora metade do que
+   ainda vai sair.
+
+   A resposta vem em FAIXA porque um número só fingiria precisão: medido na base
+   real, o mesmo mês fecha em +R$ 52 ou em −R$ 9.668 conforme o método. */
+console.log('\n=== Variável projetado e o fechamento do mês ===');
+try {
+  const contaV = DB.upsert('accounts', { name: 'Conta Var', type: 'Conta Corrente', balance: 10000, active: true });
+  const pV = DB.monthPeriod(new Date());
+  const diaV = n => DB.somarDiasISO(DB.inicioISO(pV), n);
+  const gastoV = (desc, valor, n, extra) => DB.upsert('transactions', {
+    description: desc, amount: valor, date: diaV(n), type: 'Despesa', status: 'Pago',
+    scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaV, ...(extra || {}),
+  });
+
+  const decorridosV = DB.elapsedDays(pV);
+  /* O cenário precisa caber nos dias JÁ decorridos, senão os lançamentos caem no
+     futuro e não entram no ritmo — e a suíte roda em datas diferentes. */
+  const cabe = n => Math.min(n, Math.max(0, decorridosV - 1));
+  /* MEDIDO POR DIFERENÇA. O mês corrente já tem os gastos do cenário base, então
+     afirmar um total absoluto aqui seria medir o cenário inteiro em vez do que
+     este teste acrescenta — foi assim que a primeira versão reprovou. */
+  const antesV = DB.variavelProjetado(pV);
+  gastoV('Mercado var', 100, cabe(0));
+  gastoV('Mercado var', 100, cabe(1));
+  gastoV('Pico var', 900, cabe(2));            // o atípico que a mediana ignora
+  // Um FIXO marcado: ele não pode entrar no ritmo, senão o mês inteiro se extrapola
+  gastoV('Aluguel marcado', 3000, cabe(1), { recurring: true });
+
+  const v = DB.variavelProjetado(pV);
+  check('há dias decorridos para medir o ritmo', v.decorridos >= 1, true);
+  check('  e dias à frente para projetar', v.dias, DB.periodDays(pV) - decorridosV);
+  /* O FIXO MARCADO FICA DE FORA. Sem isto o aluguel de R$ 3.000 entraria no ritmo
+     e seria cobrado de novo a cada dia restante do mês — o defeito que fazia a
+     projeção dizer R$ 162.807 num mês de R$ 17.981 de renda. */
+  /* NO ÚLTIMO DIA DO CICLO não há dias à frente, e `variavelProjetado` devolve
+     zero de propósito: não há o que projetar. Cobrar as duas coisas na mesma
+     execução exigiria um mês que tem e não tem futuro ao mesmo tempo — então cada
+     ramo afirma o que vale no seu dia, e tests/tempo.js roda os dois. */
+  const temFuturoV = v.dias > 0;
+  const acrescentado = (v.diaRitmo - antesV.diaRitmo) * v.decorridos;
+  if (temFuturoV) {
+    check('o fixo marcado não entra no ritmo', acrescentado < 3000, true);
+    check('  e o variável entra inteiro', Math.round(acrescentado), 1100);
+  } else {
+    check('no último dia do ciclo não há variável a projetar', v.ritmo, 0);
+    check('  nem cenário contido', v.contido, 0);
+  }
+
+  /* AS DUAS PONTAS. A média carrega o pico de R$ 900; a mediana não — é para isso
+     que ela existe, e é o que separa o cenário contido do cenário no ritmo.
+
+     Com POUCOS DIAS decorridos as duas coincidem, e é aritmética, não defeito: a
+     mediana de uma amostra de um dia é o próprio dia. No dia 1º do mês o teste
+     cobraria uma diferença que não pode existir. */
+  check('o ritmo é a média diária', Math.round(acrescentado * 100), Math.round(v.diaRitmo * v.decorridos * 100 - antesV.diaRitmo * antesV.decorridos * 100));
+  if (temFuturoV && v.decorridos >= 3) {
+    check('  e o contido é a mediana, que ignora o pico', v.diaContido < v.diaRitmo, true);
+  } else if (temFuturoV) {
+    check('  com um dia só de amostra, mediana e média coincidem',
+      Math.round(v.diaContido * 100), Math.round(v.diaRitmo * 100));
+  }
+  check('  as duas viram valor multiplicando pelos dias que faltam',
+    Math.round(v.ritmo * 100), Math.round(v.diaRitmo * v.dias * 100));
+
+  /* MÊS SEM RITMO NÃO SE EXTRAPOLA: um que ainda não começou não tem dias
+     decorridos, e um encerrado não tem o que projetar. */
+  const vFut = DB.variavelProjetado(DB.monthPeriod(new Date(), 2));
+  check('mês que ainda não começou não projeta variável', vFut.ritmo, 0);
+  const vPas = DB.variavelProjetado(DB.monthPeriod(new Date(), -1));
+  check('  nem mês encerrado', vPas.ritmo, 0);
+
+  /* ---- A LINHA NO HERO ---- */
+  const heroV = renderInicio(pV);
+  const fimV = DB.fimISO(pV);
+  const livreV = DB.saldoPrevistoNaData(null, fimV) - DB.guardadoPrevisto(fimV);
+  const maiorV = Math.max(v.contido, v.ritmo), menorV = Math.min(v.contido, v.ritmo);
+  if (temFuturoV) {
+    check('o hero mostra o variável estimado', heroV.includes('− Variável estimado'), true);
+    check('  e a linha do fechamento', heroV.includes('= Fecha em'), true);
+    check('  o fechamento vem DEPOIS do livre ao fim',
+      heroV.indexOf('= Livre ao fim') < heroV.indexOf('= Fecha em'), true);
+    /* Menos peso que o total: o número firme continua sendo a resposta da conta, e
+       a estimativa se apresenta como o que é. */
+    check('  e com menos destaque que ele', heroV.includes('hc-l hc-fecha'), true);
+    check('  o total não perdeu o destaque', heroV.includes('hc-l hc-total'), true);
+    /* A CONTA TEM DE FECHAR: livre ao fim − variável = fecha em. É a mesma exigência
+       de todas as contas do app — um total que não se confere nas próprias parcelas
+       é o pior defeito possível. */
+    /* Quando as duas pontas coincidem — mediana igual à média, o que acontece com
+       poucos dias de amostra — a tela mostra UM valor, não "X a X": uma faixa
+       degenerada faz o leitor procurar a diferença entre dois números iguais. */
+    check('a conta fecha: livre ao fim − variável = fecha em',
+      heroV.includes(Math.abs(maiorV - menorV) < 0.5
+        ? fmt(livreV - maiorV)
+        : `${fmt(livreV - maiorV)} a ${fmt(livreV - menorV)}`), true);
+    /* O SELO avisa quando a estimativa derruba um mês que estava no azul. O número
+       grande não muda: trocar um total medido por uma faixa estimada poria o palpite
+       no lugar mais visível do app. */
+    if (livreV >= 0 && livreV - maiorV < 0) {
+      check('o selo avisa que o variável derruba o mês', heroV.includes('Aperto no variável'), true);
+      check('  mas o número grande continua sendo o valor firme',
+        heroV.includes(`hero-value">${fmt(livreV)}`), true);
+    }
+  } else {
+    /* Último dia do ciclo: sem futuro, a estimativa não tem sentido e as duas
+       linhas somem. O hero volta a ser só a conta do que está lançado. */
+    check('sem dias à frente, o hero não estima variável', heroV.includes('− Variável estimado'), false);
+    check('  nem mostra linha de fechamento', heroV.includes('= Fecha em'), false);
+    check('  e o total continua lá', heroV.includes('= Livre ao fim'), true);
+  }
+
+  for (const t of DB.all('transactions').filter(t => / var$| marcado$/.test(String(t.description)))) DB.remove('transactions', t.id);
+  DB.remove('accounts', contaV);
+} catch (e) { console.log(` FALHA | variável projetado: ${e.message}`); fail++; }
+
+/* ---- O QUE CONTA COMO FIXO: só o que foi MARCADO ----
+
+   Adivinhar pelo nome do contrato foi tentado e recusado. Medido na base real, o
+   casamento por trecho de texto reclassificou 19 lançamentos errado, R$ 5.322 no
+   total: R$ 1.400 pagos a uma oficina viraram "internet fixa" porque a descrição
+   do Pix traz "PAGSEGURO INTERNET IP S.A.", e uma compra em "ARAGUARI" virou
+   conta de água. Um palpite que acerta às vezes é pior que a ausência dele —
+   quem confere não tem como saber quais linhas o app adivinhou. */
+console.log('\n=== Gasto fixo: só o que está marcado ===');
+try {
+  DB.upsert('recurrences', { description: 'Internet', amount: 149, type: 'Despesa',
+    periodicidade: 'mensal', dia: 10, inicio: DB.inicioISO(DB.monthPeriod(new Date())),
+    fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0 });
+  const ehFixo = DB.testadorDeGastoFixo();
+  const falso = { description: 'Transferência enviada pelo Pix - OFICINA - PAGSEGURO INTERNET IP S.A.', amount: 1400 };
+  check('descrição de extrato que CITA o contrato não vira fixo', ehFixo(falso), false);
+  check('  nem um nome que contém o do contrato por acaso',
+    ehFixo({ description: 'Compra no débito - ARAGUARI II', amount: 7 }), false);
+  check('  e nem o lançamento com o nome exato, se não estiver marcado',
+    ehFixo({ description: 'Internet', amount: 149 }), false);
+  check('marcado como custo fixo, é fixo', ehFixo({ description: 'Internet', recurring: true }), true);
+  check('  vinculado ao contrato, também', ehFixo({ description: 'x', recurrence_id: 'r1' }), true);
+  check('  e parcela, também', ehFixo({ description: 'TV', installment: '3/10' }), true);
+  for (const r of DB.all('recurrences').filter(r => r.description === 'Internet')) DB.remove('recurrences', r.id);
+} catch (e) { console.log(` FALHA | regra de gasto fixo: ${e.message}`); fail++; }
+
+/* ---- CLASSIFICAR FIXO OU VARIÁVEL, do próprio Painel ----
+
+   A projeção depende de o app saber o que é fixo, e o único sinal confiável é a
+   marcação. Só que ela vivia escondida: fora do formulário de lançamento e
+   dentro da edição em massa, a três telas do Painel — onde a dúvida nasce. */
+console.log('\n=== Classificar gastos em fixo ou variável ===');
+try {
+  const contaK = DB.upsert('accounts', { name: 'Conta Class', type: 'Conta Corrente', balance: 9000, active: true });
+  const pK = DB.monthPeriod(new Date());
+  const diaK = Math.max(0, DB.elapsedDays(pK) - 1);
+  const idGrande = DB.upsert('transactions', {
+    description: 'Aluguel nao marcado', amount: 2500, date: DB.somarDiasISO(DB.inicioISO(pK), diaK),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: contaK,
+  });
+
+  /* A linha do hero leva à folha: sem esse caminho a marca continua inalcançável.
+     Ela só existe quando há variável a estimar — no último dia do ciclo não há, e
+     a folha continua alcançável pela edição em massa do Extrato. */
+  const heroK = renderInicio(pK);
+  const projetaK = DB.variavelProjetado(pK).dias > 0;
+  check(projetaK ? 'a linha do variável abre a classificação' : 'sem projeção, o hero não oferece o atalho',
+    heroK.includes('data-classificar'), projetaK);
+
+  openClassificarGastos(pK);
+  const folha = els['#modal'] ? els['#modal'].innerHTML : '';
+  check('a folha lista os gastos do mês', folha.includes('Aluguel nao marcado'), true);
+  check('  com os dois estados à vista', folha.includes('>fixo<') && folha.includes('>variável<'), true);
+  check('  e o maior valor no topo, que é o que distorce a projeção',
+    folha.indexOf('Aluguel nao marcado') < folha.indexOf('Mercado'), true);
+
+  /* MARCAR TEM DE MUDAR A PROJEÇÃO — é o ponto inteiro da tela. No último dia do
+     ciclo não há projeção para mudar, e a marcação segue valendo para o mês que
+     vem; o que se cobra ali é que ela seja gravada. */
+  const antesK = DB.variavelProjetado(pK);
+  /* Chama o que o BOTÃO chama. Gravar por `DB.upsert` aqui testaria o banco, não a
+     tela: a sabotagem que tirava a gravação da folha passou despercebida
+     justamente porque o teste não passava por ela. */
+  check('marcar pela folha grava a classificação', marcarComoFixo(idGrande, true), true);
+  const depoisK = DB.variavelProjetado(pK);
+  check('  e a marca fica no lançamento',
+    !!DB.get('transactions', idGrande).recurring, true);
+  check('  marcar o que não existe não quebra', marcarComoFixo('nao-existe', true), false);
+  if (projetaK) {
+    check('marcar como fixo tira o gasto do ritmo',
+      Math.round((antesK.diaRitmo - depoisK.diaRitmo) * antesK.decorridos), 2500);
+    check('  e o hero passa a estimar menos variável',
+      depoisK.ritmo < antesK.ritmo, true);
+  }
+  /* E DESMARCAR VOLTA: a classificação é uma decisão de quem usa, não um caminho
+     de mão única. */
+  marcarComoFixo(idGrande, false);
+  check('  desmarcar devolve o gasto ao ritmo',
+    Math.round(DB.variavelProjetado(pK).diaRitmo * 100), Math.round(antesK.diaRitmo * 100));
+
+  /* ---- O SELO DO HERO ----
+     Ele avisa quando a estimativa derruba um mês que estava no azul. O cenário é
+     CONSTRUÍDO para isso: sem forçar a condição, o teste ficava dentro de um `if`
+     que nunca era verdadeiro, e a sabotagem que desligava o selo passou. */
+  if (projetaK) {
+    const vBase = DB.variavelProjetado(pK);
+    const fimK = DB.fimISO(pK);
+    const livreK = DB.saldoPrevistoNaData(null, fimK) - DB.guardadoPrevisto(fimK);
+    if (livreK >= 0) {
+      /* Um gasto PAGO num dia já decorrido move o ritmo sem mexer no saldo das
+         contas — é o que permite derrubar a estimativa deixando o "Livre ao fim"
+         positivo, que é exatamente a situação que o selo existe para sinalizar. */
+      /* O estado ANTES, porque em algumas datas o cenário da suíte já derruba o
+         mês sozinho — afirmar "volta ao normal" seria supor um normal que não
+         existe naquele dia. */
+      const seloAntes = renderInicio(pK).includes('Aperto no variável');
+      const precisa = (livreK + 500) * vBase.decorridos / vBase.dias;
+      const idEstouro = DB.upsert('transactions', {
+        description: 'Estouro do variavel', amount: Math.max(precisa, 10),
+        date: DB.somarDiasISO(DB.inicioISO(pK), Math.max(0, DB.elapsedDays(pK) - 1)),
+        type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+        method: 'Débito', account_id: contaK,
+      });
+      const heroSelo = renderInicio(pK);
+      check('o selo avisa quando o variável derruba um mês no azul',
+        heroSelo.includes('Aperto no variável'), true);
+      check('  e o número grande continua sendo o valor firme',
+        heroSelo.includes(`hero-value">${fmt(livreK)}`), true);
+      DB.remove('transactions', idEstouro);
+      check('  e sem o estouro ele volta ao que era',
+        renderInicio(pK).includes('Aperto no variável'), seloAntes);
+    }
+  }
+
+  /* O QUE JÁ É FIXO POR ORIGEM não vira botão: contrato e parcela são fixos pelo
+     que são, e deixar alternar criaria um estado que o app desfaz sozinho. */
+  const comContrato = { id: 'x1', description: 'Do contrato', amount: 10, date: todayISO(), recurrence_id: 'r9' };
+  const comParcela = { id: 'x2', description: 'Parcelado', amount: 10, date: todayISO(), installment: '2/5' };
+  check('lançamento de contrato não oferece o botão',
+    linhaDeClassificacao(comContrato, true).includes('data-fixo'), false);
+  check('  e diz que está travado', linhaDeClassificacao(comContrato, true).includes('cg-travado'), true);
+  check('parcela também não oferece', linhaDeClassificacao(comParcela, true).includes('data-var'), false);
+  check('  já um gasto comum oferece os dois',
+    /data-fixo[\s\S]*data-var/.test(linhaDeClassificacao({ id: 'x3', description: 'Mercado', amount: 10, date: todayISO() }, false)), true);
+
+  closeModal();
+  DB.remove('transactions', idGrande);
+  DB.remove('accounts', contaK);
+} catch (e) { console.log(` FALHA | classificar gastos: ${e.message}`); fail++; }
 
 console.log('\n=== Puxar para atualizar desligado ===');
 {

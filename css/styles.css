@@ -261,6 +261,42 @@ body {
   font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
   opacity: .5; margin-bottom: 4px;
 }
+/* "Fecha em": alinhado ao "= Livre ao fim" e com MENOS peso que ele. O total
+   firme continua sendo a resposta da conta; esta linha é estimativa, e o peso
+   menor é o que diz isso sem precisar de rótulo. Fica entre o .hc-l comum e o
+   .hc-total, como o .hc-sub — mas sem borda de topo, porque ela vem logo abaixo
+   da borda do total e duas linhas seguidas viram moldura. */
+.hc-fecha { margin-top: 2px; font-weight: 600; }
+.hc-fecha span { opacity: .95; }
+.hc-fecha-ruim b { color: #ffd7e0; }
+/* A linha do variável é um botão: leva à classificação. Herda a forma das outras
+   linhas da conta para não virar um corpo estranho no meio dela — o que a
+   distingue é o "ajustar" na nota e o sublinhado pontilhado no toque. */
+.hc-acao {
+  width: 100%; background: none; border: 0; color: inherit; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.hc-acao i { text-decoration: underline dotted; text-underline-offset: 2px; }
+.hc-acao:hover span { opacity: 1; }
+
+/* Folha de classificação: fixo ou variável, um toque por linha. */
+.cg-linha {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.cg-linha:last-child { border-bottom: 0; }
+.cg-info { flex: 1; min-width: 0; }
+.cg-info b { display: block; font-size: 13px; font-weight: 600; }
+.cg-info small { color: var(--paper-dim); font-size: 11px; }
+.cg-val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cg-botoes { display: flex; gap: 4px; flex: none; }
+.cg-b {
+  min-height: 32px; padding: 0 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--ink-2); color: var(--paper-dim);
+  font-size: 11.5px; font-weight: 600; font-family: var(--font-body);
+}
+.cg-b.on { border-color: var(--gold); background: rgba(0, 158, 247, .12); color: var(--gold); }
+.cg-travado { font-size: 11px; color: var(--paper-dim); flex: none; padding: 0 8px; }
 .hc-cab i { font-style: normal; font-weight: 600; letter-spacing: 0; text-transform: none; opacity: .8; }
 .hero-depois { margin-top: 8px; font-size: 11.5px; opacity: .78; }
 

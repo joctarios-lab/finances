@@ -1355,7 +1355,28 @@ function healthOf(stats, refLimit, available) {
    ciclos anteriores. Sem expor essa parcela, a soma das linhas não bateria com o
    total logo abaixo — e um total que não se confere não serve para decidir nada.
    Ela só aparece quando existe: no mês em dia, some. */
-function linhasDaPrevisao({ abreRotulo, abreNota, abre, previsto, atrasado, emContasFim, guardadoFim, livreAoFim }) {
+function linhasDaPrevisao({ abreRotulo, abreNota, abre, previsto, atrasado, emContasFim, guardadoFim, livreAoFim, variavel }) {
+  /* O GASTO VARIÁVEL QUE AINDA VEM, quando há ritmo para estimá-lo.
+
+     Sem estas duas linhas o hero respondia "quanto sobra do que está LANÇADO" e
+     se calava sobre mercado, combustível e restaurante — que em agosto são o
+     maior gasto do mês. Quem lia o "Livre ao fim" como o saldo do dia 31 estava
+     lendo um número que ignora metade do que ainda vai sair.
+
+     Vem em FAIXA, não em número único: medido na base real, o mesmo mês fecha em
+     +R$ 52 ou em −R$ 9.668 conforme o método de projeção. Fingir um valor exato
+     seria inventar precisão. As duas pontas saem de `DB.variavelProjetado` — a
+     mediana do gasto diário e a média —, e a ordem entre elas é resolvida aqui
+     porque nada garante qual das duas é a maior.
+
+     "Fecha em" fica alinhado ao "Livre ao fim" e com MENOS peso que ele: o total
+     firme continua sendo o protagonista da conta, e a estimativa se apresenta
+     como o que é. Dois totais com o mesmo peso fariam o leitor procurar qual dos
+     dois é a resposta. */
+  const menor = variavel ? Math.min(variavel.contido, variavel.ritmo) : 0;
+  const maior = variavel ? Math.max(variavel.contido, variavel.ritmo) : 0;
+  const temVariavel = maior > 0.005;
+  const faixa = (a, b) => (Math.abs(a - b) < 0.5 ? fmt(a) : `${fmt(a)} a ${fmt(b)}`);
   return `
         <div class="hc-l"><span>${abreRotulo}${abreNota ? ` <i>${abreNota}</i>` : ''}</span><b>${fmt(abre)}</b></div>
         <div class="hc-l"><span>+ Entradas <i>previstas</i></span><b>${fmt(previsto.entra)}</b></div>
@@ -1365,7 +1386,10 @@ function linhasDaPrevisao({ abreRotulo, abreNota, abre, previsto, atrasado, emCo
         <div class="hc-l hc-sub"><span>= Em contas ao fim</span><b>${fmt(emContasFim)}</b></div>
         ${guardadoFim > 0.005 ? `<div class="hc-l"><span>− Guardado${
           previsto.investe > 0.005 ? ` <i>+${fmtShort(previsto.investe)} no mês</i>` : ''}</span><b>${fmt(guardadoFim)}</b></div>` : ''}
-        <div class="hc-l hc-total"><span>= Livre ao fim</span><b>${fmt(livreAoFim)}</b></div>`;
+        <div class="hc-l hc-total"><span>= Livre ao fim</span><b>${fmt(livreAoFim)}</b></div>
+        ${temVariavel ? `
+        <button class="hc-l hc-acao" data-classificar="1"><span>− Variável estimado <i>${fmtShort(variavel.diaContido)} a ${fmtShort(variavel.diaRitmo)}/dia · ${variavel.dias} dias · ajustar</i></span><b>${faixa(menor, maior)}</b></button>
+        <div class="hc-l hc-fecha ${livreAoFim - maior < 0 ? 'hc-fecha-ruim' : ''}"><span>= Fecha em</span><b>${faixa(livreAoFim - maior, livreAoFim - menor)}</b></div>` : ''}`;
 }
 
 /* ---------- Início ---------- */
@@ -1860,15 +1884,26 @@ function renderInicio(period) {
   const guardadoFimAtual = DB.guardadoPrevisto(fimCicloAtual);
   const livreAoFimAtual = emContasFimAtual - guardadoFimAtual;
   const fechaNoAzul = livreAoFimAtual >= 0;
+  /* O NÚMERO GRANDE CONTINUA SENDO O LANÇADO — firme, sem estimativa. O gasto
+     variável entra na última linha da conta, e o SELO é quem avisa quando ele
+     derruba o mês: trocar o protagonista por uma faixa poria uma estimativa no
+     lugar mais visível do app, e trocar a cor do hero inteiro daria ao palpite o
+     peso de um fato. O selo âmbar diz "olhe a última linha" sem mentir sobre
+     qual dos dois números é medido. */
+  const varAtual = DB.variavelProjetado(period);
+  const varMaior = Math.max(varAtual.contido, varAtual.ritmo);
+  const derrubaNoVariavel = fechaNoAzul && varMaior > 0.005 && livreAoFimAtual - varMaior < 0;
   const heroAtual = `
     <div class="hero hero-${fechaNoAzul ? 'green' : 'red'}">
       <div class="hero-top">
         <span class="hero-label">Disponível previsto ao fim de ${esc(period.label)}</span>
-        <span class="hero-badge b-${fechaNoAzul ? 'green' : 'red'}">${fechaNoAzul ? 'No azul' : 'Aperto'}</span>
+        <span class="hero-badge b-${derrubaNoVariavel ? 'amber' : fechaNoAzul ? 'green' : 'red'}">${
+          derrubaNoVariavel ? 'Aperto no variável' : fechaNoAzul ? 'No azul' : 'Aperto'}</span>
       </div>
       <div class="hero-value">${fmt(livreAoFimAtual)}</div>
       <p class="hero-msg">${previsto.itens.length
-        ? `Projeção com ${previsto.itens.length} item(ns) já conhecido(s) — contas fixas, repetições e faturas. Gasto variável não entra nesta conta.`
+        ? `Projeção com ${previsto.itens.length} item(ns) já conhecido(s) — contas fixas, repetições e faturas.${
+          varMaior > 0.005 ? ' O gasto variável estimado está na última linha da conta.' : ' Gasto variável não entra nesta conta.'}`
         : 'Nada previsto para o resto do mês. Contas que se repetem e faturas apareceriam aqui.'}</p>
 
       <!-- BLOCO 1 — o caixa de hoje. Três linhas, nenhuma projeção: é o dinheiro
@@ -1891,6 +1926,10 @@ function renderInicio(period) {
           abreRotulo: 'Em contas hoje', abreNota: '',
           abre: saldo, previsto, atrasado: atrasadoAtual,
           emContasFim: emContasFimAtual, guardadoFim: guardadoFimAtual, livreAoFim: livreAoFimAtual,
+          /* Só no mês corrente: um mês que ainda não começou não tem ritmo para
+             extrapolar, e um encerrado não tem o que projetar. `variavelProjetado`
+             devolve zero nos dois casos, e as linhas somem sozinhas. */
+          variavel: varAtual,
         })}
       </div>
       <!-- Sem a frase-ponte "em conta haverá X" que o hero de mês futuro traz: aqui
@@ -3407,6 +3446,90 @@ function ligarAcoesDeFatura(escopo) {
   });
 }
 
+/* Classificar os gastos do mês em fixo ou variável, um toque por linha.
+
+   A projeção do fim do mês extrapola o gasto VARIÁVEL, então ela depende de o app
+   saber o que é fixo. O único sinal confiável para isso é a marcação — adivinhar
+   pelo nome do contrato foi tentado e recusado, porque errava feio no que vem de
+   extrato bancário (ver `testadorDeGastoFixo`).
+
+   Só que a marca vivia escondida: o formulário de lançamento não a mostra mais e
+   a edição em massa exige ir ao Extrato, montar um filtro e abrir a tela do lote.
+   Quem vê a projeção estranha no Painel não tem como agir dali — e é ali que a
+   dúvida nasce. Esta folha é o caminho curto: a lista do mês, o estado de cada
+   linha à vista, e o ritmo recalculado a cada toque.
+
+   Ordena pelo VALOR, não pela data: o que distorce a projeção são os poucos
+   lançamentos grandes lidos como variável, e eles precisam estar no topo. */
+function openClassificarGastos(period) {
+  const p = period || DB.monthPeriod(new Date());
+  const ehFixo = DB.testadorDeGastoFixo();
+  const itens = DB.expensesOf(p)
+    .filter(t => t.id && !t.virtual)          // previsão não se edita: não tem o que marcar
+    .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0));
+
+  const v = DB.variavelProjetado(p);
+  const marcados = itens.filter(ehFixo).length;
+  openModal(`
+    <div class="modal-title">Fixo ou variável — ${esc(p.label)}<button class="close-x" id="cg-back"><span data-ico="back"></span></button></div>
+    <p class="muted" style="margin-bottom:12px">O que for <b>variável</b> entra na projeção do fim do mês, no ritmo em que
+      está saindo. O que for <b>fixo</b> conta uma vez só. ${marcados} de ${itens.length} marcados como fixos.</p>
+    <div class="card" style="margin-bottom:12px">
+      <div class="proj-row"><span>Variável até hoje</span><b>${fmt(v.diaRitmo * v.decorridos)}</b></div>
+      <div class="proj-row"><span>Ritmo</span><b>${fmt(v.diaRitmo)}/dia</b></div>
+      <div class="proj-row"><span>Estimado até o fim do mês</span><b>${fmt(Math.min(v.contido, v.ritmo))} a ${fmt(Math.max(v.contido, v.ritmo))}</b></div>
+    </div>
+    <div id="cg-lista">${itens.map(t => linhaDeClassificacao(t, ehFixo(t))).join('')
+      || '<div class="empty">Nenhum gasto lançado neste mês.</div>'}</div>
+  `);
+  $('#cg-back').onclick = closeModal;
+  ligarClassificacao(p);
+}
+
+/* Uma linha: o lançamento e os dois estados, com o atual destacado. Dois botões
+   em vez de um interruptor porque "fixo" e "variável" são nomes que o leitor
+   precisa ver — um interruptor sozinho obrigaria a lembrar qual lado é qual.
+
+   O vínculo com contrato e a parcela NÃO viram botão: eles já são fixos por
+   origem, e deixar alternar ali criaria um estado que o app desfaz sozinho no
+   próximo cálculo. A linha diz por que está travada. */
+function linhaDeClassificacao(t, fixo) {
+  const travado = !!t.recurrence_id || !!t.installment;
+  return `<div class="cg-linha">
+    <span class="cg-info"><b>${esc(t.description)}</b><small>${fmtDay(t.date)}${
+      t.recurrence_id ? ' · contrato' : t.installment ? ' · parcela ' + esc(t.installment) : ''}</small></span>
+    <span class="cg-val">${fmt(t.amount)}</span>
+    ${travado
+      ? '<span class="cg-travado">fixo</span>'
+      : `<span class="cg-botoes">
+          <button class="cg-b ${fixo ? 'on' : ''}" data-fixo="${t.id}">fixo</button>
+          <button class="cg-b ${fixo ? '' : 'on'}" data-var="${t.id}">variável</button>
+        </span>`}
+  </div>`;
+}
+
+/* Marcar redesenha a folha inteira, e é de propósito: o cartão do topo mostra o
+   ritmo, e ele muda a cada toque. Uma atualização só da linha deixaria o número
+   do resumo mentindo até alguém fechar e reabrir. */
+function ligarClassificacao(period) {
+  const marca = (id, valor) => { marcarComoFixo(id, valor); openClassificarGastos(period); };
+  document.querySelectorAll('#modal [data-fixo]').forEach(b => b.onclick = () => marca(b.dataset.fixo, true));
+  document.querySelectorAll('#modal [data-var]').forEach(b => b.onclick = () => marca(b.dataset.var, false));
+}
+
+/* A gravação em si, fora do handler. O DOM falso da suíte não entrega elementos
+   para `querySelectorAll`, então um teste que dependesse do clique não exercitaria
+   nada — foi o que aconteceu: a sabotagem que removia a gravação passou
+   despercebida. Com a regra numa função própria, o teste chama o que o botão
+   chama. */
+function marcarComoFixo(id, valor) {
+  const t = DB.get('transactions', id);
+  if (!t) return false;
+  DB.upsert('transactions', { ...t, recurring: !!valor });
+  Sync.autoSync();
+  return true;
+}
+
 /* ---------- Metas ---------- */
 function renderMetas() {
   const goals = DB.all('goals');
@@ -4382,6 +4505,11 @@ function bindView() {
      entrasse só de um lado — os botões funcionariam na tela e ficariam inertes
      dentro da folha, que é o tipo de defeito que ninguém reporta. */
   ligarAcoesDeFatura(v);
+  /* A linha do variável no hero abre a classificação: é ali que a dúvida nasce, e
+     sem esse caminho a marca de custo fixo só existia dentro da edição em massa,
+     a três telas de distância. */
+  v.querySelectorAll('[data-classificar]').forEach(b => b.onclick = () =>
+    openClassificarGastos(DB.monthPeriod(new Date(), state.monthOffset || 0)));
   v.querySelectorAll('[data-hist]').forEach(b => b.onclick = () => openHistoricoFaturas(b.dataset.hist));
   v.querySelectorAll('[data-futuras]').forEach(b => b.onclick = () => openFaturasFuturas(b.dataset.futuras));
   const ng = $('#btn-new-goal');

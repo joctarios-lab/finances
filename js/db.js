@@ -1201,6 +1201,71 @@ const DB = {
        - só o gasto VARIÁVEL é extrapolado, que é o único que se comporta como
          ritmo. Fatura não entra: a compra no cartão já contou como gasto no dia
          em que foi feita, e somar a fatura contaria o mesmo dinheiro duas vezes. */
+  /* O QUE É GASTO FIXO, numa regra só: o que foi MARCADO como tal.
+
+     Três sinais explícitos — o vínculo com o contrato, a marca de custo fixo no
+     lançamento, e a parcela. Nada de inferir pelo texto.
+
+     ADIVINHAR PELO NOME DO CONTRATO FOI TENTADO E RECUSADO. A ideia era resolver
+     o fato de que quase nenhum lançamento tem vínculo (1 em 60 na base real), mas
+     casar a descrição contra o nome do contrato erra feio no que vem de extrato
+     bancário, onde a descrição carrega o nome do banco e da contraparte. Medido:
+     19 lançamentos reclassificados errado, R$ 5.322 no total — R$ 1.400 pagos a
+     uma oficina viraram "internet fixa" porque a descrição do Pix diz "PAGSEGURO
+     INTERNET IP S.A.", e uma compra em "ARAGUARI" virou conta de água.
+
+     Um número de tela errado é o pior defeito possível aqui, e um palpite que
+     acerta às vezes é pior que a ausência dele: quem confere não tem como saber
+     quais linhas o app adivinhou.
+
+     A consequência aceita é que o ritmo do variável fica ALTO enquanto os
+     lançamentos fixos não estiverem marcados — a projeção erra para o lado
+     pessimista, que é o lado seguro. O conserto é marcar o lançamento como custo
+     fixo (o formulário e a edição em massa já fazem isso), e aí a projeção
+     melhora sozinha. */
+  testadorDeGastoFixo() {
+    return t => !!t.recurrence_id || t.recurring === true || !!t.installment;
+  },
+
+  /* O gasto VARIÁVEL que ainda vai acontecer, em DOIS cenários.
+
+     Um número só fingiria uma precisão que não existe: medido na base real, o
+     mesmo mês fecha em +R$ 52 ou em −R$ 9.668 conforme o método escolhido. Então
+     a resposta é uma faixa, e cada ponta tem um significado:
+
+       CONTIDO  a mediana do gasto diário. Um dia atípico — a dentadura de R$ 770,
+                a compra grande de mercado — não arrasta a projeção do mês inteiro.
+       RITMO    a média diária. Conta tudo que aconteceu, inclusive o atípico, e
+                por isso é o cenário mais pesado.
+
+     Mês encerrado não tem o que projetar, e mês que ainda não começou não tem
+     ritmo para extrapolar — nos dois casos a faixa é zero, e quem chama decide se
+     mostra a linha. Extrapolar um mês sem dias decorridos foi o defeito que dava
+     "poupança projetada de −671%". */
+  variavelProjetado(period) {
+    const hoje = this.hojeISO();
+    const vazio = { contido: 0, ritmo: 0, diaContido: 0, diaRitmo: 0, dias: 0, decorridos: 0 };
+    if (this.fimISO(period) <= hoje) return vazio;
+    const decorridos = this.elapsedDays(period);
+    const dias = this.periodDays(period) - decorridos;
+    if (decorridos === 0 || dias <= 0) return { ...vazio, decorridos };
+
+    const ehFixo = this.testadorDeGastoFixo();
+    const porDia = {};
+    for (const t of this.expensesOf(period)) {
+      if (String(t.date) > hoje || ehFixo(t)) continue;
+      porDia[t.date] = (porDia[t.date] || 0) + (Number(t.amount) || 0);
+    }
+    /* A série cobre TODOS os dias decorridos, inclusive os sem gasto: a mediana
+       de "quanto sai por dia" só é honesta se os dias parados entrarem nela. */
+    const serie = [];
+    for (let i = 0; i < decorridos; i++) serie.push(porDia[this.somarDiasISO(this.inicioISO(period), i)] || 0);
+    const diaRitmo = serie.reduce((s, v) => s + v, 0) / decorridos;
+    const ord = serie.slice().sort((a, b) => a - b);
+    const diaContido = ord[Math.floor(ord.length / 2)] || 0;
+    return { contido: diaContido * dias, ritmo: diaRitmo * dias, diaContido, diaRitmo, dias, decorridos };
+  },
+
   projecaoDeGasto(period) {
     const hoje = this.hojeISO();
     const gastos = this.expensesOf(period);
@@ -1225,8 +1290,11 @@ const DB = {
     }
     /* FIXO NÃO SE EXTRAPOLA: ele já está contado acima, inteiro. Vem de contrato,
        de custo fixo marcado ou de parcela — as três coisas que acontecem uma vez
-       por ciclo com dia marcado. */
-    const ehFixo = t => !!t.recurrence_id || t.recurring === true || !!t.installment;
+       por ciclo com dia marcado. A regra mora em `testadorDeGastoFixo`, junto com
+       o porquê, e é a mesma que `variavelProjetado` usa: duas cópias divergiriam
+       na primeira correção que entrasse só de um lado, e aí a projeção de gasto e
+       a do hero passariam a discordar sobre o que é fixo. */
+    const ehFixo = this.testadorDeGastoFixo();
     const decorridos = Math.max(1, this.elapsedDays(period));
     const restantes = Math.max(0, this.periodDays(period) - this.elapsedDays(period));
     const ritmoDiario = soma(t => String(t.date) <= hoje && !ehFixo(t)) / decorridos;

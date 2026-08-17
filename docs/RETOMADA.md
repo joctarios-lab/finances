@@ -18,12 +18,13 @@ Leia primeiro, nesta ordem:
   docs/plano-gestao-eficiente.md      ← auditoria das telas e as 6 contas novas
   docs/plano-testes.md                  ← por que o relógio da suíte é congelado
   docs/plano-cartoes.md                 ← a tela de Cartões e qual fatura aparece
+  docs/plano-projecao-variavel.md       ← como o hero projeta o fim do mês
   docs/plano-extrato.md
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 126 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2355 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 127 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2393 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
@@ -116,6 +117,13 @@ mão toda vez.
   COMPROMETIDO é o que foi lançado e ainda não se efetivou. Cortar por data dava
   R$ 359,90/1.999,20 onde o certo é R$ 2.249,10/110,00. Fatura quitada devolve o
   limite — inclusive a só MARCADA como paga, em que `falta` continua cheio.
+- Gasto FIXO é só o que foi MARCADO: vínculo com contrato, marca de custo fixo
+  ou parcela. Adivinhar pelo nome do contrato foi tentado e RECUSADO — errou 19
+  lançamentos (R$ 5.322) no que vem de extrato: "PAGSEGURO INTERNET IP S.A."
+  virava internet fixa e "ARAGUARI" virava conta de água.
+- O hero projeta o fim do mês em FAIXA (contido = mediana diária, ritmo = média),
+  nunca num número só: o mesmo mês fecha em +R$ 52 ou −R$ 9.668 conforme o método.
+  O número grande NÃO vira estimativa; quem avisa é o selo âmbar.
 - Projeção do mês = DB.projecaoDeGasto: só o gasto VARIÁVEL se extrapola. O
   run-rate antigo dava R$ 162.807 num mês de R$ 17.981 de renda.
 - Base das porcentagens = DB.rendaDoMes (o mês), não a renda declarada. Cuidado:
