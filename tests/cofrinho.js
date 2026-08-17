@@ -419,7 +419,7 @@ console.log('\n=== O que a criança vê ===');
     ['cofrinho', 'tarefas', 'sonho', 'selos'].every(a => barraDeAbas().includes(`data-aba="${a}"`)), true);
   check('a tela de tarefas explica que não tem tarefa ainda', telaTarefas().includes('adulto'), true);
   check('a tela do sonho não fica vazia sem meta', telaSonho().includes('sonho'), true);
-  check('a tela de prêmios sempre mostra os seis', (telaSelos().match(/class="selo /g) || []).length, 6);
+  check('a tela de prêmios sempre mostra os seis', (telaSelos().match(/class="premio /g) || []).length, 6);
 
   // O ritual escreve na tela e o botão dele fecha o ciclo
   Dados.upsert('kid_entries', { kid_id: id, tipo: 'semanada', pote: 'gastar', amount: 8, date: Dados.somarDiasISO(HOJE, 0), confirmada: true });
@@ -530,10 +530,17 @@ console.log('\n=== O encontro com o app da família ===');
     check(`${tab}: nenhuma coluna que o app da família não envia`, sobrando, []);
   }
 
-  // Sem rede, sincronizar falha em silêncio e o app continua de pé
-  const antes = JSON.stringify(Dados.d);
-  Nuvem.sincronizar().then(r => {
+  /* Sem rede, sincronizar falha em silêncio e o app continua de pé.
+
+     O RETRATO É TIRADO DENTRO DA PROMESSA, não antes dela. Tirado fora, ele
+     capturava o estado no meio do arquivo e a comparação só rodava ao fim de
+     todo o script síncrono — quando os blocos SEGUINTES já tinham criado e
+     apagado crianças. O teste reprovava sem existir defeito, e um teste que
+     grita pelo motivo errado ensina a ignorá-lo. */
+  Nuvem.sincronizar().then(async r => {
     check('sem rede, a sincronização falha calada', r, false);
+    const antes = JSON.stringify(Dados.d);
+    await Nuvem.sincronizar();
     check('  e não estraga nada do que estava salvo', JSON.stringify(Dados.d), antes);
   });
 }
@@ -635,6 +642,258 @@ console.log('\n=== A ponte no mesmo aparelho ===');
 
   Object.defineProperty(global, 'localStorage', { value: antigoLS, configurable: true });
   Dados.carregar();
+}
+
+/* ================= O design que a idade exige ================= */
+console.log('\n=== Interface para seis anos ===');
+{
+  /* Estas não são preferências de gosto: são as regras que fazem a diferença
+     entre uma criança de seis anos conseguir usar o app sozinha ou não. Um
+     "ajuste rápido" no CSS pode desfazer qualquer uma delas sem que nada pareça
+     quebrado na tela — e é por isso que estão medidas aqui. */
+  const css = fs.readFileSync(BASE + 'cofrinho/css/cofrinho.css', 'utf8');
+
+  /* ALVO DE TOQUE. O dedo de uma criança acerta mal, e errar o botão numa tela
+     de dinheiro frustra de um jeito específico: ela acha que o app não funciona.
+     Nenhum alvo abaixo de 76px. */
+  const alvos = [...css.matchAll(/(?:min-height|height):\s*(\d+)px/g)].map(m => +m[1]);
+  /* O `(?![-\w])` importa: sem ele, `.missao-ico` e `.aba-selo` entram na conta e
+     o teste reprova por causa de um círculo de ícone e de um contador — que não
+     são alvos de toque. Um teste que grita pelo motivo errado ensina a ignorá-lo. */
+  const pequenos = [...css.matchAll(/\.(bt|tecla|missao|aba|chip|quem-bt|pote-bloco)(?![-\w])[^{]*\{[^}]*?(?:min-height|height):\s*(\d+)px/g)]
+    .filter(m => +m[2] < 76).map(m => `${m[1]}=${m[2]}px`);
+  check('nenhum alvo de toque abaixo de 76px', pequenos.length ? pequenos.join(', ') : true, true);
+  check('  e o teclado da senha tem teclas grandes', alvos.some(a => a >= 84), true);
+
+  /* O CLIQUE AFUNDA. É o que faz a tela responder como objeto físico. Sem
+     retorno visível, a criança toca de novo — e o app parece quebrado, não
+     lento. Vale para botão, tecla, card de missão e pote. */
+  for (const sel of ['.bt:active', '.tecla:active', '.missao:active', '.pote-bloco:active', '.chip:active', '.quem-bt:active']) {
+    const re = new RegExp(sel.replace('.', '\\.') + '\\s*\\{([^}]*)\\}');
+    const m = css.match(re);
+    check(`  ${sel} afunda ao toque`, !!m && /translateY\(\s*\d/.test(m[1]), true);
+  }
+
+  /* AÇÃO LONGE DA BORDA DE BAIXO: ali é onde a mão apoia o tablet, e botão
+     colado no canto dispara sozinho o tempo todo. */
+  const barra = (css.match(/\.barra\s*\{([^}]*)\}/) || [])[1] || '';
+  const folga = +(barra.match(/padding:[^;]*?calc\((\d+)px/) || [])[1];
+  check('a barra de abas fica longe da borda de baixo', folga >= 18, true);
+  check('  e respeita a área segura do aparelho', /env\(safe-area-inset-bottom\)/.test(barra), true);
+  check('  sendo uma pílula flutuante, não uma barra colada',
+    /\.barra-in\s*\{[^}]*border-radius:\s*999px/.test(css), true);
+
+  /* A FONTE QUE O CSS PEDE É A QUE O HTML BUSCA.
+
+     Peguei isto acontecendo: troquei a pilha do CSS para Fredoka e o HTML
+     continuou carregando Baloo 2. Nada quebra, nada avisa — o app simplesmente
+     abre com a letra do sistema, e a tipografia arredondada que a idade pede
+     desaparece sem deixar rastro. */
+  const html = fs.readFileSync(BASE + 'cofrinho/index.html', 'utf8');
+  const pilha = (css.match(/font-family:\s*([^;]+);/) || [])[1] || '';
+  const pedidas = [...pilha.matchAll(/'([^']+)'/g)].map(m => m[1]);
+  const baixadas = [...html.matchAll(/family=([A-Za-z+0-9]+)/g)].map(m => m[1].replace(/\+/g, ' '));
+  check('o CSS pede pelo menos duas fontes, com reserva', pedidas.length >= 2, true);
+  check('  e a primeira delas é a que o HTML baixa', baixadas.includes(pedidas[0]), true);
+  /* Fontes DO SISTEMA não se baixam — elas já estão no aparelho, e é justamente
+     por isso que fecham a pilha. 'Baloo 2' fica de fora por outro motivo: é a
+     reserva histórica, de quando o app usava ela, e mantê-la na pilha não custa
+     nada para quem já a tem em cache. */
+  const doSistema = ['Segoe UI', 'Baloo 2', 'Helvetica Neue', 'Roboto'];
+  const semBaixar = pedidas.filter(f => !baixadas.includes(f) && !doSistema.includes(f));
+  check('  nenhuma fonte pedida fica sem ser buscada',
+    semBaixar.length ? semBaixar.join(', ') : true, true);
+  check('  e a pilha termina no sistema, para o app abrir offline',
+    /system-ui|sans-serif/.test(pilha), true);
+
+  /* QUEM PREFERE MENOS MOVIMENTO continua com o app inteiro, só quieto. O app é
+     cheio de animação de propósito; desligá-la não pode esconder nada. */
+  check('quem pede menos movimento tem o app quieto',
+    /prefers-reduced-motion: reduce[\s\S]*animation-duration:\s*\.001ms/.test(css), true);
+
+  /* COR NUNCA SOZINHA. Cada pote leva o nome escrito e um ícone, e cada prêmio
+     leva nome e desenho próprio. É o que mantém o app legível para quem não
+     distingue verde de vermelho — 1 em cada 12 meninos. */
+  const idT = novaCrianca({ name: 'Design' });
+  Dados.upsert('kid_entries', { kid_id: idT, tipo: 'semanada', pote: 'gastar', amount: 9, date: HOJE, confirmada: true });
+  App.kid = Dados.get('kids', idT);
+  App.aba = 'cofrinho';
+  const tc = telaCofrinho();
+  check('cada pote diz o nome por escrito',
+    ['>Gastar<', '>Guardar<', '>Doar<'].every(n => tc.includes(n)), true);
+  check('  e traz um ícone junto da cor',
+    ['🛒', '🏦', '💝'].every(e => tc.includes(e)), true);
+
+  /* CADA PRÊMIO TEM ARTE PRÓPRIA. Seis estrelas amarelas iguais não são uma
+     coleção, são uma contagem: a criança precisa distinguir os prêmios de longe
+     para querer completar. */
+  App.aba = 'selos';
+  const artes = new Set();
+  for (const s of Dados.selos(idT)) artes.add(Arte.premio(s.id, true));
+  check('os seis prêmios têm desenhos diferentes', artes.size, 6);
+
+  const ts = telaSelos();
+  check('prêmio bloqueado mostra o cadeado', ts.includes('cad-mini'), true);
+  const idT2 = novaCrianca({ name: 'Design2' });
+  Dados.upsert('kid_entries', { kid_id: idT2, tipo: 'semanada', pote: 'gastar', amount: 8, date: HOJE, confirmada: true });
+  Dados.dividir(idT2, 3, 1);
+  App.kid = Dados.get('kids', idT2);
+  check('  e o ganho não mostra cadeado nenhum no lugar dele',
+    (telaSelos().match(/cad-mini/g) || []).length < (ts.match(/cad-mini/g) || []).length, true);
+
+  /* IDS DE SVG ÚNICOS POR POTE. Três potes na mesma tela usam clipPath, e id
+     repetido faz um recorte valer para todos — na prática, dois potes parecendo
+     ter o mesmo saldo. É invisível no código e óbvio na tela. */
+  App.kid = Dados.get('kids', idT);
+  App.aba = 'cofrinho';
+  const ids = [...telaCofrinho().matchAll(/id="cp-([^"]+)"/g)].map(m => m[1]);
+  check('cada pote tem o seu próprio recorte de SVG', ids.length, new Set(ids).size);
+  check('  e são os três da tela', ids.length, 3);
+
+  /* O RITUAL desenha potes DE NOVO, na mesma página: se reaproveitasse os ids da
+     tela principal, o recorte de um valeria para o outro. */
+  const rit = Arte.pote('gastar', 5, 10, 'rep-gastar') + Arte.pote('gastar', 5, 10, 'gastar');
+  const idsRit = [...rit.matchAll(/id="cp-([^"]+)"/g)].map(m => m[1]);
+  check('o ritual usa recortes próprios', idsRit.length, new Set(idsRit).size);
+
+  /* AS MOEDAS DENTRO DO POTE CONTAM ALGO: pote mais cheio, mais moedas. É a
+     leitura que funciona antes de saber ler número. */
+  const conta = v => (Arte.pote('guardar', v, 100).match(/pote-moeda/g) || []).length;
+  /* Três níveis, não dois: com dois, uma contagem FIXA de fileiras passava verde,
+     porque o corte pela linha do líquido bastava para dar a diferença. A escada
+     de 25 → 60 → 100 exige que a quantidade acompanhe o saldo de verdade.
+
+     Nota para quem sabotar isto: fixar as fileiras em 4 continua passando, e está
+     certo que passe. O desenho tem duas proteções — o número de fileiras E o
+     corte na linha do líquido —, e a segunda sozinha ainda entrega o
+     comportamento que importa. Exigir a primeira seria testar a implementação em
+     vez do que a criança vê. */
+  check('mais dinheiro, mais moedas no pote', conta(25) < conta(60) && conta(60) < conta(100), true);
+  check('  e pote vazio não tem moeda nenhuma', conta(0), 0);
+
+  /* O POTE VAZIO NÃO MENTE, e o cheio não transborda: com R$ 0,50 o líquido
+     aparece, e no máximo ele para antes da tampa. */
+  const alturaDe = svg => +(svg.match(/class="pote-liq" x="\d+" y="([\d.]+)"/) || [])[1];
+  const chao = alturaDe(Arte.pote('gastar', 0, 100));
+  check('pote sem dinheiro fica no fundo', chao, 138);
+  /* "APARECE" TEM QUE SER MEDIDO. `< 138` passava com meio pixel de líquido — e
+     meio pixel é exatamente o pote vazio que mente para ela. O mínimo desenhado
+     são 8% da altura útil, e é isso que a conta abaixo exige. */
+  const util = 138 - 46;
+  check('  com R$ 0,50 o líquido aparece de verdade',
+    alturaDe(Arte.pote('gastar', 0.5, 100)) <= 138 - util * 0.07, true);
+  check('  e cheio não passa da tampa', alturaDe(Arte.pote('gastar', 100, 100)) > 46, true);
+
+  /* A TRILHA DO SONHO enche junto com o guardado, e tem etapas visíveis. */
+  const t0 = Arte.trilha(0, '🛴'), t50 = Arte.trilha(50, '🛴'), t100 = Arte.trilha(100, '🛴');
+  const largura = svg => +(svg.match(/class="trilha-liq"[^>]*width="([\d.]+)"/) || [])[1];
+  check('a trilha começa vazia', largura(t0), 0);
+  /* A TRILHA CHEIA TEM QUE TER LARGURA. Sem esta linha, a proporção abaixo
+     passava verde com a trilha travada em zero: `0 === 0/2` é verdade, e o teste
+     inteiro virava decoração. Teste vazio, encontrado por sabotagem. */
+  check('  e a trilha cheia ocupa o tubo', largura(t100) > 200, true);
+  check('  enchendo pela metade no meio do caminho', Math.round(largura(t50)), Math.round(largura(t100) / 2));
+  check('  e tem bandeirinhas de etapa', (t50.match(/bandeira-ja/g) || []).length >= 2, true);
+  check('  com o brinquedo esperando no fim', t50.includes('🛴'), true);
+
+  /* O DINO TROCA DE CARA conforme o que aconteceu — é a informação que a criança
+     lê primeiro, antes de qualquer texto. Mesmo corpo, caras diferentes. */
+  const poses = ['oi', 'feliz', 'uau', 'pensando', 'dormindo', 'triste'];
+  const caras = new Set(poses.map(p => Arte.dino(p, 100)));
+  check('o Dino tem seis caras diferentes', caras.size, 6);
+  for (const p of poses) {
+    check(`  a pose ${p} mantém o mesmo corpo`, Arte.dino(p, 100).includes('class="dino-corpo"'), true);
+  }
+  check('o Dino aparece grande na tela principal', /width="1[2-9]\d"/.test(tc), true);
+
+  limpar(idT); limpar(idT2);
+}
+
+/* ================= O SVG é válido? ================= */
+console.log('\n=== SVG bem formado ===');
+{
+  /* ISTO EXISTE PORQUE EU ERREI. Escrevi `<ellipse cx="86" cy="70" r="0" rx="7.5"
+     ry="8">` — um `r` sobrando num ellipse, resto de uma edição. O navegador
+     engole calado: a elipse desenha e ninguém percebe. Mas a próxima versão do
+     erro pode ser uma tag sem fechar, e aí o Chrome descarta o resto do SVG e a
+     criança abre o app com um pedaço da tela faltando, sem nenhum aviso.
+
+     Nada aqui olhava para o desenho. Toda a suíte confere números e strings, e o
+     desenho é a metade do app que a criança de fato usa. */
+  const tags = { svg: 1, g: 1, defs: 1, clipPath: 1, linearGradient: 1, radialGradient: 1, pattern: 1, text: 1 };
+  const vazias = { path: 1, rect: 1, circle: 1, ellipse: 1, line: 1, polygon: 1, stop: 1, use: 1 };
+
+  /* Atributos que NÃO existem em cada forma. Não é a lista completa do SVG — é a
+     lista dos que se confundem na mão: r num ellipse, rx num circle, x num
+     circle. Cada um destes já é um desenho errado que o navegador não reclama. */
+  const proibidos = {
+    ellipse: ['r', 'x', 'y', 'width', 'height'],
+    circle: ['rx', 'ry', 'x', 'y', 'width', 'height'],
+    rect: ['cx', 'cy', 'r'],
+    line: ['cx', 'cy', 'r', 'rx', 'ry'],
+  };
+
+  const validar = (nome, svg) => {
+    const pilha = [];
+    let erro = null;
+
+    for (const m of svg.matchAll(/<(\/?)([a-zA-Z]+)([^>]*?)(\/?)>/g)) {
+      const [, fecha, tag, attrs, auto] = m;
+      if (fecha) {
+        const topo = pilha.pop();
+        if (topo !== tag) { erro = erro || `</${tag}> fecha <${topo || 'nada'}>`; }
+        continue;
+      }
+      // Atributo repetido na mesma tag: o navegador usa um e descarta o outro
+      const nomes = [...attrs.matchAll(/(\w[\w-]*)\s*=/g)].map(a => a[1]);
+      const dup = nomes.find((a, i) => nomes.indexOf(a) !== i);
+      if (dup) erro = erro || `<${tag}> tem "${dup}" duas vezes`;
+      // Atributo que não existe nesta forma
+      for (const p of (proibidos[tag] || [])) {
+        if (nomes.includes(p)) erro = erro || `<${tag}> não tem atributo "${p}"`;
+      }
+      // Aspas desbalanceadas engolem o resto do arquivo
+      if ((attrs.match(/"/g) || []).length % 2) erro = erro || `<${tag}> tem aspas ímpares`;
+      if (!auto && !vazias[tag]) pilha.push(tag);
+      if (!auto && vazias[tag]) pilha.push(tag);   // <rect ...></rect> é válido
+    }
+    if (pilha.length && !erro) erro = `ficou aberto: <${pilha.join('>, <')}>`;
+    check(`${nome}: SVG bem formado`, erro || true, true);
+  };
+
+  for (const p of ['oi', 'feliz', 'uau', 'pensando', 'dormindo', 'triste']) validar(`dino ${p}`, Arte.dino(p));
+  for (const t of ['gastar', 'guardar', 'doar']) {
+    validar(`pote ${t} vazio`, Arte.pote(t, 0, 10));
+    validar(`pote ${t} cheio`, Arte.pote(t, 10, 10));
+  }
+  for (const s of ['dividiu', 'tarefas', 'guardou', 'doou', 'moeda', 'meta']) {
+    validar(`prêmio ${s} ganho`, Arte.premio(s, true));
+    validar(`prêmio ${s} travado`, Arte.premio(s, false));
+  }
+  validar('moeda', Arte.moeda());
+  validar('check de ouro', Arte.checkOuro());
+  validar('ampulheta', Arte.ampulheta());
+  validar('cadeado fechado', Arte.cadeado(false));
+  validar('cadeado aberto', Arte.cadeado(true));
+  validar('cadeado pequeno', Arte.cadeadoMini());
+  validar('confete', Arte.confete());
+  validar('céu', Arte.cenario());
+  for (const pct of [0, 37, 100]) validar(`trilha ${pct}%`, Arte.trilha(pct, '🛴'));
+
+  /* E as TELAS inteiras, que são SVG dentro de HTML: um `<div>` sem fechar leva
+     metade da tela com ele, e o app abre pela metade sem dizer nada. */
+  const idS = novaCrianca({ name: 'Valida' });
+  Dados.upsert('kid_entries', { kid_id: idS, tipo: 'semanada', pote: 'gastar', amount: 12, date: HOJE, confirmada: true });
+  Dados.upsert('kid_tasks', { kid_id: idS, name: 'Missão', icon: '🧹', amount: 2, active: true });
+  Dados.upsert('kid_goals', { kid_id: idS, name: 'Sonho', icon: '🛴', target_amount: 40, done: false });
+  App.kid = Dados.get('kids', idS);
+  for (const [nome, fn] of [['cofrinho', telaCofrinho], ['missões', telaTarefas], ['sonho', telaSonho], ['prêmios', telaSelos]]) {
+    const html = fn();
+    const abre = (html.match(/<div\b/g) || []).length + (html.match(/<button\b/g) || []).length + (html.match(/<span\b/g) || []).length;
+    const fecha = (html.match(/<\/div>/g) || []).length + (html.match(/<\/button>/g) || []).length + (html.match(/<\/span>/g) || []).length;
+    check(`tela do ${nome}: todo bloco fecha`, abre, fecha);
+  }
+  limpar(idS);
 }
 
 /* ================= Versão dos arquivos ================= */

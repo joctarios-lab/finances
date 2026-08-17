@@ -1,337 +1,724 @@
-/* Cofrinho — a folha de estilo do app da criança.
+/* Cofrinho — design system do app da criança.
 
-   ESTE APP NÃO SE PARECE COM O DA FAMÍLIA, e é de propósito.
+   ESTE APP NÃO SE PARECE COM O DA FAMÍLIA, e é de propósito. O app do adulto é
+   escuro, denso e sério — mostra salário e dívida. Este é um brinquedo: vibrante,
+   tátil, feito para uma criança de seis anos querer tocar.
 
-   O app do adulto é escuro, denso e sério — ele mostra salário e dívida. Este é
-   claro, grande e colorido, porque quem usa tem seis anos, lê pouco e toca com
-   o dedo inteiro. As decisões abaixo saem de recomendações de interface infantil
-   e cada uma tem um motivo escrito:
+   A LINGUAGEM É "CLAY" — plástico macio.
 
-   - Alvo de toque de 76px, nunca menos. O dedo de uma criança acerta mal, e
-     errar o botão numa tela de dinheiro é frustrante de um jeito específico.
-   - Espaço grande entre botões, para o erro de mira não virar toque errado.
+   Tudo aqui tem volume: nada é uma borda de 1px. Cada botão e cada card carrega
+   uma sombra sólida embaixo (a "borda de baixo" do plástico) mais uma sombra
+   difusa (a que o objeto joga no chão), e AFUNDA ao ser tocado. É o que faz a
+   tela responder como um objeto físico em vez de um formulário.
+
+   As regras de interface infantil que o arquivo aplica, cada uma com motivo:
+
+   - Alvo de toque de 80px, nunca menos. O dedo de uma criança acerta mal, e
+     errar o botão numa tela de dinheiro frustra de um jeito específico.
+   - Espaço grande entre alvos, para o erro de mira não virar toque errado.
    - Nada de ação colada na borda de baixo: é onde a mão apoia o tablet.
-   - Toda ação responde. Sem retorno visível, a criança toca de novo — e o app
-     que não responde parece quebrado, não lento.
+   - Toda ação responde. Sem retorno visível a criança toca de novo, e um app que
+     não responde parece quebrado, não lento.
    - Cor NUNCA carrega o significado sozinha: sempre tem ícone e palavra junto.
-   - Fonte arredondada e grande; peso 700 quase em tudo. */
+     É o que mantém o app legível para quem não distingue verde de vermelho.
+   - Números grandes e pesados. O saldo é a informação que ela procura primeiro.
+   --------------------------------------------------------------------------- */
 
 :root {
-  --fundo: #eaf6ff;
-  --fundo-2: #d7edff;
+  /* ---- Fundo: céu, com o sol vindo de cima ---- */
+  --ceu-1: #a8e0ff;
+  --ceu-2: #d6f0ff;
+  --ceu-3: #fff6d9;
   --carta: #ffffff;
-  --tinta: #2d3436;
-  --tinta-fraca: #74838a;
-  --linha: #d9e6ee;
-  --gastar: #00b894;
-  --guardar: #0984e3;
-  --doar: #e84393;
-  --ouro: #fdcb6e;
-  --erro: #ff7675;
-  --sombra: 0 6px 0 rgba(0, 0, 0, .10);
-  --sombra-alta: 0 10px 24px rgba(9, 132, 227, .18);
-  --raio: 22px;
-  /* A cor do Dino vem da criança: escolher a cor do bichinho é o primeiro ato
-     de posse dela sobre o app, e o que faz "o meu cofrinho" ser dela mesmo. */
-  --dino-1: #55d6a0;
-  --dino-2: #3fc38c;
-  --dino-3: #2fae7a;
-  --dino-barriga: #eafff5;
+  --carta-2: #fffdf7;
+
+  /* ---- Tinta ---- */
+  --tinta: #2b3a44;
+  --tinta-fraca: #6b8290;
+  --tinta-clara: #9fb3bf;
+
+  /* ---- Os três potes: saturados, e cada um com a sua sombra de plástico ---- */
+  --gastar: #00d68f;
+  --gastar-fundo: #00a86f;
+  --gastar-claro: #7ef5cd;
+  --guardar: #2b7fff;
+  --guardar-fundo: #1a5fd0;
+  --guardar-claro: #9dc8ff;
+  --doar: #ff3d94;
+  --doar-fundo: #d81b74;
+  --doar-claro: #ffb3d5;
+
+  /* ---- Destaques: laranja quente e ouro ---- */
+  --laranja: #ff8a3d;
+  --laranja-fundo: #e06517;
+  --ouro: #ffc93c;
+  --ouro-fundo: #e0a010;
+  --ouro-claro: #fff0b8;
+  --roxo: #9b6bff;
+  --roxo-fundo: #7644e0;
+
+  --raio: 28px;
+  --raio-g: 34px;
+  --raio-p: 20px;
+
+  /* A sombra "clay": um degrau sólido embaixo + a sombra difusa no chão.
+     São as duas juntas que dão a leitura de plástico macio; só uma delas
+     devolve o botão chapado de sempre. */
+  --clay: 0 7px 0 rgba(43, 58, 68, .16), 0 12px 22px rgba(43, 58, 68, .13);
+  --clay-p: 0 5px 0 rgba(43, 58, 68, .14), 0 8px 14px rgba(43, 58, 68, .11);
+  --clay-fundo: inset 0 3px 6px rgba(255, 255, 255, .85), inset 0 -5px 10px rgba(43, 58, 68, .07);
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 body {
   margin: 0;
-  font-family: 'Baloo 2', 'Nunito', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  /* Fredoka é redonda e cheia — é a forma de letra que criança em alfabetização
+     reconhece mais rápido. Nunito assume se a rede falhar; a pilha do sistema
+     fecha a conta para a primeira abertura offline. */
+  font-family: 'Fredoka', 'Nunito', 'Baloo 2', system-ui, -apple-system, 'Segoe UI', sans-serif;
   font-weight: 600;
+  font-size: 17px;
   color: var(--tinta);
-  background: linear-gradient(180deg, var(--fundo) 0%, var(--fundo-2) 100%);
-  background-attachment: fixed;
+  background: var(--ceu-2);
   min-height: 100vh;
   overflow-x: hidden;
   user-select: none;
   -webkit-user-select: none;
+  text-rendering: optimizeLegibility;
 }
 
-.cenario { position: fixed; inset: 0 0 auto 0; height: 34vh; z-index: 0; pointer-events: none; }
-.nuvem { animation: passeio 34s linear infinite; }
-.n2 { animation-duration: 48s; animation-direction: reverse; }
-@keyframes passeio { from { transform: translateX(-70px); } to { transform: translateX(430px); } }
+/* ---------- O céu, atrás de tudo ---------- */
+.cenario { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
+.cenario .ceu { position: absolute; inset: 0; width: 100%; height: 100%; }
+.nuvem { animation: passeio 42s linear infinite; }
+.n2 { animation-duration: 62s; animation-delay: -14s; }
+.n3 { animation-duration: 52s; animation-delay: -30s; }
+@keyframes passeio { from { transform: translateX(-140px); } to { transform: translateX(560px); } }
+.sol { animation: gira 70s linear infinite; transform-origin: 352px 62px; }
+@keyframes gira { to { transform: rotate(360deg); } }
+.balao-ar { animation: flutua 9s ease-in-out infinite; }
+@keyframes flutua { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-16px); } }
 
-#app { position: relative; z-index: 1; max-width: 560px; margin: 0 auto; padding: 14px 16px 120px; }
+#app { position: relative; z-index: 1; max-width: 580px; margin: 0 auto; padding: 12px 16px 132px; }
 
-/* ---------- Tipos ---------- */
-h1 { font-size: 30px; margin: 4px 0 2px; font-weight: 800; }
-h2 { font-size: 21px; margin: 22px 0 10px; font-weight: 800; }
-.legenda { color: var(--tinta-fraca); font-size: 15px; margin: 0 0 14px; font-weight: 600; }
-.grana { font-variant-numeric: tabular-nums; font-weight: 800; }
+/* ---------- Tipografia: grande, pesada, redonda ---------- */
+h1 { font-size: 34px; margin: 4px 0 2px; font-weight: 700; letter-spacing: -.5px; }
+h2 {
+  font-size: 23px; margin: 26px 0 12px; font-weight: 700; letter-spacing: -.3px;
+  display: flex; align-items: center; gap: 9px;
+}
+h2 .emo { font-size: 27px; }
+.legenda { color: var(--tinta-fraca); font-size: 16px; margin: 0 0 14px; }
+.grana { font-variant-numeric: tabular-nums; font-weight: 700; }
 
-/* ---------- Cartões ---------- */
+/* ---------- Cards ---------- */
 .carta {
   background: var(--carta); border-radius: var(--raio); padding: 18px;
-  box-shadow: var(--sombra); margin-bottom: 16px;
+  box-shadow: var(--clay); margin-bottom: 18px;
+  border: 3px solid rgba(255, 255, 255, .9);
 }
 
-/* ---------- Botões: grandes, com sombra sólida que afunda ao tocar ---------- */
+/* ---------- Botões: plástico macio que afunda ----------
+   O :active empurra o botão para dentro do próprio degrau de sombra — o mesmo
+   movimento de um botão de brinquedo, e o retorno tátil que a criança espera. */
 .bt {
-  display: flex; align-items: center; justify-content: center; gap: 10px;
-  width: 100%; min-height: 76px; padding: 14px 20px;
-  border: 0; border-radius: 20px; cursor: pointer;
-  font-family: inherit; font-size: 21px; font-weight: 800; color: #fff;
-  background: var(--guardar); box-shadow: 0 6px 0 rgba(0, 0, 0, .16);
-  transition: transform .09s ease, box-shadow .09s ease;
+  display: flex; align-items: center; justify-content: center; gap: 11px;
+  width: 100%; min-height: 80px; padding: 16px 22px;
+  border: 0; border-radius: var(--raio); cursor: pointer;
+  font-family: inherit; font-size: 23px; font-weight: 700; color: #fff;
+  letter-spacing: -.2px; line-height: 1.15;
+  background: var(--guardar);
+  box-shadow: 0 8px 0 var(--guardar-fundo), 0 14px 20px rgba(43, 58, 68, .2);
+  transition: transform .1s cubic-bezier(.3, 1.4, .5, 1), box-shadow .1s ease, filter .12s;
+  position: relative; overflow: hidden;
 }
-.bt:active { transform: translateY(5px); box-shadow: 0 1px 0 rgba(0, 0, 0, .16); }
-.bt.verde { background: var(--gastar); }
-.bt.rosa { background: var(--doar); }
-.bt.ouro { background: var(--ouro); color: #7a5b00; }
-.bt.clara { background: #fff; color: var(--tinta); box-shadow: 0 6px 0 var(--linha); }
-.bt[disabled] { opacity: .45; pointer-events: none; }
-.bt .emo { font-size: 27px; }
+/* O brilho de plástico, na metade de cima */
+.bt::before {
+  content: ''; position: absolute; inset: 3px 3px auto 3px; height: 42%;
+  border-radius: calc(var(--raio) - 6px) calc(var(--raio) - 6px) 60% 60%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .38), rgba(255, 255, 255, 0));
+  pointer-events: none;
+}
+.bt:active { transform: translateY(8px); box-shadow: 0 0 0 var(--guardar-fundo), 0 3px 6px rgba(43, 58, 68, .18); }
+.bt .emo { font-size: 30px; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, .18)); }
+
+.bt.verde { background: var(--gastar); box-shadow: 0 8px 0 var(--gastar-fundo), 0 14px 20px rgba(0, 168, 111, .3); }
+.bt.verde:active { box-shadow: 0 0 0 var(--gastar-fundo), 0 3px 6px rgba(43, 58, 68, .18); }
+.bt.rosa { background: var(--doar); box-shadow: 0 8px 0 var(--doar-fundo), 0 14px 20px rgba(216, 27, 116, .28); }
+.bt.rosa:active { box-shadow: 0 0 0 var(--doar-fundo), 0 3px 6px rgba(43, 58, 68, .18); }
+.bt.ouro { background: var(--ouro); color: #6b4a00; box-shadow: 0 8px 0 var(--ouro-fundo), 0 14px 22px rgba(224, 160, 16, .34); }
+.bt.ouro:active { box-shadow: 0 0 0 var(--ouro-fundo), 0 3px 6px rgba(43, 58, 68, .18); }
+.bt.laranja { background: var(--laranja); box-shadow: 0 8px 0 var(--laranja-fundo), 0 14px 20px rgba(224, 101, 23, .3); }
+.bt.laranja:active { box-shadow: 0 0 0 var(--laranja-fundo), 0 3px 6px rgba(43, 58, 68, .18); }
+.bt.clara {
+  background: var(--carta); color: var(--tinta);
+  box-shadow: 0 8px 0 #cfe2ec, 0 12px 18px rgba(43, 58, 68, .14);
+}
+.bt.clara:active { box-shadow: 0 0 0 #cfe2ec, 0 3px 6px rgba(43, 58, 68, .16); }
+.bt[disabled] { filter: grayscale(.55) opacity(.6); pointer-events: none; box-shadow: 0 5px 0 rgba(43, 58, 68, .18); }
+
+/* O botão principal pulsa devagar, para dizer "é aqui" sem texto */
+.bt.chama { animation: chama 2.1s ease-in-out infinite; }
+@keyframes chama {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.035); }
+}
 
 .linha-bt { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
-/* ---------- O Dino ---------- */
-.dino-palco { display: flex; justify-content: center; margin: 6px 0 2px; }
-.dino-corpo { animation: respira 2.6s ease-in-out infinite; transform-origin: 100px 176px; }
-@keyframes respira { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-5px) scale(1.015); } }
-.dino-cabeca { animation: espia 6s ease-in-out infinite; transform-origin: 99px 100px; }
-@keyframes espia { 0%, 82%, 100% { transform: rotate(0); } 88% { transform: rotate(-5deg); } 94% { transform: rotate(4deg); } }
-.dino-braco-e { animation: acena 1.4s ease-in-out infinite; transform-origin: 62px 116px; }
-@keyframes acena { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-22deg); } }
-.dino-cauda { animation: rabo 2s ease-in-out infinite; transform-origin: 52px 138px; }
-@keyframes rabo { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(7deg); } }
+/* ---------- O Dino, com presença de tela ---------- */
+.dino-palco {
+  display: flex; justify-content: center; align-items: flex-end;
+  margin: 2px 0 -6px; position: relative;
+}
+.dino { filter: drop-shadow(0 10px 14px rgba(43, 58, 68, .18)); }
+.dino-corpo { animation: respira 2.8s ease-in-out infinite; transform-origin: 100px 176px; }
+@keyframes respira {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-6px) scale(1.02); }
+}
+.dino-cabeca { animation: espia 7s ease-in-out infinite; transform-origin: 99px 104px; }
+@keyframes espia {
+  0%, 80%, 100% { transform: rotate(0); }
+  86% { transform: rotate(-6deg); }
+  93% { transform: rotate(5deg); }
+}
+.dino-braco-e { animation: acena 1.5s ease-in-out infinite; transform-origin: 62px 116px; }
+@keyframes acena { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-26deg); } }
+.dino-cauda { animation: rabo 2.1s ease-in-out infinite; transform-origin: 56px 140px; }
+@keyframes rabo { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(9deg); } }
+.dino-crista { animation: crista 3.4s ease-in-out infinite; transform-origin: 99px 60px; }
+@keyframes crista { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(1.09); } }
 
-.dino-feliz .dino-corpo { animation: pula .55s cubic-bezier(.3, 1.6, .5, 1) 3; }
-@keyframes pula { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-26px); } 60% { transform: translateY(0) scaleY(.92); } }
-.dino-uau .dino-cabeca { animation: susto .5s ease-out 2; }
-@keyframes susto { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.12); } }
-.dino-dormindo .dino-corpo { animation: respira 4.5s ease-in-out infinite; }
-.zzz { animation: sobe 3s ease-in-out infinite; opacity: 0; }
-.zzz2 { animation-delay: 1.1s; }
-@keyframes sobe { 0% { opacity: 0; transform: translateY(6px); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateY(-16px); } }
-.lagrima { animation: cai 2.4s ease-in infinite; }
-@keyframes cai { 0% { opacity: 0; transform: translateY(0); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(26px); } }
+.dino-feliz .dino-corpo { animation: pula .6s cubic-bezier(.3, 1.7, .5, 1) 3; }
+@keyframes pula {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  35% { transform: translateY(-32px) scaleY(1.05); }
+  70% { transform: translateY(0) scaleY(.9); }
+}
+.dino-uau .dino-cabeca { animation: susto .55s ease-out 3; }
+@keyframes susto { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.14) rotate(-3deg); } }
+.dino-dormindo .dino-corpo { animation: respira 5s ease-in-out infinite; }
+.zzz { animation: sobe 3.2s ease-in-out infinite; opacity: 0; }
+.zzz2 { animation-delay: 1.2s; }
+@keyframes sobe {
+  0% { opacity: 0; transform: translateY(8px) scale(.7); }
+  40% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-22px) scale(1.2); }
+}
+.lagrima { animation: cai 2.6s ease-in infinite; }
+@keyframes cai {
+  0% { opacity: 0; transform: translateY(0) scale(.7); }
+  25% { opacity: 1; transform: translateY(4px) scale(1); }
+  100% { opacity: 0; transform: translateY(30px) scale(.8); }
+}
 
-/* Balão de fala: o Dino explica a tela, e é o único texto longo que a criança lê */
+/* ---------- Balão de fala estilo história em quadrinhos ----------
+   É o único texto longo que a criança lê, então ele é grande, centrado e chega
+   com um salto — o movimento puxa o olho para a instrução antes de tudo. */
 .balao {
-  position: relative; background: #fff; border-radius: 20px; padding: 14px 18px;
-  font-size: 17px; font-weight: 700; text-align: center; box-shadow: var(--sombra);
-  margin: 0 auto 14px; max-width: 460px;
-  animation: chega .4s cubic-bezier(.3, 1.5, .5, 1) both;
+  position: relative;
+  background: var(--carta);
+  border: 4px solid var(--tinta);
+  border-radius: 30px;
+  padding: 16px 22px;
+  font-size: 19px; font-weight: 700; text-align: center; line-height: 1.35;
+  margin: 10px auto 20px; max-width: 470px;
+  box-shadow: 0 7px 0 var(--tinta), 0 14px 24px rgba(43, 58, 68, .18);
+  animation: chega .45s cubic-bezier(.3, 1.6, .5, 1) both;
+}
+/* O bico do balão: dois triângulos, o de trás fazendo o contorno preto */
+.balao::before, .balao::after {
+  content: ''; position: absolute; left: 50%; width: 0; height: 0;
+  border-style: solid;
+}
+.balao::before {
+  bottom: -26px; margin-left: -17px;
+  border-width: 26px 17px 0 17px;
+  border-color: var(--tinta) transparent transparent transparent;
 }
 .balao::after {
-  content: ''; position: absolute; bottom: -11px; left: 50%; margin-left: -11px;
-  border: 11px solid transparent; border-top-color: #fff; border-bottom: 0;
+  bottom: -18px; margin-left: -11px;
+  border-width: 19px 11px 0 11px;
+  border-color: var(--carta) transparent transparent transparent;
 }
-@keyframes chega { from { opacity: 0; transform: translateY(-12px) scale(.92); } to { opacity: 1; transform: none; } }
+@keyframes chega {
+  from { opacity: 0; transform: translateY(-16px) scale(.86); }
+  to { opacity: 1; transform: none; }
+}
+.balao b { color: var(--guardar-fundo); }
 
-/* ---------- Os três potes ---------- */
-.potes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+/* ---------- Os três potes de vidro ---------- */
+.potes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-bottom: 4px; }
 .pote-bloco {
-  background: #fff; border-radius: var(--raio); padding: 12px 8px 14px;
-  text-align: center; box-shadow: var(--sombra); border: 3px solid transparent;
-  cursor: pointer; transition: transform .12s ease, border-color .12s ease;
+  background: var(--carta);
+  border-radius: var(--raio); padding: 10px 6px 14px;
+  text-align: center; cursor: pointer;
+  border: 4px solid var(--carta);
+  box-shadow: var(--clay-p);
+  transition: transform .13s cubic-bezier(.3, 1.4, .5, 1), box-shadow .13s;
 }
-.pote-bloco:active { transform: scale(.96); }
-.pote-bloco.on-gastar { border-color: var(--gastar); }
-.pote-bloco.on-guardar { border-color: var(--guardar); }
-.pote-bloco.on-doar { border-color: var(--doar); }
-.pote { width: 100%; height: 104px; display: block; }
-.pote-liq, .pote-onda { transition: y .9s cubic-bezier(.3, 1.2, .5, 1), cy .9s cubic-bezier(.3, 1.2, .5, 1); }
-.pote-onda { animation: balanca 3s ease-in-out infinite; }
-@keyframes balanca { 0%, 100% { transform: translateX(-2px); } 50% { transform: translateX(2px); } }
-.pote-nome { font-size: 13.5px; font-weight: 700; color: var(--tinta-fraca); margin-top: 4px; }
-.pote-val { font-size: 19px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.pote-bloco.on-gastar .pote-val { color: var(--gastar); }
-.pote-bloco.on-guardar .pote-val { color: var(--guardar); }
-.pote-bloco.on-doar .pote-val { color: var(--doar); }
+.pote-bloco:active { transform: translateY(6px) scale(.97); box-shadow: 0 1px 0 rgba(43, 58, 68, .14); }
+.pote-bloco.on-gastar { border-color: var(--gastar); box-shadow: 0 6px 0 var(--gastar-fundo), 0 10px 16px rgba(0, 168, 111, .22); }
+.pote-bloco.on-guardar { border-color: var(--guardar); box-shadow: 0 6px 0 var(--guardar-fundo), 0 10px 16px rgba(26, 95, 208, .22); }
+.pote-bloco.on-doar { border-color: var(--doar); box-shadow: 0 6px 0 var(--doar-fundo), 0 10px 16px rgba(216, 27, 116, .22); }
+.pote-bloco.on-gastar:active { box-shadow: 0 0 0 var(--gastar-fundo), 0 2px 5px rgba(43, 58, 68, .16); }
+.pote-bloco.on-guardar:active { box-shadow: 0 0 0 var(--guardar-fundo), 0 2px 5px rgba(43, 58, 68, .16); }
+.pote-bloco.on-doar:active { box-shadow: 0 0 0 var(--doar-fundo), 0 2px 5px rgba(43, 58, 68, .16); }
 
-/* O total, em destaque: é o número que ela procura ao abrir o app */
-.total { text-align: center; margin: 4px 0 16px; }
-.total .grana { font-size: 46px; display: block; line-height: 1.05; color: var(--guardar); }
-.total small { font-size: 15px; color: var(--tinta-fraca); font-weight: 700; }
+.pote { width: 100%; height: 118px; display: block; }
+/* O líquido sobe animado: é o que faz a criança VER o cofrinho enchendo */
+.pote-liq, .pote-onda { transition: y 1s cubic-bezier(.3, 1.3, .5, 1), cy 1s cubic-bezier(.3, 1.3, .5, 1); }
+.pote-onda { animation: balanca 3.4s ease-in-out infinite; }
+@keyframes balanca { 0%, 100% { transform: translateX(-2.5px); } 50% { transform: translateX(2.5px); } }
+/* As moedas dentro do pote flutuam de leve, cada uma no seu tempo */
+.pote-moeda { animation: bole 2.8s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.pote-moeda:nth-of-type(2n) { animation-delay: -.7s; animation-duration: 3.3s; }
+.pote-moeda:nth-of-type(3n) { animation-delay: -1.4s; animation-duration: 2.4s; }
+@keyframes bole { 0%, 100% { transform: translateY(0) rotate(-4deg); } 50% { transform: translateY(-2.5px) rotate(4deg); } }
+.pote-brilho { animation: brilho-vidro 5s ease-in-out infinite; }
+@keyframes brilho-vidro { 0%, 100% { opacity: .5; } 50% { opacity: .82; } }
+
+.pote-nome { font-size: 14px; font-weight: 700; color: var(--tinta-fraca); margin-top: 2px; }
+.pote-val { font-size: 21px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.5px; }
+.pote-bloco.on-gastar .pote-val { color: var(--gastar-fundo); }
+.pote-bloco.on-guardar .pote-val { color: var(--guardar-fundo); }
+.pote-bloco.on-doar .pote-val { color: var(--doar-fundo); }
+
+/* ---------- O total: o número que ela procura ao abrir ---------- */
+.total {
+  text-align: center; margin: 6px 0 18px; padding: 18px 16px 16px;
+  background: linear-gradient(165deg, #fff, var(--ouro-claro));
+  border: 4px solid var(--ouro);
+  border-radius: var(--raio-g);
+  box-shadow: 0 8px 0 var(--ouro-fundo), 0 16px 26px rgba(224, 160, 16, .26);
+  position: relative;
+}
+.total .grana {
+  font-size: 54px; display: block; line-height: 1; letter-spacing: -2px;
+  color: #8a5a00;
+  text-shadow: 0 3px 0 #fff, 0 5px 0 rgba(224, 160, 16, .4);
+}
+.total small { font-size: 16px; color: #9a7315; font-weight: 700; display: block; margin-top: 6px; }
+.total .moeda-enfeite { position: absolute; animation: flutua 4.2s ease-in-out infinite; }
+.total .m-esq { left: 10px; top: 14px; animation-delay: -1.2s; }
+.total .m-dir { right: 10px; top: 22px; }
 
 /* ---------- Teclado da senha ---------- */
-.senha-tela { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px 16px 40px; }
-.bolinhas { display: flex; gap: 16px; margin: 16px 0 22px; }
+.senha-tela {
+  min-height: 100vh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; padding: 22px 16px 44px;
+}
+.bolinhas { display: flex; gap: 18px; margin: 14px 0 24px; }
 .bolinha {
-  width: 22px; height: 22px; border-radius: 50%; background: #fff;
-  border: 3px solid var(--linha); transition: transform .16s cubic-bezier(.3, 1.7, .5, 1), background .16s;
+  width: 26px; height: 26px; border-radius: 50%;
+  background: var(--carta);
+  border: 4px solid #bfd8e6;
+  box-shadow: inset 0 2px 4px rgba(43, 58, 68, .12);
+  transition: transform .18s cubic-bezier(.3, 1.8, .5, 1), background .18s, border-color .18s, box-shadow .18s;
 }
-.bolinha.cheia { background: var(--ouro); border-color: #e1a83e; transform: scale(1.25); }
-.tecla-grade { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; width: 100%; max-width: 340px; }
+.bolinha.cheia {
+  background: var(--ouro); border-color: var(--ouro-fundo);
+  transform: scale(1.3);
+  box-shadow: 0 3px 0 var(--ouro-fundo), 0 6px 10px rgba(224, 160, 16, .4);
+}
+.tecla-grade { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; width: 100%; max-width: 350px; }
 .tecla {
-  height: 84px; border: 0; border-radius: 24px; background: #fff; cursor: pointer;
-  font-family: inherit; font-size: 34px; font-weight: 800; color: var(--tinta);
-  box-shadow: 0 6px 0 var(--linha); transition: transform .08s ease, box-shadow .08s ease, background .08s;
+  height: 88px; border: 0; border-radius: var(--raio); cursor: pointer;
+  background: var(--carta);
+  font-family: inherit; font-size: 38px; font-weight: 700; color: var(--tinta);
+  box-shadow: 0 7px 0 #c9dfec, 0 12px 18px rgba(43, 58, 68, .14);
+  transition: transform .09s cubic-bezier(.3, 1.4, .5, 1), box-shadow .09s, background .09s;
+  position: relative; overflow: hidden;
 }
-.tecla:active { transform: translateY(5px); box-shadow: 0 1px 0 var(--linha); background: #fff8e1; }
-.tecla.apagar { font-size: 27px; color: var(--erro); }
+.tecla::before {
+  content: ''; position: absolute; inset: 3px 3px auto 3px; height: 40%;
+  border-radius: 22px 22px 60% 60%;
+  background: linear-gradient(180deg, rgba(255, 255, 255, .7), rgba(255, 255, 255, 0));
+}
+.tecla:active {
+  transform: translateY(7px); background: var(--ouro-claro);
+  box-shadow: 0 0 0 #c9dfec, 0 2px 5px rgba(43, 58, 68, .16);
+}
+.tecla.apagar { font-size: 30px; color: var(--laranja-fundo); background: #fff1e6; box-shadow: 0 7px 0 #f0c9a8, 0 12px 18px rgba(43, 58, 68, .12); }
+.tecla.apagar:active { box-shadow: 0 0 0 #f0c9a8, 0 2px 5px rgba(43, 58, 68, .16); }
 .tecla.vazia { background: none; box-shadow: none; pointer-events: none; }
-.senha-tela.errou { animation: tremeu .45s; }
-@keyframes tremeu { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-13px); } 40% { transform: translateX(13px); } 60% { transform: translateX(-8px); } 80% { transform: translateX(8px); } }
-.cadeado .cad-arco { transition: transform .4s cubic-bezier(.3, 1.6, .5, 1); transform-origin: 42px 30px; }
-.cadeado.aberto .cad-arco { transform: rotate(-32deg) translateY(-3px); }
+.tecla.vazia::before { display: none; }
+.senha-tela.errou { animation: tremeu .5s; }
+@keyframes tremeu {
+  0%, 100% { transform: translateX(0); }
+  18% { transform: translateX(-15px) rotate(-1.5deg); }
+  38% { transform: translateX(15px) rotate(1.5deg); }
+  58% { transform: translateX(-9px); }
+  78% { transform: translateX(9px); }
+}
+.cadeado { filter: drop-shadow(0 6px 8px rgba(43, 58, 68, .2)); }
+.cadeado .cad-arco { transition: transform .45s cubic-bezier(.3, 1.7, .5, 1); transform-origin: 42px 30px; }
+.cadeado.aberto .cad-arco { transform: rotate(-38deg) translateY(-4px); }
+.cadeado.aberto { animation: pop .5s cubic-bezier(.3, 1.7, .5, 1); }
+@keyframes pop { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.18); } }
 
 /* ---------- Escolher de quem é o cofrinho ---------- */
-.quem { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px; }
+.quem { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 16px; }
 .quem-bt {
-  background: #fff; border: 0; border-radius: var(--raio); padding: 22px 12px; cursor: pointer;
-  font-family: inherit; box-shadow: var(--sombra); transition: transform .12s ease;
+  background: var(--carta); border: 4px solid var(--carta); border-radius: var(--raio-g);
+  padding: 22px 12px 18px; cursor: pointer; font-family: inherit;
+  box-shadow: var(--clay);
+  transition: transform .13s cubic-bezier(.3, 1.4, .5, 1), box-shadow .13s;
 }
-.quem-bt:active { transform: scale(.95); }
-.quem-av { font-size: 52px; line-height: 1; }
-.quem-nome { font-size: 19px; font-weight: 800; margin-top: 8px; }
+.quem-bt:active { transform: translateY(7px) scale(.96); box-shadow: 0 1px 0 rgba(43, 58, 68, .14); }
+.quem-av {
+  font-size: 58px; line-height: 1;
+  filter: drop-shadow(0 4px 5px rgba(43, 58, 68, .22));
+  animation: flutua 3.6s ease-in-out infinite;
+}
+.quem-nome { font-size: 21px; font-weight: 700; margin-top: 10px; }
 
-/* ---------- Tarefas ---------- */
-.tarefa {
+/* ---------- Cards de missão (tarefas) ----------
+   Uma tarefa aberta é um BOTÃO grande esperando o toque, não uma linha de lista:
+   a criança precisa enxergar que aquilo é para tocar antes de ler o que é. */
+.missao {
   display: flex; align-items: center; gap: 14px; width: 100%;
-  background: #fff; border: 0; border-radius: 20px; padding: 14px 16px; margin-bottom: 12px;
-  min-height: 78px; cursor: pointer; font-family: inherit; text-align: left;
-  box-shadow: var(--sombra); transition: transform .12s ease, background .2s;
+  background: var(--carta); border: 4px solid var(--carta);
+  border-radius: var(--raio); padding: 14px 16px; margin-bottom: 14px;
+  min-height: 92px; cursor: pointer; font-family: inherit; text-align: left;
+  box-shadow: var(--clay);
+  transition: transform .13s cubic-bezier(.3, 1.4, .5, 1), box-shadow .13s, background .25s, border-color .25s;
+  position: relative; overflow: hidden;
 }
-.tarefa:active { transform: scale(.975); }
-.tarefa-ico { font-size: 34px; width: 52px; text-align: center; flex: none; }
-.tarefa-txt { flex: 1; min-width: 0; }
-.tarefa-txt b { display: block; font-size: 18px; font-weight: 800; }
-.tarefa-txt small { color: var(--tinta-fraca); font-size: 14px; font-weight: 700; }
-.tarefa-mar {
-  width: 42px; height: 42px; border-radius: 50%; border: 4px solid var(--linha); flex: none;
-  display: grid; place-items: center; font-size: 22px; color: #fff;
-  transition: background .2s, border-color .2s, transform .2s;
+.missao:active { transform: translateY(7px) scale(.985); box-shadow: 0 1px 0 rgba(43, 58, 68, .14); }
+/* O ícone da missão mora num círculo 3D, como ficha de jogo */
+.missao-ico {
+  font-size: 34px; width: 66px; height: 66px; flex: none;
+  border-radius: 50%; display: grid; place-items: center;
+  background: radial-gradient(circle at 35% 28%, #fff, var(--ceu-1));
+  box-shadow: 0 4px 0 #8fc9e8, inset 0 3px 6px rgba(255, 255, 255, .9);
 }
-.tarefa.feita { background: #f2fff9; }
-.tarefa.feita .tarefa-mar { background: var(--gastar); border-color: var(--gastar); transform: scale(1.1); }
-.tarefa.esperando { background: #fffdf2; }
-.tarefa.esperando .tarefa-mar { background: var(--ouro); border-color: var(--ouro); }
-.tarefa.feita .tarefa-txt b { text-decoration: line-through; color: var(--tinta-fraca); }
-
-/* ---------- A meta ---------- */
-.meta-barra { height: 26px; border-radius: 13px; background: var(--linha); overflow: hidden; margin: 10px 0 8px; }
-.meta-fill {
-  height: 100%; border-radius: 13px; background: linear-gradient(90deg, var(--guardar), #74b9ff);
-  transition: width 1.1s cubic-bezier(.3, 1.2, .5, 1);
-  background-size: 28px 28px;
-  background-image: linear-gradient(45deg, rgba(255, 255, 255, .22) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, .22) 50%, rgba(255, 255, 255, .22) 75%, transparent 75%);
-  animation: listra 1.1s linear infinite;
+.missao-txt { flex: 1; min-width: 0; }
+.missao-txt b { display: block; font-size: 20px; font-weight: 700; line-height: 1.2; }
+.missao-txt small { color: var(--tinta-fraca); font-size: 15px; font-weight: 600; }
+.missao-vale {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 3px;
+  background: var(--ouro-claro); color: #8a5a00;
+  padding: 3px 11px; border-radius: 999px; font-size: 15px; font-weight: 700;
+  border: 2px solid var(--ouro);
 }
-@keyframes listra { from { background-position: 0 0; } to { background-position: 28px 0; } }
-.meta-topo { display: flex; align-items: center; gap: 12px; }
-.meta-ico { font-size: 40px; }
-.meta-quanto { font-size: 17px; font-weight: 800; }
+.missao-mar {
+  width: 52px; height: 52px; flex: none;
+  border-radius: 50%; border: 5px dashed #c9dfec;
+  display: grid; place-items: center;
+  transition: border-color .25s, background .25s, transform .25s;
+}
+.missao-mar svg { width: 46px; height: 46px; }
 
-/* Quantas semanadas faltam, em bolinhas: tempo é mais concreto que dinheiro */
-.semanas { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
-.semana-pt { width: 17px; height: 17px; border-radius: 50%; background: var(--linha); }
-.semana-pt.ja { background: var(--ouro); }
+/* Feita e confirmada: fundo verde, selo de ouro brilhando */
+.missao.feita { background: #eafff7; border-color: var(--gastar); box-shadow: 0 7px 0 var(--gastar-fundo), 0 12px 20px rgba(0, 168, 111, .2); }
+.missao.feita:active { box-shadow: 0 0 0 var(--gastar-fundo), 0 2px 5px rgba(43, 58, 68, .16); }
+.missao.feita .missao-mar { border: 0; transform: scale(1.12); }
+.missao.feita .missao-txt b { color: var(--gastar-fundo); }
+/* Marcada, esperando o adulto: fundo dourado e ampulheta girando */
+.missao.esperando { background: #fffaea; border-color: var(--ouro); box-shadow: 0 7px 0 var(--ouro-fundo), 0 12px 20px rgba(224, 160, 16, .22); }
+.missao.esperando:active { box-shadow: 0 0 0 var(--ouro-fundo), 0 2px 5px rgba(43, 58, 68, .16); }
+.missao.esperando .missao-mar { border: 0; }
+.missao.esperando .missao-mar svg { animation: vira 2.6s ease-in-out infinite; }
+@keyframes vira { 0%, 45%, 100% { transform: rotate(0); } 55%, 95% { transform: rotate(180deg); } }
+/* A missão aberta pisca de leve na borda, chamando o toque */
+.missao:not(.feita):not(.esperando) { animation: convida 3s ease-in-out infinite; }
+@keyframes convida {
+  0%, 100% { border-color: var(--carta); }
+  50% { border-color: var(--laranja); }
+}
+.selo-ouro { animation: gira-selo 4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes gira-selo {
+  0%, 100% { transform: rotate(-7deg) scale(1); }
+  50% { transform: rotate(7deg) scale(1.07); }
+}
 
-/* ---------- Selos ---------- */
-.selos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.selo { background: #fff; border-radius: 18px; padding: 12px 6px; text-align: center; box-shadow: var(--sombra); }
-.selo-svg { width: 44px; height: 44px; }
-.selo.ganho .selo-svg { animation: brilha 2.4s ease-in-out infinite; }
-@keyframes brilha { 0%, 100% { transform: scale(1) rotate(0); } 50% { transform: scale(1.12) rotate(6deg); } }
-.selo b { display: block; font-size: 13px; margin-top: 4px; }
-.selo small { display: block; font-size: 11.5px; color: var(--tinta-fraca); line-height: 1.25; }
-.selo:not(.ganho) { opacity: .55; }
+/* Contador de missões da semana */
+.missao-conta {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  background: var(--carta); border: 4px solid var(--laranja);
+  border-radius: var(--raio); padding: 12px 18px; margin-bottom: 18px;
+  box-shadow: 0 7px 0 var(--laranja-fundo), 0 12px 20px rgba(224, 101, 23, .22);
+  font-size: 20px; font-weight: 700;
+}
+.missao-conta .n { font-size: 30px; color: var(--laranja-fundo); }
 
-/* ---------- Histórico ---------- */
-.mov { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 2px dashed var(--linha); }
-.mov:last-child { border-bottom: 0; }
-.mov-ico { font-size: 24px; width: 46px; height: 46px; border-radius: 14px; background: var(--fundo); display: grid; place-items: center; flex: none; }
-.mov-txt { flex: 1; min-width: 0; }
-.mov-txt b { display: block; font-size: 16px; font-weight: 700; }
-.mov-txt small { color: var(--tinta-fraca); font-size: 13px; font-weight: 700; }
-.mov-val { font-size: 17px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.mov-val.mais { color: var(--gastar); }
-.mov-val.menos { color: var(--erro); }
+/* ---------- A trilha do sonho ---------- */
+.sonho-card {
+  background: linear-gradient(165deg, #fff, #eaf4ff);
+  border: 4px solid var(--guardar);
+  border-radius: var(--raio-g); padding: 18px;
+  box-shadow: 0 8px 0 var(--guardar-fundo), 0 16px 26px rgba(26, 95, 208, .22);
+  margin-bottom: 18px;
+}
+.sonho-topo { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.sonho-ico {
+  font-size: 44px; width: 76px; height: 76px; flex: none;
+  border-radius: 50%; display: grid; place-items: center;
+  background: radial-gradient(circle at 35% 28%, #fff, var(--guardar-claro));
+  box-shadow: 0 5px 0 var(--guardar), inset 0 3px 7px rgba(255, 255, 255, .9);
+  animation: flutua 4s ease-in-out infinite;
+}
+.sonho-nome { font-size: 23px; font-weight: 700; line-height: 1.15; }
+.sonho-quanto { font-size: 18px; font-weight: 700; color: var(--guardar-fundo); margin-top: 3px; }
+.sonho-quanto small { color: var(--tinta-fraca); font-weight: 600; }
+/* O tubo de vidro: a barra cinza virou um cano transparente que enche */
+.trilha { position: relative; margin: 16px 0 8px; }
+.trilha svg { width: 100%; display: block; overflow: visible; }
+.trilha-liq { transition: width 1.3s cubic-bezier(.3, 1.2, .5, 1); }
+.trilha-bolha { animation: sobe-bolha 2.4s ease-in-out infinite; }
+.trilha-bolha:nth-of-type(2n) { animation-delay: -.9s; }
+.trilha-bolha:nth-of-type(3n) { animation-delay: -1.6s; }
+@keyframes sobe-bolha {
+  0% { opacity: 0; transform: translateY(4px) scale(.6); }
+  40% { opacity: .9; }
+  100% { opacity: 0; transform: translateY(-5px) scale(1.1); }
+}
+.bandeira-ja { animation: acena-bandeira 2.2s ease-in-out infinite; transform-box: fill-box; transform-origin: bottom left; }
+@keyframes acena-bandeira { 0%, 100% { transform: rotate(-3deg); } 50% { transform: rotate(6deg); } }
+
+/* As semanadas que faltam, em moedinhas: tempo é mais concreto que dinheiro */
+.semanas { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; justify-content: center; }
+.semana-pt {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: #d5e6f0; box-shadow: inset 0 2px 4px rgba(43, 58, 68, .14);
+}
+.semana-pt.ja {
+  background: radial-gradient(circle at 35% 30%, #fff3c4, var(--ouro));
+  box-shadow: 0 3px 0 var(--ouro-fundo);
+}
+
+/* ---------- Prêmios: troféus e medalhas ---------- */
+.premios { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.premio {
+  background: var(--carta); border: 4px solid var(--carta);
+  border-radius: var(--raio); padding: 14px 10px 16px; text-align: center;
+  box-shadow: var(--clay);
+  transition: transform .13s, box-shadow .13s;
+}
+.premio svg { width: 78px; height: 78px; }
+.premio b { display: block; font-size: 17px; margin-top: 6px; font-weight: 700; line-height: 1.2; }
+.premio small { display: block; font-size: 13.5px; color: var(--tinta-fraca); line-height: 1.3; margin-top: 3px; font-weight: 600; }
+
+/* Ganho: brilha, e o raio de luz gira por trás */
+.premio.ganho {
+  background: linear-gradient(165deg, #fff, var(--ouro-claro));
+  border-color: var(--ouro);
+  box-shadow: 0 7px 0 var(--ouro-fundo), 0 14px 24px rgba(224, 160, 16, .3);
+}
+.premio.ganho svg { animation: premio-brilha 3.2s ease-in-out infinite; }
+@keyframes premio-brilha {
+  0%, 100% { transform: scale(1) rotate(0); filter: drop-shadow(0 3px 5px rgba(224, 160, 16, .5)); }
+  50% { transform: scale(1.09) rotate(4deg); filter: drop-shadow(0 6px 14px rgba(255, 201, 60, .85)); }
+}
+.premio-raios { animation: gira 12s linear infinite; transform-box: fill-box; transform-origin: center; }
+.premio-faisca { animation: faisca 2.4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+.premio-faisca:nth-of-type(2n) { animation-delay: -1.1s; }
+@keyframes faisca {
+  0%, 100% { opacity: .2; transform: scale(.5); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+/* Bloqueado: silhueta fofa, com cadeado. Fica claro que EXISTE e dá para ganhar. */
+.premio:not(.ganho) { background: #f2f7fa; border-color: #e2edf3; box-shadow: var(--clay-p); }
+.premio:not(.ganho) .premio-arte { filter: grayscale(1) brightness(1.55) opacity(.55); }
+.premio:not(.ganho) b { color: var(--tinta-clara); }
+.premio-trava { position: relative; display: inline-block; }
+.premio-trava .cad-mini {
+  position: absolute; right: -2px; bottom: 2px; width: 34px; height: 34px;
+  filter: none;
+}
+
+/* ---------- Histórico: figurinhas de álbum ---------- */
+.figurinha {
+  display: flex; align-items: center; gap: 13px;
+  background: var(--carta); border: 3px solid var(--carta);
+  border-radius: var(--raio-p); padding: 11px 14px; margin-bottom: 11px;
+  box-shadow: var(--clay-p);
+}
+.figurinha-ico {
+  font-size: 26px; width: 54px; height: 54px; flex: none;
+  border-radius: 50%; display: grid; place-items: center;
+  box-shadow: inset 0 3px 7px rgba(255, 255, 255, .9);
+}
+.fg-entrada { background: radial-gradient(circle at 35% 28%, #fff, var(--gastar-claro)); box-shadow: 0 4px 0 var(--gastar), inset 0 3px 6px rgba(255, 255, 255, .85); }
+.fg-guardar { background: radial-gradient(circle at 35% 28%, #fff, var(--guardar-claro)); box-shadow: 0 4px 0 var(--guardar), inset 0 3px 6px rgba(255, 255, 255, .85); }
+.fg-doar { background: radial-gradient(circle at 35% 28%, #fff, var(--doar-claro)); box-shadow: 0 4px 0 var(--doar), inset 0 3px 6px rgba(255, 255, 255, .85); }
+.fg-ouro { background: radial-gradient(circle at 35% 28%, #fff, var(--ouro-claro)); box-shadow: 0 4px 0 var(--ouro), inset 0 3px 6px rgba(255, 255, 255, .85); }
+.fg-saida { background: radial-gradient(circle at 35% 28%, #fff, #ffd9c9); box-shadow: 0 4px 0 var(--laranja), inset 0 3px 6px rgba(255, 255, 255, .85); }
+.figurinha-txt { flex: 1; min-width: 0; }
+.figurinha-txt b { display: block; font-size: 17px; font-weight: 700; line-height: 1.2; }
+.figurinha-txt small { color: var(--tinta-fraca); font-size: 14px; font-weight: 600; }
+.figurinha-val {
+  font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums;
+  white-space: nowrap; letter-spacing: -.5px;
+}
+.figurinha-val.mais { color: var(--gastar-fundo); }
+.figurinha-val.menos { color: var(--laranja-fundo); }
+.figurinha-val.troca { color: var(--tinta-clara); font-size: 16px; }
 
 /* ---------- O ritual da semanada ---------- */
-.ritual-valor { text-align: center; font-size: 44px; font-weight: 800; color: var(--ouro); }
-.reparte { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
-.rep-col { background: #fff; border-radius: 18px; padding: 12px 8px; text-align: center; box-shadow: var(--sombra); }
-.rep-col .pote { height: 82px; }
-.rep-n { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; margin: 4px 0; }
+.ritual-valor {
+  text-align: center; font-size: 52px; font-weight: 700; color: #8a5a00;
+  letter-spacing: -2px; text-shadow: 0 3px 0 #fff, 0 5px 0 rgba(224, 160, 16, .4);
+  margin-bottom: 4px;
+}
+.reparte { display: grid; grid-template-columns: repeat(3, 1fr); gap: 11px; margin-top: 14px; }
+.rep-col {
+  background: var(--carta); border: 4px solid var(--carta);
+  border-radius: var(--raio); padding: 10px 6px 14px; text-align: center;
+  box-shadow: var(--clay-p);
+}
+.rep-col.on-gastar { border-color: var(--gastar); }
+.rep-col.on-guardar { border-color: var(--guardar); }
+.rep-col.on-doar { border-color: var(--doar); }
+.rep-col .pote { height: 92px; }
+.rep-n { font-size: 27px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 3px 0 6px; letter-spacing: -1px; }
 .rep-bts { display: flex; gap: 8px; justify-content: center; }
 .rep-bt {
-  width: 46px; height: 46px; border: 0; border-radius: 14px; cursor: pointer;
-  font-family: inherit; font-size: 25px; font-weight: 800; color: #fff; background: var(--guardar);
-  box-shadow: 0 4px 0 rgba(0, 0, 0, .15);
+  width: 50px; height: 50px; border: 0; border-radius: 16px; cursor: pointer;
+  font-family: inherit; font-size: 28px; font-weight: 700; color: #fff;
+  background: var(--guardar); box-shadow: 0 5px 0 var(--guardar-fundo);
+  transition: transform .09s, box-shadow .09s;
+  display: grid; place-items: center; line-height: 1;
 }
-.rep-bt:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(0, 0, 0, .15); }
-.rep-bt[disabled] { opacity: .35; pointer-events: none; }
+.rep-bt:active { transform: translateY(5px); box-shadow: 0 0 0 var(--guardar-fundo); }
+.rep-bt.menos { background: var(--laranja); box-shadow: 0 5px 0 var(--laranja-fundo); }
+.rep-bt.menos:active { box-shadow: 0 0 0 var(--laranja-fundo); }
+.rep-bt[disabled] { filter: grayscale(.6) opacity(.45); pointer-events: none; }
 
 /* ---------- Teclado de dinheiro (gastar / doar) ---------- */
 .valor-mostra {
-  text-align: center; font-size: 44px; font-weight: 800; color: var(--tinta);
-  font-variant-numeric: tabular-nums; margin: 6px 0 14px;
+  text-align: center; font-size: 52px; font-weight: 700;
+  font-variant-numeric: tabular-nums; letter-spacing: -2px;
+  margin: 4px 0 16px; color: var(--tinta);
+  text-shadow: 0 3px 0 #fff;
 }
-.chips { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-bottom: 14px; }
+.valor-mostra.demais { color: var(--laranja-fundo); animation: tremeu .5s; }
+.chips { display: flex; flex-wrap: wrap; gap: 11px; justify-content: center; margin-bottom: 16px; }
 .chip {
-  border: 0; border-radius: 16px; padding: 12px 16px; min-height: 52px; cursor: pointer;
-  font-family: inherit; font-size: 17px; font-weight: 800; background: #fff; color: var(--tinta);
-  box-shadow: 0 4px 0 var(--linha);
+  border: 3px solid var(--carta); border-radius: 18px;
+  padding: 14px 18px; min-height: 76px; cursor: pointer;
+  font-family: inherit; font-size: 18px; font-weight: 700;
+  background: var(--carta); color: var(--tinta);
+  box-shadow: 0 5px 0 #cfe2ec, 0 8px 12px rgba(43, 58, 68, .1);
+  transition: transform .1s, box-shadow .1s, background .15s;
+  display: inline-flex; align-items: center; gap: 6px;
 }
-.chip:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--linha); }
-.chip.on { background: var(--ouro); color: #7a5b00; box-shadow: 0 4px 0 #e1a83e; }
+.chip:active { transform: translateY(5px); box-shadow: 0 0 0 #cfe2ec; }
+.chip.on {
+  background: var(--ouro); color: #6b4a00; border-color: var(--ouro-fundo);
+  box-shadow: 0 5px 0 var(--ouro-fundo), 0 8px 14px rgba(224, 160, 16, .3);
+}
+.chip.on:active { box-shadow: 0 0 0 var(--ouro-fundo); }
 
 /* ---------- Moeda que voa para o pote ---------- */
-.moeda-voo { position: fixed; z-index: 60; pointer-events: none; animation: voa .85s cubic-bezier(.4, 0, .6, 1) forwards; }
+.moeda-voo { position: fixed; z-index: 60; pointer-events: none; animation: voa .9s cubic-bezier(.35, 0, .6, 1) forwards; }
 @keyframes voa {
-  0% { transform: translate(0, 0) scale(1) rotate(0); opacity: 1; }
+  0% { transform: translate(0, 0) scale(1.15) rotate(0); opacity: 1; }
   70% { opacity: 1; }
-  100% { transform: translate(var(--dx), var(--dy)) scale(.42) rotate(420deg); opacity: 0; }
+  100% { transform: translate(var(--dx), var(--dy)) scale(.4) rotate(500deg); opacity: 0; }
 }
 
 /* ---------- Confete ---------- */
 .confete { position: fixed; inset: 0; z-index: 70; pointer-events: none; }
-.confete rect { animation: chuva 2.1s linear forwards; }
+.confete rect, .confete circle { animation: chuva 2.4s cubic-bezier(.3, .6, .7, 1) forwards; }
 @keyframes chuva {
-  0% { transform: translateY(-10px) rotate(0); opacity: 1; }
-  100% { transform: translateY(115px) rotate(680deg); opacity: 0; }
+  0% { transform: translateY(-12px) rotate(0); opacity: 1; }
+  100% { transform: translateY(118px) rotate(760deg); opacity: 0; }
 }
 
 /* ---------- Avisos ---------- */
 .aviso {
-  position: fixed; left: 50%; bottom: 108px; transform: translateX(-50%);
-  background: var(--tinta); color: #fff; padding: 14px 22px; border-radius: 999px;
-  font-size: 17px; font-weight: 800; z-index: 80; box-shadow: var(--sombra-alta);
-  animation: sobe-aviso .3s cubic-bezier(.3, 1.5, .5, 1);
+  position: fixed; left: 50%; bottom: 126px; transform: translateX(-50%);
+  background: var(--tinta); color: #fff; padding: 15px 26px;
+  border-radius: 999px; border: 4px solid #fff;
+  font-size: 18px; font-weight: 700; z-index: 80;
+  box-shadow: 0 7px 0 rgba(0, 0, 0, .25), 0 14px 26px rgba(43, 58, 68, .3);
+  animation: sobe-aviso .35s cubic-bezier(.3, 1.6, .5, 1);
   max-width: 90vw; text-align: center;
 }
-@keyframes sobe-aviso { from { opacity: 0; transform: translate(-50%, 18px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes sobe-aviso {
+  from { opacity: 0; transform: translate(-50%, 24px) scale(.85); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
 
-/* ---------- Barra de baixo ----------
-   Fica ACIMA da borda inferior, com folga: é onde os dedos seguram o tablet, e
+/* ---------- Barra de abas: pílula flutuante ----------
+   Flutua ACIMA da borda inferior, com folga: é onde os dedos seguram o tablet, e
    botão colado ali dispara sozinho o tempo todo. */
 .barra {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
-  display: flex; justify-content: center; gap: 8px;
-  padding: 10px 12px calc(20px + env(safe-area-inset-bottom));
-  background: linear-gradient(180deg, rgba(234, 246, 255, 0), var(--fundo-2) 42%);
+  display: flex; justify-content: center;
+  padding: 12px 12px calc(22px + env(safe-area-inset-bottom));
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(214, 240, 255, 0), rgba(214, 240, 255, .85) 55%);
 }
-.barra-in { display: flex; gap: 8px; background: #fff; border-radius: 26px; padding: 8px; box-shadow: var(--sombra-alta); }
+.barra-in {
+  display: flex; gap: 4px; pointer-events: auto;
+  background: var(--carta); border: 4px solid #fff;
+  border-radius: 999px; padding: 8px;
+  box-shadow: 0 8px 0 #c3dbe9, 0 16px 30px rgba(43, 58, 68, .22);
+}
 .aba {
   border: 0; background: none; cursor: pointer; font-family: inherit;
-  min-width: 76px; min-height: 62px; border-radius: 20px; padding: 6px 10px;
-  display: flex; flex-direction: column; align-items: center; gap: 2px;
-  font-size: 12.5px; font-weight: 800; color: var(--tinta-fraca);
-  transition: background .16s, color .16s, transform .12s;
+  min-width: 80px; min-height: 76px; border-radius: 999px; padding: 8px;
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  font-size: 13px; font-weight: 700; color: var(--tinta-fraca);
+  transition: background .18s, color .18s, transform .12s;
+  position: relative;
 }
-.aba .emo { font-size: 25px; }
-.aba:active { transform: scale(.92); }
-.aba.on { background: var(--fundo); color: var(--guardar); }
+.aba .emo { font-size: 27px; transition: transform .2s cubic-bezier(.3, 1.6, .5, 1); }
+.aba:active { transform: scale(.9); }
+.aba.on { background: linear-gradient(165deg, var(--ouro-claro), #ffe89a); color: #8a5a00; }
+.aba.on .emo { transform: scale(1.18) translateY(-2px); }
+/* Selo com o número de missões abertas: puxa para a aba que espera ação */
+.aba-selo {
+  position: absolute; top: 2px; right: 8px;
+  min-width: 24px; height: 24px; padding: 0 5px;
+  border-radius: 999px; background: var(--doar); color: #fff;
+  border: 3px solid #fff;
+  font-size: 13px; font-weight: 700; line-height: 18px;
+  box-shadow: 0 2px 5px rgba(216, 27, 116, .5);
+  animation: pulsa-selo 1.7s ease-in-out infinite;
+}
+@keyframes pulsa-selo {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.16); }
+}
 
 /* ---------- Estado vazio ---------- */
-.vazio { text-align: center; padding: 26px 16px; color: var(--tinta-fraca); font-size: 16px; font-weight: 700; }
+.vazio {
+  text-align: center; padding: 22px 18px; color: var(--tinta-fraca);
+  font-size: 17px; font-weight: 600; line-height: 1.45;
+}
 
-/* ---------- Tela de aviso ao adulto ---------- */
-.recado { background: #fff8e1; border: 3px solid var(--ouro); border-radius: var(--raio); padding: 18px; font-size: 16px; }
-.recado b { display: block; font-size: 18px; margin-bottom: 6px; }
+/* ---------- Recado para o adulto ---------- */
+.recado {
+  background: linear-gradient(165deg, #fff, var(--ouro-claro));
+  border: 4px solid var(--ouro); border-radius: var(--raio);
+  padding: 18px; font-size: 16.5px; line-height: 1.5;
+  box-shadow: 0 7px 0 var(--ouro-fundo), 0 14px 22px rgba(224, 160, 16, .22);
+}
+.recado b { display: block; font-size: 19px; margin-bottom: 7px; color: #8a5a00; }
 
-/* Quem prefere menos movimento continua com o app inteiro, só quieto. */
+/* ---------- Quem prefere menos movimento continua com o app inteiro, só quieto ---------- */
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
+
+/* ---------- Telas pequenas: nada encolhe abaixo do que o dedo alcança ---------- */
+@media (max-width: 380px) {
+  #app { padding: 10px 12px 128px; }
+  .total .grana { font-size: 46px; }
+  .pote-val { font-size: 18px; }
+  .pote-nome { font-size: 12.5px; }
+  .aba { min-width: 70px; font-size: 12px; }
+  .tecla { height: 80px; font-size: 34px; }
+  .premios { gap: 11px; }
+  .premio svg { width: 66px; height: 66px; }
 }

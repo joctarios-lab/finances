@@ -4,8 +4,8 @@
    repartir a semanada, marcar o que fez e escolher no que gastar. Nada mais.
 
    O QUE ELE NÃO É, e por decisão: não tem saldo da família, não tem conta
-   bancária, não tem lista de tudo o que os pais gastam. O adulto administra no
-   app da família; aqui é o dinheiro DELA, e só.
+   bancária, não tem lista do que os pais gastam. O adulto administra no app da
+   família; aqui é o dinheiro DELA, e só.
 
    COMO A TELA CONVERSA. Toda tela tem o Dino dizendo uma frase curta em primeira
    pessoa e no imperativo suave — "escolha", "toque", "vamos repartir". Uma
@@ -13,7 +13,8 @@
    nominal, e o balão do mascote é lido antes de qualquer título.
 
    TEMPO EM SEMANAS, dinheiro em reais inteiros sempre que der. "Faltam quatro
-   semanadas" é uma frase que ela consegue planejar; "faltam R$ 43,50" não. */
+   semanadas" é uma frase que ela consegue planejar; "faltam R$ 43,50" não.
+   --------------------------------------------------------------------------- */
 'use strict';
 
 const App = {
@@ -38,7 +39,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c =>
 /* ---------- Som ----------
    Gerado na hora com WebAudio: nenhum arquivo para baixar, nenhum atraso na
    primeira vez. Notas curtas e agudas, que é o som que criança lê como "certo".
-   O botão de silêncio existe porque nem todo lugar de usar o app aceita som. */
+   O silêncio existe porque nem todo lugar de usar o app aceita som. */
 const Som = {
   ctx: null,
   ligar() { if (!this.ctx) { try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (_) { } } },
@@ -53,10 +54,10 @@ const Som = {
     o.connect(g).connect(this.ctx.destination);
     o.start(); o.stop(this.ctx.currentTime + dur);
   },
-  toque() { this.nota(660, 0.07, 'triangle', 0.1); },
+  toque() { this.nota(700, 0.07, 'triangle', 0.1); },
   moeda() { this.nota(880, 0.09, 'triangle'); setTimeout(() => this.nota(1320, 0.14, 'triangle'), 70); },
-  festa() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.nota(f, 0.16, 'triangle'), i * 95)); },
-  nao() { this.nota(200, 0.2, 'sawtooth', 0.1); },
+  festa() { [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => this.nota(f, 0.16, 'triangle'), i * 90)); },
+  nao() { this.nota(190, 0.22, 'sawtooth', 0.1); },
 };
 
 function vibra(ms) { if (navigator.vibrate) try { navigator.vibrate(ms); } catch (_) { } }
@@ -67,14 +68,14 @@ function aviso(txt, emo = '') {
   d.className = 'aviso';
   d.textContent = (emo ? emo + ' ' : '') + txt;
   document.body.appendChild(d);
-  setTimeout(() => d.remove(), 2600);
+  setTimeout(() => d.remove(), 2700);
 }
 
 function festa() {
   const antigo = el('.confete'); if (antigo) antigo.remove();
   document.body.insertAdjacentHTML('beforeend', Arte.confete());
-  Som.festa(); vibra([25, 40, 25]);
-  setTimeout(() => { const c = el('.confete'); if (c) c.remove(); }, 3000);
+  Som.festa(); vibra([25, 40, 25, 40, 60]);
+  setTimeout(() => { const c = el('.confete'); if (c) c.remove(); }, 3200);
 }
 
 /* A MOEDA QUE VOA até o pote. É o que transforma "o número mudou" em "o dinheiro
@@ -85,27 +86,28 @@ function moedaVoando(deEl, paraEl) {
   const a = deEl.getBoundingClientRect(), b = paraEl.getBoundingClientRect();
   const d = document.createElement('div');
   d.className = 'moeda-voo';
-  d.style.left = (a.left + a.width / 2 - 17) + 'px';
-  d.style.top = (a.top + a.height / 2 - 17) + 'px';
+  d.style.left = (a.left + a.width / 2 - 19) + 'px';
+  d.style.top = (a.top + a.height / 2 - 19) + 'px';
   d.style.setProperty('--dx', (b.left + b.width / 2 - a.left - a.width / 2) + 'px');
   d.style.setProperty('--dy', (b.top + b.height / 2 - a.top - a.height / 2) + 'px');
-  d.innerHTML = Arte.moeda();
+  d.innerHTML = Arte.moeda(38);
   document.body.appendChild(d);
   Som.moeda();
-  setTimeout(() => d.remove(), 900);
+  setTimeout(() => d.remove(), 950);
 }
 
 function balao(txt) { return `<div class="balao">${txt}</div>`; }
-function palco(pose, tam = 130) { return `<div class="dino-palco">${Arte.dino(pose, tam)}</div>`; }
+function palco(pose, tam = 150) { return `<div class="dino-palco">${Arte.dino(pose, tam)}</div>`; }
 
 // A cor do Dino segue a cor da criança: o app vira dela na primeira olhada
 function pintarDino(cor) {
   if (!cor) return;
   const r = document.documentElement.style;
   r.setProperty('--dino-1', cor);
-  r.setProperty('--dino-2', sombrear(cor, -12));
-  r.setProperty('--dino-3', sombrear(cor, -24));
-  r.setProperty('--dino-barriga', clarear(cor, 82));
+  r.setProperty('--dino-2', sombrear(cor, -14));
+  r.setProperty('--dino-3', sombrear(cor, -27));
+  r.setProperty('--dino-luz', clarear(cor, 26));
+  r.setProperty('--dino-barriga', clarear(cor, 84));
 }
 function hexRGB(h) {
   const s = String(h).replace('#', '');
@@ -140,7 +142,7 @@ function telaQuem() {
         </button>`).join('')}
     </div>`;
   document.querySelectorAll('[data-kid]').forEach(b => b.onclick = () => {
-    Som.toque();
+    Som.toque(); vibra(12);
     telaSenha(Dados.get('kids', b.dataset.kid));
   });
 }
@@ -156,11 +158,14 @@ function telaSemCrianca() {
       <b>Recado para o adulto</b>
       ${semNuvem
       ? 'Abra o app da família neste aparelho, entre na sua conta e cadastre a criança em <b>Configurações → Crianças</b>. Depois volte aqui.'
-      : 'Cadastre a criança no app da família, em <b>Configurações → Crianças</b>, e toque em atualizar abaixo.'}
+      : 'Cadastre a criança no app da família, em <b>Configurações → Crianças</b>, e toque em procurar de novo.'}
     </div>
-    <button class="bt clara" id="recarregar" style="margin-top:16px"><span class="emo">🔄</span> Procurar de novo</button>`;
+    <button class="bt clara" id="recarregar" style="margin-top:18px">
+      <span class="emo">🔄</span> Procurar de novo
+    </button>`;
   el('#recarregar').onclick = async () => {
     aviso('Procurando...', '🔎');
+    Dados.carregar();
     await Nuvem.sincronizar();
     telaQuem();
   };
@@ -180,8 +185,8 @@ function telaSenha(kid) {
   raiz().innerHTML = `
     <div class="senha-tela" id="senha-tela">
       <div style="text-align:center">${Arte.cadeado(false)}</div>
-      ${palco('pensando', 110)}
-      ${balao(`Oi, ${esc(kid.name)}! Qual é a sua senha secreta?`)}
+      ${palco('pensando', 122)}
+      ${balao(`Oi, <b>${esc(kid.name)}</b>! Qual é a sua senha secreta?`)}
       <div class="bolinhas">${[0, 1, 2, 3].map(i => `<span class="bolinha" data-b="${i}"></span>`).join('')}</div>
       <div class="tecla-grade">
         ${teclas.map(t => t === 'vazia'
@@ -190,7 +195,7 @@ function telaSenha(kid) {
             ? '<button class="tecla apagar" data-t="apagar" aria-label="Apagar">⌫</button>'
             : `<button class="tecla" data-t="${t}">${t}</button>`).join('')}
       </div>
-      <button class="bt clara" id="voltar-quem" style="max-width:340px;margin-top:22px">
+      <button class="bt clara" id="voltar-quem" style="max-width:350px;margin-top:24px">
         <span class="emo">↩️</span> Não sou eu
       </button>
     </div>`;
@@ -208,24 +213,24 @@ function telaSenha(kid) {
 
     const hash = await hashDaSenha(digitado, kid.pin_salt || '');
     if (hash === kid.pin_hash) {
-      el('.cadeado').classList.add('aberto');
-      Som.moeda();
-      setTimeout(() => entrar(kid), 480);
+      const cad = el('.cadeado');
+      if (cad) cad.classList.add('aberto');
+      Som.moeda(); vibra(30);
+      setTimeout(() => entrar(kid), 520);
       return;
     }
     /* ERROU: treme, apaga e o Dino fica triste — nunca uma mensagem de erro
        vermelha. Aos seis anos, errar a senha é comum, e o app não pode fazer
-       disso um fracasso. Depois de três, oferece voltar sem culpa. */
+       disso um fracasso. Depois de três, oferece chamar um adulto sem culpa. */
     App._erros++;
     Som.nao(); vibra([70, 50, 70]);
     const tela = el('#senha-tela');
-    tela.classList.add('errou');
-    setTimeout(() => tela.classList.remove('errou'), 460);
+    if (tela) { tela.classList.add('errou'); setTimeout(() => tela.classList.remove('errou'), 500); }
     digitado = ''; pintarBolinhas();
     const p = el('.dino-palco');
-    if (p) p.innerHTML = Arte.dino('triste', 110);
+    if (p) p.innerHTML = Arte.dino('triste', 122);
     const bl = el('.balao');
-    if (bl) bl.textContent = App._erros >= 3
+    if (bl) bl.innerHTML = App._erros >= 3
       ? 'Peça ajuda para um adulto — ele sabe a sua senha 🙂'
       : 'Ops, não é essa. Tenta de novo!';
   });
@@ -253,7 +258,6 @@ function entrar(kid) {
 function sair() {
   App.kid = null;
   sessionStorage.removeItem('cofrinho.kid');
-  document.documentElement.removeAttribute('style');
   telaQuem();
 }
 
@@ -271,27 +275,30 @@ function render() {
   ligarAbas();
 }
 
+/* A barra é uma PÍLULA FLUTUANTE, longe da borda de baixo: ali é onde a mão
+   apoia o tablet, e botão colado no canto dispara sozinho o tempo todo. */
 function barraDeAbas() {
-  const t = Dados.tarefas(App.kid.id).filter(x => !x.feita).length;
+  const abertas = Dados.tarefas(App.kid.id).filter(x => !x.feita).length;
   const abas = [
     ['cofrinho', '🐷', 'Cofrinho', 0],
-    ['tarefas', '✅', 'Tarefas', t],
+    ['tarefas', '✅', 'Missões', abertas],
     ['sonho', '⭐', 'Meu sonho', 0],
-    ['selos', '🏅', 'Prêmios', 0],
+    ['selos', '🏆', 'Prêmios', 0],
   ];
   return `
     <div class="barra"><div class="barra-in">
       ${abas.map(([id, emo, nome, n]) => `
         <button class="aba ${App.aba === id ? 'on' : ''}" data-aba="${id}">
           <span class="emo">${emo}</span>
-          <span>${nome}${n ? ` (${n})` : ''}</span>
+          <span>${nome}</span>
+          ${n ? `<span class="aba-selo">${n}</span>` : ''}
         </button>`).join('')}
     </div></div>`;
 }
 
 function ligarAbas() {
   document.querySelectorAll('[data-aba]').forEach(b => b.onclick = () => {
-    Som.toque();
+    Som.toque(); vibra(10);
     App.aba = b.dataset.aba;
     render();
   });
@@ -310,19 +317,21 @@ function telaCofrinho() {
     ? 'Chegou a sua semanada! Vamos repartir?'
     : p.total <= 0
       ? 'Seu cofrinho está vazinho. Logo enche!'
-      : `Você tem ${fmtKid(p.total)}. Que legal!`;
+      : `Você tem <b>${fmtKid(p.total)}</b>. Que legal!`;
 
   return `
     ${palco(ritual ? 'uau' : p.total > 0 ? 'feliz' : 'dormindo')}
     ${balao(fala)}
 
     <div class="total">
+      <span class="moeda-enfeite m-esq">${Arte.moeda(30)}</span>
+      <span class="moeda-enfeite m-dir">${Arte.moeda(24)}</span>
       <span class="grana">${fmtKid(p.total)}</span>
       <small>é tudo o que você tem</small>
     </div>
 
     ${ritual ? `
-      <button class="bt ouro" id="ir-ritual" style="margin-bottom:16px">
+      <button class="bt ouro chama" id="ir-ritual" style="margin-bottom:18px">
         <span class="emo">🎉</span> Repartir ${fmtKid(ritual.valor)}
       </button>` : ''}
 
@@ -335,48 +344,62 @@ function telaCofrinho() {
         </div>`).join('')}
     </div>
 
-    <div class="linha-bt" style="margin-top:16px">
+    <div class="linha-bt" style="margin-top:18px">
       <button class="bt verde" id="bt-gastar"><span class="emo">🛒</span> Gastei</button>
       <button class="bt rosa" id="bt-doar"><span class="emo">💝</span> Doei</button>
     </div>
 
-    ${aConfirmar ? `<div class="recado" style="margin-top:16px">
-      <b>Quase lá!</b> ${aConfirmar === 1 ? 'Uma tarefa está' : `${aConfirmar} tarefas estão`}
-      esperando um adulto conferir. Aí o dinheiro cai no seu pote 🪙
+    ${aConfirmar ? `<div class="recado" style="margin-top:18px">
+      <b>Quase lá!</b> ${aConfirmar === 1 ? 'Uma missão está' : `${aConfirmar} missões estão`}
+      esperando um adulto conferir. Aí a moeda cai no seu pote 🪙
     </div>` : ''}
 
-    <h2>O que aconteceu</h2>
+    <h2><span class="emo">📖</span> O que aconteceu</h2>
     ${historico(kid.id)}
 
-    <button class="bt clara" id="bt-sair" style="margin-top:18px">
+    <button class="bt clara" id="bt-sair" style="margin-top:20px">
       <span class="emo">👋</span> Sair do meu cofrinho
     </button>`;
 }
 
+/* O histórico são FIGURINHAS, não linhas de lista: cada movimento é um cartão
+   com o ícone num círculo colorido. Ela lê o desenho e a cor antes do texto, e
+   é assim que o extrato dela vira algo de olhar em vez de algo de ler. */
 function historico(kidId) {
   const movs = Dados.entradas(kidId).slice(0, 12);
-  if (!movs.length) return '<div class="vazio">Nada ainda. Sua primeira semanada vai aparecer aqui 🪙</div>';
-  const icones = {
-    semanada: '🪙', tarefa: '✅', rendimento: '✨', divisao: '🫙',
-    gasto: '🛒', doacao: '💝', presente: '🎁',
+  if (!movs.length) {
+    return `<div class="carta"><div class="vazio">
+      Nada ainda. Sua primeira semanada vai aparecer aqui 🪙
+    </div></div>`;
+  }
+  const tipos = {
+    semanada: ['🪙', 'fg-ouro'], tarefa: ['✅', 'fg-entrada'], rendimento: ['✨', 'fg-ouro'],
+    presente: ['🎁', 'fg-ouro'], gasto: ['🛒', 'fg-saida'], doacao: ['💝', 'fg-doar'],
   };
-  return `<div class="carta">${movs.map(e => {
+  return movs.map(e => {
     const saida = e.tipo === 'gasto' || e.tipo === 'doacao';
     const v = Number(e.amount) || 0;
-    // A divisão que sai do pote gastar é o repasse interno: mostra sem sinal,
-    // porque para ela o dinheiro não sumiu, só mudou de pote.
+    /* A divisão que sai do pote gastar é repasse interno: mostra sem sinal,
+       porque para ela o dinheiro não sumiu, só mudou de pote. */
     const interno = e.tipo === 'divisao';
-    return `<div class="mov">
-      <div class="mov-ico">${icones[e.tipo] || '🪙'}</div>
-      <div class="mov-txt">
+    let ico = '🪙', cor = 'fg-ouro';
+    if (interno) {
+      ico = '🫙';
+      cor = e.pote === 'guardar' ? 'fg-guardar' : e.pote === 'doar' ? 'fg-doar' : 'fg-entrada';
+    } else if (tipos[e.tipo]) {
+      [ico, cor] = tipos[e.tipo];
+    }
+    return `<div class="figurinha">
+      <div class="figurinha-ico ${cor}">${ico}</div>
+      <div class="figurinha-txt">
         <b>${esc(e.description || e.tipo)}</b>
         <small>${diaBonito(e.date)}${interno ? ' · trocou de pote' : ''}</small>
       </div>
-      <div class="mov-val ${interno ? '' : saida ? 'menos' : 'mais'}">
+      <div class="figurinha-val ${interno ? 'troca' : saida ? 'menos' : 'mais'}">
         ${interno ? '' : saida ? '−' : '+'}${fmtKid(Math.abs(v))}
       </div>
     </div>`;
-  }).join('')}</div>`;
+  }).join('');
 }
 
 /* Data em palavra, não em número: "hoje" e "ontem" são as únicas datas que uma
@@ -407,23 +430,23 @@ function telaRitual() {
     const gastar = +(total - guardar - doar).toFixed(2);
     const teto = Math.max(gastar, guardar, doar, 1);
     raiz().innerHTML = `
-      ${palco('uau', 120)}
-      ${balao('Chegou a sua semanada! Quanto você quer guardar e quanto quer doar?')}
+      ${palco('uau', 138)}
+      ${balao('Chegou a sua semanada! Quanto você quer <b>guardar</b> e quanto quer <b>doar</b>?')}
       <div class="ritual-valor">${fmtKid(total)}</div>
       <div class="reparte">
         ${[['gastar', gastar, 'Gastar', false], ['guardar', guardar, 'Guardar', true], ['doar', doar, 'Doar', true]]
         .map(([t, v, nome, mexe]) => `
-          <div class="rep-col" id="rep-${t}">
-            ${Arte.pote(t, v, teto)}
+          <div class="rep-col on-${t}" id="rep-${t}">
+            ${Arte.pote(t, v, teto, 'rep-' + t)}
             <div class="rep-n">${fmtKid(v)}</div>
             <div class="pote-nome">${nome}</div>
             ${mexe ? `<div class="rep-bts" style="margin-top:8px">
-              <button class="rep-bt" data-menos="${t}" ${v <= 0 ? 'disabled' : ''}>−</button>
+              <button class="rep-bt menos" data-menos="${t}" ${v <= 0 ? 'disabled' : ''}>−</button>
               <button class="rep-bt" data-mais="${t}" ${gastar < passo ? 'disabled' : ''}>+</button>
-            </div>` : '<div style="height:8px"></div>'}
+            </div>` : '<div style="height:10px"></div>'}
           </div>`).join('')}
       </div>
-      <button class="bt ouro" id="rit-ok" style="margin-top:20px">
+      <button class="bt ouro" id="rit-ok" style="margin-top:22px">
         <span class="emo">🫙</span> Pronto, guardei!
       </button>
       <button class="bt clara" id="rit-volta" style="margin-top:12px">
@@ -433,14 +456,14 @@ function telaRitual() {
     document.querySelectorAll('[data-mais]').forEach(b => b.onclick = () => {
       const alvo = b.dataset.mais;
       if (total - guardar - doar < passo) return;
-      const de = el('#rep-gastar'), para = el('#rep-' + alvo);
-      moedaVoando(de, para);
+      moedaVoando(el('#rep-gastar'), el('#rep-' + alvo));
+      vibra(15);
       if (alvo === 'guardar') guardar = +(guardar + passo).toFixed(2); else doar = +(doar + passo).toFixed(2);
-      setTimeout(desenhar, 340);
+      setTimeout(desenhar, 360);
     });
     document.querySelectorAll('[data-menos]').forEach(b => b.onclick = () => {
       const alvo = b.dataset.menos;
-      Som.toque();
+      Som.toque(); vibra(10);
       if (alvo === 'guardar') guardar = Math.max(0, +(guardar - passo).toFixed(2));
       else doar = Math.max(0, +(doar - passo).toFixed(2));
       desenhar();
@@ -458,7 +481,7 @@ function telaRitual() {
   desenhar();
 }
 
-/* ---------- Aba 2: tarefas ---------- */
+/* ---------- Aba 2: missões ---------- */
 
 function telaTarefas() {
   const kid = App.kid;
@@ -466,28 +489,40 @@ function telaTarefas() {
   const feitas = ts.filter(t => t.feita).length;
 
   if (!ts.length) {
-    return `${palco('pensando')}${balao('Você ainda não tem tarefas. Peça para um adulto criar!')}
-      <div class="vazio">As tarefas aparecem aqui quando um adulto cadastrar 📋</div>`;
+    return `${palco('pensando')}
+      ${balao('Você ainda não tem missões. Peça para um adulto criar!')}
+      <div class="carta"><div class="vazio">
+        As missões aparecem aqui quando um adulto cadastrar 📋
+      </div></div>`;
   }
 
-  const fala = feitas === ts.length
+  const tudo = feitas === ts.length;
+  const fala = tudo
     ? 'Uhuul! Você fez tudo esta semana!'
-    : feitas === 0 ? 'Toque na tarefa quando você fizer!'
-      : `Já fez ${feitas} de ${ts.length}. Continua!`;
+    : feitas === 0 ? 'Toque na missão quando você fizer!'
+      : `Já fez <b>${feitas} de ${ts.length}</b>. Continua!`;
 
   return `
-    ${palco(feitas === ts.length ? 'feliz' : 'oi', 110)}
+    ${palco(tudo ? 'feliz' : 'oi', 128)}
     ${balao(fala)}
+    <div class="missao-conta">
+      <span class="n">${feitas}</span> de <span class="n">${ts.length}</span> missões desta semana
+    </div>
     ${ts.map(t => `
-      <button class="tarefa ${t.feita ? (t.confirmada ? 'feita' : 'esperando') : ''}" data-tarefa="${t.id}">
-        <span class="tarefa-ico">${esc(t.icon || '⭐')}</span>
-        <span class="tarefa-txt">
+      <button class="missao ${t.feita ? (t.confirmada ? 'feita' : 'esperando') : ''}" data-tarefa="${t.id}">
+        <span class="missao-ico">${esc(t.icon || '⭐')}</span>
+        <span class="missao-txt">
           <b>${esc(t.name)}</b>
-          <small>${Number(t.amount) > 0 ? `vale ${fmtKid(t.amount)}` : 'sem moeda, mas conta ponto!'}${t.feita && !t.confirmada ? ' · esperando conferir' : ''}</small>
+          ${Number(t.amount) > 0
+            ? `<span class="missao-vale">${Arte.moeda(19)} ${fmtKid(t.amount)}</span>`
+            : '<small>sem moeda, mas conta ponto!</small>'}
+          ${t.feita && !t.confirmada ? '<small>esperando um adulto conferir</small>' : ''}
         </span>
-        <span class="tarefa-mar">${t.feita ? (t.confirmada ? '✓' : '⏳') : ''}</span>
+        <span class="missao-mar">
+          ${t.feita ? (t.confirmada ? Arte.checkOuro() : Arte.ampulheta()) : ''}
+        </span>
       </button>`).join('')}
-    <div class="vazio" style="font-size:14px">
+    <div class="vazio" style="font-size:15px">
       Um adulto confere o que você marcou. Aí a moeda cai no pote 🪙
     </div>`;
 }
@@ -502,10 +537,10 @@ function telaSonho() {
   if (!meta) {
     return `${palco('pensando')}
       ${balao('Você ainda não escolheu um sonho para guardar. Fale com um adulto!')}
-      <div class="carta">
-        <div class="vazio">Um sonho é uma coisa que você quer muito e que dá para comprar
-        guardando um pouquinho toda semana 🌟</div>
-      </div>`;
+      <div class="carta"><div class="vazio">
+        Um sonho é uma coisa que você quer muito e que dá para comprar
+        guardando um pouquinho toda semana 🌟
+      </div></div>`;
   }
 
   const alvo = Number(meta.target_amount) || 0;
@@ -514,56 +549,61 @@ function telaSonho() {
   const chegou = pct >= 100;
 
   return `
-    ${palco(chegou ? 'feliz' : 'oi', 110)}
+    ${palco(chegou ? 'feliz' : 'oi', 128)}
     ${balao(chegou
       ? 'Você conseguiu! Já dá para comprar!'
       : faltam === null ? 'Continue guardando, falta pouquinho!'
-        : faltam <= 1 ? 'Falta só uma semanada!'
-          : `Faltam ${faltam} semanadas. Você consegue!`)}
-    <div class="carta">
-      <div class="meta-topo">
-        <span class="meta-ico">${esc(meta.icon || '🎁')}</span>
+        : faltam <= 1 ? 'Falta só <b>uma semanada</b>!'
+          : `Faltam <b>${faltam} semanadas</b>. Você consegue!`)}
+
+    <div class="sonho-card">
+      <div class="sonho-topo">
+        <span class="sonho-ico">${esc(meta.icon || '🎁')}</span>
         <span style="flex:1">
-          <b style="font-size:20px">${esc(meta.name)}</b>
-          <div class="meta-quanto">${fmtKid(p.guardar)} de ${fmtKid(alvo)}</div>
+          <div class="sonho-nome">${esc(meta.name)}</div>
+          <div class="sonho-quanto">${fmtKid(p.guardar)} <small>de ${fmtKid(alvo)}</small></div>
         </span>
-        ${chegou ? Arte.trofeu() : ''}
       </div>
-      <div class="meta-barra"><div class="meta-fill" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="trilha">${Arte.trilha(pct, meta.icon || '🎁')}</div>
       ${faltam !== null && faltam > 0 ? `
-        <div class="pote-nome" style="text-align:left">quantas semanadas faltam</div>
+        <div class="pote-nome" style="text-align:center;margin-top:10px">quantas semanadas faltam</div>
         <div class="semanas">
           ${Array.from({ length: Math.min(20, faltam) }, () => '<span class="semana-pt"></span>').join('')}
         </div>` : ''}
     </div>
+
     <div class="carta">
-      <div class="pote-nome" style="text-align:left;margin-bottom:6px">como chegar mais rápido</div>
-      <div style="font-size:16px;line-height:1.5">
-        Toda semanada, coloque um pouquinho no pote <b style="color:var(--guardar)">Guardar</b>.
+      <div style="font-size:17px;line-height:1.55">
+        <b>Como chegar mais rápido</b><br>
+        Toda semanada, coloque um pouquinho no pote
+        <b style="color:var(--guardar-fundo)">Guardar</b>.
         E se você não tirar nada dele durante a semana, ganha a <b>moeda mágica</b> ✨
       </div>
     </div>`;
 }
 
-/* ---------- Aba 4: os selos ---------- */
+/* ---------- Aba 4: os prêmios ---------- */
 
 function telaSelos() {
   const selos = Dados.selos(App.kid.id);
   const n = selos.filter(s => s.ganho).length;
   return `
-    ${palco(n >= 4 ? 'feliz' : 'oi', 110)}
+    ${palco(n >= 4 ? 'feliz' : 'oi', 128)}
     ${balao(n === 0 ? 'Ainda não tem prêmio esta semana. Bora conquistar!'
-      : n === selos.length ? 'Você ganhou TODOS os prêmios! Incrível!'
-        : `Você já tem ${n} ${n === 1 ? 'prêmio' : 'prêmios'} esta semana!`)}
-    <div class="selos">
+      : n === selos.length ? 'Você ganhou <b>TODOS</b> os prêmios! Incrível!'
+        : `Você já tem <b>${n} ${n === 1 ? 'prêmio' : 'prêmios'}</b> esta semana!`)}
+    <div class="premios">
       ${selos.map(s => `
-        <div class="selo ${s.ganho ? 'ganho' : ''}">
-          ${Arte.estrela(s.ganho)}
+        <div class="premio ${s.ganho ? 'ganho' : ''}">
+          <span class="premio-trava">
+            ${Arte.premio(s.id, s.ganho)}
+            ${s.ganho ? '' : Arte.cadeadoMini()}
+          </span>
           <b>${s.nome}</b>
           <small>${s.dica}</small>
         </div>`).join('')}
     </div>
-    <div class="vazio" style="font-size:14px">
+    <div class="vazio" style="font-size:15px">
       Os prêmios recomeçam toda semana, no dia da sua semanada 🗓️
     </div>`;
 }
@@ -579,52 +619,54 @@ function telaGastar(pote) {
   const sugestoes = [1, 2, 5, 10, 20].filter(v => v <= Math.max(1, disponivel));
 
   const desenhar = () => {
+    const demais = valor > disponivel;
     raiz().innerHTML = `
-      ${palco(valor > disponivel ? 'triste' : 'oi', 110)}
+      ${palco(demais ? 'triste' : 'oi', 122)}
       ${balao(doando
-        ? `Que legal doar! Você tem ${fmtKid(disponivel)} no pote de doar.`
-        : `Quanto você gastou? Tem ${fmtKid(disponivel)} para gastar.`)}
-      <div class="valor-mostra">${fmtKid(valor)}</div>
+        ? `Que legal doar! Você tem <b>${fmtKid(disponivel)}</b> no pote de doar.`
+        : `Quanto você gastou? Tem <b>${fmtKid(disponivel)}</b> para gastar.`)}
+      <div class="valor-mostra ${demais ? 'demais' : ''}">${fmtKid(valor)}</div>
       <div class="chips">
-        ${sugestoes.map(v => `<button class="chip ${valor === v ? 'on' : ''}" data-v="${v}">${fmtKid(v)}</button>`).join('')}
+        ${sugestoes.map(v => `<button class="chip ${valor === v ? 'on' : ''}" data-v="${v}">
+          ${Arte.moeda(22)} ${fmtKid(v)}</button>`).join('')}
         <button class="chip" data-v="tudo">tudo (${fmtKid(disponivel)})</button>
         <button class="chip" data-v="zero">limpar</button>
       </div>
       <div class="carta">
-        <div class="pote-nome" style="text-align:left;margin-bottom:8px">
+        <div class="pote-nome" style="text-align:left;margin-bottom:10px">
           ${doando ? 'para quem você doou?' : 'o que você comprou?'}
         </div>
-        <div class="chips" style="justify-content:flex-start">
+        <div class="chips" style="justify-content:flex-start;margin-bottom:0">
           ${(doando
             ? [['🐶', 'Bichinhos'], ['🏥', 'Hospital'], ['🧒', 'Outra criança'], ['⛪', 'Igreja'], ['🌳', 'Natureza']]
             : [['🍭', 'Doce'], ['🧸', 'Brinquedo'], ['📚', 'Livro'], ['🎮', 'Jogo'], ['🍦', 'Sorvete'], ['✏️', 'Escola']]
           ).map(([e, n]) => `<button class="chip ${oque === n ? 'on' : ''}" data-o="${n}">${e} ${n}</button>`).join('')}
         </div>
       </div>
-      <button class="bt ${doando ? 'rosa' : 'verde'}" id="conf" ${valor <= 0 || valor > disponivel ? 'disabled' : ''}>
+      <button class="bt ${doando ? 'rosa' : 'verde'}" id="conf" ${valor <= 0 || demais ? 'disabled' : ''}>
         <span class="emo">${doando ? '💝' : '🛒'}</span>
-        ${valor > disponivel ? 'Não tem tudo isso' : doando ? 'Doei!' : 'Gastei!'}
+        ${demais ? 'Não tem tudo isso' : doando ? 'Doei!' : 'Gastei!'}
       </button>
       <button class="bt clara" id="volta" style="margin-top:12px"><span class="emo">↩️</span> Voltar</button>`;
 
     document.querySelectorAll('[data-v]').forEach(b => b.onclick = () => {
-      Som.toque();
+      Som.toque(); vibra(10);
       const v = b.dataset.v;
       valor = v === 'tudo' ? disponivel : v === 'zero' ? 0 : +(valor + Number(v)).toFixed(2);
       desenhar();
     });
     document.querySelectorAll('[data-o]').forEach(b => b.onclick = () => {
-      Som.toque(); oque = b.dataset.o; desenhar();
+      Som.toque(); vibra(10); oque = b.dataset.o; desenhar();
     });
     el('#conf').onclick = () => {
       const r = Dados.gastar(kid.id, doando ? 'doar' : 'gastar', valor, oque);
       if (!r.ok) {
-        Som.nao();
+        Som.nao(); vibra([60, 40, 60]);
         aviso(r.motivo === 'falta' ? 'Não tem tudo isso no pote' : 'Escolha um valor', '😕');
         return;
       }
       Nuvem.sincronizar();
-      if (doando) festa(); else { Som.moeda(); vibra(20); }
+      if (doando) festa(); else { Som.moeda(); vibra(25); }
       App.aba = 'cofrinho';
       render();
       aviso(doando ? 'Você doou! Que coração grande 💝' : 'Anotado no cofrinho!', '');
