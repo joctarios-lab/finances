@@ -113,7 +113,7 @@ eval(appSrc + `; Object.assign(global, {
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE, prazoDaMeta, custoFixoCard, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
   openPagarFaturaSheet, desfazerPagamentosDaFatura, rotuloDaFatura,
-  cartaoBloco, usoDoLimite, linhasDaPrevisao, openClassificarGastos, linhaDeClassificacao, ligarClassificacao, classificarGasto, vincularAContrato, openEscolherContrato, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
+  cartaoBloco, usoDoLimite, linhasDaPrevisao, openClassificarGastos, linhaDeClassificacao, ligarClassificacao, classificarGasto, vincularAContrato, desvincularDoContrato, openEscolherContrato, openCriarContrato, contratoDoLancamento, openHistoricoFaturas, openFaturasFuturas, ligarAcoesDeFatura, prazoDeVencimento, mesAno,
   cardPrevisaoDoMes, secaoDoQueAindaVem, linhaPrevista, openAporteSheet, selectChip, chipValue, somarDias, resumoDoProximoMes, notaDoInvestimento,
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
@@ -5370,12 +5370,21 @@ try {
      contrato, e alternar aqui criaria um estado que o próximo cálculo desfaz. */
   const doContrato = { id: 'x1', description: 'Do contrato', amount: 10, date: todayISO(), recurrence_id: 'r9' };
   const comParcela = { id: 'x2', description: 'Parcelado', amount: 10, date: todayISO(), installment: '2/5' };
-  check('lançamento de contrato não oferece os botões',
+  check('lançamento de contrato não oferece os botões de classe',
     linhaDeClassificacao(doContrato, 'contrato').includes('data-classe'), false);
-  check('  e diz que está fora da projeção',
-    linhaDeClassificacao(doContrato, 'contrato').includes('fora da projeção'), true);
-  check('parcela também não oferece',
+  /* Mas oferece DESVINCULAR: o vínculo pode ter sido posto no lançamento errado, e
+     sem saída a única correção seria mexer no contrato — que é outra coisa. */
+  check('  e oferece desvincular',
+    linhaDeClassificacao(doContrato, 'contrato').includes('data-desvincular'), true);
+  check('parcela também não oferece classe',
     linhaDeClassificacao(comParcela, 'contrato').includes('data-classe'), false);
+  /* Parcela NÃO oferece desvincular: ela é de contrato por outro caminho, o
+     `installment`, e o botão prometeria desfazer algo que não desfaz — a próxima
+     parcela continuaria nascendo. */
+  check('  nem desvincular, que ali não desfaria nada',
+    linhaDeClassificacao(comParcela, 'contrato').includes('data-desvincular'), false);
+  check('  e é ela que diz estar fora da projeção',
+    linhaDeClassificacao(comParcela, 'contrato').includes('fora da projeção'), true);
   const linhaComum = linhaDeClassificacao({ id: 'x3', description: 'Mercado', amount: 10, date: todayISO(), type: 'Despesa' }, 'variavel');
   check('  já um gasto comum oferece variável e pontual',
     ['variavel', 'pontual'].every(c => linhaComum.includes(`data-classe="${c}"`)), true);
@@ -5456,6 +5465,116 @@ try {
   DB.remove('recurrences', idCtrCF);
   DB.remove('accounts', contaCF);
 } catch (e) { console.log(` FALHA | custo fixo uma fonte: ${e.message}`); fail++; }
+
+/* ---- CRIAR CONTRATO E DESVINCULAR, a partir da folha ----
+
+   Vincular só serve quando existe a que vincular, e desvincular só serve quando
+   dá para errar — as duas condições acontecem na prática: contratos são criados
+   depois dos primeiros lançamentos, e um vínculo pode ir para a linha errada. */
+console.log('\n=== Criar contrato e desvincular ===');
+try {
+  const contaN = DB.upsert('accounts', { name: 'Conta Novo', type: 'Conta Corrente', balance: 8000, active: true });
+  const pN = DB.monthPeriod(new Date());
+  const catN = (DB.rootCategories('Despesa')[0] || {}).id || null;
+  const idAssin = DB.upsert('transactions', {
+    description: 'Streaming novo', amount: 55,
+    date: DB.somarDiasISO(DB.inicioISO(pN), Math.max(0, DB.elapsedDays(pN) - 1)),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Débito', account_id: contaN, category_id: catN,
+  });
+
+  /* A folha de escolha oferece criar, não só escolher. */
+  openEscolherContrato(idAssin, pN);
+  check('a escolha de contrato oferece criar um novo',
+    (els['#modal'].innerHTML || '').includes(`data-novo-contrato="${idAssin}"`), true);
+
+  /* O CONTRATO herda o lançamento e começa na PRÓXIMA ocorrência: a de hoje é o
+     próprio lançamento, e começar hoje deixaria o mês com duas linhas iguais. */
+  const antesN = DB.all('recurrences').length;
+  const idCtrNovo = contratoDoLancamento(DB.get('transactions', idAssin), {
+    periodicidade: 'mensal', dia: 9, valorTipo: 'fixo', fimTipo: 'sem_prazo',
+  });
+  check('criar contrato a partir do lançamento', DB.all('recurrences').length, antesN + 1);
+  const ctrNovo = DB.get('recurrences', idCtrNovo);
+  check('  herda a descrição', ctrNovo.description, 'Streaming novo');
+  check('  o valor', Number(ctrNovo.amount), 55);
+  check('  e a categoria, senão o previsto cai em "sem categoria"', ctrNovo.category_id, catN);
+  check('  começa na próxima ocorrência, não hoje',
+    String(ctrNovo.inicio) > String(DB.get('transactions', idAssin).date), true);
+  check('  e nasce ativo', ctrNovo.status, 'ativa');
+
+  /* O "N vezes" conta o lançamento de hoje: quem escolhe 12x quer doze cobranças
+     no total, não doze além da que acabou de fazer. */
+  const idPorVezes = contratoDoLancamento(DB.get('transactions', idAssin), {
+    periodicidade: 'mensal', dia: 9, fimTipo: 'vezes', fimVezes: 12,
+  });
+  check('o prazo por vezes desconta a ocorrência de hoje',
+    Number(DB.get('recurrences', idPorVezes).fim_vezes), 11);
+  DB.remove('recurrences', idPorVezes);
+  check('sem periodicidade não cria nada',
+    contratoDoLancamento(DB.get('transactions', idAssin), { dia: 9 }), null);
+
+  /* DESVINCULAR devolve o lançamento ao ritmo — e não toca no contrato. */
+  vincularAContrato(idAssin, idCtrNovo);
+  check('vinculado, a classe é de contrato',
+    DB.classeDoGasto(DB.get('transactions', idAssin)), 'contrato');
+  const vN = DB.variavelProjetado(pN);
+  check('desvincular devolve verdadeiro', desvincularDoContrato(idAssin), true);
+  check('  o vínculo sai do lançamento',
+    !!DB.get('transactions', idAssin).recurrence_id, false);
+  check('  e ele volta a ser variável',
+    DB.classeDoGasto(DB.get('transactions', idAssin)), 'variavel');
+  if (vN.dias > 0) {
+    check('  voltando a contar no ritmo',
+      DB.variavelProjetado(pN).diaRitmo > vN.diaRitmo, true);
+  }
+  /* O CONTRATO CONTINUA DE PÉ: desvincular é dizer "este lançamento não é aquela
+     ocorrência", não "cancele a conta fixa". Apagá-lo aqui destruiria a repetição
+     inteira por causa de um vínculo errado num mês. */
+  check('  e o contrato continua existindo', !!DB.get('recurrences', idCtrNovo), true);
+  check('  ainda ativo', DB.get('recurrences', idCtrNovo).status, 'ativa');
+  check('desvincular o que não tem vínculo não faz nada',
+    desvincularDoContrato(idAssin), false);
+
+  /* DESPESA COM DESPESA, RECEITA COM RECEITA. A tela filtra, mas a função é onde
+     isso tem de valer: um gasto vinculado ao contrato do salário sairia do ritmo
+     por um caminho que não faz sentido, e `restamDaRecorrencia` passaria a contar
+     ocorrência de outro tipo. */
+  const ctrReceita = DB.upsert('recurrences', {
+    description: 'Salario Novo', amount: 9000, type: 'Receita', valor_tipo: 'fixo',
+    periodicidade: 'mensal', dia: 5, inicio: DB.inicioISO(pN), fim_tipo: 'sem_prazo',
+    status: 'ativa', geradas: 0,
+  });
+  check('despesa não vincula a contrato de receita',
+    vincularAContrato(idAssin, ctrReceita), false);
+  check('  e o lançamento fica sem vínculo',
+    !!DB.get('transactions', idAssin).recurrence_id, false);
+  /* E a tela não oferece o que a função recusa — senão o toque não faria nada e
+     pareceria defeito. */
+  openEscolherContrato(idAssin, pN);
+  check('  a escolha nem lista contrato de receita para uma despesa',
+    (els['#modal'].innerHTML || '').includes(`data-contrato="${ctrReceita}"`), false);
+  DB.remove('recurrences', ctrReceita);
+
+  /* A LISTA VEM POR VALOR: é assim que se acha o aluguel no meio de dez contratos,
+     e não pela ordem de cadastro. */
+  const ctrPequeno = DB.upsert('recurrences', { description: 'Assinatura miuda', amount: 12,
+    type: 'Despesa', valor_tipo: 'fixo', periodicidade: 'mensal', dia: 3, inicio: DB.inicioISO(pN),
+    fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0 });
+  const ctrGrande = DB.upsert('recurrences', { description: 'Aluguel graudo', amount: 4000,
+    type: 'Despesa', valor_tipo: 'fixo', periodicidade: 'mensal', dia: 3, inicio: DB.inicioISO(pN),
+    fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0 });
+  openEscolherContrato(idAssin, pN);
+  const listaEsc = els['#modal'].innerHTML || '';
+  check('a lista de contratos vem do maior para o menor',
+    listaEsc.indexOf(`data-contrato="${ctrGrande}"`) < listaEsc.indexOf(`data-contrato="${ctrPequeno}"`), true);
+  DB.remove('recurrences', ctrPequeno); DB.remove('recurrences', ctrGrande);
+
+  DB.remove('recurrences', idCtrNovo);
+  DB.remove('transactions', idAssin);
+  DB.remove('accounts', contaN);
+  closeModal();
+} catch (e) { console.log(` FALHA | criar e desvincular: ${e.message}`); fail++; }
 
 console.log('\n=== Puxar para atualizar desligado ===');
 {

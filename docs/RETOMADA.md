@@ -23,8 +23,8 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 129 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2425 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 130 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2448 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
@@ -128,6 +128,11 @@ mão toda vez.
 - Duas classes decidem a projeção, exclusivas: VARIÁVEL entra no ritmo; PONTUAL
   (aconteceu e não volta) fica fora. "Conta fixa" não é classe, é o VÍNCULO com o
   contrato — a folha do Painel oferece vincular, nunca aplica sozinha.
+- A folha oferece CRIAR contrato dali (contratoDoLancamento, que salta uma
+  ocorrência) e DESVINCULAR. Desvincular NAO apaga o contrato — é outra coisa, e
+  existe a tela "Contas fixas" para isso. Parcela não oferece desvincular: ela é
+  de contrato pelo installment, e o botão não desfaria nada. Vincular exige o
+  mesmo TIPO (despesa com despesa).
 - Casar descrição com nome de contrato só para SUGERIR. Automático errou 19
   lançamentos (R$ 5.322): "PAGSEGURO INTERNET IP S.A." virava internet fixa e
   "ARAGUARI" virava conta de água. contratoSugeridoPara compara o nome INTEIRO.

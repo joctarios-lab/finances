@@ -145,6 +145,67 @@ casar descrição contra nome de contrato já errou 19 lançamentos aqui, porque
 descrição do Pix traz o nome do banco. `contratoSugeridoPara` compara o nome
 **inteiro** — não um trecho — e mesmo assim só sugere.
 
+### Criar o contrato dali, e desfazer o vínculo
+
+Vincular só serve quando existe a que vincular — e contratos costumam nascer
+depois dos primeiros lançamentos, que foi exatamente o caso de agosto. Então a
+folha de escolha oferece **criar uma conta fixa com este lançamento**.
+
+O formulário pede só o que a tabela precisa saber e que o lançamento não tem:
+
+```
+Nova conta fixa
+Matrícula Escola Thomaz · R$ 300,00
+
+A primeira ocorrência do contrato é a PRÓXIMA — este
+lançamento já existe e já está aqui.
+
+Com que frequência?   [ Todo mês ▾ ]
+Em que dia?           [ 4 ]
+Até quando?           [ Até eu cancelar ▾ ]
+O valor muda?         [ Não, é sempre o mesmo ▾ ]
+
+        [ Criar e vincular ]
+```
+
+Descrição, valor, categoria, conta e método vêm do lançamento — pedir de novo o
+que o app já tem seria trabalho sem retorno. E o lançamento é **vinculado ao
+contrato recém-criado**: sem isso ele continuaria contando como gasto variável, e
+a pessoa teria feito o trabalho sem ver o resultado, que é o ritmo do mês baixar.
+
+O miolo da criação saiu de `criarRecorrenciaDoLancamento` para
+`contratoDoLancamento`, porque a folha não tem os campos `#f-rep-*` do formulário.
+Duas cópias divergiriam no primeiro ajuste, e a regra de **saltar uma ocorrência**
+— a de hoje é o próprio lançamento — é justamente o tipo que se esquece de
+replicar. O "N vezes" também desconta a ocorrência de hoje: quem escolhe 12x quer
+doze cobranças no total.
+
+**Desvincular** existe porque dá para errar: o vínculo pode ir para a linha
+errada, e sem saída a única correção seria mexer no contrato — que é outra coisa.
+A linha de um lançamento vinculado troca o "fora da projeção" por um botão:
+
+```
+Matrícula Escola Thomaz  ter., 04 de ago. · de Escola Thomaz
+                                  R$ 300,00  [ desvincular ]
+```
+
+Duas regras que os testes travam:
+
+- **o contrato não é tocado.** Desvincular é dizer "este lançamento não é aquela
+  ocorrência", não "cancele a conta fixa" — para isso existe a tela "Contas
+  fixas", que apaga as pendências junto. Apagar o contrato aqui destruiria a
+  repetição inteira por causa de um vínculo errado num mês.
+- **parcela não oferece desvincular.** Ela é de contrato por outro caminho, o
+  `installment`, e o botão prometeria desfazer algo que não desfaz: a próxima
+  parcela continuaria nascendo.
+
+E duas travas que a inspeção da tela real revelou: `vincularAContrato` recusa
+cruzar **despesa com contrato de receita** — a tela filtrava, mas a função
+aceitava, e um gasto ligado ao contrato do salário sairia do ritmo por um caminho
+sem sentido. A lista de contratos também passou a vir **ordenada por valor**, como
+a folha: é assim que se reconhece o aluguel no meio de dez, não pela ordem de
+cadastro.
+
 ### Por que isto não vai voltar a acontecer
 
 De setembro em diante o contrato gera a ocorrência sozinho, já com

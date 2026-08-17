@@ -3533,11 +3533,17 @@ function openClassificarGastos(period) {
    nada é pior que botão nenhum. */
 function linhaDeClassificacao(t, classe) {
   if (classe === 'contrato') {
+    /* DESVINCULAR só existe para quem tem `recurrence_id`. A parcela é de contrato
+       por outro caminho — o `installment` —, e um botão ali prometeria desfazer
+       algo que ele não desfaz: a próxima parcela continuaria nascendo. */
+    const contrato = t.recurrence_id ? DB.get('recurrences', t.recurrence_id) : null;
     return `<div class="cg-linha">
       <span class="cg-info"><b>${esc(t.description)}</b><small>${fmtDay(t.date)} · ${
-        t.recurrence_id ? 'de contrato' : 'parcela ' + esc(t.installment)}</small></span>
+        t.recurrence_id ? 'de ' + esc(contrato ? contrato.description : 'contrato') : 'parcela ' + esc(t.installment)}</small></span>
       <span class="cg-val">${fmt(t.amount)}</span>
-      <span class="cg-travado">fora da projeção</span>
+      ${t.recurrence_id
+        ? `<span class="cg-botoes"><button class="cg-b" data-desvincular="${t.id}">desvincular</button></span>`
+        : '<span class="cg-travado">fora da projeção</span>'}
     </div>`;
   }
   const b = (valor, rot) => `<button class="cg-b ${classe === valor ? 'on' : ''}" data-classe="${valor}" data-tx="${t.id}">${rot}</button>`;
@@ -3555,7 +3561,15 @@ function linhaDeClassificacao(t, classe) {
 function openEscolherContrato(txId, period) {
   const t = DB.get('transactions', txId);
   if (!t) return toast('Lançamento não encontrado');
-  const ativos = DB.all('recurrences').filter(r => r.status === 'ativa' && r.type !== 'Receita');
+  /* Só contratos ATIVOS e do mesmo tipo do lançamento. Vincular a um cancelado não
+     faria o gasto se repetir — a tela prometeria o contrário —, e cruzar despesa
+     com contrato de receita é o mesmo erro pelo outro lado.
+
+     Ordenados pelo VALOR, como a folha: é assim que se reconhece o aluguel no meio
+     de dez contratos, e não pela ordem em que foram cadastrados. */
+  const ativos = DB.all('recurrences')
+    .filter(r => r.status === 'ativa' && (r.type !== 'Receita') === DB.isExpense(t))
+    .sort((a, b) => DB.valorDaRecorrencia(b) - DB.valorDaRecorrencia(a));
   openModal(`
     <div class="modal-title">De qual conta fixa?<button class="close-x" id="ec-back"><span data-ico="back"></span></button></div>
     <p class="muted" style="margin-bottom:12px"><b>${esc(t.description)}</b> · ${fmt(t.amount)} · ${fmtDay(t.date)}<br>
@@ -3564,10 +3578,86 @@ function openEscolherContrato(txId, period) {
     ${ativos.map(r => `<button class="cg-esc" data-vincular="${t.id}" data-contrato="${r.id}">
       <span><b>${esc(r.description)}</b><i>dia ${esc(String(r.dia))} · ${fmt(DB.valorDaRecorrencia(r))}</i></span>
       <span data-ico="chev"></span>
-    </button>`).join('') || '<div class="empty">Nenhuma conta fixa cadastrada. Crie em Configurações → Contas fixas.</div>'}
+    </button>`).join('') || '<div class="empty">Nenhuma conta fixa cadastrada ainda.</div>'}
+    <p class="section-title" style="margin-top:14px">Ou crie uma nova</p>
+    <button class="cg-esc" data-novo-contrato="${t.id}">
+      <span><b>Criar conta fixa com este lançamento</b><i>usa a descrição, o valor e a categoria dele</i></span>
+      <span data-ico="chev"></span>
+    </button>
   `);
   $('#ec-back').onclick = () => openClassificarGastos(period);
   ligarClassificacao(period);
+}
+
+/* Criar o contrato a partir do lançamento, com o que a tabela precisa saber e
+   nada além: periodicidade, dia e prazo. Descrição, valor, categoria, conta e
+   método vêm do próprio lançamento — repetir isso num formulário seria pedir de
+   novo o que o app já tem.
+
+   O lançamento é VINCULADO ao contrato recém-criado. Sem isso ele continuaria
+   contando como gasto variável, e a pessoa teria feito o trabalho sem ver o
+   resultado — que é justamente o ritmo do mês baixar. */
+function openCriarContrato(txId, period) {
+  const t = DB.get('transactions', txId);
+  if (!t) return toast('Lançamento não encontrado');
+  const diaBase = Number(String(t.date || todayISO()).slice(8, 10)) || 1;
+  openModal(`
+    <div class="modal-title">Nova conta fixa<button class="close-x" id="nc-back"><span data-ico="back"></span></button></div>
+    <p class="muted" style="margin-bottom:12px"><b>${esc(t.description)}</b> · ${fmt(t.amount)}<br>
+      A primeira ocorrência do contrato é a PRÓXIMA — este lançamento já existe e
+      já está aqui. Depois de criado, o app lança sozinho na data certa.</p>
+    <div class="massa-campo">
+      <label class="massa-liga"><span>Com que frequência?</span></label>
+      <select id="nc-per">
+        <option value="mensal">Todo mês</option>
+        <option value="semanal">Toda semana</option>
+        <option value="quinzenal">A cada 15 dias</option>
+        <option value="anual">Todo ano</option>
+      </select>
+    </div>
+    <div class="massa-campo">
+      <label class="massa-liga"><span>Em que dia?</span></label>
+      <input type="number" id="nc-dia" min="1" max="31" value="${diaBase}">
+    </div>
+    <div class="massa-campo">
+      <label class="massa-liga"><span>Até quando?</span></label>
+      <select id="nc-fim">
+        <option value="sem_prazo">Até eu cancelar</option>
+        <option value="vezes">Por um número de vezes</option>
+        <option value="data">Até uma data</option>
+      </select>
+      <input type="number" id="nc-vezes" min="1" value="12" hidden>
+      <input type="date" id="nc-data" hidden>
+    </div>
+    <div class="massa-campo">
+      <label class="massa-liga"><span>O valor muda todo mês?</span></label>
+      <select id="nc-valor">
+        <option value="fixo">Não, é sempre o mesmo</option>
+        <option value="media">Sim — usar a média (luz, água)</option>
+      </select>
+    </div>
+    <button class="btn" id="nc-ok" style="margin-top:12px">Criar e vincular</button>
+  `);
+  $('#nc-back').onclick = () => openEscolherContrato(txId, period);
+  // Os campos de prazo só aparecem quando fazem sentido
+  const fim = $('#nc-fim');
+  fim.onchange = () => {
+    $('#nc-vezes').hidden = fim.value !== 'vezes';
+    $('#nc-data').hidden = fim.value !== 'data';
+  };
+  $('#nc-ok').onclick = () => {
+    const id = contratoDoLancamento(t, {
+      periodicidade: $('#nc-per').value,
+      dia: Number($('#nc-dia').value) || diaBase,
+      valorTipo: $('#nc-valor').value,
+      fimTipo: fim.value,
+      fimData: $('#nc-data').value || null,
+      fimVezes: Number($('#nc-vezes').value) || 12,
+    });
+    if (!id) return toast('Não foi possível criar a conta fixa');
+    vincularAContrato(txId, id);
+    openClassificarGastos(period);
+  };
 }
 
 function ligarClassificacao(period) {
@@ -3577,8 +3667,14 @@ function ligarClassificacao(period) {
   });
   document.querySelectorAll('#modal [data-escolher]').forEach(b => b.onclick = () =>
     openEscolherContrato(b.dataset.escolher, period));
+  document.querySelectorAll('#modal [data-novo-contrato]').forEach(b => b.onclick = () =>
+    openCriarContrato(b.dataset.novoContrato, period));
   document.querySelectorAll('#modal [data-vincular]').forEach(b => b.onclick = () => {
     vincularAContrato(b.dataset.vincular, b.dataset.contrato);
+    openClassificarGastos(period);
+  });
+  document.querySelectorAll('#modal [data-desvincular]').forEach(b => b.onclick = () => {
+    desvincularDoContrato(b.dataset.desvincular);
     openClassificarGastos(period);
   });
 }
@@ -3607,9 +3703,33 @@ function vincularAContrato(txId, recId) {
   const t = DB.get('transactions', txId);
   const r = DB.get('recurrences', recId);
   if (!t || !r) return false;
+  /* DESPESA com contrato de despesa, receita com receita. A tela já filtra, mas a
+     função é o lugar onde isso tem de valer: um gasto vinculado ao contrato do
+     salário sairia do ritmo por um caminho que não faz sentido nenhum, e o
+     `restamDaRecorrencia` passaria a contar ocorrência de outro tipo. */
+  if (DB.isExpense(t) !== (r.type !== 'Receita')) return false;
   DB.upsert('transactions', { ...t, recurrence_id: r.id, pontual: false });
   Sync.autoSync();
   toast(`"${t.description}" agora vem de ${r.description} ✓`);
+  return true;
+}
+
+/* Desfazer o vínculo. O lançamento volta a ser gasto variável e entra no ritmo.
+
+   O CONTRATO NÃO É TOCADO: desvincular é dizer "este lançamento não é aquela
+   ocorrência", não "cancele a conta fixa" — para isso existe a tela "Contas
+   fixas", que apaga as pendências junto. Apagar o contrato aqui destruiria a
+   repetição inteira por causa de um vínculo errado num mês.
+
+   E não recria a ocorrência: `ocorrenciaJaLancada` casa também por NOME dentro
+   da janela, então o gerador continua enxergando o lançamento e não duplica. */
+function desvincularDoContrato(txId) {
+  const t = DB.get('transactions', txId);
+  if (!t || !t.recurrence_id) return false;
+  const r = DB.get('recurrences', t.recurrence_id);
+  DB.upsert('transactions', { ...t, recurrence_id: null });
+  Sync.autoSync();
+  toast(`"${t.description}" desvinculado${r ? ' de ' + r.description : ''} — voltou a contar como variável`);
   return true;
 }
 
@@ -6802,8 +6922,27 @@ function avisoDeAperto() {
 function criarRecorrenciaDoLancamento(tx) {
   const per = chipValue('f-rep');
   if (!per || !tx) return null;
-  const dia = Math.min(31, Math.max(1, Number($('#f-rep-dia').value) || 1));
-  const fimTipo = $('#f-rep-fim').value || 'sem_prazo';
+  return contratoDoLancamento(tx, {
+    periodicidade: per,
+    dia: Number($('#f-rep-dia').value) || 1,
+    valorTipo: $('#f-rep-valor').value,
+    fimTipo: $('#f-rep-fim').value || 'sem_prazo',
+    fimData: $('#f-rep-data').value || null,
+    fimVezes: Number($('#f-rep-vezes').value) || 12,
+  });
+}
+
+/* O CONTRATO a partir de um lançamento, sem depender do formulário.
+
+   O miolo saiu de `criarRecorrenciaDoLancamento` para poder ser chamado também da
+   folha de classificação, onde não existe `#f-rep-dia` nem `#f-rep-fim`. Duas
+   cópias divergiriam no primeiro ajuste — e a regra de "salta uma ocorrência" é
+   exatamente do tipo que se esquece de replicar. */
+function contratoDoLancamento(tx, o) {
+  if (!tx || !o || !o.periodicidade) return null;
+  const per = o.periodicidade;
+  const dia = Math.min(31, Math.max(1, Number(o.dia) || 1));
+  const fimTipo = o.fimTipo || 'sem_prazo';
   const base = new Date((tx.date || todayISO()) + 'T12:00:00');
   // Salta uma ocorrência: a de hoje é o próprio lançamento
   const proximo = new Date(base);
@@ -6812,9 +6951,9 @@ function criarRecorrenciaDoLancamento(tx) {
   else if (per === 'anual') proximo.setFullYear(base.getFullYear() + 1);
   else proximo.setMonth(base.getMonth() + 1);
 
-  const r = {
+  const id = DB.upsert('recurrences', {
     description: tx.description, amount: tx.amount,
-    valor_tipo: $('#f-rep-valor').value === 'media' ? 'media' : 'fixo',
+    valor_tipo: o.valorTipo === 'media' ? 'media' : 'fixo',
     type: tx.type || 'Despesa', scope: tx.scope, member: tx.member || '',
     method: tx.method, category_id: tx.category_id || null,
     account_id: tx.account_id || null, card_id: tx.card_id || null,
@@ -6822,13 +6961,12 @@ function criarRecorrenciaDoLancamento(tx) {
     periodicidade: per, dia,
     inicio: DB.paraISO(proximo),
     fim_tipo: fimTipo,
-    fim_data: fimTipo === 'data' ? ($('#f-rep-data').value || null) : null,
+    fim_data: fimTipo === 'data' ? (o.fimData || null) : null,
     /* O "N vezes" conta o lançamento de hoje: quem escolhe 12x quer doze
        cobranças no total, não doze além da que acabou de fazer. */
-    fim_vezes: fimTipo === 'vezes' ? Math.max(1, (Number($('#f-rep-vezes').value) || 12) - 1) : null,
+    fim_vezes: fimTipo === 'vezes' ? Math.max(1, (Number(o.fimVezes) || 12) - 1) : null,
     geradas: 0, status: 'ativa', ultima_geracao: null,
-  };
-  const id = DB.upsert('recurrences', r);
+  });
   DB.gerarRecorrencias();          // já traz o que couber no ciclo atual
   return id;
 }
