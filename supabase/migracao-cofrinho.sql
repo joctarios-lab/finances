@@ -23,6 +23,13 @@
 -- Classificação pontual de um gasto: o terceiro estado, além de fixo e variável
 alter table transactions add column if not exists pontual boolean not null default false;
 
+-- A semanada e um contrato como qualquer outro, e esta coluna e o que a liga a
+-- crianca dona do cofrinho. Sem ela, o dinheiro que sai toda semana para as
+-- criancas nao existe no orcamento da familia.
+alter table recurrences add column if not exists kid_id uuid;
+create index if not exists idx_rec_kid on recurrences(kid_id);
+
+
 /* ---------------------------------------------------------------------------
    COFRINHO — o dinheiro das crianças
 

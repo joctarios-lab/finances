@@ -7317,6 +7317,16 @@ function openCriancas() {
           ? `${fmt(k.semanada_valor)} · ${DIAS_SEMANA[Number(k.semanada_dia) || 0]}`
           : 'sem semanada'}${k.active === false ? ' · pausado' : ''}</small>
         <small>${DB.kidTarefas(k.id).length} tarefa(s)${meta ? ` · ${esc(meta.icon || '🎁')} ${esc(meta.name)}${pct !== null ? ` (${pct}%)` : ''}` : ' · sem meta'}</small>
+        ${(() => {
+          /* O AVISO SOBE PARA A LISTA. Escondido só no detalhe, ele dependia de
+             alguém abrir a criança para descobrir que a semanada não estava nas
+             contas — e o que não se vê não se corrige. */
+          const fora = DB.semanadaForaDeSincronia(k.id);
+          if (!fora) return '';
+          const curto = { faltando: 'fora das suas contas', valor: 'valor diferente do contrato',
+            dia: 'dia diferente do contrato', pausado: 'contrato pausado', sobrando: 'contrato sem semanada' }[fora.motivo];
+          return `<small class="t-warn">⚠ ${curto}</small>`;
+        })()}
       </span>
       <span class="kid-saldo">${fmt(potes.total)}</span>
       <span data-ico="chev"></span>
@@ -7423,6 +7433,56 @@ async function hashDaSenha(pin, salt) {
 
 /* O detalhe: tudo da criança num lugar só, com o extrato completo. É o que o app
    dela NÃO mostra — lá a história é ilustrada e curta; aqui é auditoria. */
+/* O CUSTO DA SEMANADA, no orçamento de quem paga.
+
+   O cofrinho mostra o dinheiro chegando para a criança. Este bloco é o outro
+   lado: para a família é despesa semanal, e sem contrato ela não existia em
+   nenhum número do app — nem no custo fixo, nem no comprometido, nem na
+   projeção. Dois filhos a R$ 8 por semana passam de R$ 75 por mês invisíveis.
+
+   Mostra o mensal e não o semanal porque é em mês que o orçamento é decidido; o
+   valor da semana fica junto, na mesma linha, para a conta ser conferível. */
+function blocoDaSemanada(kidId) {
+  const k = DB.get('kids', kidId);
+  if (!k) return '';
+  const semana = (Number(k.semanada_valor) || 0)
+    + (k.rendimento_tipo === 'moeda' ? (Number(k.rendimento_valor) || 0) : 0);
+  const mensal = DB.semanadaMensalDoKid(k);
+  const contrato = DB.contratoDaSemanada(kidId);
+  const fora = DB.semanadaForaDeSincronia(kidId);
+
+  if (semana <= 0 && !contrato) {
+    return `<div class="sec-cab"><div class="sec-tit"><b>Custo para vocês</b>
+      <small>sem semanada definida</small></div></div>`;
+  }
+
+  /* O AVISO DIZ O QUE MUDOU, não que "algo está diferente": o motivo é o que
+     torna a linha acionável em um toque em vez de virar um alerta que se ignora. */
+  const recado = !fora ? null : {
+    faltando: 'Esta semanada ainda não entra nas suas contas. Crie o contrato para ela aparecer no custo fixo e na projeção.',
+    valor: `O contrato está em ${fmt(fora.atual)} por semana e a semanada agora é ${fmt(fora.esperado)}.`,
+    dia: 'O contrato lança em outro dia da semana.',
+    pausado: 'O contrato está pausado, então a semanada não está sendo lançada.',
+    sobrando: 'A semanada foi zerada, mas o contrato continua lançando.',
+  }[fora.motivo];
+
+  return `
+    <div class="sec-cab"><div class="sec-tit"><b>Custo para vocês</b>
+      <small>${fmt(semana)} por semana${k.rendimento_valor > 0 && k.rendimento_tipo === 'moeda'
+        ? ` (semanada + moeda mágica)` : ''}</small></div>
+      ${fora ? `<div class="sec-acoes"><button class="sec-btn" id="kdd-contrato">${
+        fora.motivo === 'faltando' ? 'Criar contrato' : fora.motivo === 'sobrando' ? 'Encerrar' : 'Acertar'
+      }</button></div>` : ''}</div>
+    <div class="card" style="margin-bottom:12px">
+      <div class="proj-row"><span>No mês</span><b>${fmt(mensal)}</b></div>
+      <div class="proj-row"><span>${contrato ? 'Contrato' : 'Sem contrato'}</span>
+        <b>${contrato ? esc(contrato.description) : '—'}</b></div>
+      ${recado ? `<p class="muted" style="margin-top:8px">${recado}</p>` : ''}
+      ${!fora ? `<p class="muted" style="margin-top:8px">Entra no custo fixo mensal e na projeção,
+        como qualquer outro contrato.</p>` : ''}
+    </div>`;
+}
+
 function openCriancaDetalhe(kidId) {
   const k = DB.get('kids', kidId);
   if (!k) return toast('Criança não encontrada');
@@ -7443,6 +7503,8 @@ function openCriancaDetalhe(kidId) {
       <div class="proj-row"><span>❤️ Doar</span><b>${fmt(potes.doar)}</b></div>
       <div class="proj-row" style="border-top:1px solid var(--line);font-weight:700"><span>Total</span><b>${fmt(potes.total)}</b></div>
     </div>
+
+    ${blocoDaSemanada(kidId)}
 
     <div class="sec-cab"><div class="sec-tit"><b>Meta</b><small>${meta
       ? `${esc(meta.name)} · ${fmt(meta.target_amount)}` : 'nenhuma agora'}</small></div>
@@ -7477,6 +7539,22 @@ function openCriancaDetalhe(kidId) {
   `);
   $('#kdd-back').onclick = () => openCriancas();
   $('#kdd-editar').onclick = () => openCriancaSheet(kidId);
+  /* Acertar o contrato é uma ação de UM toque, e não um formulário: o app já sabe
+     o valor, o dia e a periodicidade certos — pedir para a pessoa redigitar o que
+     ele conhece só cria chance de errar. */
+  if ($('#kdd-contrato')) $('#kdd-contrato').onclick = () => {
+    const fora = DB.semanadaForaDeSincronia(kidId);
+    DB.acertarContratoDaSemanada(kidId);
+    /* Gera o que já venceu na hora: sem isto o contrato nasce certo e o custo
+       fixo só mudaria na próxima abertura do app, dando a impressão de que o
+       botão não fez nada. */
+    try { DB.gerarRecorrencias(); } catch (_) { }
+    Sync.autoSync();
+    openCriancaDetalhe(kidId);
+    toast(fora && fora.motivo === 'sobrando' ? 'Contrato encerrado ✓'
+      : fora && fora.motivo === 'faltando' ? 'Contrato criado — já entra no custo fixo ✓'
+      : 'Contrato acertado ✓');
+  };
   $('#kdd-meta').onclick = () => openKidMetaSheet(kidId);
   $('#kdd-tarefa').onclick = () => openKidTarefaSheet(kidId);
   $('#kdd-lanc').onclick = () => openKidLancarSheet(kidId);

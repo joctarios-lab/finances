@@ -1408,7 +1408,21 @@ const DB = {
     const hoje = this.hojeISO();
     const itens = [];
     for (const r of this.all('recurrences')) {
-      if (r.status === 'Encerrada' || r.type === 'Receita') continue;
+      /* O FILTRO ERA POR UM STATUS QUE NÃO EXISTE.
+
+         Estava `r.status === 'Encerrada'`, com E maiúsculo. O app grava
+         'ativa' | 'pausada' | 'cancelada' — nunca 'Encerrada' —, então a condição
+         era falsa sempre e TODO contrato cancelado ou pausado continuava somando
+         no custo fixo mensal. Quem cancelou um financiamento continuava vendo o
+         peso dele no orçamento, e não havia como desconfiar: o contrato aparecia
+         encerrado na tela de contratos e vivo na conta do mês.
+
+         Apareceu ao encerrar o contrato de uma semanada zerada e o valor não
+         sair da conta. Listar o que EXCLUI, em vez de exigir `=== 'ativa'`, é o
+         lado seguro: registro antigo sem status continua contando, e é o que se
+         espera dele. */
+      if (r.status === 'pausada' || r.status === 'cancelada' || r.status === 'Encerrada') continue;
+      if (r.type === 'Receita') continue;
       const mensal = (Number(r.amount) || 0) * (this.POR_MES[r.periodicidade] || 1);
       let restam = null;                         // null = sem prazo
       if (r.fim_tipo === 'vezes') restam = Math.max(0, (Number(r.fim_vezes) || 0) - (Number(r.geradas) || 0));
@@ -2214,6 +2228,125 @@ const DB = {
       }
     }
     return out;
+  },
+
+  /* ---------- A SEMANADA NO ORÇAMENTO DE QUEM PAGA ----------
+
+     O cofrinho registra o dinheiro CHEGANDO no lado da criança. Faltava o outro
+     lado: para a família, aquilo é dinheiro saindo toda semana, e sem registro
+     ele não existia em nenhum número do app.
+
+     Não é pouco. Dois filhos a R$ 8 por semana, mais a moeda mágica, passam de
+     R$ 75 por mês — e é exatamente o perfil de gasto que desaparece da conta:
+     pequeno, repetido e pago em dinheiro vivo.
+
+     A FONTE É O CONTRATO, sem exceção para este caso. A regra da casa é que toda
+     movimentação futura vem de contrato, e abrir uma segunda fonte só porque
+     "semanada é diferente" recriaria a divergência que a unificação resolveu. O
+     contrato é semanal de verdade — `POR_MES` já sabe que semanal pesa 52/12 num
+     mês, então o custo fixo mensal sai certo sem ninguém calcular nada.
+
+     O VALOR INCLUI A MOEDA MÁGICA. Ela é condicional (só cai se a criança não
+     mexer no que guardou), mas quem guarda a recebe quase toda semana. Entre
+     superestimar levemente um compromisso e subestimá-lo, orçamento doméstico
+     erra melhor para cima: sobrar é resultado, faltar é problema. */
+  semanadaMensalDoKid(kid) {
+    if (!kid) return 0;
+    const semana = (Number(kid.semanada_valor) || 0)
+      + (kid.rendimento_tipo === 'moeda' ? (Number(kid.rendimento_valor) || 0) : 0);
+    return semana * this.POR_MES.semanal;
+  },
+
+  contratoDaSemanada(kidId) {
+    return this.all('recurrences').find(r => r.kid_id === kidId && r.status !== 'cancelada') || null;
+  },
+
+  /* A próxima vez que este dia da semana acontece, contando hoje.
+
+     Hoje conta de propósito: se a semanada é no sábado e alguém cadastra no
+     sábado, a primeira ocorrência é hoje — e não daqui a sete dias, o que faria a
+     criança esperar uma semana inteira sem entender por quê. */
+  proximoDiaDaSemana(alvo, refISO) {
+    const hoje = refISO || this.hojeISO();
+    const d = new Date(hoje + 'T12:00:00');
+    const avanco = (Math.min(6, Math.max(0, alvo)) - d.getDay() + 7) % 7;
+    d.setDate(d.getDate() + avanco);
+    return this.paraISO(d);
+  },
+
+  /* O que o contrato DEVERIA dizer, comparado ao que ele diz.
+
+     Devolve null quando está em dia. Devolve o motivo quando não está, porque a
+     tela precisa dizer O QUE mudou — "o valor da semanada mudou" é acionável,
+     "algo está diferente" não é. */
+  semanadaForaDeSincronia(kidId) {
+    const kid = this.get('kids', kidId);
+    if (!kid) return null;
+    const contrato = this.contratoDaSemanada(kidId);
+    const semana = (Number(kid.semanada_valor) || 0)
+      + (kid.rendimento_tipo === 'moeda' ? (Number(kid.rendimento_valor) || 0) : 0);
+
+    if (semana <= 0) {
+      // Sem semanada não há compromisso: um contrato vivo aqui é resto do passado
+      return contrato ? { motivo: 'sobrando', contrato, esperado: 0 } : null;
+    }
+    if (!contrato) return { motivo: 'faltando', contrato: null, esperado: semana };
+    if (Math.abs((Number(contrato.amount) || 0) - semana) > 0.005) {
+      return { motivo: 'valor', contrato, esperado: semana, atual: Number(contrato.amount) || 0 };
+    }
+    /* O DIA DA SEMANA VEM DO `inicio`, não do campo `dia`.
+
+       Para periodicidade semanal, `dataDaOcorrencia` soma sete dias sobre o
+       início e ignora `dia` por completo (ver a função). Conferir `dia` aqui
+       daria um contrato "em dia" gerando lançamento na terça enquanto a semanada
+       é paga no sábado — e ninguém ligaria uma coisa à outra. */
+    const diaDoInicio = new Date(String(contrato.inicio) + 'T12:00:00').getDay();
+    if (diaDoInicio !== Number(kid.semanada_dia)) {
+      return { motivo: 'dia', contrato, esperado: semana };
+    }
+    if (contrato.status !== 'ativa') return { motivo: 'pausado', contrato, esperado: semana };
+    return null;
+  },
+
+  /* Cria ou acerta o contrato da semanada. Idempotente: rodar duas vezes não
+     duplica, e o `kid_id` é o que garante isso mesmo se alguém renomear o
+     contrato depois. */
+  acertarContratoDaSemanada(kidId, extras = {}) {
+    const kid = this.get('kids', kidId);
+    if (!kid) return null;
+    const fora = this.semanadaForaDeSincronia(kidId);
+    if (!fora) return this.contratoDaSemanada(kidId);
+
+    // Semanada zerada: encerra o contrato em vez de apagar, para o histórico do
+    // que já foi pago continuar explicável
+    if (fora.motivo === 'sobrando') {
+      this.upsert('recurrences', { ...fora.contrato, status: 'cancelada' });
+      return null;
+    }
+
+    const base = fora.contrato || {
+      type: 'Despesa', valor_tipo: 'fixo', scope: 'Familiar',
+      method: 'Dinheiro', fim_tipo: 'sempre', geradas: 0,
+      ...extras,
+    };
+    /* O INÍCIO É A PRÓXIMA SEMANADA que ainda vai acontecer, nunca uma passada:
+       cadastrar hoje não pode despejar semanadas retroativas no extrato. E é o
+       início que fixa o dia da semana, porque a periodicidade semanal soma sete
+       dias sobre ele. */
+    const inicio = fora.contrato && fora.motivo !== 'dia'
+      ? fora.contrato.inicio
+      : this.proximoDiaDaSemana(Number(kid.semanada_dia) || 0);
+    return this.upsert('recurrences', {
+      ...base,
+      kid_id: kidId,
+      description: `Semanada de ${kid.name}`,
+      amount: fora.esperado,
+      inicio,
+      dia: Number(kid.semanada_dia) || 0,   // guardado para a tela; a data usa o início
+      periodicidade: 'semanal',
+      status: 'ativa',
+      type: 'Despesa',
+    });
   },
 
   /* ---------- A PONTE COM O APP DA CRIANÇA ----------

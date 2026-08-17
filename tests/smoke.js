@@ -118,7 +118,7 @@ eval(appSrc + `; Object.assign(global, {
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openEditarContrato, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
-  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
+  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, blocoDaSemanada, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
 
 // ---- monta um cenário de família ----
 DB.load();
@@ -5840,6 +5840,213 @@ try {
   DB.remove('kid_tasks', tarefaId); DB.remove('kid_goals', metaId); DB.remove('kids', kidId);
 } catch (e) { console.log(` FALHA | cofrinho dados: ${e.message}`); fail++; }
 
+/* ---- CONTRATO ENCERRADO SAI DO CUSTO FIXO ----
+
+   Este bloco nasceu de um defeito que estava no app desde antes do cofrinho: o
+   filtro era `r.status === 'Encerrada'`, com E maiúsculo, e o app grava
+   'ativa' | 'pausada' | 'cancelada'. A condição era falsa SEMPRE, então todo
+   contrato cancelado ou pausado continuava somando no custo fixo mensal.
+
+   Quem cancelou um financiamento continuava vendo o peso dele no orçamento, sem
+   ter como desconfiar: o contrato aparecia encerrado na tela de contratos e vivo
+   na conta do mês. Apareceu por acaso, ao encerrar o contrato de uma semanada
+   zerada e o valor não sair da conta. */
+console.log('\n=== Contrato encerrado sai do custo fixo ===');
+try {
+  const somaDe = nome => DB.custoFixoMensal().itens
+    .filter(i => i.descricao === nome).reduce((s, i) => s + i.mensal, 0);
+
+  const idCF = DB.upsert('recurrences', {
+    description: 'Teste do custo fixo', amount: 500, type: 'Despesa',
+    periodicidade: 'mensal', dia: 10, inicio: DB.hojeISO(),
+    fim_tipo: 'sempre', status: 'ativa', geradas: 0,
+  });
+  check('contrato ativo conta no custo fixo', somaDe('Teste do custo fixo'), 500);
+
+  DB.upsert('recurrences', { ...DB.get('recurrences', idCF), status: 'cancelada' });
+  check('cancelado sai da conta', somaDe('Teste do custo fixo'), 0);
+
+  /* PAUSADO TAMBÉM SAI. Pausar existe para "não me cobre isso agora" — se o valor
+     continuasse no custo fixo, pausar não faria diferença nenhuma no número que a
+     família usa para decidir, e a tela de contratos diria uma coisa e o orçamento
+     outra. */
+  DB.upsert('recurrences', { ...DB.get('recurrences', idCF), status: 'pausada' });
+  check('pausado também sai', somaDe('Teste do custo fixo'), 0);
+  check('  e o contrato continua existindo', !!DB.get('recurrences', idCF), true);
+
+  DB.upsert('recurrences', { ...DB.get('recurrences', idCF), status: 'ativa' });
+  check('reativar traz de volta', somaDe('Teste do custo fixo'), 500);
+
+  /* O CUSTO FIXO É COERENTE COM QUEM GERA. Um contrato que não gera lançamento não
+     pode pesar no orçamento: seriam dois números discordando sobre o mesmo mês. */
+  const geramMas = DB.all('recurrences').filter(r => r.status !== 'ativa' && r.type !== 'Receita');
+  const noCusto = DB.custoFixoMensal().itens.map(i => i.id);
+  check('nenhum contrato não-ativo aparece no custo fixo',
+    geramMas.filter(r => noCusto.includes(r.id)).map(r => r.description), []);
+
+  DB.remove('recurrences', idCF);
+} catch (e) { console.log(` FALHA | custo fixo e status: ${e.message}`); fail++; }
+
+/* ---- A SEMANADA NO ORÇAMENTO DE QUEM PAGA ----
+
+   O cofrinho registrava o dinheiro chegando para a criança e o lado de quem paga
+   ficava cego: a semanada não existia no custo fixo, no comprometido nem na
+   projeção. É o perfil de gasto que mais some da conta — pequeno, repetido e em
+   dinheiro vivo. */
+console.log('\n=== A semanada entra nas contas da família ===');
+try {
+  const hojeS = DB.hojeISO();
+  const diaS = new Date(hojeS + 'T12:00:00').getDay();
+  const idS = DB.upsert('kids', {
+    name: 'Cofrinho Custo', avatar: '🐢', cor: '#0984e3',
+    semanada_valor: 8, semanada_dia: diaS,
+    rendimento_tipo: 'moeda', rendimento_valor: 1, active: true,
+  });
+
+  /* O MENSAL SAI DA PERIODICIDADE, não de "quatro semanas".
+
+     Um mês não tem quatro semanas: tem 52/12 = 4,333. Arredondar para quatro
+     subestima o ano inteiro em quase um mês de semanada — e o app já sabia disso
+     em POR_MES, para a diarista semanal. Reusar essa conta é o que mantém a
+     semanada coerente com o resto do custo fixo. */
+  check('a semanada vira custo mensal pela periodicidade real',
+    Math.round(DB.semanadaMensalDoKid(DB.get('kids', idS)) * 100) / 100,
+    Math.round((8 + 1) * 52 / 12 * 100) / 100);
+  check('  incluindo a moeda mágica, que também sai do bolso',
+    DB.semanadaMensalDoKid(DB.get('kids', idS)) > 8 * 52 / 12, true);
+
+  // Sem contrato, o app diz o que falta — e diz O QUE, não "algo"
+  const fora1 = DB.semanadaForaDeSincronia(idS);
+  check('sem contrato, a semanada está fora das contas', fora1 && fora1.motivo, 'faltando');
+  check('  e o custo fixo mensal não a conhece',
+    DB.custoFixoMensal().itens.some(i => /Cofrinho Custo/.test(i.descricao)), false);
+
+  const idC = DB.acertarContratoDaSemanada(idS);
+  check('criar o contrato resolve', !!idC, true);
+  check('  e agora ela está em dia', DB.semanadaForaDeSincronia(idS), null);
+
+  const contrato = DB.get('recurrences', idC);
+  check('  o contrato é semanal', contrato.periodicidade, 'semanal');
+  check('  é despesa', contrato.type, 'Despesa');
+  check('  está ativo', contrato.status, 'ativa');
+  check('  vale semanada + moeda mágica', contrato.amount, 9);
+  check('  e está ligado à criança pelo id', contrato.kid_id, idS);
+
+  /* O INÍCIO CAI NO DIA DA SEMANADA. Para periodicidade semanal, o app soma sete
+     dias sobre o início e IGNORA o campo `dia` — então é o início que define o dia
+     da semana. Sem isto, a semanada de sábado seria lançada na terça. */
+  check('  o início cai no dia da semanada',
+    new Date(contrato.inicio + 'T12:00:00').getDay(), diaS);
+  check('  e nunca no passado', contrato.inicio >= hojeS, true);
+
+  /* AGORA A CONTA FECHA: o custo fixo mensal da família conhece a semanada, com o
+     valor mensal certo. É o teste que prova que o dinheiro deixou de ser
+     invisível. */
+  const item = DB.custoFixoMensal().itens.find(i => /Cofrinho Custo/.test(i.descricao));
+  check('o custo fixo mensal passa a conhecer a semanada', !!item, true);
+  check('  com o valor mensal certo',
+    item ? Math.round(item.mensal * 100) / 100 : null,
+    Math.round(9 * 52 / 12 * 100) / 100);
+
+  /* IDEMPOTENTE: acertar duas vezes não cria um segundo contrato. Duplicar aqui
+     dobraria o custo fixo da família sem ninguém entender de onde veio. */
+  const antes = DB.all('recurrences').filter(r => r.kid_id === idS).length;
+  DB.acertarContratoDaSemanada(idS);
+  check('acertar de novo não duplica o contrato',
+    DB.all('recurrences').filter(r => r.kid_id === idS).length, antes);
+
+  /* MUDAR A SEMANADA desencaixa o contrato, e o app avisa com o motivo. Sem este
+     aviso, aumentar a semanada de 8 para 15 deixaria o orçamento contando 8 para
+     sempre — errando para baixo, que é o lado ruim de errar. */
+  DB.upsert('kids', { ...DB.get('kids', idS), semanada_valor: 15 });
+  const fora2 = DB.semanadaForaDeSincronia(idS);
+  check('mudar o valor da semanada desencaixa o contrato', fora2 && fora2.motivo, 'valor');
+  check('  dizendo quanto era', fora2.atual, 9);
+  check('  e quanto passou a ser', fora2.esperado, 16);
+  DB.acertarContratoDaSemanada(idS);
+  check('  acertar atualiza o mesmo contrato', DB.get('recurrences', idC).amount, 16);
+  check('  sem criar outro', DB.all('recurrences').filter(r => r.kid_id === idS).length, antes);
+
+  // Mudar o DIA também desencaixa, e o acerto move o início
+  DB.upsert('kids', { ...DB.get('kids', idS), semanada_dia: (diaS + 3) % 7 });
+  const fora3 = DB.semanadaForaDeSincronia(idS);
+  check('mudar o dia da semana desencaixa', fora3 && fora3.motivo, 'dia');
+  DB.acertarContratoDaSemanada(idS);
+  check('  e o acerto move o início para o novo dia',
+    new Date(DB.get('recurrences', idC).inicio + 'T12:00:00').getDay(), (diaS + 3) % 7);
+
+  // Contrato pausado: a semanada para de ser lançada, e isso precisa aparecer
+  DB.upsert('recurrences', { ...DB.get('recurrences', idC), status: 'pausada' });
+  check('contrato pausado é avisado', (DB.semanadaForaDeSincronia(idS) || {}).motivo, 'pausado');
+  DB.acertarContratoDaSemanada(idS);
+  check('  e o acerto religa', DB.get('recurrences', idC).status, 'ativa');
+
+  /* ZERAR A SEMANADA encerra o contrato, não o apaga: o que já foi pago continua
+     explicável no histórico. Apagar deixaria lançamentos órfãos apontando para um
+     contrato que não existe mais. */
+  DB.upsert('kids', { ...DB.get('kids', idS), semanada_valor: 0, rendimento_valor: 0 });
+  check('zerar a semanada deixa o contrato sobrando',
+    (DB.semanadaForaDeSincronia(idS) || {}).motivo, 'sobrando');
+  DB.acertarContratoDaSemanada(idS);
+  check('  e o acerto encerra o contrato', DB.get('recurrences', idC).status, 'cancelada');
+  check('  sem apagar o registro', !!DB.get('recurrences', idC), true);
+  check('  saindo do custo fixo mensal',
+    DB.custoFixoMensal().itens.some(i => /Cofrinho Custo/.test(i.descricao)), false);
+  check('  e sem ficar avisando para sempre', DB.semanadaForaDeSincronia(idS), null);
+
+  /* A TELA MOSTRA O CUSTO. É onde o adulto decide, e por isso mostra o mensal:
+     orçamento se pensa em mês, mesmo quando o pagamento é semanal. */
+  DB.upsert('kids', { ...DB.get('kids', idS), semanada_valor: 10, rendimento_valor: 2 });
+  const bloco = blocoDaSemanada(idS);
+  check('a tela da criança mostra o custo para a família', bloco.includes('Custo para vocês'), true);
+  check('  o valor da semana', bloco.includes(fmt(12)), true);
+  check('  e o peso no mês', bloco.includes(fmt(12 * 52 / 12)), true);
+  check('  com o caminho para criar o contrato', bloco.includes('id="kdd-contrato"'), true);
+
+  // Com tudo em dia, o aviso e o botão saem da tela
+  DB.acertarContratoDaSemanada(idS);
+  const bloco2 = blocoDaSemanada(idS);
+  check('em dia, o botão de acertar desaparece', bloco2.includes('id="kdd-contrato"'), false);
+  check('  e a tela diz que já entra nas contas', bloco2.includes('custo fixo mensal'), true);
+
+  /* O AVISO SOBE PARA A LISTA de crianças: escondido só no detalhe, dependia de
+     alguém abrir a criança para descobrir o problema. */
+  DB.upsert('kids', { ...DB.get('kids', idS), semanada_valor: 30 });
+  openCriancas();
+  check('a lista de crianças avisa quando está fora de sincronia',
+    els['#modal'].innerHTML.includes('valor diferente do contrato'), true);
+  DB.acertarContratoDaSemanada(idS);
+  openCriancas();
+  check('  e não avisa quando está tudo certo',
+    els['#modal'].innerHTML.includes('valor diferente do contrato'), false);
+
+  /* A GERAÇÃO FUNCIONA: o contrato semanal cria lançamentos de verdade, um por
+     semana, no dia certo. Um contrato que não gera nada é um número bonito que
+     não vira dinheiro saindo. */
+  /* O ID MUDA quando o contrato e recriado. Zerar a semanada CANCELA o contrato,
+     e reativar cria outro — cancelado nao volta, porque o historico do que foi
+     pago precisa continuar apontando para um contrato encerrado. Guardar o id
+     antigo aqui media o contrato errado, e o teste reprovava sem defeito. */
+  const idAtual = DB.contratoDaSemanada(idS).id;
+  DB.gerarRecorrencias(DB.somarDiasISO(hojeS, 21));
+  const geradas = DB.all('transactions').filter(t => t.recurrence_id === idAtual);
+  check('o contrato gera as semanadas do período', geradas.length >= 2, true);
+  check('  todas no dia da semana certo',
+    geradas.every(t => new Date(t.date + 'T12:00:00').getDay() === (diaS + 3) % 7), true);
+  check('  nenhuma no passado', geradas.every(t => t.date >= hojeS), true);
+  /* 32, nao 30: a semanada e 30 e a moeda magica continua valendo 2. Errei esta
+     conta ao escrever o teste, e e exatamente o erro que o contrato evita que a
+     familia cometa no orcamento — a moeda magica esquecida na soma. */
+  check('  e com o valor da semana mais a moeda magica',
+    geradas.every(t => Number(t.amount) === 32), true);
+
+  // Limpeza
+  for (const t of geradas) DB.remove('transactions', t.id);
+  for (const r of DB.all('recurrences').filter(r => r.kid_id === idS)) DB.remove('recurrences', r.id);
+  DB.remove('kids', idS);
+  closeModal();
+} catch (e) { console.log(` FALHA | semanada no orçamento: ${e.message}`); fail++; }
+
 /* ---- COFRINHO: a gestão no app de quem administra ----
 
    A área dos pais mora AQUI, não no app da criança: o PIN daqui criptografa os
@@ -6357,6 +6564,12 @@ check('função is_member definida antes das policies', schema.indexOf('function
       const bloco = fonte.match(/const COLUNAS = \{([\s\S]*?)\n\};/)[1];
       const mapa = {};
       for (const m of bloco.matchAll(/(\w+): '(\w+)([!#]?)'/g)) mapa[m[1]] = { tipo: m[2], marca: m[3] };
+      /* Declaração POR TABELA, no formato 'tabela.coluna'. Existe porque `kid_id`
+         é NOT NULL nas tabelas do cofrinho e opcional em recurrences — o mesmo
+         nome com dois contratos diferentes, que o mapa por nome não expressa. */
+      for (const m of bloco.matchAll(/'(\w+)\.(\w+)': '(\w+)([!#]?)'/g)) {
+        mapa[m[1] + '.' + m[2]] = { tipo: m[3], marca: m[4] };
+      }
       check('mapa de colunas foi lido', Object.keys(mapa).length > 20, true);
 
       const equivale = { uuid: 'uuid', num: 'numeric', int: 'int', date: 'date', bool: 'boolean', json: 'jsonb', ts: 'timestamptz', text: 'text' };
@@ -6365,7 +6578,8 @@ check('função is_member definida antes das policies', schema.indexOf('function
         for (const col of [...cols, 'id', 'family_id', 'updated_at', 'deleted']) {
           const real = esquema[tabela] && esquema[tabela][col];
           if (!real) continue;
-          const decl = mapa[col] || { tipo: 'text', marca: '' };
+          // A específica da tabela vence a global, igual ao que higienizar() faz
+          const decl = mapa[tabela + '.' + col] || mapa[col] || { tipo: 'text', marca: '' };
           if (equivale[decl.tipo] !== real.tipo) {
             divergencias.push(`${tabela}.${col}: mapa diz ${decl.tipo}, banco tem ${real.tipo}`);
             continue;
@@ -6490,6 +6704,100 @@ check('função is_member definida antes das policies', schema.indexOf('function
     }
     check('o que os fluxos do app gravaram é aceito pelo banco',
       problemasReais.length ? problemasReais.slice(0, 4).join(' | ') : true, true);
+  }
+
+/* ---- CONTRATO COMUM CONTINUA SENDO ENVIADO ----
+
+     A coluna `kid_id` chegou em recurrences para ligar o contrato da semanada à
+     criança. Ela é NOT NULL nas tabelas do cofrinho, e o mapa de tipos é por NOME
+     de coluna — então a marca de obrigatório valia para recurrences também, e
+     `higienizar` DESCARTAVA todo contrato sem criança. Ou seja: aluguel,
+     financiamento, escola, todos os contratos da família parariam de sincronizar,
+     sem erro na tela.
+
+     O mapa por arquivo já é conferido acima, mas conferir a declaração não é
+     conferir o comportamento: aqui o envio roda de verdade, com o PostgREST falso,
+     e o que se mede é se o contrato CHEGA. */
+  console.log('\n=== Contrato sem criança continua sincronizando ===');
+  {
+    const enviados = [];
+    const guarda = DB.data;
+    const S2 = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S2.saveCfg = () => {}; S2.GIRO_MINIMO = 0;
+    S2.cfg = { url: 'https://x.supabase.co', anonKey: 'k', access_token: 'a',
+      refresh_token: 'r', token_exp: Date.now() + 600000, family_id: FAM_TESTE };
+
+    const envio = (id, extra) => ({
+      id, updated_at: DB.now(), deleted: false, dirty: true,
+      description: 'Aluguel', amount: 1800, type: 'Despesa', valor_tipo: 'fixo',
+      periodicidade: 'mensal', dia: 5, inicio: iso(new Date()),
+      fim_tipo: 'sempre', geradas: 0, status: 'ativa', ...extra,
+    });
+    const idSemKid = DB.uuid(), idComKid = DB.uuid(), idKid = DB.uuid(), idNuloKid = DB.uuid();
+
+    DB.data = {
+      meta: { seeded: true, lastSync: null },
+      accounts: [], cards: [], categories: [], transactions: [], goals: [],
+      goal_entries: [], invoice_status: [], family_settings: [], budget_overrides: [],
+      kid_goals: [], kid_tasks: [], kid_entries: [],
+      kids: [{ id: idKid, updated_at: DB.now(), deleted: false, dirty: true,
+        name: 'Kid', semanada_valor: 8, semanada_dia: 6, active: true }],
+      recurrences: [
+        envio(idSemKid),                                            // contrato comum: coluna ausente
+        /* kid_id: null EXPLÍCITO — e este é o caso que importa.
+
+           Coluna ausente nem chega a `higienizar`: o push pula o que é
+           `undefined` para deixar o default do banco valer. Então a marca de
+           obrigatório não morde ali, e um teste só com o contrato "sem kid_id"
+           passa verde mesmo com a declaração errada.
+
+           Só que TODO contrato fica com `kid_id: null` depois do primeiro pull —
+           o Postgres devolve null para coluna vazia, e o merge grava isso local.
+           A partir daí o valor existe, é null, e a marca `!` descarta o registro:
+           os contratos da família param de subir sem nenhum erro na tela. É o
+           estado real de qualquer aparelho que já sincronizou uma vez. */
+        envio(idNuloKid, { description: 'Escola', amount: 900, kid_id: null }),
+        envio(idComKid, { description: 'Semanada de Kid', amount: 8, periodicidade: 'semanal', kid_id: idKid }),
+      ],
+    };
+
+    global.navigator.onLine = true;
+    global.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('/auth/v1/')) {
+        return { ok: true, status: 200, text: async () => '', json: async () => ({
+          access_token: 'a', refresh_token: 'r', expires_in: 3600, user: { id: 'u', email: 'a@b.c' } }) };
+      }
+      if (opts && opts.method === 'POST' && opts.body && u.includes('/recurrences')) {
+        for (const o of JSON.parse(opts.body)) enviados.push(o);
+      }
+      if (!opts || opts.method === 'GET') return { ok: true, status: 200, json: async () => [], text: async () => '' };
+      return { ok: true, status: 200, json: async () => [], text: async () => '' };
+    };
+
+    let erro = null;
+    await S2.syncAll(false).catch(e => { erro = e.message; });
+    clearTimeout(S2._debounce);
+
+    check('sincroniza sem erro', erro, null);
+    check('o contrato COMUM, sem criança, chega ao banco',
+      enviados.some(o => o.id === idSemKid), true);
+    check('o contrato que voltou do banco com kid_id nulo também chega',
+      enviados.some(o => o.id === idNuloKid), true);
+    check('  e o da semanada também', enviados.some(o => o.id === idComKid), true);
+    check('  nenhum contrato é descartado no caminho', enviados.length >= 3, true);
+
+    /* O CONTRATO COMUM NÃO INVENTA UM kid_id. Mandar um uuid qualquer criaria um
+       vínculo com criança que não existe, e a tela da semanada passaria a achar
+       que o aluguel é a mesada de alguém. */
+    const comum = enviados.find(o => o.id === idSemKid);
+    check('  o comum vai sem criança nenhuma', comum.kid_id === undefined || comum.kid_id === null, true);
+    const dela = enviados.find(o => o.id === idComKid);
+    check('  e o da semanada leva o id da criança', dela.kid_id, idKid);
+
+    DB.data = guarda;
+    global.fetch = undefined;
+    global.navigator.onLine = false;
   }
 
   /* ---- Lote de envio precisa ter chaves uniformes ----

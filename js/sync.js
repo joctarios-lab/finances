@@ -50,7 +50,7 @@ const SYNC_TABLES = {
   invoice_status: ['invoice_key', 'paid'],
   recurrences: ['description', 'amount', 'valor_tipo', 'type', 'scope', 'member', 'method',
     'category_id', 'account_id', 'card_id', 'tags', 'notes',
-    'periodicidade', 'dia', 'inicio', 'fim_tipo', 'fim_data', 'fim_vezes', 'geradas', 'status', 'ultima_geracao'],
+    'periodicidade', 'dia', 'inicio', 'fim_tipo', 'fim_data', 'fim_vezes', 'geradas', 'status', 'ultima_geracao', 'kid_id'],
   family_settings: ['members', 'month_start_day', 'monthly_income', 'family_name'],
   // Orçamento ajustado para um ciclo. Tabela nova: num banco onde o SQL ainda não
   // foi rodado, o pull e o push já isolam falha POR TABELA, então só o ajuste
@@ -95,6 +95,8 @@ const COLUNAS = {
   inicio: 'date!', fim_data: 'date', ultima_geracao: 'date', period_start: 'date!',
   date: 'date!', target_date: 'date',
   kid_id: 'uuid!', task_id: 'uuid', kid_goal_id: 'uuid',
+  // Em recurrences só o contrato da semanada tem criança: ali a coluna é opcional
+  'recurrences.kid_id': 'uuid',
   semanada_valor: 'num#', rendimento_valor: 'num#', semanada_dia: 'int#', nascimento_ano: 'int',
   done_at: 'date', confirmada: 'bool',
   deleted: 'bool', active: 'bool', is_reserve: 'bool', recurring: 'bool',
@@ -109,7 +111,14 @@ const COLUNAS = {
    Na primeira recusa o nome da coluna sai da montagem e o lote é reenviado sem
    ele; enquanto durar a sessão, os próximos nem a incluem. É o mesmo desenho do
    fallback de `server_at` no pull: detectar em vez de exigir. */
-const COLUNAS_OPCIONAIS = { transactions: ['pontual'] };
+const COLUNAS_OPCIONAIS = {
+  transactions: ['pontual'],
+  /* `kid_id` liga o contrato da semanada à criança, e chegou depois. Sem entrar
+     aqui, um banco sem a coluna derrubaria o push de recorrências INTEIRO — todos
+     os contratos da família, por causa de uma coluna que só existe quando há
+     criança cadastrada. */
+  recurrences: ['kid_id'],
+};
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -117,8 +126,18 @@ const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
 /* Devolve { ok:true, valor }, { omitir:true } ou { ok:false }.
    ok:false só acontece em NOT NULL sem default: aí o registro sai do lote, em
    vez de fazer o banco recusar todos os outros junto. */
-function higienizar(col, bruto) {
-  const decl = COLUNAS[col] || 'text';
+function higienizar(col, bruto, tabela) {
+  /* A DECLARAÇÃO PODE SER POR TABELA, e precisa poder.
+
+     O mapa é por NOME de coluna, o que funciona enquanto o mesmo nome tem o mesmo
+     contrato em todo lugar. `kid_id` quebrou isso: é NOT NULL nas tabelas do
+     cofrinho e OPCIONAL em recurrences, onde só o contrato da semanada o
+     preenche. Com a marca global de obrigatório, TODO contrato comum da família
+     saía do lote e parava de sincronizar — sem erro visível, só contratos que
+     nunca chegavam ao outro aparelho. O teste de tipos pegou antes de subir.
+
+     Chave "tabela.coluna" tem precedência; sem ela, o nome puro decide. */
+  const decl = (tabela && COLUNAS[tabela + '.' + col]) || COLUNAS[col] || 'text';
   const marca = /[!#]$/.test(decl) ? decl.slice(-1) : '';
   const tipo = marca ? decl.slice(0, -1) : decl;
   const semSaida = marca === '!' ? { ok: false } : marca === '#' ? { omitir: true } : { ok: true, valor: null };
@@ -450,7 +469,7 @@ const Sync = {
           const row = {};
           let vivo = true;
           for (const [c, bruto] of [['id', r.id], ['family_id', fid], ['updated_at', r.updated_at], ['deleted', !!r.deleted]]) {
-            const h = higienizar(c, bruto);
+            const h = higienizar(c, bruto, table);
             if (h.omitir) continue;
             if (!h.ok) { vivo = false; break; }
             row[c] = h.valor;
@@ -460,7 +479,7 @@ const Sync = {
               if (r[c] === undefined) continue;      // ausente segue ausente: default do banco
               // Coluna que o banco já recusou nesta sessão: nem tenta de novo
               if (this._semColuna.has(table + '.' + c)) continue;
-              const h = higienizar(c, r[c]);
+              const h = higienizar(c, r[c], table);
               if (h.omitir) continue;                // NOT NULL com default: o banco preenche
               if (!h.ok) { vivo = false; break; }
               row[c] = h.valor;

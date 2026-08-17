@@ -171,6 +171,20 @@ create table if not exists recurrences (
 alter table transactions add column if not exists recurrence_id uuid;
 create index if not exists idx_tx_recurrence on transactions(recurrence_id);
 
+/* A SEMANADA É UM CONTRATO como qualquer outro, e esta coluna é o que a liga à
+   criança dona do cofrinho.
+
+   Sem ela, o dinheiro que sai toda semana para as crianças não existiria no
+   orçamento da família: o cofrinho registraria a entrada do lado dela e o lado
+   de quem paga ficaria cego. Uma família com dois filhos a R$ 8 por semana tem
+   quase R$ 70 por mês invisíveis — e é justamente o tipo de gasto pequeno e
+   repetido que some da conta.
+
+   Ligada por coluna, e não pelo nome do contrato: renomear "Semanada da Nina"
+   não pode desfazer o vínculo. */
+alter table recurrences add column if not exists kid_id uuid;
+create index if not exists idx_rec_kid on recurrences(kid_id);
+
 create table if not exists goals (
   id uuid primary key,
   family_id uuid not null references families(id) on delete cascade,
