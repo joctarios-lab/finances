@@ -211,3 +211,60 @@ select to_char(date, 'YYYY-MM') as mes,
   from transactions
  where deleted = false
  group by 1 order by 1 desc;
+
+
+-- ------------------------------------------------------------
+-- CHECK 7 — O cofrinho das crianças e o custo dele para vocês
+-- ------------------------------------------------------------
+-- A semanada sai do bolso da família toda semana. Quem paga só a
+-- vê no orçamento se existir o CONTRATO correspondente, e é aqui
+-- que se confere se cada criança tem o seu, com o valor certo.
+--
+-- O valor esperado é semanada + moeda mágica: as duas saem do
+-- mesmo bolso, e a moeda cai em quase toda semana em que a
+-- criança não mexe no que guardou.
+--
+-- "no mês" usa 52/12 = 4,333 semanas, não 4: arredondar para
+-- quatro subestima o ano em quase uma semanada inteira.
+select k.name                                        as crianca,
+       k.semanada_valor                               as semanada,
+       k.rendimento_valor                             as moeda_magica,
+       k.semanada_valor + k.rendimento_valor          as por_semana,
+       round((k.semanada_valor + k.rendimento_valor) * 52 / 12.0, 2) as no_mes,
+       r.description                                  as contrato,
+       r.amount                                       as valor_do_contrato,
+       r.status                                       as status_contrato,
+       case
+         when k.semanada_valor + k.rendimento_valor = 0 and r.id is null then 'ok — sem semanada'
+         when r.id is null then 'FORA DAS CONTAS — crie o contrato no app'
+         when r.status <> 'ativa' then 'CONTRATO ' || upper(r.status)
+         when abs(r.amount - (k.semanada_valor + k.rendimento_valor)) > 0.005 then 'VALOR DIVERGENTE'
+         when extract(dow from r.inicio) <> k.semanada_dia then 'DIA DA SEMANA DIVERGENTE'
+         else 'ok'
+       end                                            as situacao
+  from kids k
+  left join recurrences r
+    on r.kid_id = k.id and r.deleted = false and r.status <> 'cancelada'
+ where k.deleted = false and k.active
+ order by k.name;
+
+-- Saldo de cada pote, derivado dos lançamentos — nunca materializado.
+-- Se o app mostrar outro número, o defeito é no app, não aqui.
+select k.name                                                    as crianca,
+       e.pote,
+       round(sum(case when e.tipo in ('gasto','doacao') then -e.amount
+                      else e.amount end), 2)                      as saldo
+  from kid_entries e
+  join kids k on k.id = e.kid_id
+ where e.deleted = false and e.confirmada and k.deleted = false
+ group by 1, 2
+ order by 1, 2;
+
+-- Tarefas marcadas pela criança e ainda não confirmadas por um adulto.
+-- Não entram no saldo até a confirmação: o app não paga por dizer que fez.
+select k.name as crianca, e.description as tarefa, e.amount, e.date
+  from kid_entries e
+  join kids k on k.id = e.kid_id
+ where e.deleted = false and e.tipo = 'tarefa' and e.confirmada = false
+   and k.deleted = false
+ order by e.date desc;

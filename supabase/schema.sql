@@ -564,7 +564,7 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- Conferência: rode isto depois e verifique se aparecem 16 tabelas, todas com
+-- Conferência: rode isto depois e verifique se aparecem 18 tabelas, todas com
 -- RLS ligado, e a função create_family.
 --
 --   select tablename, rowsecurity as rls
@@ -572,4 +572,19 @@ end $$;
 --
 --   select routine_name from information_schema.routines
 --    where routine_schema = 'public' and routine_name in ('is_member','create_family');
+--
+-- As 18: families e family_members (a própria família), as 14 que o app
+-- sincroniza — accounts, cards, categories, transactions, recurrences, goals,
+-- goal_entries, invoice_status, family_settings, budget_overrides e as quatro do
+-- cofrinho (kids, kid_goals, kid_tasks, kid_entries) — mais push_subscriptions e
+-- notification_log, que servem ao push e não passam pelo pull.
+--
+-- O carimbo do servidor também alcança essas duas últimas, porque elas têm
+-- family_id e a descoberta é por essa coluna. É de propósito: filtrar por nome
+-- traria de volta a lista escrita à mão que deixou o cofrinho sem carimbo. Uma
+-- coluna e um trigger a mais numa tabela de push não custam nada.
+--
+-- Conferir o carimbo:
+--   select event_object_table from information_schema.triggers
+--    where trigger_name = 'trg_server_at' order by event_object_table;
 -- ---------------------------------------------------------------------------

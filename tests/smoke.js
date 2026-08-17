@@ -6297,6 +6297,18 @@ console.log('\n=== Carimbo do servidor em todas as tabelas ===');
   const listasComCarimbo = [...sql.matchAll(/foreach t in array array\[([^\]]*)\][\s\S]{0,400}?server_at/g)];
   check('nenhuma lista escrita à mão aplica o carimbo', listasComCarimbo.length, 0);
 
+  /* O COMENTÁRIO DE CONFERÊNCIA TEM DE CONTAR CERTO.
+
+     Ele diz "verifique se aparecem N tabelas", e é o que alguém usa para saber se
+     o SQL rodou inteiro. Ficou em 16 enquanto o schema já tinha 18 — quem
+     conferisse acharia que sobraram duas de algum lugar, ou pior, pararia de
+     conferir. Documentação errada é pior que documentação ausente: a ausente faz
+     olhar o código. */
+  const declaradas = [...sql.matchAll(/create table if not exists (\w+)/g)].map(m => m[1]);
+  const prometidas = Number((sql.match(/verifique se aparecem (\d+) tabelas/) || [])[1]);
+  check('a conferência promete o número certo de tabelas', prometidas, declaradas.length);
+  check('  e nenhuma tabela é declarada duas vezes', declaradas.length, new Set(declaradas).size);
+
   /* E o cofrinho, que foi o caso que revelou tudo: as quatro tabelas dele têm
      family_id, então a descoberta automática as alcança. */
   for (const t of ['kids', 'kid_goals', 'kid_tasks', 'kid_entries']) {
