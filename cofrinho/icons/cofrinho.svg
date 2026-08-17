@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Ícone do app da criança: o Dino segurando uma moeda.
+       Fundo cheio e desenho centrado com folga, para o recorte redondo do
+       Android e o quadrado do iOS não cortarem a cara dele. -->
+  <rect width="512" height="512" rx="112" fill="#eaf6ff"/>
+  <circle cx="256" cy="268" r="196" fill="#d7edff"/>
+
+  <!-- cauda, saindo por trás do corpo pela esquerda -->
+  <path d="M170 350 q-64 24 -92 -18 q42 4 78 -30 z" fill="#3fc38c"/>
+  <!-- pernas -->
+  <rect x="200" y="360" width="44" height="66" rx="22" fill="#3fc38c"/>
+  <rect x="266" y="360" width="44" height="66" rx="22" fill="#3fc38c"/>
+  <ellipse cx="222" cy="426" rx="33" ry="15" fill="#2fae7a"/>
+  <ellipse cx="288" cy="426" rx="33" ry="15" fill="#2fae7a"/>
+  <!-- espinhos, na linha das costas onde de fato aparecem -->
+  <path d="M162 288 l-52 -14 l44 -30 z" fill="#2fae7a"/>
+  <path d="M154 232 l-50 -34 l48 -20 z" fill="#2fae7a"/>
+  <path d="M176 166 l-32 -46 l48 4 z" fill="#2fae7a"/>
+  <!-- corpo -->
+  <ellipse cx="256" cy="318" rx="106" ry="92" fill="#55d6a0"/>
+  <ellipse cx="265" cy="340" rx="66" ry="57" fill="#eafff5"/>
+  <!-- bracinhos curtos, a marca do bichinho -->
+  <ellipse cx="176" cy="322" rx="26" ry="15" fill="#3fc38c" transform="rotate(24 176 322)"/>
+  <ellipse cx="336" cy="322" rx="26" ry="15" fill="#3fc38c" transform="rotate(-24 336 322)"/>
+  <!-- cabeça -->
+  <ellipse cx="254" cy="212" rx="101" ry="88" fill="#55d6a0"/>
+  <ellipse cx="254" cy="252" rx="57" ry="44" fill="#eafff5"/>
+  <circle cx="184" cy="250" r="19" fill="#ffb3e6"/>
+  <circle cx="324" cy="250" r="19" fill="#ffb3e6"/>
+  <!-- olhos felizes -->
+  <path d="M212 198 q13 -18 26 0" stroke="#2d3436" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <path d="M270 198 q13 -18 26 0" stroke="#2d3436" stroke-width="9" fill="none" stroke-linecap="round"/>
+  <path d="M218 230 q37 44 74 0 z" fill="#2d3436"/>
+  <path d="M240 256 q18 18 35 0 z" fill="#ff7675"/>
+  <!-- a moeda -->
+  <circle cx="372" cy="352" r="46" fill="#fdcb6e" stroke="#e1a83e" stroke-width="7"/>
+  <circle cx="372" cy="352" r="33" fill="#ffeaa7"/>
+  <text x="372" y="368" font-size="36" text-anchor="middle" fill="#b8860b"
+        font-family="system-ui, sans-serif" font-weight="700">R$</text>
+</svg>

@@ -137,13 +137,14 @@ const DB = {
     // Mantém a cópia do rótulo em dia, inclusive quando ele chega pela sincronização
     if (store === 'family_settings' && record.family_name !== undefined) this.lembrarRotulo(record.family_name);
     this.save();
+    this.agendarPonte(store);
     return record.id;
   },
 
   remove(store, id) {
     if (!this.data) return;
     const r = this.data[store].find(x => x.id === id);
-    if (r) { r.deleted = true; r.updated_at = this.now(); r.dirty = true; this.save(); }
+    if (r) { r.deleted = true; r.updated_at = this.now(); r.dirty = true; this.save(); this.agendarPonte(store); }
     // Apagar um envelope sem levar as subcategorias deixaria filhas apontando para
     // um pai que não existe mais — órfãs invisíveis na tela e vivas no banco.
     if (store === 'categories') {
@@ -2213,6 +2214,103 @@ const DB = {
       }
     }
     return out;
+  },
+
+  /* ---------- A PONTE COM O APP DA CRIANÇA ----------
+
+     O app dela (em cofrinho/) tem armazém próprio, `financas.cofrinho.v1`, e não
+     o blob deste app: aquele é cifrado com o PIN de quem administra, e a criança
+     não tem esse PIN — nem deve, porque ele abre salário, cartão e dívida.
+
+     Só que armazém separado, sem ponte, significaria um cofrinho VAZIO em todo
+     aparelho sem nuvem configurada — a criança cadastrada aqui simplesmente não
+     apareceria lá. Como os dois apps rodam na MESMA origem, eles enxergam o mesmo
+     localStorage, e esta função é o encontro: empurra o que este app sabe e traz
+     o que ela mexeu, resolvendo por `updated_at` como o sync da nuvem faz.
+
+     Roda no boot e depois de cada mudança de criança. É barata: quatro tabelas
+     pequenas, e quem não tem criança cadastrada sai na primeira linha.
+
+     O que trafega aqui são mesadas de dez reais — nada da vida financeira da
+     casa passa por este armazém, e é por isso que ele pode ficar em claro. */
+  PONTE_COFRINHO: 'financas.cofrinho.v1',
+  TABELAS_COFRINHO: ['kids', 'kid_goals', 'kid_tasks', 'kid_entries'],
+
+  /* A ponte é AUTOMÁTICA, e não uma chamada em cada função que mexe com criança.
+
+     Chamada manual é chamada que se esquece: bastaria um fluxo novo — editar a
+     meta, pagar a semanada por outro caminho — para o cofrinho dela ficar com
+     dado velho, e o sintoma seria "o app da minha filha não atualizou", difícil
+     de ligar à causa. Pendurado no upsert/remove, não há como esquecer.
+
+     Com atraso de 50ms para uma edição em massa (ou um emLote) atravessar a
+     ponte uma vez, não uma vez por registro. Fora do navegador — nos testes —
+     não há setTimeout com agenda, então roda na hora. */
+  _ponteAgendada: null,
+  agendarPonte(store) {
+    if (!this.TABELAS_COFRINHO.includes(store)) return;
+    if (this._lote) return;                    // o fim do lote grava e a ponte vem depois
+    if (typeof setTimeout !== 'function') { try { this.ponteDoCofrinho(); } catch (_) { } return; }
+    clearTimeout(this._ponteAgendada);
+    this._ponteAgendada = setTimeout(() => { try { this.ponteDoCofrinho(); } catch (_) { } }, 50);
+  },
+
+  ponteDoCofrinho() {
+    if (!this.data) return 0;
+    let lado = null;
+    try { lado = JSON.parse(localStorage.getItem(this.PONTE_COFRINHO)) || null; } catch (_) { lado = null; }
+    if (!lado) lado = { meta: { lastSync: null } };
+    for (const t of this.TABELAS_COFRINHO) if (!lado[t]) lado[t] = [];
+
+    // Sem criança de nenhum lado, não há ponte a manter
+    const vazio = this.TABELAS_COFRINHO.every(t => !(this.data[t] || []).length && !lado[t].length);
+    if (vazio) return 0;
+
+    let mudou = 0, mudouAqui = false;
+    for (const t of this.TABELAS_COFRINHO) {
+      const aqui = this.data[t], la = lado[t];
+
+      /* O DESEMPATE É O `dirty`, não só o `updated_at`.
+
+         Os dois apps gravam com o relógio do MESMO aparelho, e localStorage é
+         rápido: duas gravações no mesmo milissegundo empatam de verdade. Num
+         empate resolvido só por `updated_at`, este app venceria sempre — e o que
+         a criança acabou de fazer sumiria da tela dela sem explicação.
+
+         `dirty` no lado do cofrinho quer dizer exatamente "mexi nisto depois da
+         última ponte". É por isso que ele decide o empate, e é por isso que a
+         volta abaixo o LIMPA: absorvido aqui, o registro deixa de ser novidade
+         de lá, e a responsabilidade de subir para a nuvem passa a ser deste app
+         — que fica dirty no lugar dele. */
+      const venceLa = (r, meu) => {
+        const dLa = String(r.updated_at || ''), dAqui = String(meu.updated_at || '');
+        if (dLa > dAqui) return true;
+        return dLa === dAqui && !!r.dirty;
+      };
+
+      // Vem de lá: o que a criança criou ou mexeu depois da nossa versão
+      for (const r of la) {
+        const i = aqui.findIndex(x => x.id === r.id);
+        if (i < 0) { aqui.push({ ...r, dirty: true }); mudou++; mudouAqui = true; continue; }
+        if (venceLa(r, aqui[i])) {
+          // dirty fica: o que veio de lá ainda precisa subir para a nuvem daqui
+          aqui[i] = { ...r, dirty: true };
+          mudou++; mudouAqui = true;
+        }
+      }
+
+      // Vai para lá: tudo o que este app tem, já na versão vencedora
+      lado[t] = aqui.map(r => {
+        const copia = { ...r };
+        delete copia.dirty;
+        return copia;
+      });
+    }
+
+    lado.meta.lastSync = this.now();
+    try { localStorage.setItem(this.PONTE_COFRINHO, JSON.stringify(lado)); } catch (_) { }
+    if (mudouAqui) this.save();
+    return mudou;
   },
 
   restamDaRecorrencia(r) {

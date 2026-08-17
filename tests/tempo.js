@@ -21,6 +21,7 @@ const { execFileSync } = require('child_process');
 const path = require('path');
 
 const SMOKE = path.join(__dirname, 'smoke.js');
+const COFRINHO = path.join(__dirname, 'cofrinho.js');
 
 const DATAS = [
   ['primeiro dia do mês', '2026-08-01T10:00:00-03:00'],
@@ -37,27 +38,54 @@ const DATAS = [
   ['primeiro dia do ano', '2027-01-01T10:00:00-03:00'],
 ];
 
-let piores = 0;
-for (const [rotulo, quando] of DATAS) {
-  let saida = '';
-  try {
-    saida = execFileSync(process.execPath, [SMOKE], {
-      env: { ...process.env, HOJE: quando },
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-    });
-  } catch (e) {
-    // A suíte sai com código 1 quando reprova; a saída dela é o que interessa
-    saida = (e.stdout || '') + (e.stderr || '');
+/* O COFRINHO tem outro eixo de risco: a semana dele começa no DIA DA SEMANA da
+   semanada, e a conta de "esta semana" recua até esse dia. Um bug de recuo passa
+   liso nas datas acima — todas caem em dias de semana diferentes por acidente,
+   não por escolha. Aqui os sete dias são varridos de propósito, mais as duas
+   bordas que também mexem com a semana: a virada de mês e a de ano, em que o
+   recuo de sete dias atravessa o limite. */
+const DATAS_SEMANA = [
+  ['domingo', '2026-08-16T10:00:00-03:00'],
+  ['segunda', '2026-08-17T10:00:00-03:00'],
+  ['terça', '2026-08-18T10:00:00-03:00'],
+  ['quarta', '2026-08-19T10:00:00-03:00'],
+  ['quinta', '2026-08-20T10:00:00-03:00'],
+  ['sexta', '2026-08-21T10:00:00-03:00'],
+  ['sábado', '2026-08-22T10:00:00-03:00'],
+  ['semana virando o mês', '2026-09-02T10:00:00-03:00'],
+  ['semana virando o ano', '2027-01-02T10:00:00-03:00'],
+  ['29 de fevereiro', '2028-02-29T10:00:00-03:00'],
+];
+
+function rodar(suite, datas, titulo) {
+  console.log(`\n---- ${titulo} ----`);
+  let piores = 0;
+  for (const [rotulo, quando] of datas) {
+    let saida = '';
+    try {
+      saida = execFileSync(process.execPath, [suite], {
+        env: { ...process.env, HOJE: quando },
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+      });
+    } catch (e) {
+      // A suíte sai com código 1 quando reprova; a saída dela é o que interessa
+      saida = (e.stdout || '') + (e.stderr || '');
+    }
+    const falhas = saida.split('\n').filter(l => l.startsWith(' FALHA'));
+    piores += falhas.length;
+    const dia = quando.slice(0, 10);
+    console.log(`${falhas.length === 0 ? '  OK  ' : ' FALHA'} | ${dia}  ${rotulo.padEnd(24)} ${falhas.length === 0 ? '' : falhas.length + ' reprovaram'}`);
+    for (const f of falhas) console.log('         ' + f.replace(/^ FALHA \| /, ''));
   }
-  const falhas = saida.split('\n').filter(l => l.startsWith(' FALHA'));
-  piores += falhas.length;
-  const dia = quando.slice(0, 10);
-  console.log(`${falhas.length === 0 ? '  OK  ' : ' FALHA'} | ${dia}  ${rotulo.padEnd(24)} ${falhas.length === 0 ? '' : falhas.length + ' reprovaram'}`);
-  for (const f of falhas) console.log('         ' + f.replace(/^ FALHA \| /, ''));
+  return piores;
 }
 
+const piores = rodar(SMOKE, DATAS, 'App da família')
+  + rodar(COFRINHO, DATAS_SEMANA, 'Cofrinho das crianças');
+const total = DATAS.length + DATAS_SEMANA.length;
+
 console.log(piores === 0
-  ? `\n✅ A suíte é verde nas ${DATAS.length} datas`
-  : `\n❌ ${piores} reprovações somadas nas ${DATAS.length} datas`);
+  ? `\n✅ As suítes são verdes nas ${total} datas`
+  : `\n❌ ${piores} reprovações somadas nas ${total} datas`);
 process.exit(piores ? 1 : 0);

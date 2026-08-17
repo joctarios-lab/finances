@@ -7328,9 +7328,23 @@ function openCriancas() {
       aqui você define a semanada, as tarefas e a meta — e vê tudo em detalhe.</p>
     ${kids.map(linha).join('') || '<div class="empty"><b>Nenhuma criança ainda</b>Cadastre a primeira para começar o cofrinho dela.</div>'}
     <button class="btn ghost" id="kd-nova" style="margin-top:12px">Adicionar criança</button>
+    ${kids.length ? `
+      <div class="hint" style="margin-top:18px">
+        <b>O app dela</b>
+        Abre em <code>/cofrinho/</code> — instale no aparelho da criança como
+        atalho na tela inicial. Ele pede a senha de quatro números que você
+        cadastrou e mostra só o cofrinho dela, nunca as contas da casa.
+      </div>
+      <button class="btn ghost" id="kd-abrir" style="margin-top:10px">Abrir o app do cofrinho</button>` : ''}
   `);
   $('#kd-back').onclick = () => openConfig();
   $('#kd-nova').onclick = () => openCriancaSheet(null);
+  /* A ponte roda ANTES de abrir: o app dela lê o armazém que esta função acaba
+     de atualizar, e sem isto um cadastro feito agora abriria lá como inexistente. */
+  if ($('#kd-abrir')) $('#kd-abrir').onclick = () => {
+    try { DB.ponteDoCofrinho(); } catch (_) { }
+    window.open('cofrinho/index.html', '_blank');
+  };
   document.querySelectorAll('#modal [data-kid]').forEach(el =>
     el.onclick = () => openCriancaDetalhe(el.dataset.kid));
 }
@@ -9344,6 +9358,10 @@ Auth.init(() => {
      a soma do extrato não fecha — foi o defeito relatado na conta C6. */
   try { DB.migrarFaturasPagasAntigas(); } catch (_) {}
   try { DB.gerarRecorrencias(); } catch (_) {}
+  /* Traz o que a criança fez no app dela e devolve o que mudou aqui. Antes do
+     desenho, porque a fila do painel precisa contar as tarefas que ela marcou
+     enquanto este app estava fechado. */
+  try { DB.ponteDoCofrinho(); } catch (_) {}
   setTab(state.tab);          // restaura a aba e marca o menu corretamente
   Sync.startAuto();           // mantém o aparelho em dia sempre que houver conexão
   setTimeout(() => Notif.check(), 800);

@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>Meu Cofrinho</title>
+<meta name="description" content="O cofrinho da criança: semanada, potes de gastar, guardar e doar, tarefas e sonhos.">
+<meta name="theme-color" content="#eaf6ff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Meu Cofrinho">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/cofrinho.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/cofrinho-180.png">
+
+<!-- Baloo 2 é arredondada e sem serifa: é a forma de letra que criança em
+     alfabetização reconhece mais rápido. Se a fonte não carregar (offline na
+     primeira abertura), a pilha do sistema assume e nada quebra. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="css/cofrinho.css?v=1">
+</head>
+<body>
+
+<main id="app"></main>
+
+<!-- js/config.js é o mesmo do app da família: pré-configuração opcional do
+     Supabase. Vazio no repositório de propósito — ver o comentário lá. -->
+<script src="../js/config.js?v=134"></script>
+<script src="js/arte.js?v=1"></script>
+<script src="js/dados.js?v=1"></script>
+<script src="js/cofrinho.js?v=1"></script>
+</body>
+</html>
