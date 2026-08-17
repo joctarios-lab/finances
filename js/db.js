@@ -2288,6 +2288,62 @@ const DB = {
     return out;
   },
 
+  /* ---------- APAGAR UM COFRINHO INTEIRO ----------
+
+     Existia só "pausar", que esconde do app da criança e guarda tudo. Faltava
+     apagar de verdade — e a falta apareceu do pior jeito: alguém precisou de um
+     script contra o banco para zerar um cofrinho de teste, porque a tela não
+     oferecia o caminho.
+
+     APAGA EM CASCATA, e cada peça tem um motivo para estar na lista:
+
+       kid_entries  — é o que forma o saldo dos potes. Sem isto, recadastrar a
+                      criança faria o dinheiro antigo reaparecer, porque os
+                      lançamentos continuam apontando para o id dela.
+       kid_goals    — a meta não sobrevive a quem a queria.
+       kid_tasks    — idem.
+       recurrences  — o contrato da semanada, senão ele continua lançando e
+                      pesando no custo fixo de uma criança que não existe mais.
+       transactions — as semanadas já lançadas no extrato. Deixá-las faria o
+                      extrato mostrar movimento de um cofrinho apagado, sem nada
+                      que explicasse de onde veio.
+
+     Lógica, nunca física: o app é local-first, e é a marca `deleted` que faz a
+     exclusão viajar para os outros aparelhos. Remover a linha aqui a
+     ressuscitaria no próximo pull do celular do outro adulto. */
+  apagarCofrinho(kidId) {
+    const kid = this.get('kids', kidId);
+    if (!kid) return null;
+    const conta = { entries: 0, metas: 0, tarefas: 0, contratos: 0, lancamentos: 0 };
+
+    return this.emLote(() => {
+      for (const e of this.all('kid_entries')) {
+        if (e.kid_id === kidId) { this.remove('kid_entries', e.id); conta.entries++; }
+      }
+      for (const g of this.all('kid_goals')) {
+        if (g.kid_id === kidId) { this.remove('kid_goals', g.id); conta.metas++; }
+      }
+      for (const t of this.all('kid_tasks')) {
+        if (t.kid_id === kidId) { this.remove('kid_tasks', t.id); conta.tarefas++; }
+      }
+      /* O CONTRATO E AS SEMANADAS: pelo vínculo E pelo nome.
+
+         Pelo nome também porque as semanadas lançadas antes de a coluna `kid_id`
+         existir não têm vínculo — ficariam para trás e voltariam a aparecer se
+         alguém recadastrasse a criança com o mesmo nome. */
+      const nome = String(kid.name || '').trim().toLowerCase();
+      const doNome = d => nome && String(d || '').trim().toLowerCase() === `semanada de ${nome}`;
+      for (const r of this.all('recurrences')) {
+        if (r.kid_id === kidId || doNome(r.description)) { this.remove('recurrences', r.id); conta.contratos++; }
+      }
+      for (const t of this.all('transactions')) {
+        if (t.kid_id === kidId || doNome(t.description)) { this.remove('transactions', t.id); conta.lancamentos++; }
+      }
+      this.remove('kids', kidId);
+      return conta;
+    });
+  },
+
   /* ---------- O DINHEIRO QUE JÁ É DOS FILHOS ----------
 
      Está na conta da família e não é da família. Sai do "livre" por isso, e a

@@ -6216,6 +6216,68 @@ try {
   DB.remove('accounts', contaF);
 } catch (e) { console.log(` FALHA | dinheiro dos filhos: ${e.message}`); fail++; }
 
+/* ---- APAGAR UM COFRINHO INTEIRO ----
+
+   Existia só "pausar", que esconde e guarda tudo. A falta de "excluir" apareceu
+   do pior jeito: foi preciso um script contra o banco para zerar um cofrinho de
+   teste, porque a tela não oferecia o caminho. */
+console.log('\n=== Excluir o cofrinho de uma criança ===');
+try {
+  const hojeX = DB.hojeISO();
+  const idX = DB.upsert('kids', {
+    name: 'Filho Apagar', avatar: '🐢', semanada_valor: 9, semanada_dia: new Date(hojeX + 'T12:00:00').getDay(),
+    rendimento_tipo: 'moeda', rendimento_valor: 1, active: true,
+  });
+  const outroX = DB.upsert('kids', {
+    name: 'Filho Que Fica', semanada_valor: 5, semanada_dia: 6, active: true,
+  });
+  DB.upsert('kid_entries', { kid_id: idX, tipo: 'semanada', pote: 'gastar', amount: 9, date: hojeX, confirmada: true });
+  DB.upsert('kid_entries', { kid_id: idX, tipo: 'presente', pote: 'guardar', amount: 30, date: hojeX, confirmada: true });
+  DB.upsert('kid_goals', { kid_id: idX, name: 'Lego', icon: '🧱', target_amount: 60, done: false });
+  DB.upsert('kid_tasks', { kid_id: idX, name: 'Varrer', icon: '🧹', amount: 2, active: true });
+  DB.upsert('kid_entries', { kid_id: outroX, tipo: 'semanada', pote: 'gastar', amount: 5, date: hojeX, confirmada: true });
+  const contratoX = DB.acertarContratoDaSemanada(idX);
+  DB.gerarRecorrencias();
+
+  check('antes de apagar, o cofrinho tem saldo', DB.kidPotes(idX).total, 39);
+  check('  e um contrato', !!DB.contratoDaSemanada(idX), true);
+  const nLanc = DB.all('transactions').filter(t => t.kid_id === idX).length;
+  check('  e semanadas no extrato', nLanc >= 1, true);
+
+  const r = DB.apagarCofrinho(idX);
+  check('apagar devolve o que foi apagado', r.entries, 2);
+  check('  incluindo a meta', r.metas, 1);
+  check('  a tarefa', r.tarefas, 1);
+  check('  o contrato', r.contratos, 1);
+  check('  e os lançamentos do extrato', r.lancamentos, nLanc);
+
+  check('a criança sai da lista', DB.kids().some(k => k.id === idX), false);
+  check('  o saldo dela desaparece', DB.kidPotes(idX).total, 0);
+  /* SEM ISTO, recadastrar a criança faria o dinheiro antigo reaparecer: os
+     lançamentos continuam apontando para o id, e um id novo não os apaga. */
+  check('  nenhum lançamento do cofrinho sobra', DB.all('kid_entries').filter(e => e.kid_id === idX).length, 0);
+  check('  nem meta', DB.all('kid_goals').filter(g => g.kid_id === idX).length, 0);
+  check('  nem tarefa', DB.all('kid_tasks').filter(t => t.kid_id === idX).length, 0);
+  /* O CONTRATO TEM DE MORRER: vivo, continuaria lançando e pesando no custo fixo
+     de uma criança que não existe mais. */
+  check('  o contrato não sobrevive', DB.all('recurrences').some(x => x.id === contratoX), false);
+  check('  e sai do custo fixo mensal',
+    DB.custoFixoMensal().itens.some(i => /Filho Apagar/.test(i.descricao)), false);
+  check('  as semanadas saem do extrato',
+    DB.all('transactions').filter(t => t.kid_id === idX).length, 0);
+  check('  e o dinheiro dos filhos não conta mais o apagado', DB.dosFilhos(), DB.kidPotes(outroX).total);
+
+  /* NÃO LEVA O IRMÃO. Apagar em cascata por engano é o defeito clássico deste tipo
+     de função, e aqui custaria o cofrinho da outra criança. */
+  check('o outro filho continua intacto', DB.kids().some(k => k.id === outroX), true);
+  check('  com o saldo dele', DB.kidPotes(outroX).total, 5);
+
+  check('apagar de novo não estoura', DB.apagarCofrinho(idX), null);
+
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === outroX)) DB.remove('kid_entries', e.id);
+  DB.remove('kids', outroX);
+} catch (e) { console.log(` FALHA | excluir cofrinho: ${e.message}`); fail++; }
+
 /* ---- A SEMANADA NO ORÇAMENTO DE QUEM PAGA ----
 
    O cofrinho registrava o dinheiro chegando para a criança e o lado de quem paga
@@ -6411,6 +6473,13 @@ try {
   check('  mostra o movimento', det.includes('Semanada'), true);
   check('  e oferece editar, meta, tarefa e lançamento',
     ['kdd-editar', 'kdd-meta', 'kdd-tarefa', 'kdd-lanc'].every(i => det.includes(i)), true);
+  /* PAUSAR E EXCLUIR, os dois: a função de apagar já existia sem caminho na tela, e
+     alguém precisou de um script contra o banco para zerar um cofrinho de teste.
+     Função sem botão é função que não existe para quem usa. */
+  check('  além de pausar e excluir o cofrinho',
+    det.includes('kdd-pausar') && det.includes('kdd-excluir'), true);
+  check('  explicando a diferença entre as duas',
+    /Pausar[\s\S]*esconde[\s\S]*Excluir[\s\S]*apaga/.test(det), true);
 
   /* PAGAR A SEMANADA nasce inteira no pote GASTAR: a divisão nos três é decisão
      da criança, no app dela, e é ali que a lição acontece. */

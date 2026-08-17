@@ -7572,7 +7572,10 @@ function openCriancaDetalhe(kidId) {
 
     <div class="sec-cab" style="margin-top:14px"><div class="sec-tit"><b>Configurações</b><small>semanada, senha e bichinho</small></div>
       <div class="sec-acoes"><button class="sec-btn" id="kdd-editar">Editar</button></div></div>
-    <button class="btn ghost t-danger" id="kdd-pausar" style="margin-top:8px">${k.active === false ? 'Reativar cofrinho' : 'Pausar cofrinho'}</button>
+    <button class="btn ghost" id="kdd-pausar" style="margin-top:8px">${k.active === false ? 'Reativar cofrinho' : 'Pausar cofrinho'}</button>
+    <button class="btn ghost t-danger" id="kdd-excluir" style="margin-top:8px">Excluir cofrinho</button>
+    <p class="muted" style="margin-top:6px">Pausar guarda tudo e só esconde do app dela.
+      Excluir apaga o cofrinho inteiro — movimento, meta, tarefas e o contrato da semanada.</p>
   `);
   $('#kdd-back').onclick = () => openCriancas();
   $('#kdd-editar').onclick = () => openCriancaSheet(kidId);
@@ -7598,6 +7601,30 @@ function openCriancaDetalhe(kidId) {
   $('#kdd-pausar').onclick = () => {
     DB.upsert('kids', { ...k, active: k.active === false });
     Sync.autoSync(); openCriancaDetalhe(kidId);
+  };
+  /* A CONFIRMAÇÃO DIZ O QUE VAI SUMIR, com números.
+
+     "Tem certeza?" não informa nada — quem lê já sabe que tem certeza, e por isso
+     confirma no automático. Dizer "8 movimentos, 2 tarefas e o contrato da
+     semanada" dá a chance real de perceber que se está apagando o cofrinho
+     errado. */
+  $('#kdd-excluir').onclick = () => {
+    const potes = DB.kidPotes(kidId);
+    const nEnt = DB.all('kid_entries').filter(e => e.kid_id === kidId).length;
+    const nTar = DB.all('kid_tasks').filter(t => t.kid_id === kidId).length;
+    const temContrato = !!DB.contratoDaSemanada(kidId);
+    const partes = [];
+    if (nEnt) partes.push(`${nEnt} movimento(s)`);
+    if (DB.kidMeta(kidId)) partes.push('a meta');
+    if (nTar) partes.push(`${nTar} tarefa(s)`);
+    if (temContrato) partes.push('o contrato da semanada');
+    if (potes.total > 0.005) partes.push(`o saldo de ${fmt(potes.total)}`);
+    const lista = partes.length ? partes.join(', ') : 'o cadastro';
+    if (!confirm(`Excluir o cofrinho de ${k.name}?\n\nIsto apaga ${lista}.\n\nNão dá para desfazer.`)) return;
+    const r = DB.apagarCofrinho(kidId);
+    Sync.autoSync();
+    openCriancas();
+    toast(r ? `Cofrinho de ${k.name} excluído ✓` : 'Nada a excluir');
   };
   document.querySelectorAll('#modal [data-del-tarefa]').forEach(b => b.onclick = () => {
     DB.remove('kid_tasks', b.dataset.delTarefa);
