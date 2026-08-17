@@ -1,0 +1,181 @@
+-- ===========================================================================
+--  MIGRAÇÃO — o cofrinho das crianças
+--
+--  Rode este arquivo INTEIRO no Supabase → SQL Editor (cole e execute).
+--
+--  É seguro, e pode rodar mais de uma vez: tudo aqui é "if not exists" ou
+--  "create or replace". Nada é apagado, nada é recriado e nenhum dado existente
+--  é tocado — só acrescenta o que falta.
+--
+--  O que ele faz:
+--    1. acrescenta a coluna 'pontual' em transactions
+--    2. cria as quatro tabelas do cofrinho, com RLS ligado
+--    3. reaplica o carimbo do servidor em TODAS as tabelas sincronizadas,
+--       inclusive nas quatro novas — sem ele o pull perde registros de vez em
+--       quando, e o sintoma é quase impossível de rastrear
+--
+--  Ao terminar, volte ao app e toque em sincronizar.
+--
+--  (Este arquivo é um recorte de supabase/schema.sql, que continua sendo a
+--   fonte completa. Rodar o schema inteiro também funciona e dá no mesmo.)
+-- ===========================================================================
+
+-- Classificação pontual de um gasto: o terceiro estado, além de fixo e variável
+alter table transactions add column if not exists pontual boolean not null default false;
+
+/* ---------------------------------------------------------------------------
+   COFRINHO — o dinheiro das crianças
+
+   Quatro tabelas, mesmo envelope de sync das demais (id, family_id, updated_at,
+   deleted). Nenhum nome próprio no schema: cada família cadastra as suas.
+
+   O saldo de cada pote é DERIVADO de kid_entries, nunca materializado — a mesma
+   regra que o app usa para saldo e previsão. Um total guardado à parte diverge no
+   primeiro erro e ninguém percebe.
+   --------------------------------------------------------------------------- */
+
+create table if not exists kids (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  name text not null,
+  avatar text default '🦖',              -- emoji que representa a criança
+  cor text default '#00b894',            -- cor do tema do cofrinho dela
+  nascimento_ano int,                    -- só o ano: idade aproxima, e não é dado sensível
+  -- Semanada, não mesada: abaixo dos 10 anos é o ciclo que a criança compreende.
+  semanada_valor numeric not null default 0,
+  semanada_dia int not null default 5,   -- 0=domingo … 6=sábado
+  -- Como o guardado rende: 'moeda' (a mágica semanal, valor fixo) ou 'percentual',
+  -- que fica para quando houver idade de entender proporção. Zero desliga.
+  rendimento_tipo text not null default 'moeda',
+  rendimento_valor numeric not null default 0,
+  -- Senha do cofrinho: separa irmãos, não guarda dinheiro. Hash com sal basta.
+  pin_hash text default '',
+  pin_salt text default '',
+  active boolean not null default true,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+
+create table if not exists kid_goals (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  kid_id uuid not null,
+  name text not null,
+  icon text default '🎁',
+  target_amount numeric not null default 0,
+  done boolean not null default false,
+  done_at date,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+
+create table if not exists kid_tasks (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  kid_id uuid not null,
+  name text not null,
+  icon text default '⭐',
+  amount numeric not null,
+  active boolean not null default true,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+
+create table if not exists kid_entries (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  kid_id uuid not null,
+  -- semanada | tarefa | presente | gasto | doacao | rendimento
+  tipo text not null default 'semanada',
+  amount numeric not null,
+  date date not null,
+  description text default '',
+  -- gastar | guardar | doar — de qual pote entrou ou saiu
+  pote text not null default 'gastar',
+  task_id uuid,                          -- quando veio de uma tarefa
+  -- Nome próprio para não colidir com goal_entries.goal_id, que é NOT NULL.
+  kid_goal_id uuid,                      -- quando a saída foi para realizar a meta
+  -- A criança marca a tarefa, o adulto confirma. Só vale para tipo='tarefa'.
+  confirmada boolean not null default true,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+
+create index if not exists idx_kid_entries_kid on kid_entries(family_id, kid_id, date);
+create index if not exists idx_kid_goals_kid on kid_goals(family_id, kid_id);
+create index if not exists idx_kid_tasks_kid on kid_tasks(family_id, kid_id);
+
+alter table kids enable row level security;
+alter table kid_goals enable row level security;
+alter table kid_tasks enable row level security;
+alter table kid_entries enable row level security;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['kids','kid_goals','kid_tasks','kid_entries']
+  loop
+    execute format('drop policy if exists %I_rw on %I', t, t);
+    execute format(
+      'create policy %I_rw on %I for all to authenticated using (is_member(family_id)) with check (is_member(family_id))',
+      t, t);
+  end loop;
+end $$;
+
+create or replace function marca_server_at()
+returns trigger language plpgsql as $$
+begin
+  -- Sobrescreve sempre, inclusive no update: o cliente pode mandar qualquer
+  -- coisa nesta coluna e ela é ignorada. É isso que torna o campo confiável.
+  new.server_at := clock_timestamp();
+  return new;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- CARIMBO DO SERVIDOR, aplicado a TODAS as tabelas sincronizadas
+--
+-- Roda por último, depois da última tabela existir, e descobre a lista sozinha:
+-- toda tabela do schema public que tem `family_id` é uma tabela que o app
+-- sincroniza, e portanto precisa do carimbo. É o que impede o erro que o
+-- cofrinho revelou — quatro tabelas novas sem carimbo porque ninguém lembrou de
+-- acrescentar o nome numa lista escrita à mão.
+--
+-- `families` e `family_members` ficam de fora por não terem `family_id`, e é
+-- correto: elas não passam pelo pull incremental.
+--
+-- Idempotente: pode rodar quantas vezes quiser.
+-- ---------------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  for t in
+    select c.table_name from information_schema.columns c
+     join information_schema.tables tb
+       on tb.table_schema = c.table_schema and tb.table_name = c.table_name
+    where c.table_schema = 'public' and c.column_name = 'family_id'
+      and tb.table_type = 'BASE TABLE'
+    order by c.table_name
+  loop
+    execute format(
+      'alter table %I add column if not exists server_at timestamptz not null default clock_timestamp()', t);
+    -- O pull filtra por família e ordena por server_at: sem o índice, cada
+    -- sincronização varreria a tabela inteira.
+    execute format(
+      'create index if not exists %I on %I (family_id, server_at)', t || '_family_server_idx', t);
+    execute format('drop trigger if exists trg_server_at on %I', t);
+    execute format(
+      'create trigger trg_server_at before insert or update on %I
+         for each row execute function marca_server_at()', t);
+  end loop;
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Conferência: rode isto depois e verifique se aparecem 16 tabelas, todas com
+-- RLS ligado, e a função create_family.
+--
+--   select tablename, rowsecurity as rls
+--     from pg_tables where schemaname = 'public' order by tablename;
+--
+--   select routine_name from information_schema.routines
+--    where routine_schema = 'public' and routine_name in ('is_member','create_family');
+-- ---------------------------------------------------------------------------

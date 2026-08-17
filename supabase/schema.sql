@@ -295,21 +295,6 @@ alter table transactions add column if not exists tags jsonb not null default '[
 -- clock_timestamp() é o relógio real no momento da linha.
 -- ---------------------------------------------------------------------------
 
-do $$
-declare t text;
-begin
-  foreach t in array array['accounts','cards','categories','transactions','recurrences',
-                           'goals','goal_entries','invoice_status','family_settings','budget_overrides']
-  loop
-    execute format(
-      'alter table %I add column if not exists server_at timestamptz not null default clock_timestamp()', t);
-    -- O pull filtra por família e ordena por server_at: sem o índice, cada
-    -- sincronização varreria a tabela inteira.
-    execute format(
-      'create index if not exists %I on %I (family_id, server_at)', t || '_family_server_idx', t);
-  end loop;
-end $$;
-
 create or replace function marca_server_at()
 returns trigger language plpgsql as $$
 begin
@@ -319,18 +304,17 @@ begin
   return new;
 end $$;
 
-do $$
-declare t text;
-begin
-  foreach t in array array['accounts','cards','categories','transactions','recurrences',
-                           'goals','goal_entries','invoice_status','family_settings','budget_overrides']
-  loop
-    execute format('drop trigger if exists trg_server_at on %I', t);
-    execute format(
-      'create trigger trg_server_at before insert or update on %I
-         for each row execute function marca_server_at()', t);
-  end loop;
-end $$;
+/* O CARIMBO É APLICADO NO FIM DO ARQUIVO, não aqui.
+
+   Ele estava neste ponto, com a lista de tabelas escrita à mão, e o cofrinho
+   entrou depois — as quatro tabelas dele nasceram SEM carimbo, sem índice e sem
+   trigger, porque são criadas mais abaixo e este bloco não podia alcançá-las.
+   O sintoma seria o pior tipo: sincronização funcionando, e um registro perdido
+   de vez em quando.
+
+   Agora o bloco vive depois da última tabela e descobre a lista sozinha, olhando
+   quem tem `family_id`. Tabela nova entra no carimbo por existir, e não por
+   alguém lembrar de escrever o nome numa lista. Ver o fim deste arquivo. */
 
 -- Conferência do carimbo:
 --   select tablename, indexname from pg_indexes
@@ -526,6 +510,44 @@ end $$;
 
 revoke all on function create_family(text) from public;
 grant execute on function create_family(text) to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- CARIMBO DO SERVIDOR, aplicado a TODAS as tabelas sincronizadas
+--
+-- Roda por último, depois da última tabela existir, e descobre a lista sozinha:
+-- toda tabela do schema public que tem `family_id` é uma tabela que o app
+-- sincroniza, e portanto precisa do carimbo. É o que impede o erro que o
+-- cofrinho revelou — quatro tabelas novas sem carimbo porque ninguém lembrou de
+-- acrescentar o nome numa lista escrita à mão.
+--
+-- `families` e `family_members` ficam de fora por não terem `family_id`, e é
+-- correto: elas não passam pelo pull incremental.
+--
+-- Idempotente: pode rodar quantas vezes quiser.
+-- ---------------------------------------------------------------------------
+do $$
+declare t text;
+begin
+  for t in
+    select c.table_name from information_schema.columns c
+     join information_schema.tables tb
+       on tb.table_schema = c.table_schema and tb.table_name = c.table_name
+    where c.table_schema = 'public' and c.column_name = 'family_id'
+      and tb.table_type = 'BASE TABLE'
+    order by c.table_name
+  loop
+    execute format(
+      'alter table %I add column if not exists server_at timestamptz not null default clock_timestamp()', t);
+    -- O pull filtra por família e ordena por server_at: sem o índice, cada
+    -- sincronização varreria a tabela inteira.
+    execute format(
+      'create index if not exists %I on %I (family_id, server_at)', t || '_family_server_idx', t);
+    execute format('drop trigger if exists trg_server_at on %I', t);
+    execute format(
+      'create trigger trg_server_at before insert or update on %I
+         for each row execute function marca_server_at()', t);
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------------
 -- Conferência: rode isto depois e verifique se aparecem 16 tabelas, todas com

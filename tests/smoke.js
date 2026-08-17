@@ -6020,6 +6020,85 @@ try {
   }
 } catch (e) { console.log(` FALHA | sql executável: ${e.message}`); fail++; }
 
+/* ---- TODA TABELA SINCRONIZADA PRECISA DO CARIMBO ----
+
+   O carimbo `server_at` é o que torna o pull confiável, e ele era aplicado por
+   uma LISTA DE NOMES escrita à mão no schema.sql. As quatro tabelas do cofrinho
+   entraram depois e ficaram fora dela — sem coluna, sem índice e sem trigger.
+
+   O sintoma seria o pior tipo que existe: sincronização aparentemente
+   funcionando, e um registro perdido de vez em quando. Foi exatamente o defeito
+   que já custou um lançamento invisível na conta C6, voltando por outra porta.
+
+   Agora o schema descobre a lista sozinha, e este teste é o que garante que ela
+   continue se descobrindo: se alguém trocar de volta por nomes escritos à mão,
+   uma tabela nova volta a poder nascer sem carimbo. */
+console.log('\n=== Carimbo do servidor em todas as tabelas ===');
+{
+  const sql = fs.readFileSync(BASE + 'supabase/schema.sql', 'utf8');
+
+  // As tabelas que o app sincroniza, tiradas do próprio sync.js
+  const syncSrc = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
+  const bloco = syncSrc.slice(syncSrc.indexOf('const SYNC_TABLES'));
+  const tabelas = [...bloco.slice(0, bloco.indexOf('\n};')).matchAll(/^  (\w+):/gm)].map(m => m[1]);
+  check('sync.js declara as tabelas', tabelas.length >= 14, true);
+
+  /* O carimbo tem que vir DEPOIS da última tabela existir. Aplicado antes, um
+     `alter table` numa tabela que ainda não foi criada aborta o arquivo inteiro
+     em banco novo — e o schema deixaria de ser executável de ponta a ponta. */
+  const posCarimbo = sql.indexOf('add column if not exists server_at');
+  const ultimaTabela = Math.max(...tabelas.map(t =>
+    sql.indexOf(`create table if not exists ${t} (`)));
+  check('o carimbo é aplicado depois da última tabela', posCarimbo > ultimaTabela, true);
+
+  /* Descoberta automática, não lista escrita à mão: é o que faz tabela nova
+     entrar no carimbo por existir, em vez de por alguém lembrar do nome. */
+  const trecho = sql.slice(posCarimbo - 1200, posCarimbo + 900);
+  const inicioBloco = sql.lastIndexOf('do $$', posCarimbo);
+  const corpoCarimbo = sql.slice(inicioBloco, sql.indexOf('end $$;', posCarimbo));
+  check('  descobrindo as tabelas por family_id', /column_name = 'family_id'/.test(trecho), true);
+  check('  e só tabelas de verdade, não views', /table_type = 'BASE TABLE'/.test(trecho), true);
+
+  /* O QUE IMPORTA É A COBERTURA, não a forma da query.
+
+     Conferir que a query "menciona family_id" não protege nada: dá para manter a
+     descoberta e ainda assim restringi-la a alguns nomes, e o teste passaria
+     verde com metade das tabelas sem carimbo. Então a verificação é outra:
+     NENHUM nome de tabela sincronizada aparece escrito dentro do bloco. Qualquer
+     tentativa de recortar a lista precisa nomear o que ficou, e é isso que cai
+     aqui — inclusive a que passou verde na primeira versão deste teste. */
+  const nomeados = tabelas.filter(t => new RegExp(`'${t}'`).test(corpoCarimbo));
+  check('  sem nenhuma tabela nomeada dentro do bloco',
+    nomeados.length ? nomeados.join(', ') : true, true);
+  check('  e sem lista de nomes de qualquer forma',
+    /array\s*\[\s*'/.test(corpoCarimbo) || /in\s*\(\s*'/.test(corpoCarimbo), false);
+
+  // Coluna, índice e trigger: os três, senão o pull fica lento ou não confiável
+  check('o carimbo cria a coluna', /add column if not exists server_at timestamptz not null/.test(trecho), true);
+  check('  o índice que o pull usa', /family_id, server_at/.test(trecho), true);
+  check('  e o trigger que o cliente não consegue burlar', /create trigger trg_server_at/.test(trecho), true);
+
+  /* clock_timestamp(), não now(): now() devolve o início da TRANSAÇÃO, então
+     duas gravações concorrentes recebem o mesmo instante e podem sair na ordem
+     errada — o que ressuscitaria o problema que o carimbo existe para resolver. */
+  const fn = sql.slice(sql.indexOf('function marca_server_at'), sql.indexOf('function marca_server_at') + 420);
+  check('o trigger usa clock_timestamp, não now()',
+    fn.includes('clock_timestamp()') && !/:=\s*now\(\)/.test(fn), true);
+
+  /* NENHUMA LISTA DE NOMES sobrou aplicando carimbo. Uma lista remanescente
+     voltaria a ser o lugar onde uma tabela nova é esquecida. */
+  const listasComCarimbo = [...sql.matchAll(/foreach t in array array\[([^\]]*)\][\s\S]{0,400}?server_at/g)];
+  check('nenhuma lista escrita à mão aplica o carimbo', listasComCarimbo.length, 0);
+
+  /* E o cofrinho, que foi o caso que revelou tudo: as quatro tabelas dele têm
+     family_id, então a descoberta automática as alcança. */
+  for (const t of ['kids', 'kid_goals', 'kid_tasks', 'kid_entries']) {
+    const cria = sql.slice(sql.indexOf(`create table if not exists ${t} (`));
+    const corpo = cria.slice(0, cria.indexOf('\n);'));
+    check(`  ${t} tem family_id, então o carimbo a alcança`, /family_id uuid not null/.test(corpo), true);
+  }
+}
+
 const colunasDe = tabela => {
   const cria = schema.match(new RegExp(`create table if not exists ${tabela} \\(([\\s\\S]*?)\\n\\);`, 'i'));
   const cols = new Set(['id', 'family_id', 'updated_at', 'deleted']);
