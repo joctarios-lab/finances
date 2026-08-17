@@ -18,6 +18,11 @@ No **computador** funciona como um painel administrativo (menu lateral, cards, t
 - **🔮 Preditivo** — projeção de fim de mês por *run-rate*, gráfico de **ritmo do mês** (acumulado vs. trilha ideal), taxa de poupança, **regra 50/30/20**, **reserva de emergência em meses de cobertura** e previsão de conclusão das metas pelo ritmo de aportes.
 - **📈 Relatórios** — evolução 12 meses, comparativo de categorias com variação %, gasto por membro e por método, top 10 maiores gastos, custos fixos e **exportação CSV** (abre no Excel).
 
+**Educação financeira das crianças**
+- **🦖 Meu Cofrinho** — um **segundo app**, em `cofrinho/`, feito para a criança usar sozinha: três potes (gastar, guardar, doar), o ritual de repartir a semanada, tarefas que ela marca e um adulto confirma, o sonho contado em *semanadas que faltam* e a **moeda mágica** que premia quem deixou o dinheiro guardado. Mascote animado e toda a arte em SVG.
+- **👨‍👩‍👧 Área dos pais** — fica no app da família, em *Configurações → Crianças*: semanada, tarefas, meta, senha de quatro números e o extrato completo do cofrinho de cada criança. Aceita **quantas crianças você quiser**.
+- Os dois apps se encontram **no mesmo aparelho sem depender de internet**, e pela nuvem quando são aparelhos diferentes. O cofrinho **nunca** vê as contas da casa. Detalhes em [`docs/plano-cofrinho-app.md`](docs/plano-cofrinho-app.md).
+
 **Plataforma**
 - **☁️ Sincronização familiar** via Supabase (opcional — o app funciona 100% sem ela).
 - **🔒 Segurança** — PIN que **criptografa os dados no aparelho** (AES-256-GCM, chave derivada por PBKDF2) e bloqueio progressivo contra tentativas.
@@ -32,6 +37,11 @@ npx serve .          # ou: python -m http.server 8080
 ```
 
 Abra `http://localhost:8080`. Para instalar no celular, o PWA precisa de **HTTPS** (ver hospedagem).
+
+O app da criança fica em `http://localhost:8080/cofrinho/` — instale-o **separadamente**
+no aparelho dela, como um atalho próprio na tela inicial. Cadastre a criança primeiro,
+em *Configurações → Crianças*; sem isso o cofrinho abre com um recado explicando o
+que falta.
 
 ## Hospedagem (grátis, com HTTPS)
 
