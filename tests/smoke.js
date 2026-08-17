@@ -5454,6 +5454,56 @@ try {
   check('todo item do custo fixo vem de contrato',
     cfCtr.itens.every(i => i.origem === 'contrato'), true);
 
+  /* TODOS OS ITENS NA TELA, sem "e mais N" — a pedido de quem usa. Esta é a tela
+     de gerenciar custo fixo, e o que está escondido não se gerencia: com dez
+     contratos, os seis de baixo somavam R$ 1.120 sem dizer de quê.
+
+     O CENÁRIO PRECISA PASSAR DE QUATRO ITENS, senão o corte antigo não recortava
+     nada e o teste passava sem exercitar a regra — foi o que a sabotagem mostrou:
+     reintroduzir `slice(0, 4)` não reprovava. */
+  const enchePara = [];
+  while (DB.custoFixoMensal().itens.length < 6) {
+    enchePara.push(DB.upsert('recurrences', {
+      description: `Enche CF ${enchePara.length + 1}`, amount: 10 + enchePara.length,
+      type: 'Despesa', valor_tipo: 'fixo', periodicidade: 'mensal', dia: 7,
+      inicio: DB.inicioISO(pC), fim_tipo: 'sem_prazo', status: 'ativa', geradas: 0,
+    }));
+    if (enchePara.length > 12) break;           // trava: nunca virar laço infinito
+  }
+  const cfCtr2 = DB.custoFixoMensal();
+  check('o cenário tem itens além do corte antigo de quatro', cfCtr2.itens.length > 4, true);
+  const cartaoCF = custoFixoCard();
+  check('o card lista todos os itens do custo fixo',
+    cfCtr2.itens.every(i => cartaoCF.includes(esc(i.descricao))), true);
+  check('  e não agrupa o resto em "e mais N"', /e mais \d+/.test(cartaoCF), false);
+  /* Com todas as linhas à vista, o total do cabeçalho é a soma CONFERÍVEL delas —
+     e por isso deixou de vir abreviado. "R$ 6.241" bastava enquanto só quatro
+     apareciam; agora quem soma as dez chega a R$ 6.240,80 e encontraria dois
+     números para a mesma coisa. */
+  check('  o total do cabeçalho vem com centavos, para fechar com a soma',
+    cartaoCF.includes(fmt(cfCtr2.total)), true);
+  check('  e a soma das linhas dá o total',
+    Math.round(cfCtr2.itens.reduce((s, i) => s + i.mensal, 0) * 100), Math.round(cfCtr2.total * 100));
+  /* O PRAZO em cada linha: é o que faz planejar, e antes vivia só na frase do
+     rodapé, que fala de dois itens.
+
+     O CONTRATO COM PRAZO É CRIADO AQUI. A primeira versão procurava um no cenário,
+     e todos eram "sem prazo" — o `if` nunca rodava e a sabotagem que removia o
+     prazo da linha passou despercebida. */
+  const idComPrazo = DB.upsert('recurrences', {
+    description: 'Parcela com prazo', amount: 250, type: 'Despesa', valor_tipo: 'fixo',
+    periodicidade: 'mensal', dia: 6, inicio: DB.inicioISO(pC),
+    fim_tipo: 'vezes', fim_vezes: 10, geradas: 3, status: 'ativa',
+  });
+  const itemPrazo = DB.custoFixoMensal().itens.find(i => i.descricao === 'Parcela com prazo');
+  check('  o item com prazo sabe quantas faltam', itemPrazo ? itemPrazo.restam : null, 7);
+  /* ANCORADO NA LINHA, não no card inteiro: a frase do rodapé também diz
+     "7 meses", e por isso a primeira versão deste teste passava mesmo com o prazo
+     removido da linha — casava com o rodapé sem saber. */
+  check('  e a linha do card diz isso, não só o rodapé',
+    custoFixoCard().includes(`Parcela com prazo <i>${itemPrazo.restam} meses</i>`), true);
+  DB.remove('recurrences', idComPrazo);
+
   /* AS DUAS TELAS CONTAM A MESMA HISTÓRIA — é o que a fonte única compra. */
   const naTela = renderCartoes();
   check('o card mostra o contrato', naTela.includes('Academia contrato'), true);
@@ -5462,6 +5512,7 @@ try {
     (els['#modal'].innerHTML || '').includes('Academia contrato'), true);
   closeModal();
 
+  for (const id of enchePara) DB.remove('recurrences', id);
   DB.remove('recurrences', idCtrCF);
   DB.remove('accounts', contaCF);
 } catch (e) { console.log(` FALHA | custo fixo uma fonte: ${e.message}`); fail++; }

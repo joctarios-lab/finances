@@ -23,8 +23,8 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 130 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2448 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 131 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2455 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 

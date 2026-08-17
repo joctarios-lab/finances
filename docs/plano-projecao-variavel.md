@@ -275,6 +275,30 @@ problema nunca foi **qual** das duas fontes mostrar, era **haver duas**.
 Agora o card "Custo fixo mensal" e a tela "Contas fixas" leem a mesma tabela, e há
 teste exigindo que as duas mostrem o mesmo item.
 
+### O card mostra TODOS os itens
+
+Sem "e mais 7". O agrupamento economizava quatro linhas e cobrava o preço errado:
+esta é a tela de gerenciar custo fixo, e o que está escondido não se gerencia — com
+dez contratos, os seis de baixo somavam R$ 1.120 sem dizer de quê.
+
+Duas mudanças vieram junto, e as duas são consequência de ter tudo à vista:
+
+- **o total do cabeçalho deixou de ser abreviado.** Enquanto só quatro linhas
+  apareciam, "R$ 6.241" bastava; com as dez, quem soma chega a R$ 6.240,80 e
+  encontraria dois números para a mesma coisa. Um total que não fecha com as
+  próprias parcelas é o pior defeito de uma tela.
+- **a marca de origem saiu.** Ela distinguia contrato de lançamento marcado; com o
+  contrato virando fonte única, todas as linhas diriam "contrato", e um rótulo
+  igual em dez linhas é ruído. No lugar entrou o que ajuda a decidir: a
+  periodicidade quando não é mensal, e **quantos meses faltam** — que antes vivia
+  só na frase do rodapé, e ela fala de dois itens.
+
+Três sabotagens ficaram registradas aqui porque as três passaram na primeira
+tentativa, por testes que não exercitavam nada: o cenário tinha menos de cinco
+itens (então reintroduzir o corte de quatro não recortava nada), não tinha contrato
+com prazo (a condição nunca rodava), e a verificação do prazo casava com a frase do
+rodapé em vez da linha. Os três foram refeitos.
+
 ## O que os testes travam
 
 - o gasto de contrato e o pontual ficam fora do ritmo; o variável entra;

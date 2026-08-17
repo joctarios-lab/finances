@@ -3093,17 +3093,29 @@ function custoFixoCard() {
     <div class="card">
       <div class="card-head" style="margin-bottom:6px"><div><b>Custo fixo mensal</b><small>${
         cf.itens.length} ${cf.itens.length === 1 ? 'item' : 'itens'}${pct !== null ? ` — ${pct}% da renda média` : ''}</small></div>
-        <span class="num txt-red" style="font-size:18px">${fmtShort(cf.total)}</span></div>
+        ${/* Com todas as linhas à vista, o total do cabeçalho passou a ser a soma
+              CONFERÍVEL delas — e aí ele não pode mais vir abreviado. Enquanto só
+              quatro apareciam, "R$ 6.241" bastava; agora quem soma as dez chega a
+              R$ 6.240,80 e encontra dois números para a mesma coisa. Um total que
+              não fecha com as próprias parcelas é o pior defeito de uma tela. */''}
+        <span class="num txt-red" style="font-size:18px">${fmt(cf.total)}</span></div>
       <div class="res-conta" style="border-top:0;padding:0">
-        ${/* A ORIGEM em cada linha. Contrato se gera sozinho na data certa;
-              lançamento marcado depende do botão "Custos fixos" para virar conta
-              do mês. São compromissos iguais com manutenção diferente, e sem a
-              marca o leitor não tem como saber qual dos dois precisa de ação. */
-          cf.itens.slice(0, 4).map(i => `<div class="hc-l"><span>${esc(i.descricao)} <i>${
-          i.origem === 'marcado' ? 'marcado' : 'contrato'}${
-          i.periodicidade !== 'mensal' ? ` · ${esc(i.periodicidade)}, por mês` : ''}</i></span><b>${fmt(i.mensal)}</b></div>`).join('')}
-        ${cf.itens.length > 4 ? `<div class="hc-l hc-d"><span>e mais ${cf.itens.length - 4}</span><b>${
-          fmt(cf.itens.slice(4).reduce((s, i) => s + i.mensal, 0))}</b></div>` : ''}
+        ${/* TODOS OS ITENS, sem "e mais 7" — a pedido de quem usa. O agrupamento
+              economizava quatro linhas e cobrava o preço errado: esta é a tela de
+              gerenciar custo fixo, e o que está escondido não se gerencia. Com dez
+              contratos, os seis de baixo somavam R$ 1.120 sem dizer de quê.
+
+              A NOTA de cada linha diz o que ajuda a decidir: quando o valor não é
+              mensal (para o número ao lado se explicar) e quantos meses faltam. A
+              marca de origem saiu — com o contrato virando fonte única, todas as
+              linhas diriam "contrato", e um rótulo igual em dez linhas é ruído. */
+          cf.itens.map(i => {
+            const nota = [
+              i.periodicidade !== 'mensal' ? `${esc(i.periodicidade)}, por mês` : '',
+              i.restam !== null ? `${i.restam} ${i.restam === 1 ? 'mês' : 'meses'}` : '',
+            ].filter(Boolean).join(' · ');
+            return `<div class="hc-l"><span>${esc(i.descricao)}${nota ? ` <i>${nota}</i>` : ''}</span><b>${fmt(i.mensal)}</b></div>`;
+          }).join('')}
       </div>
       ${acabam.length ? `<p class="muted" style="margin-top:8px">${acabam.slice(0, 2).map(i =>
         `<b>${esc(i.descricao)}</b> acaba em ${i.restam} ${i.restam === 1 ? 'mês' : 'meses'} e libera ${fmtShort(i.mensal)}/mês`).join('. ')}.</p>` : ''}
