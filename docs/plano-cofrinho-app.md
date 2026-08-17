@@ -86,22 +86,60 @@ passa a fazer pelo preço, e para quando o preço para. Selo é reconhecimento.
 frase que ela consegue planejar; "faltam R$ 43,50" não. A conta usa só o pote
 guardar — incluir o de gastar prometeria uma data que não vai acontecer.
 
-## Interface para 5–7 anos: as regras que o CSS aplica
+## O design: "clay", e por que não um tema claro do app do adulto
 
-Cada uma está comentada no arquivo, com o motivo:
+A primeira versão parecia um formulário corporativo suavizado — funcionava e não
+engajava. A linguagem agora é **plástico macio**: nada é uma borda de 1px.
 
-- Alvo de toque de 76px mínimo, e espaço grande entre botões. O dedo acerta mal, e
+Cada botão e card carrega **duas** sombras: um degrau sólido embaixo (a borda de
+baixo do plástico) e uma difusa (a que o objeto joga no chão). São as duas juntas
+que dão volume; só uma devolve o botão chapado. E tudo **afunda** ao toque, com
+`translateY` para dentro do próprio degrau — o movimento de um botão de brinquedo.
+
+Isso não é decoração: numa tela sem retorno tátil, a criança toca de novo, e o app
+parece quebrado em vez de lento.
+
+**Onde a arte para e a imagem começa.** `arte.js` desenha à mão o que rende bem em
+vetor: potes, moedas, troféus, bandeiras, o Dino em poses de meio corpo. Para o
+mascote em pose complexa e ilustrações com textura, o SVG à mão ficaria pobre ou
+gigante — esses casos estão no fim de `arte.js` como **PROMPT DE IMAGEM**, com o
+texto em inglês pronto para gerar. Nenhum é necessário para o app funcionar.
+
+### Interface para 5–7 anos: as regras que o CSS aplica
+
+Cada uma está comentada no arquivo, com o motivo, e **cada uma tem teste** — porque
+um "ajuste rápido" no CSS desfaz qualquer uma delas sem que nada pareça quebrado:
+
+- Alvo de toque de 76px mínimo, e espaço grande entre alvos. O dedo acerta mal, e
   errar o botão numa tela de dinheiro frustra de um jeito específico.
-- Nenhuma ação colada na borda de baixo — é onde a mão apoia o tablet.
-- Toda ação responde com algo visível. Sem retorno, ela toca de novo, e um app que
-  não responde parece quebrado.
-- Cor nunca carrega o significado sozinha: sempre tem ícone e palavra junto.
+- Todo clicável afunda ao toque — botão, tecla, card, pote, chip.
+- Nenhuma ação colada na borda de baixo. O rodapé é uma pílula flutuante, com
+  folga e `env(safe-area-inset-bottom)`: ali é onde a mão apoia o tablet, e botão
+  colado no canto dispara sozinho o tempo todo.
+- Cor nunca carrega o significado sozinha: cada pote leva nome escrito e ícone,
+  cada prêmio tem desenho próprio. É o que mantém o app legível para quem não
+  distingue verde de vermelho — 1 em cada 12 meninos.
+- Seis prêmios, seis objetos diferentes. Seis estrelas amarelas iguais não são uma
+  coleção, são uma contagem; e o bloqueado aparece em silhueta com cadeado, para
+  ficar claro que existe e dá para ganhar.
 - Errar a senha não gera mensagem de erro vermelha. Treme, o Dino fica triste, e
   na terceira tentativa oferece chamar um adulto. Aos seis anos, errar a senha é
   comum, e o app não pode transformar isso em fracasso.
 - Nenhuma tela sem saída. Quem chega num beco sem botão de voltar não sabe fechar
   app — desiste, e o cofrinho fica abandonado.
 - `prefers-reduced-motion` mantém o app inteiro, só quieto.
+
+### Duas armadilhas que já morderam
+
+**IDs de SVG repetidos.** Três potes na mesma tela usam `clipPath`, e id repetido
+faz um recorte valer para todos — na prática, potes diferentes parecendo ter o
+mesmo saldo. Invisível no código, óbvio na tela. Por isso `Arte.pote()` recebe um
+sufixo, e o ritual passa o seu.
+
+**A fonte que o CSS pede não ser a que o HTML busca.** Aconteceu: troquei a pilha
+para Fredoka e o `<link>` continuou baixando Baloo 2. Nada quebra, nada avisa — o
+app só abre com a letra do sistema e a tipografia arredondada desaparece sem
+rastro. Há teste comparando as duas listas.
 
 ## Onde o Dino mora
 
