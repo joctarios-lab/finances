@@ -25,6 +25,10 @@
 -- truncate em vez de delete: é mais rápido e reinicia as sequências.
 -- cascade cobre qualquer dependência que apareça no futuro.
 truncate table
+  kid_entries,
+  kid_tasks,
+  kid_goals,
+  kids,
   transactions,
   goal_entries,
   goals,

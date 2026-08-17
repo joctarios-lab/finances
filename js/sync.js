@@ -56,6 +56,14 @@ const SYNC_TABLES = {
   // foi rodado, o pull e o push já isolam falha POR TABELA, então só o ajuste
   // deixa de sincronizar — o resto da base continua andando.
   budget_overrides: ['category_id', 'period_start', 'amount'],
+  // Cofrinho das crianças. Tabelas novas: num banco onde o SQL ainda não foi
+  // rodado, o pull e o push isolam falha POR TABELA — só o cofrinho deixa de
+  // sincronizar, e o resto da base continua andando.
+  kids: ['name', 'avatar', 'cor', 'nascimento_ano', 'semanada_valor', 'semanada_dia',
+    'rendimento_tipo', 'rendimento_valor', 'pin_hash', 'pin_salt', 'active'],
+  kid_goals: ['kid_id', 'name', 'icon', 'target_amount', 'done', 'done_at'],
+  kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active'],
+  kid_entries: ['kid_id', 'tipo', 'amount', 'date', 'description', 'pote', 'task_id', 'kid_goal_id', 'confirmada'],
 };
 
 /* Tipo de cada coluna do banco, por nome (nenhum nome se repete com tipo
@@ -86,6 +94,9 @@ const COLUNAS = {
   dia: 'int#', fim_vezes: 'int', geradas: 'int#',
   inicio: 'date!', fim_data: 'date', ultima_geracao: 'date', period_start: 'date!',
   date: 'date!', target_date: 'date',
+  kid_id: 'uuid!', task_id: 'uuid', kid_goal_id: 'uuid',
+  semanada_valor: 'num#', rendimento_valor: 'num#', semanada_dia: 'int#', nascimento_ano: 'int',
+  done_at: 'date', confirmada: 'bool',
   deleted: 'bool', active: 'bool', is_reserve: 'bool', recurring: 'bool',
   adjustment: 'bool', paid: 'bool', done: 'bool', pontual: 'bool',
   members: 'json', tags: 'json',

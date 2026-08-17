@@ -5731,6 +5731,115 @@ try {
   DB.remove('accounts', contaE);
 } catch (e) { console.log(` FALHA | editar contrato: ${e.message}`); fail++; }
 
+/* ---- COFRINHO: os dados ----
+
+   O saldo de cada pote é DERIVADO das entradas, nunca guardado — mesma regra do
+   saldo e da previsão no resto do app. */
+console.log('\n=== Cofrinho: potes, semanada e moeda mágica ===');
+try {
+  const hojeK = DB.hojeISO();
+  const diaSemanaHoje = new Date(hojeK + 'T12:00:00').getDay();
+  const kidId = DB.upsert('kids', {
+    name: 'Criança Teste', avatar: '🦖', cor: '#00b894',
+    semanada_valor: 8, semanada_dia: diaSemanaHoje,     // hoje é dia de semanada
+    rendimento_tipo: 'moeda', rendimento_valor: 1, active: true,
+  });
+  const kid = () => DB.get('kids', kidId);
+  const lanc = (tipo, amount, pote, dataISO, extra) => DB.upsert('kid_entries', {
+    kid_id: kidId, tipo, amount, pote, date: dataISO || hojeK, description: tipo, ...(extra || {}),
+  });
+
+  check('a criança entra na lista', DB.kids().some(k => k.id === kidId), true);
+  check('sem movimento, os três potes estão zerados',
+    JSON.stringify(DB.kidPotes(kidId)), JSON.stringify({ gastar: 0, guardar: 0, doar: 0, total: 0 }));
+
+  /* A DIVISÃO NOS POTES: uma semanada de 8 vira três entradas, uma por pote. */
+  lanc('semanada', 4, 'gastar');
+  lanc('semanada', 3, 'guardar');
+  lanc('semanada', 1, 'doar');
+  const p1 = DB.kidPotes(kidId);
+  check('cada pote soma o que caiu nele', `${p1.gastar}/${p1.guardar}/${p1.doar}`, '4/3/1');
+  check('  e o total é a soma dos três', p1.total, 8);
+
+  /* GASTO E DOAÇÃO SÃO SAÍDAS, e saem do pote de onde vieram. Gastar do pote
+     "guardar" tem significado diferente de gastar do "gastar agora" — a criança
+     precisa ver essa diferença, e por isso `pote` existe também na saída. */
+  lanc('gasto', 2, 'gastar');
+  check('gasto sai do pote onde foi feito', DB.kidPotes(kidId).gastar, 2);
+  check('  e não mexe nos outros', DB.kidPotes(kidId).guardar, 3);
+  lanc('doacao', 1, 'doar');
+  check('doação sai do pote doar', DB.kidPotes(kidId).doar, 0);
+
+  /* SEMANADA: uma por semana. Sem a conferência, abrir o app duas vezes no mesmo
+     dia daria duas semanadas, e o erro só apareceria ao somar o mês. */
+  check('com a semanada já paga, não é devida de novo', DB.kidSemanadaDevida(kid()), null);
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === kidId && e.tipo === 'semanada')) DB.remove('kid_entries', e.id);
+  const devida = DB.kidSemanadaDevida(kid());
+  check('sem ela, a semanada é devida', devida ? devida.valor : null, 8);
+  check('  e sem valor configurado, não é devida nada',
+    DB.kidSemanadaDevida({ ...kid(), semanada_valor: 0 }), null);
+
+  /* A SEMANA começa no dia da semanada, não no domingo: todo o app da criança
+     pensa em semanas, e o marco é o dia em que ela recebe. */
+  check('a semana começa no dia da semanada', DB.kidInicioDaSemana(kid()), hojeK);
+  const outroDia = DB.kidInicioDaSemana({ ...kid(), semanada_dia: (diaSemanaHoje + 1) % 7 });
+  check('  e recua quando o dia ainda não chegou nesta semana', outroDia < hojeK, true);
+
+  /* MOEDA MÁGICA: cai quando a semana passou sem saída do pote guardar. */
+  const semanaPassada = DB.somarDiasISO(hojeK, -8);
+  lanc('semanada', 5, 'guardar', semanaPassada);
+  const magica = DB.kidMoedaMagicaDevida(kid());
+  check('guardou a semana toda: a moeda mágica é devida', magica ? magica.valor : null, 1);
+  /* Se mexeu no que guardou, não cai — e a tela diz isso sem repreender. */
+  const idMexeu = lanc('gasto', 2, 'guardar', DB.somarDiasISO(hojeK, -3));
+  check('  mexeu no pote guardar: não cai', DB.kidMoedaMagicaDevida(kid()), null);
+  DB.remove('kid_entries', idMexeu);
+  check('  desfeito o gasto, volta a ser devida', !!DB.kidMoedaMagicaDevida(kid()), true);
+  /* Uma por semana: sem isso, cada abertura do app pagaria de novo. */
+  lanc('rendimento', 1, 'guardar');
+  check('  e cai uma só por semana', DB.kidMoedaMagicaDevida(kid()), null);
+  check('  desligada, nunca cai',
+    DB.kidMoedaMagicaDevida({ ...kid(), rendimento_valor: 0 }), null);
+
+  /* META: em SEMANADAS, não em reais. Aos 6 anos tempo é mais concreto que
+     dinheiro — "faltam 5 semanadas" se entende, "faltam R$ 47,50" não. */
+  const metaId = DB.upsert('kid_goals', { kid_id: kidId, name: 'Bicicleta', icon: '🚲', target_amount: 45 });
+  const guardado = DB.kidPotes(kidId).guardar;
+  check('a meta ativa é encontrada', (DB.kidMeta(kidId) || {}).id, metaId);
+  /* Faltam 45 − guardado, a R$ 9 por semana (semanada 8 + moeda mágica 1). A moeda
+     entra na conta de propósito: ignorá-la prometeria mais semanas do que a
+     realidade. */
+  check('quantas semanadas faltam',
+    DB.kidSemanadasParaMeta(kidId), Math.ceil((45 - guardado) / 9));
+  check('  só o pote GUARDAR conta para a meta',
+    DB.kidSemanadasParaMeta(kidId) > 0, true);
+  DB.upsert('kid_goals', { ...DB.get('kid_goals', metaId), target_amount: 1 });
+  check('  meta já alcançada devolve zero', DB.kidSemanadasParaMeta(kidId), 0);
+
+  /* TAREFAS: a criança marca, o adulto confirma. Sem esse passo o app vira
+     máquina de auto-serviço. */
+  const tarefaId = DB.upsert('kid_tasks', { kid_id: kidId, name: 'Arrumar a cama', icon: '🛏️', amount: 1, active: true });
+  const listaT = DB.kidTarefas(kidId);
+  check('a tarefa aparece na lista da semana', listaT.length, 1);
+  check('  e começa não feita', listaT[0].feita, false);
+  /* MEDIDO POR DELTA: o cenário já mexeu nos potes acima, e afirmar um total
+     absoluto aqui mediria o teste inteiro em vez do que a confirmação faz. */
+  const antesTarefa = DB.kidPotes(kidId).gastar;
+  const marcaId = lanc('tarefa', 1, 'gastar', hojeK, { task_id: tarefaId, confirmada: false });
+  check('marcada, ela aparece como feita', DB.kidTarefas(kidId)[0].feita, true);
+  check('  mas ainda não confirmada', DB.kidTarefas(kidId)[0].confirmada, false);
+  check('  e o dinheiro NÃO entra antes da confirmação', DB.kidPotes(kidId).gastar, antesTarefa);
+  check('  ela entra na fila do adulto',
+    DB.kidTarefasAConfirmar().some(x => x.entry.id === marcaId), true);
+  DB.upsert('kid_entries', { ...DB.get('kid_entries', marcaId), confirmada: true });
+  check('confirmada, o dinheiro entra', DB.kidPotes(kidId).gastar, antesTarefa + 1);
+  check('  e ela sai da fila do adulto',
+    DB.kidTarefasAConfirmar().some(x => x.entry.id === marcaId), false);
+
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === kidId)) DB.remove('kid_entries', e.id);
+  DB.remove('kid_tasks', tarefaId); DB.remove('kid_goals', metaId); DB.remove('kids', kidId);
+} catch (e) { console.log(` FALHA | cofrinho dados: ${e.message}`); fail++; }
+
 console.log('\n=== Puxar para atualizar desligado ===');
 {
   const cssP = fs.readFileSync(BASE + 'css/styles.css', 'utf8');

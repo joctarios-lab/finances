@@ -3,7 +3,9 @@
 'use strict';
 
 const DB_KEY = 'financas.v1';
-const STORES = ['accounts', 'cards', 'categories', 'transactions', 'goals', 'goal_entries', 'invoice_status', 'recurrences', 'family_settings', 'budget_overrides'];
+const STORES = ['accounts', 'cards', 'categories', 'transactions', 'goals', 'goal_entries', 'invoice_status', 'recurrences', 'family_settings', 'budget_overrides',
+  // Cofrinho das crianças — o app delas lê daqui pelo mesmo DB.
+  'kids', 'kid_goals', 'kid_tasks', 'kid_entries'];
 
 /* Criptografia local: AES-256-GCM com chave derivada do PIN (PBKDF2, 150 mil iterações). */
 const KCrypto = {
@@ -2070,6 +2072,149 @@ const DB = {
 
   // Quantas ocorrências ainda faltam, quando há prazo — para a tela dizer
   // "faltam 22 de 48" em vez de só "ativa"
+/* ---------- COFRINHO: o dinheiro das crianças ----------
+
+     Regra que governa tudo aqui: o saldo de cada pote é DERIVADO das entradas,
+     nunca guardado. É a mesma regra do saldo e da previsão no resto do app — um
+     total à parte diverge no primeiro erro e ninguém percebe. */
+
+  kids() {
+    return this.all('kids').filter(k => k.active !== false)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  },
+
+  kidEntries(kidId) {
+    return this.all('kid_entries')
+      .filter(e => e.kid_id === kidId && e.confirmada !== false)
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  },
+
+  /* O SALDO DOS TRÊS POTES.
+
+     Entrada soma no pote em que caiu; saída subtrai do pote de onde saiu. Gasto e
+     doação são saídas — e é por isso que `pote` existe nos dois: gastar do pote
+     "guardar" tem significado diferente de gastar do pote "gastar agora", e a
+     criança precisa ver essa diferença. */
+  kidPotes(kidId) {
+    const potes = { gastar: 0, guardar: 0, doar: 0 };
+    for (const e of this.all('kid_entries')) {
+      if (e.kid_id !== kidId || e.confirmada === false) continue;
+      const p = potes[e.pote] === undefined ? 'gastar' : e.pote;
+      const v = Number(e.amount) || 0;
+      potes[p] += (e.tipo === 'gasto' || e.tipo === 'doacao') ? -v : v;
+    }
+    potes.total = potes.gastar + potes.guardar + potes.doar;
+    return potes;
+  },
+
+  kidMeta(kidId) {
+    return this.all('kid_goals').find(g => g.kid_id === kidId && !g.done) || null;
+  },
+
+  /* QUANTAS SEMANADAS FALTAM para a meta.
+
+     Aos 6 anos, tempo é mais concreto que dinheiro: "faltam 5 semanadas" se
+     entende, "faltam R$ 47,50" não. Conta só o que está no pote GUARDAR — o
+     dinheiro de gastar não é para a meta, e prometer o contrário seria mentira. */
+  kidSemanadasParaMeta(kidId) {
+    const meta = this.kidMeta(kidId);
+    const kid = this.get('kids', kidId);
+    if (!meta || !kid) return null;
+    const falta = (Number(meta.target_amount) || 0) - this.kidPotes(kidId).guardar;
+    if (falta <= 0) return 0;
+    /* O ritmo inclui a moeda mágica: ela entra no pote guardar toda semana, e
+       ignorá-la faria a conta prometer mais semanas do que a realidade. */
+    const porSemana = (Number(kid.semanada_valor) || 0) + (kid.rendimento_tipo === 'moeda' ? (Number(kid.rendimento_valor) || 0) : 0);
+    if (porSemana <= 0) return null;
+    return Math.ceil(falta / porSemana);
+  },
+
+  /* A SEMANA do cofrinho: começa no dia da semanada.
+
+     Todo o app da criança pensa em semanas, não em meses — é o maior ciclo que
+     ela administra. Devolve o ISO do último dia de semanada que já passou. */
+  kidInicioDaSemana(kid, refISO) {
+    const hoje = refISO || this.hojeISO();
+    const d = new Date(hoje + 'T12:00:00');
+    const alvo = Math.min(6, Math.max(0, Number(kid.semanada_dia) || 0));
+    const recuo = (d.getDay() - alvo + 7) % 7;
+    d.setDate(d.getDate() - recuo);
+    return this.paraISO(d);
+  },
+
+  /* A SEMANADA JÁ SAIU nesta semana?
+
+     Sem esta conferência, abrir o app duas vezes no mesmo dia daria duas
+     semanadas — e o erro só apareceria quando alguém somasse o mês. */
+  kidSemanadaPaga(kid, refISO) {
+    const inicio = this.kidInicioDaSemana(kid, refISO);
+    return this.all('kid_entries').some(e =>
+      e.kid_id === kid.id && e.tipo === 'semanada' && String(e.date) >= inicio);
+  },
+
+  kidSemanadaDevida(kid, refISO) {
+    if (!kid || !(Number(kid.semanada_valor) > 0)) return null;
+    if (this.kidSemanadaPaga(kid, refISO)) return null;
+    return { kid, valor: Number(kid.semanada_valor), desde: this.kidInicioDaSemana(kid, refISO) };
+  },
+
+  /* A MOEDA MÁGICA: rende quem esperou.
+
+     Cai quando uma semana inteira passou sem NENHUMA saída do pote guardar. É o
+     conceito de rendimento em formato que a idade alcança — porcentagem sobre
+     R$ 7 dá sete centavos, e o que não se vê não ensina.
+
+     Devida uma vez por semana, e só se houver semana fechada para julgar: sem
+     isso, criar a criança hoje já pagaria a moeda de uma semana que não existiu. */
+  kidMoedaMagicaDevida(kid, refISO) {
+    if (!kid || kid.rendimento_tipo !== 'moeda' || !(Number(kid.rendimento_valor) > 0)) return null;
+    const inicio = this.kidInicioDaSemana(kid, refISO);
+    const jaCaiu = this.all('kid_entries').some(e =>
+      e.kid_id === kid.id && e.tipo === 'rendimento' && String(e.date) >= inicio);
+    if (jaCaiu) return null;
+
+    const entradas = this.all('kid_entries').filter(e => e.kid_id === kid.id);
+    if (!entradas.length) return null;                 // ninguém guardou nada ainda
+    const anterior = this.somarDiasISO(inicio, -7);
+    // Precisa existir a semana ANTERIOR para julgar: sem histórico, não há espera
+    if (!entradas.some(e => String(e.date) < inicio)) return null;
+    const mexeu = entradas.some(e => e.pote === 'guardar'
+      && (e.tipo === 'gasto' || e.tipo === 'doacao')
+      && String(e.date) >= anterior && String(e.date) < inicio);
+    if (mexeu) return null;
+    if (this.kidPotes(kid.id).guardar <= 0) return null;   // nada guardado, nada a render
+    return { kid, valor: Number(kid.rendimento_valor) };
+  },
+
+  /* TAREFAS da semana, com o que já foi marcado e o que falta confirmar. */
+  kidTarefas(kidId) {
+    const kid = this.get('kids', kidId);
+    if (!kid) return [];
+    const inicio = this.kidInicioDaSemana(kid);
+    const marcadas = this.all('kid_entries').filter(e =>
+      e.kid_id === kidId && e.tipo === 'tarefa' && String(e.date) >= inicio);
+    return this.all('kid_tasks')
+      .filter(t => t.kid_id === kidId && t.active !== false)
+      .map(t => {
+        const feita = marcadas.find(e => e.task_id === t.id);
+        return { ...t, feita: !!feita, confirmada: feita ? feita.confirmada !== false : false, entryId: feita ? feita.id : null };
+      });
+  },
+
+  // O que espera o adulto: tarefa marcada pela criança e ainda não confirmada
+  kidTarefasAConfirmar() {
+    const out = [];
+    for (const kid of this.kids()) {
+      const inicio = this.kidInicioDaSemana(kid);
+      for (const e of this.all('kid_entries')) {
+        if (e.kid_id !== kid.id || e.tipo !== 'tarefa' || e.confirmada !== false) continue;
+        if (String(e.date) < inicio) continue;
+        out.push({ kid, entry: e });
+      }
+    }
+    return out;
+  },
+
   restamDaRecorrencia(r) {
     if (r.fim_tipo !== 'vezes' || !(Number(r.fim_vezes) > 0)) return null;
     return Math.max(0, Number(r.fim_vezes) - (Number(r.geradas) || 0));

@@ -407,6 +407,105 @@ begin
   end loop;
 end $$;
 
+/* ---------------------------------------------------------------------------
+   COFRINHO — o dinheiro das crianças
+
+   Quatro tabelas, mesmo envelope de sync das demais (id, family_id, updated_at,
+   deleted). Nenhum nome próprio no schema: cada família cadastra as suas.
+
+   O saldo de cada pote é DERIVADO de kid_entries, nunca materializado — a mesma
+   regra que o app usa para saldo e previsão. Um total guardado à parte diverge no
+   primeiro erro e ninguém percebe.
+   --------------------------------------------------------------------------- */
+
+create table if not exists kids (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  name text not null,
+  avatar text default '🦖',              -- emoji que representa a criança
+  cor text default '#00b894',            -- cor do tema do cofrinho dela
+  nascimento_ano int,                    -- só o ano: idade aproxima, e não é dado sensível
+  -- Semanada, não mesada: abaixo dos 10 anos é o ciclo que a criança compreende.
+  semanada_valor numeric not null default 0,
+  semanada_dia int not null default 5,   -- 0=domingo … 6=sábado
+  -- Como o guardado rende: 'moeda' (a mágica semanal, valor fixo) ou 'percentual',
+  -- que fica para quando houver idade de entender proporção. Zero desliga.
+  rendimento_tipo text not null default 'moeda',
+  rendimento_valor numeric not null default 0,
+  -- Senha do cofrinho: separa irmãos, não guarda dinheiro. Hash com sal basta.
+  pin_hash text default '',
+  pin_salt text default '',
+  active boolean not null default true,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+
+create table if not exists kid_goals (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  kid_id uuid not null,
+  name text not null,
+  icon text default '🎁',
+  target_amount numeric not null default 0,
+  done boolean not null default false,
+  done_at date,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+
+create table if not exists kid_tasks (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  kid_id uuid not null,
+  name text not null,
+  icon text default '⭐',
+  amount numeric not null,
+  active boolean not null default true,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+
+create table if not exists kid_entries (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  kid_id uuid not null,
+  -- semanada | tarefa | presente | gasto | doacao | rendimento
+  tipo text not null default 'semanada',
+  amount numeric not null,
+  date date not null,
+  description text default '',
+  -- gastar | guardar | doar — de qual pote entrou ou saiu
+  pote text not null default 'gastar',
+  task_id uuid,                          -- quando veio de uma tarefa
+  -- Nome próprio para não colidir com goal_entries.goal_id, que é NOT NULL.
+  kid_goal_id uuid,                      -- quando a saída foi para realizar a meta
+  -- A criança marca a tarefa, o adulto confirma. Só vale para tipo='tarefa'.
+  confirmada boolean not null default true,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+
+create index if not exists idx_kid_entries_kid on kid_entries(family_id, kid_id, date);
+create index if not exists idx_kid_goals_kid on kid_goals(family_id, kid_id);
+create index if not exists idx_kid_tasks_kid on kid_tasks(family_id, kid_id);
+
+alter table kids enable row level security;
+alter table kid_goals enable row level security;
+alter table kid_tasks enable row level security;
+alter table kid_entries enable row level security;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['kids','kid_goals','kid_tasks','kid_entries']
+  loop
+    execute format('drop policy if exists %I_rw on %I', t, t);
+    execute format(
+      'create policy %I_rw on %I for all to authenticated using (is_member(family_id)) with check (is_member(family_id))',
+      t, t);
+  end loop;
+end $$;
+
 -- Criar família em uma única operação.
 -- Sem isto, o app inseriria a família e só depois viraria membro dela — e a política
 -- de leitura (is_member) impediria de receber o id de volta, travando o primeiro uso.
@@ -429,7 +528,7 @@ revoke all on function create_family(text) from public;
 grant execute on function create_family(text) to authenticated;
 
 -- ---------------------------------------------------------------------------
--- Conferência: rode isto depois e verifique se aparecem 12 tabelas, todas com
+-- Conferência: rode isto depois e verifique se aparecem 16 tabelas, todas com
 -- RLS ligado, e a função create_family.
 --
 --   select tablename, rowsecurity as rls
