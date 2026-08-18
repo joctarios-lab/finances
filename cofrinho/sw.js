@@ -10,19 +10,19 @@
    e a nuvem é conversa que acontece por trás, sem passar pelo cache. */
 'use strict';
 
-const VERSAO = '12';
+const VERSAO = '13';
 const CACHE = 'cofrinho-' + VERSAO;
 
 const CASCA = [
   './',
   './index.html',
-  './css/cofrinho.css?v=12',
-  './js/arte.js?v=12',
-  './js/dados.js?v=12',
-  './js/cofrinho.js?v=12',
+  './css/cofrinho.css?v=13',
+  './js/arte.js?v=13',
+  './js/dados.js?v=13',
+  './js/cofrinho.js?v=13',
   './manifest.webmanifest',
   './icons/cofrinho.svg',
-  '../js/config.js?v=148',
+  '../js/config.js?v=149',
 ];
 
 self.addEventListener('install', ev => {
@@ -30,7 +30,11 @@ self.addEventListener('install', ev => {
   // ícone ausente não é motivo para o app não instalar.
   ev.waitUntil(
     caches.open(CACHE)
-      .then(c => Promise.all(CASCA.map(u => c.add(u).catch(() => { }))))
+      // `cache: reload` porque add() respeita o cache HTTP do navegador: sem isto a
+      // casca NOVA podia ser gravada com os bytes VELHOS que o Pages ainda servia.
+      .then(c => Promise.all(CASCA.map(u =>
+        c.add(new Request(u, { cache: 'reload' })).catch(() => { })
+      )))
       .then(() => self.skipWaiting())
   );
 });
@@ -51,16 +55,29 @@ self.addEventListener('fetch', ev => {
   // cache seria pior do que não responder.
   if (url.origin !== location.origin) return;
 
+  /* REDE PRIMEIRO. O cache existe para quando a rede falha, e não para poupar uma
+     viagem: o app tem seis arquivos e nenhum deles é pesado.
+
+     NADA DE ignoreSearch aqui, e este era o defeito que se alimentava sozinho. Todo o
+     versionamento do app é a etiqueta `?v=`; com ignoreSearch, um pedido de
+     `cofrinho.js?v=12` casava com o `?v=11` guardado. Bastava uma página velha carregar
+     enquanto o worker novo já valia para o `?v=11` entrar no cache NOVO — e a partir
+     dali o HTML novo era servido com o código velho, para sempre, sem nada no app
+     indicando que havia duas versões brigando. */
   ev.respondWith(
-    caches.match(req, { ignoreSearch: true }).then(achou => {
-      const daRede = fetch(req).then(res => {
+    fetch(req)
+      .then(res => {
         if (res && res.ok) {
           const copia = res.clone();
           caches.open(CACHE).then(c => c.put(req, copia)).catch(() => { });
         }
         return res;
-      }).catch(() => achou || caches.match('./index.html'));
-      return achou || daRede;
-    })
+      })
+      /* RESERVA OFFLINE em cadeia, e não com `||`: `caches.match` devolve uma Promise,
+         que é sempre verdadeira -- encadear com `||` pegaria sempre a primeira, mesmo
+         quando ela resolve para undefined, e a tela ficaria em branco offline. */
+      .catch(() => caches.match(req)
+        .then(achou => achou || caches.match('./index.html'))
+        .then(achou => achou || caches.match('./')))
   );
 });

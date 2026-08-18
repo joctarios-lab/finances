@@ -1143,7 +1143,27 @@ async function iniciar() {
   });
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => { });
+    /* REGISTRAR NÃO BASTA NUM APP INSTALADO. O navegador só procura versão nova em
+       uma NAVEGAÇÃO, e um app instalado quase nunca navega: a criança sai pelo botão
+       do aparelho e volta pelo ícone, o que é apenas retomar. Sem isto o cofrinho pode
+       passar semanas na versão antiga sem nada indicando que existe outra.
+
+       Então: pergunta ao voltar para a frente, e recarrega uma vez quando um worker
+       novo assume. O guarda do `tinhaDono` é o que evita recarregar na PRIMEIRA visita,
+       quando assumir o controle é o esperado e não uma atualização. */
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      const olhar = () => { if (!document.hidden) reg.update().catch(() => { }); };
+      document.addEventListener('visibilitychange', olhar);
+      olhar();
+
+      let tinhaDono = !!navigator.serviceWorker.controller;
+      let recarregando = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!tinhaDono || recarregando) { tinhaDono = true; return; }
+        recarregando = true;
+        location.reload();
+      });
+    }).catch(() => { });
   }
 }
 

@@ -584,6 +584,61 @@ console.log('\n=== Os dois apps instalam lado a lado ===');
   const swCof = fs.readFileSync(BASE + 'cofrinho/sw.js', 'utf8');
   check('cada app tem o seu cache', swFam.includes("'financas-' + VERSAO")
     && swCof.includes("'cofrinho-' + VERSAO"), true);
+
+  /* ---- PUBLICAR PRECISA CHEGAR NO APARELHO ----
+
+     O cofrinho ficou sem atualizar mesmo com o servidor ja servindo a versao nova, e
+     eram dois defeitos somados no service worker dele. */
+
+  /* REDE PRIMEIRO. Cache primeiro faz o navegador rodar a versao ANTERIOR por um
+     carregamento inteiro depois de cada publicacao -- o app da familia ja tinha
+     aprendido isso, e o cofrinho nao. Numa crianca o efeito e pior: ela nao sabe
+     recarregar e conclui que o app quebrou. */
+  check('o cofrinho busca na rede antes do cache',
+    /respondWith\(\s*fetch\(/.test(swCof), true);
+  check('  e o app da familia tambem', /respondWith\([\s\S]{0,40}fetch\(/.test(swFam), true);
+
+  /* IGNORESEARCH ANULAVA O VERSIONAMENTO INTEIRO, e se alimentava sozinho: todo o
+     controle de versao do app e a etiqueta `?v=`, e ignoreSearch fazia um pedido de
+     `cofrinho.js?v=12` casar com o `?v=11` guardado. Bastava uma pagina velha carregar
+     com o worker novo ja valendo para o `?v=11` entrar no cache NOVO -- dali em diante,
+     HTML novo servido com codigo velho, sem nada no app denunciando a briga. */
+  check('nenhum worker casa pedido ignorando a etiqueta de versao',
+    /caches\.match\([^)]*ignoreSearch/.test(swCof + swFam), false);
+
+  /* A CASCA SE INSTALA SEM O CACHE HTTP: add() respeita o cache do navegador, entao a
+     casca nova podia ser gravada com os bytes velhos que o Pages ainda servia. */
+  check('a casca do cofrinho ignora o cache HTTP ao instalar',
+    /c\.add\(new Request\([^)]*cache:\s*.reload./.test(swCof), true);
+
+  /* APP INSTALADO QUASE NUNCA NAVEGA: a crianca sai pelo botao do aparelho e volta pelo
+     icone, o que e apenas retomar -- e o navegador so procura versao nova numa NAVEGACAO.
+     Sem perguntar ao voltar para a frente, o cofrinho pode passar semanas na versao
+     antiga sem nada indicando que existe outra. */
+  const appCof = fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8');
+  const appFam = fs.readFileSync(BASE + 'index.html', 'utf8');
+  /* O UPDATE TEM DE ESTAR PENDURADO no visibilitychange, e não apenas existir no
+     arquivo: procurar as duas palavras soltas aceitava um listener registrado e uma
+     chamada de update que nunca se encontram. */
+  const pendurado = fonte => {
+    const m = fonte.match(/addEventListener\('visibilitychange',\s*(\w+)\s*\)/);
+    if (!m) return false;
+    const cb = new RegExp(`(const|let|var)\\s+${m[1]}\\s*=[^;]*reg\\.update\\(\\)`);
+    return cb.test(fonte);
+  };
+  check('o cofrinho procura versao nova ao voltar para a frente', pendurado(appCof), true);
+  check('  e o app da familia tambem', pendurado(appFam), true);
+
+  /* E RECARREGA UMA VEZ quando o worker novo assume, senao a tela continua sendo a antiga
+     ate a crianca fechar o app -- que e justamente o que ela nao vai fazer. O guarda
+     impede recarregar na PRIMEIRA visita, quando assumir o controle e o esperado. */
+  check('o cofrinho recarrega quando um worker novo assume',
+    appCof.includes('controllerchange') && appCof.includes('location.reload()'), true);
+  /* O GUARDA DA PRIMEIRA VISITA precisa estar na CONDIÇÃO que decide recarregar, e não
+     só declarado em algum lugar: assumir o controle na primeira visita é o esperado, e
+     recarregar ali daria um pisca-pisca em toda primeira abertura. */
+  check('  mas nao na primeira visita',
+    /if\s*\(\s*!tinhaDono\s*\|\|/.test(appCof), true);
 }
 
 /* TOCAR NUM POTE como o dedo toca: dispara o mesmo listener global que o app registra,
