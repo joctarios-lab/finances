@@ -62,7 +62,7 @@ const SYNC_TABLES = {
   kids: ['name', 'avatar', 'cor', 'nascimento_ano', 'semanada_valor', 'semanada_dia',
     'rendimento_tipo', 'rendimento_valor', 'pin_hash', 'pin_salt', 'active'],
   kid_goals: ['kid_id', 'name', 'icon', 'target_amount', 'done', 'done_at'],
-  kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active'],
+  kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active', 'frequencia'],
   kid_entries: ['kid_id', 'tipo', 'amount', 'date', 'description', 'pote', 'task_id', 'kid_goal_id', 'confirmada', 'repartido'],
 };
 
@@ -124,6 +124,8 @@ const COLUNAS_OPCIONAIS = {
   recurrences: ['kid_id'],
   // A marca de "a criança já repartiu" chegou depois do resto do cofrinho
   kid_entries: ['repartido'],
+  // A frequência da missão chegou depois do resto do cofrinho
+  kid_tasks: ['frequencia'],
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

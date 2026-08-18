@@ -474,6 +474,10 @@ create table if not exists kid_tasks (
   name text not null,
   icon text default '⭐',
   amount numeric not null,
+  -- semanal (faz uma vez) | diaria (todo dia, e o valor sai UMA VEZ ao completar
+  -- a semana). Pagar a diária por dia faria 70% da renda da criança vir de uma
+  -- tarefa e ensinaria que cuidar de quem depende dela tem preço por unidade.
+  frequencia text not null default 'semanal',
   active boolean not null default true,
   updated_at timestamptz not null default now(),
   deleted boolean not null default false

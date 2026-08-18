@@ -722,3 +722,34 @@ h2 .emo { font-size: 27px; }
   .premios { gap: 11px; }
   .premio svg { width: 66px; height: 66px; }
 }
+
+/* ---------- Missão de todo dia: os sete dias em bolinhas ----------
+   É a leitura que funciona antes de saber contar. Cheia = cuidou. Vazia com o dia
+   já passado = falhou, e a bolinha mostra isso sem uma palavra de reprovação —
+   texto de erro numa tela de criança de seis anos vira vergonha, não correção. */
+.dias-trilha { display: flex; gap: 6px; margin: 5px 0 3px; }
+.dia-pt {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #e2edf3; box-shadow: inset 0 2px 3px rgba(43, 58, 68, .12);
+  flex: none;
+}
+.dia-pt.ja {
+  background: radial-gradient(circle at 35% 30%, #7ef5cd, var(--gastar));
+  box-shadow: 0 2px 0 var(--gastar-fundo);
+}
+/* Dia que passou sem ser marcado: fica oco, não vermelho. Diz "faltou" sem punir. */
+.dia-pt.perdeu { background: #fff; box-shadow: inset 0 0 0 3px #dbe9f1; }
+/* HOJE tem anel, para ela achar onde está na semana num relance. */
+.dia-pt.hoje { box-shadow: 0 0 0 3px var(--ouro); transform: scale(1.15); }
+.dia-pt.ja.hoje { box-shadow: 0 0 0 3px var(--ouro), 0 2px 0 var(--gastar-fundo); }
+
+.missao.diaria.feita-hoje { background: #f2fff9; border-color: var(--gastar-claro); }
+/* Semana completa: o card inteiro vira dourado, que é o mesmo sinal do prêmio. */
+.missao.diaria.completa {
+  background: linear-gradient(165deg, #fff, var(--ouro-claro));
+  border-color: var(--ouro);
+  box-shadow: 0 7px 0 var(--ouro-fundo), 0 12px 20px rgba(224, 160, 16, .24);
+}
+.missao.diaria.completa:active { box-shadow: 0 0 0 var(--ouro-fundo), 0 2px 5px rgba(43, 58, 68, .16); }
+/* A diária não pisca chamando toque quando o dia já foi cumprido. */
+.missao.diaria.feita-hoje, .missao.diaria.completa { animation: none; }

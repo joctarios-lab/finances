@@ -421,6 +421,173 @@ console.log('\n=== A criança reparte o que já tinha ===');
   limpar(idP);
 }
 
+/* ================= Missão de todo dia ================= */
+console.log('\n=== A missão que precisa acontecer todo dia ===');
+{
+  /* A água do cachorro é o caso que revelou a falta: uma missão diária marcada na
+     segunda ficava "feita" o resto da semana, e o cachorro passava seis dias sem
+     ninguém cobrar. */
+  const id = novaCrianca({ name: 'Diaria' });
+  const tD = Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Água do Duque', icon: '🐕', amount: 2,
+    frequencia: 'diaria', active: true,
+  });
+  const tS = Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Regar as plantas', icon: '🪴', amount: 1,
+    frequencia: 'semanal', active: true,
+  });
+
+  const dela = () => Dados.tarefas(id).find(x => x.id === tD);
+  const semanal = () => Dados.tarefas(id).find(x => x.id === tS);
+
+  check('a diária se identifica como diária', dela().diaria, true);
+  check('  e a semanal continua semanal', semanal().diaria, false);
+  check('  a diária abre com os sete dias da semana', dela().dias.length, 7);
+  check('  nenhum marcado ainda', dela().feitos, 0);
+
+  /* MARCAR HOJE não conclui a semana. Era o defeito: o app dizia "feita" e a
+     criança não conseguia marcar amanhã. */
+  check('marcar hoje funciona', Dados.marcarTarefa(id, tD), true);
+  check('  conta um dia', dela().feitos, 1);
+  check('  e hoje está marcado', dela().feita, true);
+  check('  mas a semana NÃO está completa', dela().completou, false);
+  check('  e marcar hoje de novo não duplica', Dados.marcarTarefa(id, tD), false);
+  check('  continua um dia só', dela().feitos, 1);
+
+  /* A MARCAÇÃO DO DIA VALE ZERO: é o que impede a diária de virar 70% da renda
+     dela. O dinheiro da semana sai uma vez, no bônus. */
+  check('a marcação do dia não põe dinheiro no pote', Dados.potes(id).total, 0);
+  const doDia = Dados.all('kid_entries').find(e => e.task_id === tD);
+  check('  o lançamento do dia vale zero', doDia.amount, 0);
+  check('  e já nasce confirmado, porque não há o que conferir', doDia.confirmada, true);
+
+  /* DESMARCAR HOJE é permitido, mesmo o lançamento estando "confirmado": ele vale
+     zero e nasce assim por construção. Tratá-lo como intocável trancaria a criança
+     num toque errado. */
+  check('desmarcar hoje funciona', Dados.desmarcarTarefa(id, tD), true);
+  check('  e volta a zero dias', dela().feitos, 0);
+
+  /* A SEMANA COMPLETA gera o bônus, uma vez. Aqui os sete dias são semeados
+     direto, porque a criança só pode marcar HOJE — e o teste não viaja no tempo. */
+  const kidD = Dados.get('kids', id);
+  const inicio = Dados.inicioDaSemana(kidD);
+  for (let i = 0; i < 6; i++) {
+    Dados.upsert('kid_entries', {
+      kid_id: id, tipo: 'tarefa', pote: 'gastar', amount: 0,
+      date: Dados.somarDiasISO(inicio, i), description: 'Água do Duque',
+      task_id: tD, confirmada: true,
+    });
+  }
+  check('seis dias marcados: ainda não completou', dela().completou, false);
+  /* CHAMA acertarBonus AQUI, com seis dias. Sem a chamada o bônus não existiria de
+     qualquer forma, e a asserção media a ausência de uma ação em vez da regra — a
+     sabotagem que soltava o bônus sem completar a semana passava verde. */
+  Dados.acertarBonus(id, tD);
+  check('  e o bônus não é criado com a semana incompleta', dela().bonusId, null);
+  check('  nem com um dia só', (() => {
+    const doPrimeiro = Dados.all('kid_entries').find(e =>
+      e.task_id === tD && e.tipo === 'tarefa' && e.date === Dados.somarDiasISO(inicio, 0));
+    Dados.remove('kid_entries', doPrimeiro.id);
+    Dados.acertarBonus(id, tD);
+    const semBonus = dela().bonusId === null;
+    Dados.upsert('kid_entries', {
+      kid_id: id, tipo: 'tarefa', pote: 'gastar', amount: 0,
+      date: Dados.somarDiasISO(inicio, 0), description: 'Água do Duque',
+      task_id: tD, confirmada: true,
+    });
+    return semBonus;
+  })(), true);
+
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'tarefa', pote: 'gastar', amount: 0,
+    date: Dados.somarDiasISO(inicio, 6), description: 'Água do Duque',
+    task_id: tD, confirmada: true,
+  });
+  check('os sete dias fecham a semana', dela().completou, true);
+
+  /* O BÔNUS nasce PENDENTE: o dinheiro só cai depois que o adulto vê. Sem isso o
+     app pagaria por a criança dizer que cuidou. */
+  Dados.acertarBonus(id, tD);
+  check('  e o bônus é criado', !!dela().bonusId, true);
+  check('  pendente, esperando o adulto', dela().bonusPago, false);
+  check('  sem dinheiro no pote ainda', Dados.potes(id).total, 0);
+  const bonus = Dados.get('kid_entries', dela().bonusId);
+  check('  o bônus vale o valor da missão', bonus.amount, 2);
+  check('  e não vale sete vezes isso', bonus.amount < 2 * 7, true);
+
+  /* NÃO DUPLICA: acertar de novo não cria um segundo bônus. */
+  Dados.acertarBonus(id, tD);
+  check('acertar de novo não cria outro bônus',
+    Dados.all('kid_entries').filter(e => e.tipo === 'bonus' && e.task_id === tD).length, 1);
+
+  /* A SEQUÊNCIA QUEBRADA desfaz o bônus pendente. Sem isto, bastava marcar os sete
+     dias, desmarcar um e ficar com o bônus para sempre. */
+  const doUltimo = Dados.all('kid_entries').find(e =>
+    e.task_id === tD && e.tipo === 'tarefa' && e.date === Dados.somarDiasISO(inicio, 6));
+  Dados.remove('kid_entries', doUltimo.id);
+  Dados.acertarBonus(id, tD);
+  check('quebrar a sequência tira o bônus pendente', dela().bonusId, null);
+  check('  e a semana volta a estar incompleta', dela().completou, false);
+
+  /* BÔNUS JÁ PAGO NÃO É RETIRADO: o dinheiro está no pote, e tomar de volta seria
+     o app desfazendo o que já deu. */
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'tarefa', pote: 'gastar', amount: 0,
+    date: Dados.somarDiasISO(inicio, 6), description: 'Água do Duque',
+    task_id: tD, confirmada: true,
+  });
+  Dados.acertarBonus(id, tD);
+  Dados.upsert('kid_entries', { ...Dados.get('kid_entries', dela().bonusId), confirmada: true });
+  check('bônus confirmado entra no pote', Dados.potes(id).total, 2);
+  const idPago = dela().bonusId;
+  const outroUltimo = Dados.all('kid_entries').find(e =>
+    e.task_id === tD && e.tipo === 'tarefa' && e.date === Dados.somarDiasISO(inicio, 5));
+  Dados.remove('kid_entries', outroUltimo.id);
+  Dados.acertarBonus(id, tD);
+  check('  e quebrar a sequência depois não tira o que foi pago',
+    !!Dados.get('kid_entries', idPago), true);
+  check('  o dinheiro continua no pote', Dados.potes(id).total, 2);
+
+  limpar(id);
+}
+
+console.log('\n=== A tela das missões de todo dia ===');
+{
+  const id = novaCrianca({ name: 'Tela Diaria' });
+  const tD = Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Água do Duque', icon: '🐕', amount: 2, frequencia: 'diaria', active: true });
+  App.kid = Dados.get('kids', id);
+  App.aba = 'tarefas';
+
+  const tela1 = telaTarefas();
+  check('a tela mostra a missão diária', tela1.includes('Água do Duque'), true);
+  check('  com os sete dias em bolinhas', (tela1.match(/class="dia-pt/g) || []).length, 7);
+  check('  dizendo quantos dias faltam', tela1.includes('0 de 7 dias'), true);
+  /* O VALOR APARECE COMO DA SEMANA, não do dia: é a diferença entre premiar a
+     constância e pagar por balde de água. */
+  check('  e que o valor é da semana toda', tela1.includes('a semana toda vale'), true);
+  check('  sem prometer valor por dia', /por dia vale/.test(tela1), false);
+  /* HOJE tem anel: é como ela acha onde está na semana. */
+  check('  com o dia de hoje destacado', tela1.includes('dia-pt hoje') || tela1.includes(' hoje"'), true);
+
+  Dados.marcarTarefa(id, tD);
+  const tela2 = telaTarefas();
+  check('depois de marcar, conta um dia', tela2.includes('1 de 7 dias'), true);
+  check('  e o card mostra que hoje foi feito', tela2.includes('feita-hoje'), true);
+
+  /* O CONTADOR DO TOPO é de HOJE, não da semana: numa segunda com seis dias pela
+     frente, dizer "1 de 1 missões desta semana" mentiria sobre o compromisso. */
+  /* O CONTADOR É DE HOJE, não da semana. Numa segunda com seis dias pela frente,
+     "1 de 1 desta semana" mentiria sobre o compromisso que ainda existe.
+
+     Mede o texto INTEIRO da linha: procurar só o trecho "de hoje" deixava passar a
+     troca por "desta semana", porque a palavra sobrevivia em outro lugar da tela. */
+  const contador = (tela2.match(/<div class="missao-conta">([\s\S]*?)<\/div>/) || [])[1] || '';
+  check('o contador fala de hoje', /de hoje/.test(contador), true);
+  check('  e não fala da semana', /desta semana/.test(contador), false);
+
+  limpar(id);
+}
 /* ================= Gastar e doar ================= */
 console.log('\n=== Gastar só o que tem ===');
 {

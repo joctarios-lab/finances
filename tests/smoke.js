@@ -118,7 +118,7 @@ eval(appSrc + `; Object.assign(global, {
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openEditarContrato, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
-  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, blocoDaSemanada, openKidLancarSheet, notaDosFilhos, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
+  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, blocoDaSemanada, openKidLancarSheet, openKidTarefaSheet, notaDosFilhos, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
 
 /* 'R$ 1.234,56' de volta para 1234.56.
 
@@ -6381,6 +6381,149 @@ try {
   closeModal();
 } catch (e) { console.log(` FALHA | saldo de abertura: ${e.message}`); fail++; }
 
+/* ---- MISSÃO DE TODO DIA, no app da família ----
+
+   A água do cachorro revelou a falta: missão diária marcada na segunda ficava
+   "feita" o resto da semana. E o valor NÃO pode ser por dia — sete toques a R$ 1
+   numa semanada de R$ 10 fariam 70% da renda da criança vir de uma tarefa, e
+   ensinariam que cuidar de quem depende dela tem preço por unidade. */
+console.log('\n=== Missão de todo dia (lado do adulto) ===');
+try {
+  const hojeD = DB.hojeISO();
+  const idD = DB.upsert('kids', {
+    name: 'Filho Diaria', semanada_valor: 10,
+    semanada_dia: new Date(hojeD + 'T12:00:00').getDay(), active: true,
+  });
+  const tarD = DB.upsert('kid_tasks', {
+    kid_id: idD, name: 'Água do Duque', icon: '🐕', amount: 2,
+    frequencia: 'diaria', active: true,
+  });
+  const tarS = DB.upsert('kid_tasks', {
+    kid_id: idD, name: 'Pôr a mesa', icon: '🍽️', amount: 1,
+    frequencia: 'semanal', active: true,
+  });
+  const daD = () => DB.kidTarefas(idD).find(x => x.id === tarD);
+
+  check('o app da família reconhece a missão diária', daD().diaria, true);
+  check('  com os sete dias', daD().dias.length, 7);
+  check('  e a semanal segue semanal', DB.kidTarefas(idD).find(x => x.id === tarS).diaria, false);
+
+  /* O MESMO PROGRESSO DOS DOIS LADOS. É a razão de o cálculo estar duplicado em
+     vez de importado: os apps são artefatos separados, e o que garante que não
+     divirjam é este teste. Se o número da tela dela não bate com o da tela dele,
+     quem perde a confiança no app é a criança. */
+  const inicioD = DB.kidInicioDaSemana(DB.get('kids', idD));
+  for (let i = 0; i < 4; i++) {
+    DB.upsert('kid_entries', {
+      kid_id: idD, tipo: 'tarefa', pote: 'gastar', amount: 0,
+      date: DB.somarDiasISO(inicioD, i), description: 'Água do Duque',
+      task_id: tarD, confirmada: true,
+    });
+  }
+  check('quatro dias marcados contam quatro', daD().feitos, 4);
+  check('  e a semana não está completa', daD().completou, false);
+  check('  sem dinheiro no pote', DB.kidPotes(idD).total, 0);
+
+  /* AS MARCAÇÕES DIÁRIAS NÃO ENTOPEM A FILA DO ADULTO. Valem zero: não há dinheiro
+     a liberar, então não há o que conferir. Pedir sete confirmações por semana por
+     tarefa faria o adulto parar de conferir qualquer coisa — inclusive o que
+     importa. */
+  check('as marcações de dia não pedem confirmação',
+    DB.kidTarefasAConfirmar().filter(x => x.kid.id === idD).length, 0);
+  /* E TAMBÉM QUANDO PENDENTE. O app cria a marcação do dia já confirmada, então o
+     filtro por confirmada bastava e o de valor zero podia sair sem nada reprovar.
+     Mas um registro de valor zero pendente pode chegar por outro caminho — dado
+     legado, sync de versão antiga — e ali não há dinheiro a liberar: colocá-lo na
+     fila treinaria o adulto a confirmar sem olhar. */
+  const zeroPendente = DB.upsert('kid_entries', {
+    kid_id: idD, tipo: 'tarefa', pote: 'gastar', amount: 0,
+    date: hojeD, description: 'Água do Duque', task_id: tarD, confirmada: false,
+  });
+  check('  nem quando o registro de valor zero está pendente',
+    DB.kidTarefasAConfirmar().filter(x => x.kid.id === idD).length, 0);
+  DB.remove('kid_entries', zeroPendente);
+
+  /* A TAREFA SEMANAL, sim: ela vale dinheiro e espera o adulto. */
+  DB.upsert('kid_entries', {
+    kid_id: idD, tipo: 'tarefa', pote: 'gastar', amount: 1,
+    date: hojeD, description: 'Pôr a mesa', task_id: tarS, confirmada: false,
+  });
+  check('a tarefa semanal marcada pede confirmação',
+    DB.kidTarefasAConfirmar().filter(x => x.kid.id === idD).length, 1);
+
+  /* O BÔNUS DA SEMANA CHEIA entra na mesma fila, e é o único pagamento da diária. */
+  for (let i = 4; i < 7; i++) {
+    DB.upsert('kid_entries', {
+      kid_id: idD, tipo: 'tarefa', pote: 'gastar', amount: 0,
+      date: DB.somarDiasISO(inicioD, i), description: 'Água do Duque',
+      task_id: tarD, confirmada: true,
+    });
+  }
+  check('sete dias fecham a semana', daD().completou, true);
+  const idBonus = DB.upsert('kid_entries', {
+    kid_id: idD, tipo: 'bonus', pote: 'gastar', amount: 2,
+    date: hojeD, description: 'Água do Duque — a semana toda',
+    task_id: tarD, confirmada: false,
+  });
+  const naFilaD = DB.kidTarefasAConfirmar().filter(x => x.kid.id === idD);
+  check('o bônus entra na fila do adulto', naFilaD.length, 2);
+  check('  e um deles é o bônus', naFilaD.some(x => x.entry.tipo === 'bonus'), true);
+  check('  sem dinheiro no pote antes de confirmar', DB.kidPotes(idD).total, 0);
+
+  confirmarTarefa(idBonus, true);
+  check('confirmar o bônus credita o pote', DB.kidPotes(idD).total, 2);
+  /* UMA VEZ, e não sete: é o teto que mantém a proporção com a semanada. */
+  check('  e vale o valor da missão, não sete vezes', DB.kidPotes(idD).total < 2 * 7, true);
+
+  /* A TELA DO ADULTO mostra o progresso, senão ele não tem como conferir se a
+     semana foi cumprida antes de aprovar o bônus. */
+  openCriancaDetalhe(idD);
+  const detD = els['#modal'].innerHTML;
+  check('o detalhe mostra a missão diária', detD.includes('Água do Duque'), true);
+  check('  com o progresso dos dias', /7 de 7|de 7 dias/.test(detD), true);
+
+  /* O CADASTRO oferece a escolha e explica o que o valor significa em cada caso.
+     Sem a nota, "quanto vale" numa diária é lido como valor por dia — que é
+     exatamente o que o desenho evita. */
+  openKidTarefaSheet(idD);
+  const folhaD = els['#sheet'].innerHTML;
+  check('o cadastro deixa escolher a frequência', folhaD.includes('id="kt-freq"'), true);
+  check('  com as duas opções', folhaD.includes('value="diaria"') && folhaD.includes('value="semanal"'), true);
+  /* A NOTA É INJETADA POR JS depois da montagem, então ela não está no innerHTML da
+     folha — está no elemento. Ler o lugar errado dava um teste vazio disfarçado de
+     falha. */
+  check('  e explica que a diária paga uma vez',
+    /uma vez/.test((els['#kt-nota'] || {}).innerHTML || ''), true);
+
+  /* E GRAVA O QUE FOI ESCOLHIDO. Ler o HTML da folha prova que o campo existe, não
+     que ele é usado: a sabotagem que jogava a frequência no lixo passava verde,
+     porque nada exercitava o botão de salvar. */
+  el('#kt-nome').value = 'Água do gato';
+  el('#kt-freq').value = 'diaria';
+  el('#kt-valor').dataset.cents = 300;
+  el('#sh-save').click();
+  const criada = DB.all('kid_tasks').find(x => x.kid_id === idD && x.name === 'Água do gato');
+  check('salvar grava a missão', !!criada, true);
+  check('  com a frequência escolhida', criada && criada.frequencia, 'diaria');
+  check('  e o valor da semana', criada && criada.amount, 3);
+
+  el('#kt-nome').value = 'Varrer a área';
+  el('#kt-freq').value = 'semanal';
+  el('#kt-valor').dataset.cents = 100;
+  openKidTarefaSheet(idD);
+  el('#kt-nome').value = 'Varrer a área';
+  el('#kt-freq').value = 'semanal';
+  el('#kt-valor').dataset.cents = 100;
+  el('#sh-save').click();
+  const semanalCriada = DB.all('kid_tasks').find(x => x.kid_id === idD && x.name === 'Varrer a área');
+  check('  e a semanal grava como semanal', semanalCriada && semanalCriada.frequencia, 'semanal');
+
+  // Limpeza
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idD)) DB.remove('kid_entries', e.id);
+  for (const x of DB.all('kid_tasks').filter(x => x.kid_id === idD)) DB.remove('kid_tasks', x.id);
+  DB.remove('kids', idD);
+  closeSheet(); closeModal();
+} catch (e) { console.log(` FALHA | missão de todo dia: ${e.message}`); fail++; }
 /* ---- APAGAR UM COFRINHO INTEIRO ----
 
    Existia só "pausar", que esconde e guarda tudo. A falta de "excluir" apareceu

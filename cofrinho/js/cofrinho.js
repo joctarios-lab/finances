@@ -510,34 +510,76 @@ function telaTarefas() {
       </div></div>`;
   }
 
-  const tudo = feitas === ts.length;
-  const fala = tudo
-    ? 'Uhuul! Você fez tudo esta semana!'
-    : feitas === 0 ? 'Toque na missão quando você fizer!'
-      : `Já fez <b>${feitas} de ${ts.length}</b>. Continua!`;
+  /* O QUE CONTA COMO "FEITA" DEPENDE DA FREQUÊNCIA.
+
+     Semanal: feita é feita. Diária: feita HOJE — porque amanhã o cachorro tem
+     sede de novo. Somar os dois no mesmo contador daria "3 de 3" numa segunda em
+     que ela ainda tem seis dias de compromisso pela frente. */
+  const semanais = ts.filter(x => !x.diaria);
+  const diarias = ts.filter(x => x.diaria);
+  const semanaisFeitas = semanais.filter(x => x.feita).length;
+  const diariasHoje = diarias.filter(x => x.feita).length;
+  const faltamHoje = (semanais.length - semanaisFeitas) + (diarias.length - diariasHoje);
+
+  const fala = faltamHoje === 0
+    ? 'Uhuul! Você fez tudo o que era de hoje!'
+    : faltamHoje === ts.length ? 'Toque na missão quando você fizer!'
+      : `Falta${faltamHoje > 1 ? 'm' : ''} <b>${faltamHoje}</b>. Você consegue!`;
+
+  /* OS SETE DIAS EM BOLINHAS: é a leitura que funciona antes de saber contar.
+
+     Cheia = cuidou. Vazia com o dia já passado = falhou, e a bolinha mostra isso
+     sem texto de reprovação. O dia de HOJE tem anel, para ela achar onde está. */
+  const trilhaDias = t => t.dias.map(d => `<span class="dia-pt${
+    d.marcada ? ' ja' : d.passou ? ' perdeu' : ''}${d.hoje ? ' hoje' : ''}"></span>`).join('');
+
+  const cardDiaria = t => `
+    <button class="missao diaria ${t.feita ? 'feita-hoje' : ''} ${t.completou ? 'completa' : ''}" data-tarefa="${t.id}">
+      <span class="missao-ico">${esc(t.icon || '⭐')}</span>
+      <span class="missao-txt">
+        <b>${esc(t.name)}</b>
+        <span class="dias-trilha">${trilhaDias(t)}</span>
+        <small>${t.feitos} de 7 dias${
+          Number(t.amount) > 0 ? ` · a semana toda vale ${fmtKid(t.amount)}` : ''}</small>
+        ${t.completou && t.bonusId && !t.bonusPago
+          ? '<small>semana completa! esperando um adulto conferir ⏳</small>' : ''}
+        ${t.bonusPago ? '<small>semana completa e paga! 🎉</small>' : ''}
+      </span>
+      <span class="missao-mar">
+        ${t.completou ? Arte.checkOuro() : t.feita ? Arte.checkDia() : ''}
+      </span>
+    </button>`;
+
+  const cardSemanal = t => `
+    <button class="missao ${t.feita ? (t.confirmada ? 'feita' : 'esperando') : ''}" data-tarefa="${t.id}">
+      <span class="missao-ico">${esc(t.icon || '⭐')}</span>
+      <span class="missao-txt">
+        <b>${esc(t.name)}</b>
+        ${Number(t.amount) > 0
+          ? `<span class="missao-vale">${Arte.moeda(19)} ${fmtKid(t.amount)}</span>`
+          : '<small>sem moeda, mas conta ponto!</small>'}
+        ${t.feita && !t.confirmada ? '<small>esperando um adulto conferir</small>' : ''}
+      </span>
+      <span class="missao-mar">
+        ${t.feita ? (t.confirmada ? Arte.checkOuro() : Arte.ampulheta()) : ''}
+      </span>
+    </button>`;
 
   return `
-    ${palco(tudo ? 'feliz' : 'oi', 128)}
+    ${palco(faltamHoje === 0 ? 'feliz' : 'oi', 128)}
     ${balao(fala)}
-    <div class="missao-conta">
-      <span class="n">${feitas}</span> de <span class="n">${ts.length}</span> missões desta semana
-    </div>
-    ${ts.map(t => `
-      <button class="missao ${t.feita ? (t.confirmada ? 'feita' : 'esperando') : ''}" data-tarefa="${t.id}">
-        <span class="missao-ico">${esc(t.icon || '⭐')}</span>
-        <span class="missao-txt">
-          <b>${esc(t.name)}</b>
-          ${Number(t.amount) > 0
-            ? `<span class="missao-vale">${Arte.moeda(19)} ${fmtKid(t.amount)}</span>`
-            : '<small>sem moeda, mas conta ponto!</small>'}
-          ${t.feita && !t.confirmada ? '<small>esperando um adulto conferir</small>' : ''}
-        </span>
-        <span class="missao-mar">
-          ${t.feita ? (t.confirmada ? Arte.checkOuro() : Arte.ampulheta()) : ''}
-        </span>
-      </button>`).join('')}
+    ${diarias.length ? `<div class="missao-conta">
+      <span class="n">${diariasHoje}</span> de <span class="n">${diarias.length}</span> de hoje
+    </div>` : ''}
+    ${diarias.map(cardDiaria).join('')}
+    ${semanais.length ? `<div class="missao-conta">
+      <span class="n">${semanaisFeitas}</span> de <span class="n">${semanais.length}</span> desta semana
+    </div>` : ''}
+    ${semanais.map(cardSemanal).join('')}
     <div class="vazio" style="font-size:15px">
-      Um adulto confere o que você marcou. Aí a moeda cai no pote 🪙
+      ${diarias.length
+        ? 'As de todo dia pagam quando você cuidar a semana toda 🗓️'
+        : 'Um adulto confere o que você marcou. Aí a moeda cai no pote 🪙'}
     </div>`;
 }
 

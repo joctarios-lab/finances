@@ -1985,3 +1985,9 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .kd-op.on { border-color: var(--gold); background: rgba(0, 158, 247, .12); }
 .kd-cor { border-width: 3px; }
 .kd-cor.on { border-color: var(--paper); transform: scale(1.08); }
+
+/* O nome da missão com o progresso embaixo: a diária precisa mostrar quantos
+   dias já foram, senão o adulto aprova o bônus da semana no escuro. */
+.kid-tarefa-nome { flex: 1; min-width: 0; }
+.kid-tarefa-nome small { display: block; color: var(--paper-dim); font-size: 11.5px; }
+.kid-tarefa b small { color: var(--paper-dim); font-weight: 400; font-size: 11px; }

@@ -7564,13 +7564,21 @@ function openCriancaDetalhe(kidId) {
       ${DB.kidSemanadasParaMeta(kidId) !== null ? `<p class="muted" style="margin-top:6px">Faltam ${DB.kidSemanadasParaMeta(kidId)} semanada(s).</p>` : ''}
     </div>` : ''}
 
-    <div class="sec-cab"><div class="sec-tit"><b>Tarefas</b><small>valem dinheiro extra</small></div>
+    <div class="sec-cab"><div class="sec-tit"><b>Missões</b><small>valem dinheiro extra</small></div>
       <div class="sec-acoes"><button class="sec-btn" id="kdd-tarefa">Nova</button></div></div>
     ${tarefas.map(t => `<div class="kid-tarefa">
-      <span>${esc(t.icon || '⭐')} ${esc(t.name)}</span>
-      <b>${fmt(t.amount)}</b>
+      <span class="kid-tarefa-nome">${esc(t.icon || '⭐')} ${esc(t.name)}
+        ${/* O PROGRESSO DA DIÁRIA precisa aparecer aqui: sem ele o adulto aprova o
+             bônus da semana sem ter como conferir se a semana foi cumprida — e a
+             confirmação, que é o que impede o app de virar auto-serviço, viraria
+             carimbo. */ ''}
+        ${t.diaria
+          ? `<small>todo dia · ${t.feitos} de 7 dias${
+              t.completou ? (t.bonusPago ? ' · semana paga ✓' : ' · semana completa, confira') : ''}</small>`
+          : ''}</span>
+      <b>${fmt(t.amount)}${t.diaria ? '<small>/semana</small>' : ''}</b>
       <button class="link-btn t-danger" data-del-tarefa="${t.id}">tirar</button>
-    </div>`).join('') || '<div class="empty">Nenhuma tarefa cadastrada.</div>'}
+    </div>`).join('') || '<div class="empty">Nenhuma missão cadastrada.</div>'}
 
     <div class="sec-cab" style="margin-top:14px"><div class="sec-tit"><b>Movimento</b><small>tudo que entrou e saiu</small></div>
       <div class="sec-acoes"><button class="sec-btn" id="kdd-lanc">Lançar</button></div></div>
@@ -7688,15 +7696,32 @@ function openKidMetaSheet(kidId) {
   };
 }
 
+/* A MISSÃO ESCOLHE A FREQUÊNCIA, e a escolha muda o significado do valor.
+
+   Semanal: faz uma vez, ganha o valor. "Ajudar a pôr a mesa" não acontece todo
+   dia, e cobrar todo dia transformaria a lista em falha permanente.
+
+   Diária: precisa acontecer todos os dias — a água do cachorro é o caso que
+   revelou a falta. Aí o valor NÃO é por dia: sai uma vez, ao completar a semana.
+   Sete toques a R$ 1 numa semanada de R$ 10 fariam 70% da renda dela vir do
+   cachorro, e ensinariam que cuidar de quem depende de você tem preço por
+   unidade. O bônus premia a constância; faltar um dia não custa R$ 1, quebra a
+   sequência. */
 function openKidTarefaSheet(kidId) {
   const ICONES_T = ['🛏️', '🧸', '🪴', '🍽️', '🦷', '📚', '🐕', '🧹'];
   openSheet(`
-    <div class="sheet-title">Nova tarefa<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <div class="field"><label>Qual tarefa?</label>
-      <input type="text" id="kt-nome" autocomplete="off" placeholder="arrumar a cama…"></div>
+    <div class="sheet-title">Nova missão<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="field"><label>Qual missão?</label>
+      <input type="text" id="kt-nome" autocomplete="off" placeholder="regar as plantas…"></div>
     <div class="field"><label>Desenho</label>
       <div class="kd-escolha" id="kt-icones">${ICONES_T.map((i, n) =>
         `<button class="kd-op${n === 0 ? ' on' : ''}" data-ic="${i}">${i}</button>`).join('')}</div></div>
+    <div class="field"><label>Com que frequência?</label>
+      <select id="kt-freq">
+        <option value="semanal">Uma vez na semana</option>
+        <option value="diaria">Todo dia</option>
+      </select>
+      <p class="muted" id="kt-nota" style="margin-top:4px"></p></div>
     <div class="field"><label>Quanto vale?</label>
       <input class="amount-input" id="kt-valor" type="text" inputmode="numeric" autocomplete="off"></div>
     <button class="btn" id="sh-save">Criar</button>
@@ -7707,13 +7732,28 @@ function openKidTarefaSheet(kidId) {
     ic = b.dataset.ic;
     document.querySelectorAll('[data-ic]').forEach(o => o.classList.toggle('on', o.dataset.ic === ic));
   });
+  /* A NOTA MUDA COM A ESCOLHA. Sem ela, "quanto vale" numa missão diária seria
+     lido como valor por dia — que é exatamente o que o desenho evita. */
+  const nota = () => {
+    const diaria = $('#kt-freq').value === 'diaria';
+    $('#kt-nota').innerHTML = diaria
+      ? 'Ela marca todo dia. O valor sai <b>uma vez</b>, ao completar os sete dias — premia ter cuidado a semana toda, não cada dia.'
+      : 'Ela marca uma vez e o valor sai quando você confirmar.';
+  };
+  nota();
+  $('#kt-freq').onchange = nota;
   $('#sh-close').onclick = closeSheet;
   $('#sh-save').onclick = () => {
     const nome = ($('#kt-nome').value || '').trim();
-    if (!nome) return toast('Diga qual é a tarefa');
-    DB.upsert('kid_tasks', { kid_id: kidId, name: nome, icon: ic, amount: moneyVal('#kt-valor') || 0, active: true });
+    if (!nome) return toast('Diga qual é a missão');
+    DB.upsert('kid_tasks', {
+      kid_id: kidId, name: nome, icon: ic,
+      amount: moneyVal('#kt-valor') || 0,
+      frequencia: $('#kt-freq').value === 'diaria' ? 'diaria' : 'semanal',
+      active: true,
+    });
     closeSheet(); Sync.autoSync(); openCriancaDetalhe(kidId);
-    toast('Tarefa criada ✓');
+    toast('Missão criada ✓');
   };
 }
 
@@ -7816,6 +7856,15 @@ function pagarSemanada(kidId) {
   return true;
 }
 
+/* CONFIRMAR o que a criança marcou: a tarefa da semana ou o bônus da diária.
+
+   Aceitar credita o dinheiro no pote; recusar apaga a marcação, e apagar é o
+   certo — não fica um registro de "não fez" pendurado no histórico dela.
+
+   RECUSAR UM BÔNUS não desfaz os dias marcados. Os dias valem zero e são o
+   registro do que ela fez; o bônus é o pagamento da semana cheia. Se o adulto
+   discorda de que a semana foi cumprida, é o pagamento que ele nega, não a
+   memória dos dias. */
 function confirmarTarefa(entryId, aceitar) {
   const e = DB.get('kid_entries', entryId);
   if (!e) return false;
@@ -7824,6 +7873,7 @@ function confirmarTarefa(entryId, aceitar) {
   Sync.autoSync();
   return true;
 }
+
 
 function openConfig() {
   const s = Sync.cfg || {};

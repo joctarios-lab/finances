@@ -238,6 +238,19 @@ const Arte = {
 </svg>`;
   },
 
+  /* O CHECK DO DIA, menor e mais quieto que o de ouro.
+
+     Marcar um dia de uma missão diária não é conquista — é o combinado. O selo de
+     ouro fica para a semana completa; se os dois brilhassem igual, a criança
+     leria "já ganhei" na segunda e o valor da constância desapareceria. */
+  checkDia() {
+    return `
+<svg viewBox="0 0 60 60" aria-hidden="true">
+  <circle cx="30" cy="30" r="19" fill="#eafff7" stroke="#00b87b" stroke-width="3"/>
+  <path d="M21 30.5 l6.5 6.5 l12 -14" stroke="#00a86f" stroke-width="5" fill="none"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
+  },
   // Esperando o adulto conferir: ampulheta, que gira no CSS
   ampulheta() {
     return `

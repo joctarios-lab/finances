@@ -31,7 +31,7 @@ const COLUNAS = {
   kids: ['name', 'avatar', 'cor', 'nascimento_ano', 'semanada_valor', 'semanada_dia',
     'rendimento_tipo', 'rendimento_valor', 'pin_hash', 'pin_salt', 'active'],
   kid_goals: ['kid_id', 'name', 'icon', 'target_amount', 'done'],
-  kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active'],
+  kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active', 'frequencia'],
   kid_entries: ['kid_id', 'tipo', 'pote', 'amount', 'date', 'description', 'task_id', 'kid_goal_id', 'confirmada', 'repartido'],
 };
 
@@ -144,20 +144,74 @@ const Dados = {
       .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.updated_at).localeCompare(String(a.updated_at)));
   },
 
+  /* AS MISSÕES DA SEMANA, com o progresso de cada uma.
+
+     Duas frequências, e a diferença é de natureza, não de grau:
+
+       semanal — faz uma vez e está feito. "Ajudar a pôr a mesa" não acontece
+                 todo dia, e cobrar todo dia transformaria a lista em falha.
+       diária  — precisa acontecer TODOS os dias, como a água do cachorro. Um ser
+                 vivo depende disso, e é por isso que ela existe.
+
+     A DIÁRIA NÃO PAGA POR DIA, e este é o centro do desenho. Sete toques a R$ 1
+     numa semanada de R$ 10 fariam 70% da renda dela vir do cachorro — e, pior,
+     ensinariam que cuidar de quem depende de você tem preço por unidade. No dia
+     em que ela não quisesse o dinheiro, o cachorro ficaria sem água.
+
+     O valor é pago UMA VEZ, ao completar a semana inteira. Premia a constância,
+     não o balde de água. Faltar um dia não "custa R$ 1": quebra a sequência, que
+     é exatamente a lição de compromisso. */
   tarefas(kidId) {
     const kid = this.get('kids', kidId);
     if (!kid) return [];
     const inicio = this.inicioDaSemana(kid);
+    const hoje = this.hojeISO();
     const marcadas = this.all('kid_entries').filter(e =>
       e.kid_id === kidId && e.tipo === 'tarefa' && String(e.date) >= inicio);
+
     return this.all('kid_tasks')
       .filter(t => t.kid_id === kidId && t.active !== false)
       .map(t => {
-        const feita = marcadas.find(e => e.task_id === t.id);
+        const daTarefa = marcadas.filter(e => e.task_id === t.id);
+        if (t.frequencia !== 'diaria') {
+          const feita = daTarefa[0];
+          return {
+            ...t, diaria: false, feita: !!feita,
+            confirmada: feita ? feita.confirmada !== false : false,
+            entryId: feita ? feita.id : null,
+          };
+        }
+
+        /* OS SETE DIAS DA SEMANA DO COFRINHO, na ordem. A semana começa no dia da
+           semanada, e não no domingo: é o ciclo que a criança vive, e misturar os
+           dois faria a sequência virar na quarta sem motivo visível. */
+        const dias = [];
+        for (let i = 0; i < 7; i++) {
+          const d = this.somarDiasISO(inicio, i);
+          dias.push({
+            data: d,
+            passou: d <= hoje,
+            hoje: d === hoje,
+            marcada: daTarefa.some(e => String(e.date) === d),
+          });
+        }
+        const feitos = dias.filter(d => d.marcada).length;
+        const deHoje = daTarefa.find(e => String(e.date) === hoje);
+        const bonus = this.all('kid_entries').find(e =>
+          e.kid_id === kidId && e.tipo === 'bonus' && e.task_id === t.id && String(e.date) >= inicio);
+
         return {
-          ...t, feita: !!feita,
-          confirmada: feita ? feita.confirmada !== false : false,
-          entryId: feita ? feita.id : null,
+          ...t, diaria: true, dias, feitos,
+          /* "feita" numa diária quer dizer FEITA HOJE. É o que a tela precisa para
+             decidir se o botão de hoje já foi usado — e o que impede a diária de
+             parecer concluída na segunda e ficar assim a semana toda, que era o
+             comportamento antigo aplicado a ela. */
+          feita: !!deHoje,
+          confirmada: deHoje ? deHoje.confirmada !== false : false,
+          entryId: deHoje ? deHoje.id : null,
+          completou: feitos >= 7,
+          bonusId: bonus ? bonus.id : null,
+          bonusPago: bonus ? bonus.confirmada !== false : false,
         };
       });
   },
@@ -301,12 +355,29 @@ const Dados = {
   /* MARCAR TAREFA: nasce sem confirmação, e é isso que a torna honesta.
 
      O dinheiro não entra no pote enquanto o adulto não vir. Se entrasse na hora,
-     o app estaria pagando por dizer que fez — e a criança aprenderia a dizer. */
+     o app estaria pagando por dizer que fez — e a criança aprenderia a dizer.
+
+     NA DIÁRIA, a marcação do dia vale ZERO e já nasce confirmada: não há dinheiro
+     em jogo, então não há o que conferir, e pedir sete confirmações por semana por
+     tarefa faria o adulto parar de conferir qualquer coisa. O que ele confirma é o
+     BÔNUS, uma vez, quando a semana fecha. */
   marcarTarefa(kidId, taskId) {
     const t = this.get('kid_tasks', taskId);
     if (!t) return false;
     const ja = this.tarefas(kidId).find(x => x.id === taskId);
-    if (!ja || ja.feita) return false;
+    if (!ja) return false;
+
+    if (ja.diaria) {
+      if (ja.feita) return false;                 // hoje já foi marcado
+      this.upsert('kid_entries', {
+        kid_id: kidId, tipo: 'tarefa', pote: 'gastar', amount: 0,
+        date: this.hojeISO(), description: t.name, task_id: taskId, confirmada: true,
+      });
+      this.acertarBonus(kidId, taskId);
+      return true;
+    }
+
+    if (ja.feita) return false;
     this.upsert('kid_entries', {
       kid_id: kidId, tipo: 'tarefa', pote: 'gastar', amount: Number(t.amount) || 0,
       date: this.hojeISO(), description: t.name, task_id: taskId, confirmada: false,
@@ -316,9 +387,46 @@ const Dados = {
 
   desmarcarTarefa(kidId, taskId) {
     const t = this.tarefas(kidId).find(x => x.id === taskId);
-    if (!t || !t.feita || t.confirmada) return false;   // confirmada não se desfaz
+    if (!t || !t.feita) return false;
+    if (!t.diaria && t.confirmada) return false;  // semanal confirmada não se desfaz
+    /* NA DIÁRIA, desmarcar hoje é permitido mesmo estando "confirmada": a marcação
+       do dia vale zero e nasce confirmada por construção, então tratá-la como
+       intocável trancaria a criança num toque errado. O que não se desfaz é o
+       BÔNUS já pago — e é o acertarBonus abaixo que cuida disso. */
+    if (t.diaria && t.bonusPago) return false;
     this.remove('kid_entries', t.entryId);
+    if (t.diaria) this.acertarBonus(kidId, taskId);
     return true;
+  },
+
+  /* O BÔNUS DA SEMANA CHEIA, criado e desfeito conforme a sequência.
+
+     Nasce pendente (confirmada: false) e entra na mesma fila que o adulto já usa
+     para conferir tarefas — o dinheiro só cai no pote depois que ele vê.
+
+     E SAI se a sequência quebrar: se a criança desmarcar um dia antes de o adulto
+     confirmar, o bônus deixa de ser devido. Sem isto, bastava marcar os sete dias,
+     desmarcar um e ficar com o bônus pendente para sempre. Bônus já confirmado não
+     é mexido: o dinheiro está no pote, e retirar dali seria o app tomando de volta
+     o que já deu. */
+  acertarBonus(kidId, taskId) {
+    const t = this.tarefas(kidId).find(x => x.id === taskId);
+    if (!t || !t.diaria) return false;
+    const valor = Number(t.amount) || 0;
+
+    if (t.completou && !t.bonusId && valor > 0) {
+      this.upsert('kid_entries', {
+        kid_id: kidId, tipo: 'bonus', pote: 'gastar', amount: valor,
+        date: this.hojeISO(), description: t.name + ' — a semana toda',
+        task_id: taskId, confirmada: false,
+      });
+      return true;
+    }
+    if (!t.completou && t.bonusId && !t.bonusPago) {
+      this.remove('kid_entries', t.bonusId);
+      return true;
+    }
+    return false;
   },
 
   /* GASTAR e DOAR: só até onde o pote alcança.

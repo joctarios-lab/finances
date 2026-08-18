@@ -2259,35 +2259,86 @@ const DB = {
     return { kid, valor: Number(kid.rendimento_valor) };
   },
 
-  /* TAREFAS da semana, com o que já foi marcado e o que falta confirmar. */
+  /* AS MISSÕES DA SEMANA, com o progresso de cada uma.
+
+     Espelha `tarefas` do app da criança, e tem de espelhar: o adulto e ela
+     precisam ver o MESMO progresso. Duas contas parecidas viram duas verdades, e
+     quando o número da tela dela não bate com o da tela dele, quem perde a
+     confiança no app é a criança. Há teste rodando a mesma cena nas duas.
+
+     Duas frequências, e a diferença é de natureza:
+       semanal — faz uma vez e está feito
+       diária  — precisa acontecer todos os dias, e o valor sai UMA VEZ ao
+                 completar a semana (ver o comentário em cofrinho/js/dados.js) */
   kidTarefas(kidId) {
     const kid = this.get('kids', kidId);
     if (!kid) return [];
     const inicio = this.kidInicioDaSemana(kid);
+    const hoje = this.hojeISO();
     const marcadas = this.all('kid_entries').filter(e =>
       e.kid_id === kidId && e.tipo === 'tarefa' && String(e.date) >= inicio);
+
     return this.all('kid_tasks')
       .filter(t => t.kid_id === kidId && t.active !== false)
       .map(t => {
-        const feita = marcadas.find(e => e.task_id === t.id);
-        return { ...t, feita: !!feita, confirmada: feita ? feita.confirmada !== false : false, entryId: feita ? feita.id : null };
+        const daTarefa = marcadas.filter(e => e.task_id === t.id);
+        if (t.frequencia !== 'diaria') {
+          const feita = daTarefa[0];
+          return {
+            ...t, diaria: false, feita: !!feita,
+            confirmada: feita ? feita.confirmada !== false : false,
+            entryId: feita ? feita.id : null,
+          };
+        }
+        const dias = [];
+        for (let i = 0; i < 7; i++) {
+          const d = this.somarDiasISO(inicio, i);
+          dias.push({ data: d, passou: d <= hoje, hoje: d === hoje,
+            marcada: daTarefa.some(e => String(e.date) === d) });
+        }
+        const feitos = dias.filter(d => d.marcada).length;
+        const deHoje = daTarefa.find(e => String(e.date) === hoje);
+        const bonus = this.all('kid_entries').find(e =>
+          e.kid_id === kidId && e.tipo === 'bonus' && e.task_id === t.id && String(e.date) >= inicio);
+        return {
+          ...t, diaria: true, dias, feitos,
+          feita: !!deHoje,
+          confirmada: deHoje ? deHoje.confirmada !== false : false,
+          entryId: deHoje ? deHoje.id : null,
+          completou: feitos >= 7,
+          bonusId: bonus ? bonus.id : null,
+          bonusPago: bonus ? bonus.confirmada !== false : false,
+        };
       });
   },
-
   // O que espera o adulto: tarefa marcada pela criança e ainda não confirmada
+  /* O QUE ESPERA O ADULTO: o que a criança marcou e ainda não foi conferido.
+
+     Duas coisas entram, e as duas envolvem dinheiro:
+
+       tarefa semanal — ela marcou, vale um valor, e o dinheiro só cai depois que
+                        ele vê. É o que impede o app de virar auto-serviço.
+       bônus da diária — ela cuidou os sete dias e o valor da semana ficou devido.
+
+     A MARCAÇÃO DIÁRIA NÃO ENTRA AQUI, de propósito. Ela vale zero e nasce
+     confirmada: não há dinheiro a liberar, então não há o que conferir. Pedir sete
+     confirmações por semana por tarefa faria o adulto parar de conferir qualquer
+     coisa — inclusive o que importa. */
   kidTarefasAConfirmar() {
     const out = [];
     for (const kid of this.kids()) {
       const inicio = this.kidInicioDaSemana(kid);
       for (const e of this.all('kid_entries')) {
-        if (e.kid_id !== kid.id || e.tipo !== 'tarefa' || e.confirmada !== false) continue;
+        if (e.kid_id !== kid.id || e.confirmada !== false) continue;
+        if (e.tipo !== 'tarefa' && e.tipo !== 'bonus') continue;
         if (String(e.date) < inicio) continue;
+        // Marcação de dia vale zero: não há dinheiro a liberar, nada a conferir
+        if (!(Number(e.amount) > 0)) continue;
         out.push({ kid, entry: e });
       }
     }
     return out;
   },
-
   /* ---------- APAGAR UM COFRINHO INTEIRO ----------
 
      Existia só "pausar", que esconde do app da criança e guarda tudo. Faltava
