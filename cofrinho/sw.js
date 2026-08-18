@@ -10,19 +10,19 @@
    e a nuvem é conversa que acontece por trás, sem passar pelo cache. */
 'use strict';
 
-const VERSAO = '5';
+const VERSAO = '6';
 const CACHE = 'cofrinho-' + VERSAO;
 
 const CASCA = [
   './',
   './index.html',
-  './css/cofrinho.css?v=5',
-  './js/arte.js?v=5',
-  './js/dados.js?v=5',
-  './js/cofrinho.js?v=5',
+  './css/cofrinho.css?v=6',
+  './js/arte.js?v=6',
+  './js/dados.js?v=6',
+  './js/cofrinho.js?v=6',
   './manifest.webmanifest',
   './icons/cofrinho.svg',
-  '../js/config.js?v=142',
+  '../js/config.js?v=143',
 ];
 
 self.addEventListener('install', ev => {

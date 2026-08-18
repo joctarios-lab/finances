@@ -315,7 +315,16 @@ console.log('\n=== A criança reparte o que já tinha ===');
   check('e não pede de novo depois de repartido', Dados.aRepartir(idA), null);
   const t2 = telaCofrinho ? true : true;
   App.kid = Dados.get('kids', idA);
-  check('  o convite sai da tela do cofrinho', telaCofrinho().includes('id="ir-ritual"'), false);
+  /* O CONVITE DESTACADO sai; o botão discreto FICA.
+
+     São dois estados do mesmo caminho, e a diferença importa: o convite dourado
+     que pulsa chama a criança quando chega dinheiro novo, e some depois de
+     atendido. O botão claro "Quero guardar um pouco" permanece enquanto houver
+     dinheiro no pote gastar, porque decidir guardar é válido em qualquer dia — e
+     não havia caminho nenhum para isso antes. */
+  const depois = telaCofrinho();
+  check('  o convite destacado sai da tela', /bt ouro chama[^>]*id="ir-ritual"/.test(depois), false);
+  check('  mas o botão de guardar continua', depois.includes('Quero guardar um pouco'), true);
 
   /* A SEMANADA DEPOIS DA ABERTURA continua funcionando, e vem depois dela: a
      abertura é uma vez na vida do cofrinho, e é o primeiro contato. */
@@ -588,6 +597,134 @@ console.log('\n=== A tela das missões de todo dia ===');
 
   limpar(id);
 }
+/* ================= O mesmo dinheiro repartido duas vezes ================= */
+console.log('\n=== Repartir não duplica dinheiro ===');
+{
+  /* ESTRAGO REAL, numa base de verdade. O histórico ficou assim:
+
+       08-10 | inicial | gastar  |  R$ 60,00
+       08-17 | divisao | gastar  | -R$ 60,00   ← repartiu
+       08-17 | divisao | guardar |  R$ 60,00
+       08-17 | divisao | gastar  | -R$ 60,00   ← repartiu DE NOVO
+       08-17 | divisao | guardar |  R$ 60,00
+
+     Resultado: pote gastar em −R$ 54 e guardar em R$ 121 em vez de R$ 61.
+
+     A CAUSA foi de desenho: a marca `repartido` era a única barreira, e ela é uma
+     coluna nova em COLUNAS_OPCIONAIS. Num banco sem a coluna o push a descarta e o
+     pull traz o registro limpo — o convite reabria e a criança repartia de novo.
+
+     Coluna opcional serve para dado acessório, nunca para a regra que decide se
+     dinheiro se move. Agora quem manda é o SALDO, que é derivado. */
+  const id = novaCrianca({ name: 'Duplicado' });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'inicial', pote: 'gastar', amount: 60,
+    date: Dados.somarDiasISO(HOJE, -7), description: 'O que ele já tinha', confirmada: true,
+  });
+
+  check('reparte a abertura', Dados.dividir(id, 60, 0), true);
+  check('  o dinheiro foi para guardar', Dados.potes(id).guardar, 60);
+  check('  e gastar zerou', Dados.potes(id).gastar, 0);
+
+  /* A MARCA SE PERDE — é o que a sincronização faz num banco sem a coluna. Simula
+     removendo o campo, que é exatamente o estado em que o registro volta do pull. */
+  for (const e of Dados.all('kid_entries')) {
+    if (e.kid_id === id) delete e.repartido;
+  }
+  Dados.salvar();
+
+  /* Sem a proteção por saldo, o convite reabriria com R$ 60 e a criança repartiria
+     de novo. Agora o pote gastar está em zero, então não há nada a repartir. */
+  check('com a marca perdida, o convite não reabre', Dados.aRepartir(id), null);
+  check('  porque não há dinheiro em gastar', Dados.podeRepartir(id), false);
+
+  /* E MESMO CHAMANDO dividir DIRETO, o dinheiro não se multiplica. É a barreira
+     que faltava: a validação não confia em quem chamou. */
+  check('repartir de novo é recusado', Dados.dividir(id, 60, 0), false);
+  check('  o guardar não dobra', Dados.potes(id).guardar, 60);
+  check('  e o gastar não fica negativo', Dados.potes(id).gastar, 0);
+  check('  o total continua o mesmo', Dados.potes(id).total, 60);
+
+  /* O POTE NUNCA FICA NEGATIVO. Um cofrinho que deixa o pote no vermelho perdeu o
+     direito de ensinar que dinheiro acaba — é a lição inteira do app. */
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'semanada', pote: 'gastar', amount: 10, date: HOJE,
+    confirmada: true, repartido: false,
+  });
+  check('com R$ 10 em gastar, repartir R$ 30 é recusado', Dados.dividir(id, 30, 0), false);
+  check('  o pote fica intacto', Dados.potes(id).gastar, 10);
+  check('repartir exatamente o que tem funciona', Dados.dividir(id, 7, 3), true);
+  check('  e zera o pote sem passar', Dados.potes(id).gastar, 0);
+  check('  guardar recebeu', Dados.potes(id).guardar, 67);
+  check('  doar recebeu', Dados.potes(id).doar, 3);
+  check('  e o total nunca mudou', Dados.potes(id).total, 70);
+
+
+  /* O CONVITE OFERECE O QUE EXISTE, não o que o lançamento dizia.
+
+     Se a criança recebe R$ 10 e gasta R$ 5 antes de repartir, o pote tem R$ 5 — e
+     oferecer R$ 10 seria prometer o que não está lá: ela distribuiria dez, o app
+     recusaria no fim e o botão pareceria quebrado. */
+  const idL = novaCrianca({ name: 'Limite' });
+  Dados.upsert('kid_entries', {
+    kid_id: idL, tipo: 'semanada', pote: 'gastar', amount: 10, date: HOJE,
+    confirmada: true, repartido: false,
+  });
+  Dados.gastar(idL, 'gastar', 5, 'Sorvete');
+  check('gastou metade antes de repartir', Dados.potes(idL).gastar, 5);
+  check('  o convite oferece só o que sobrou', Dados.aRepartir(idL).valor, 5);
+  check('  e não o valor cheio da semanada', Dados.aRepartir(idL).valor < 10, true);
+
+  App.kid = Dados.get('kids', idL);
+  telaRitual();
+  check('  a tela do ritual mostra o que existe', tela().includes(fmtKid(5)), true);
+  /* O valor grande da tela é o teto da repartição: mostrar R$ 10 ali seria a mesma
+     promessa falsa, agora em corpo 52. */
+  const grande = (tela().match(/ritual-valor">([^<]+)/) || [])[1] || '';
+  check('  e o número grande é o saldo, não a semanada', grande.includes('5'), true);
+  check('  sem mostrar o valor cheio', /10/.test(grande), false);
+  limpar(idL);
+
+  /* NENHUM POTE NEGATIVO, em nenhum momento: é a invariante do cofrinho. */
+  const p = Dados.potes(id);
+  check('nenhum pote está negativo', p.gastar >= 0 && p.guardar >= 0 && p.doar >= 0, true);
+  limpar(id);
+}
+
+console.log('\n=== Guardar um pouco, em qualquer dia ===');
+{
+  /* Faltava por completo: se a criança deixasse tudo em gastar, não havia caminho
+     nenhum para depois decidir guardar. E "hoje eu quero guardar isso" é exatamente
+     a decisão que o app existe para incentivar. */
+  const id = novaCrianca({ name: 'Depois' });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'semanada', pote: 'gastar', amount: 10, date: HOJE,
+    confirmada: true, repartido: false,
+  });
+  // Ela escolhe deixar tudo em gastar, que é uma decisão legítima
+  Dados.dividir(id, 0, 0);
+  check('deixou tudo em gastar', Dados.potes(id).gastar, 10);
+  check('  e o convite se encerrou', Dados.aRepartir(id), null);
+
+  /* MAS AINDA PODE GUARDAR. Antes o caminho morria aqui. */
+  check('ainda pode repartir depois', Dados.podeRepartir(id), true);
+  App.kid = Dados.get('kids', id);
+  check('  e a tela oferece o botão', telaCofrinho().includes('Quero guardar um pouco'), true);
+
+  telaRitual();
+  check('  a tela de repartir abre sem convite pendente', tela().includes('data-mais="guardar"'), true);
+  check('  oferecendo o que está no pote', tela().includes(fmtKid(10)), true);
+
+  check('e guardar depois funciona', Dados.dividir(id, 4, 1), true);
+  check('  o dinheiro se move', [Dados.potes(id).gastar, Dados.potes(id).guardar, Dados.potes(id).doar], [5, 4, 1]);
+  check('  sem mudar o total', Dados.potes(id).total, 10);
+
+  /* GASTOU TUDO: aí o botão some, porque não há o que repartir. */
+  Dados.gastar(id, 'gastar', 5, 'Doce');
+  check('sem saldo em gastar, não pode repartir', Dados.podeRepartir(id), false);
+  check('  e o botão sai da tela', telaCofrinho().includes('Quero guardar um pouco'), false);
+  limpar(id);
+}
 /* ================= Gastar e doar ================= */
 console.log('\n=== Gastar só o que tem ===');
 {
@@ -715,7 +852,13 @@ console.log('\n=== O que a criança vê ===');
   check('  o histórico já mostra a semanada', t.includes('Semanada'), true);
 
   Dados.dividir(id, 3, 0);
-  check('depois de repartir, o convite some', telaCofrinho().includes('id="ir-ritual"'), false);
+  const aposRepartir = telaCofrinho();
+  check('depois de repartir, o convite destacado some',
+    /bt ouro chama[^>]*id="ir-ritual"/.test(aposRepartir), false);
+  /* E se sobrou dinheiro em gastar, o botão discreto continua: ela pode voltar e
+     guardar mais. Se não sobrou nada, nem o botão aparece — não há o que repartir. */
+  check('  e o botão discreto acompanha o saldo do pote',
+    aposRepartir.includes('Quero guardar um pouco'), Dados.potes(id).gastar > 0);
   check('  e a divisão aparece no histórico sem sinal de menos',
     telaCofrinho().includes('trocou de pote'), true);
 

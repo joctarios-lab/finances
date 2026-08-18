@@ -224,60 +224,59 @@ const Dados = {
      nesta semana: se já dividiu, o ritual está cumprido. */
   /* O QUE ESPERA A DECISÃO DELA.
 
-     Duas coisas passam por aqui, e a segunda foi pedida depois: a semanada e o
-     SALDO DE ABERTURA — o dinheiro que a criança já tinha quando o cofrinho
-     começou. Antes ele ia direto para o pote que o adulto escolheu, e a criança
-     perdia justamente o melhor primeiro contato com o app: decidir onde o
-     dinheiro dela vai.
+     Duas coisas passam por aqui: a semanada e o SALDO DE ABERTURA — o dinheiro
+     que a criança já tinha quando o cofrinho começou.
 
-     A MARCA `repartido` SUBSTITUIU A JANELA SEMANAL, e a troca importa. Antes o
-     app perguntava "houve divisão nesta semana?", o que funciona para a semanada e
-     falha para o saldo de abertura: ele é datado no passado (o dinheiro não chegou
-     hoje), e a busca por `date >= início da semana` nunca o encontrava. Com a
-     marca, a pergunta passa a ser sobre o LANÇAMENTO e não sobre o calendário.
+     O VALOR É LIMITADO PELO SALDO DO POTE, e esta linha nasceu de um estrago real.
 
-     SÓ O QUE ESTÁ NO POTE GASTAR. Se o adulto lançou o saldo de abertura direto em
-     "guardar", ele já decidiu o destino — pedir para a criança repartir de novo
-     seria desfazer a escolha dele.
+     A marca `repartido` era a única barreira, e ela some: a coluna chegou depois e
+     está em COLUNAS_OPCIONAIS, então num banco sem ela o push descarta a marca e o
+     pull traz o registro limpo. O ritual reabria, a criança repartia de novo, e o
+     mesmo dinheiro entrava duas vezes no pote guardar. Medido numa base real: o
+     pote gastar ficou em −R$ 54 e o guardar em R$ 121 em vez de R$ 61.
 
-     A ABERTURA VEM PRIMEIRO, sem janela de tempo: é uma vez na vida do cofrinho e
-     não expira. A semanada continua limitada à semana corrente — uma de três
-     semanas atrás não volta a pedir ritual, porque aquele dinheiro já foi gasto e
-     o ritual perdeu o sentido. */
+     A lição é de desenho: coluna opcional serve para dado acessório, nunca para a
+     regra que decide se dinheiro se move. Agora quem manda é o SALDO — que é
+     derivado dos lançamentos e não depende de coluna nenhuma. A marca continua
+     existindo, mas só para destacar o convite; se ela se perder, o pior caso é o
+     convite reaparecer, e repartir dinheiro que ela realmente tem é legítimo. */
   aRepartir(kidId) {
     const kid = this.get('kids', kidId);
     if (!kid) return null;
+    const disponivel = this.potes(kidId).gastar;
+    if (!(disponivel > 0)) return null;          // nada em gastar, nada a repartir
+
     const pendente = e => e.kid_id === kidId && e.pote === 'gastar'
       && e.repartido !== true && (Number(e.amount) || 0) > 0;
+    const limitar = v => Math.min(Number(v) || 0, disponivel);
 
     const abertura = this.all('kid_entries').find(e => pendente(e) && e.tipo === 'inicial');
-    if (abertura) return { entry: abertura, valor: Number(abertura.amount) || 0, abertura: true };
+    if (abertura) return { entry: abertura, valor: limitar(abertura.amount), abertura: true };
 
     const inicio = this.inicioDaSemana(kid);
     const sem = this.all('kid_entries').find(e =>
       pendente(e) && e.tipo === 'semanada' && String(e.date) >= inicio);
     if (!sem) return null;
 
-    /* Compatibilidade com semanadas gravadas ANTES da marca existir.
-
-       Elas não têm o campo `repartido` — nem `true` nem `false` —, e para elas a
-       pergunta antiga (houve divisão nesta semana?) continua sendo a única resposta
-       possível. Sem isto, toda semanada já repartida em versão anterior voltaria a
-       pedir o ritual, e a criança repartiria DE NOVO, tirando mais do pote gastar.
-
-       `=== undefined` E NÃO `!== true`: a diferença apareceu no teste. Uma semanada
-       nova nasce com `repartido: false` explícito, e tratá-la como antiga fazia o
-       calendário decidir por ela — a divisão da ABERTURA, feita hoje, bloqueava a
-       semanada desta mesma semana. Quem repartisse o saldo inicial na segunda
-       perdia o ritual da semanada da segunda. */
+    /* Compatibilidade com semanadas gravadas ANTES da marca existir: para elas a
+       pergunta antiga (houve divisão nesta semana?) é a única resposta possível.
+       Sem isto, toda semanada já repartida em versão anterior voltaria a pedir o
+       ritual. Ver o teste do legado em tests/cofrinho.js. */
     if (sem.repartido === undefined) {
       const jaDividiu = this.all('kid_entries').some(e =>
         e.kid_id === kidId && e.tipo === 'divisao' && String(e.date) >= inicio);
       if (jaDividiu) return null;
     }
-    return { entry: sem, valor: Number(sem.amount) || 0, abertura: false };
+    return { entry: sem, valor: limitar(sem.amount), abertura: false };
   },
 
+  /* PODE REPARTIR A QUALQUER MOMENTO, e não só quando o dinheiro chega.
+
+     Faltava: se a criança deixasse tudo em gastar — ou se o convite não abrisse —,
+     não havia caminho nenhum para depois decidir guardar. E "hoje eu quero guardar
+     isso" é exatamente a decisão que o app existe para incentivar; recusá-la
+     ensinava que guardar só vale no instante em que o dinheiro cai. */
+  podeRepartir(kidId) { return this.potes(kidId).gastar > 0; },
   // Nome antigo, mantido enquanto houver chamada por aí
   semanadaADividir(kidId) { return this.aRepartir(kidId); },
 
@@ -311,24 +310,32 @@ const Dados = {
      histórico dela precisa MOSTRAR a escolha ("guardei 3, doei 1"), e o registro
      original da semanada não pode ser reescrito — ele é do adulto, e o app da
      criança nunca reescreve o que o adulto lançou. */
+  /* REPARTIR: três lançamentos de "divisao" que somam zero.
+
+     Podia ser um só, mudando o pote da entrada. Não é, por dois motivos: o
+     histórico dela precisa MOSTRAR a escolha ("guardei 3, doei 1"), e o registro
+     original é do adulto — o app da criança nunca reescreve o que ele lançou.
+
+     NÃO MOVE MAIS DO QUE EXISTE NO POTE. É a proteção que faltava: sem ela, o
+     ritual reaberto por marca perdida repartiu o mesmo dinheiro duas vezes e o
+     pote gastar foi para −R$ 54. Um cofrinho que deixa o pote negativo perdeu o
+     direito de ensinar que dinheiro acaba. */
   dividir(kidId, guardar, doar) {
     const hoje = this.hojeISO();
     const g = Math.max(0, Number(guardar) || 0);
     const d = Math.max(0, Number(doar) || 0);
-    /* MARCA A ORIGEM COMO REPARTIDA, e é o que fecha o ritual.
+    const disponivel = this.potes(kidId).gastar;
+    if (g + d > disponivel + 0.005) return false;
 
-       Sem a marca, o app decidia por calendário — "houve divisão nesta semana?" — e
-       o saldo de abertura, datado no passado, nunca saía da fila: a criança
-       repartia e o app pedia de novo. */
     const origem = this.aRepartir(kidId);
     const fechar = () => {
       if (origem) this.upsert('kid_entries', { ...origem.entry, repartido: true });
     };
-    const rotulo = origem && origem.abertura ? 'Reparti o meu dinheiro' : 'Reparti a semanada';
+    const rotulo = origem && origem.abertura ? 'Reparti o meu dinheiro' : 'Guardei um pouco';
 
     if (g + d <= 0) {
-      // Escolheu não repartir: o registro existe assim mesmo, para o ritual não
-      // ficar aberto para sempre pedindo uma divisão que já foi decidida.
+      /* Escolheu não repartir. O registro existe assim mesmo, para o convite não
+         ficar pedindo para sempre uma decisão que já foi tomada. */
       this.upsert('kid_entries', {
         kid_id: kidId, tipo: 'divisao', pote: 'gastar', amount: 0,
         date: hoje, description: 'Deixei tudo para gastar', confirmada: true,
@@ -351,7 +358,6 @@ const Dados = {
     fechar();
     return true;
   },
-
   /* MARCAR TAREFA: nasce sem confirmação, e é isso que a torna honesta.
 
      O dinheiro não entra no pote enquanto o adulto não vir. Se entrasse na hora,

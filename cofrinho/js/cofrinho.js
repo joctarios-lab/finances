@@ -335,6 +335,17 @@ function telaCofrinho() {
     ${ritual ? `
       <button class="bt ouro chama" id="ir-ritual" style="margin-bottom:18px">
         <span class="emo">🎉</span> ${ritual.abertura ? 'Guardar meus' : 'Repartir'} ${fmtKid(ritual.valor)}
+      </button>`
+      /* SEM CONVITE, MAS COM DINHEIRO EM GASTAR: o botão continua ali, discreto.
+
+         Faltava por completo. Se a criança deixasse tudo em gastar, ou se o convite
+         não abrisse, não havia caminho nenhum para depois decidir guardar — e "hoje
+         eu quero guardar isso" é exatamente a decisão que o app existe para
+         incentivar. Recusá-la ensinava que guardar só vale no instante em que o
+         dinheiro cai. */
+      : Dados.podeRepartir(kid.id) ? `
+      <button class="bt clara" id="ir-ritual" style="margin-bottom:18px">
+        <span class="emo">🫙</span> Quero guardar um pouco
       </button>` : ''}
 
     <div class="potes">
@@ -426,18 +437,30 @@ function diaBonito(iso) {
 function telaRitual() {
   const kid = App.kid;
   const r = Dados.aRepartir(kid.id);
-  if (!r) { render(); return; }
-  const total = r.valor;
-  // A regra do passo vive em Dados, para poder ser medida — ver passoDoRitual
+  /* SEM CONVITE PENDENTE, reparte o que está no pote gastar.
+
+     A tela era acessível só pelo convite, e por isso morria com ele. Agora ela
+     responde à pergunta "quanto do que tenho eu quero guardar?", que é válida em
+     qualquer dia — e o teto é sempre o saldo do pote, nunca o valor de um
+     lançamento antigo. Foi assim que o mesmo dinheiro foi repartido duas vezes. */
+  const disponivel = Dados.potes(kid.id).gastar;
+  if (!(disponivel > 0)) { render(); return; }
+  const abertura = !!(r && r.abertura);
+  /* Math.min com o saldo, embora aRepartir ja limite: sao duas barreiras para a
+     mesma promessa falsa, e a redundancia e de proposito. Um teste que reprovasse
+     a remocao desta linha estaria exigindo a implementacao em vez do que a crianca
+     ve — e o que ela ve continua certo com qualquer uma das duas. */
+  const total = r ? Math.min(r.valor, disponivel) : disponivel;
+  /* Passo de R$ 1 sempre que der: contar moedas de um real é a conta que ela faz.
+     A regra do passo vive em Dados, para poder ser medida — ver passoDoRitual. */
   const passo = Dados.passoDoRitual(total);
   let guardar = 0, doar = 0;
-
   const desenhar = () => {
     const gastar = +(total - guardar - doar).toFixed(2);
     const teto = Math.max(gastar, guardar, doar, 1);
     raiz().innerHTML = `
       ${palco('uau', 138)}
-      ${balao(r.abertura
+      ${balao(abertura
         ? 'Este dinheiro é todo seu! Quanto você quer <b>guardar</b> e quanto quer <b>doar</b>?'
         : 'Chegou a sua semanada! Quanto você quer <b>guardar</b> e quanto quer <b>doar</b>?')}
       <div class="ritual-valor">${fmtKid(total)}</div>
@@ -487,7 +510,7 @@ function telaRitual() {
       App.aba = 'cofrinho';
       render();
       aviso(guardar + doar > 0
-        ? (r.abertura ? 'Pronto! Seu cofrinho está montado 🫙' : 'Muito bem! Você repartiu 🫙')
+        ? (abertura ? 'Pronto! Seu cofrinho está montado 🫙' : 'Muito bem! Você repartiu 🫙')
         : 'Tudo no pote de gastar!', '🎉');
     };
     el('#rit-volta').onclick = () => { App.aba = 'cofrinho'; render(); };
