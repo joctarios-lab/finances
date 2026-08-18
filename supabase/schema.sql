@@ -483,7 +483,12 @@ create table if not exists kid_entries (
   id uuid primary key,
   family_id uuid not null references families(id) on delete cascade,
   kid_id uuid not null,
-  -- semanada | tarefa | presente | gasto | doacao | rendimento
+  -- Entra: semanada | tarefa | presente | rendimento | inicial (o que ela já tinha
+  -- quando o cofrinho começou) — e divisao, que soma zero: são três linhas que
+  -- movem dinheiro entre potes, e existem para o histórico dela MOSTRAR a escolha.
+  -- Sai: gasto | doacao
+  -- Texto livre de propósito, sem CHECK: um tipo novo no app não pode exigir
+  -- migração de banco para funcionar, senão o app novo quebra contra o banco velho.
   tipo text not null default 'semanada',
   amount numeric not null,
   date date not null,

@@ -375,6 +375,10 @@ function historico(kidId) {
   const tipos = {
     semanada: ['🪙', 'fg-ouro'], tarefa: ['✅', 'fg-entrada'], rendimento: ['✨', 'fg-ouro'],
     presente: ['🎁', 'fg-ouro'], gasto: ['🛒', 'fg-saida'], doacao: ['💝', 'fg-doar'],
+    /* O que ela já tinha quando o cofrinho começou. Bandeirinha de largada, porque
+       para a criança é o marco de "aqui eu comecei" — e sem entrada própria este
+       lançamento cairia no ícone genérico, sem dizer o que é. */
+    inicial: ['🏁', 'fg-guardar'],
   };
   return movs.map(e => {
     const saida = e.tipo === 'gasto' || e.tipo === 'doacao';

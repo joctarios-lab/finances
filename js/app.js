@@ -7527,8 +7527,8 @@ function openCriancaDetalhe(kidId) {
   const meta = DB.kidMeta(kidId);
   const tarefas = DB.kidTarefas(kidId);
   const entradas = DB.kidEntries(kidId).slice(0, 30);
-  const rotulo = { semanada: 'Semanada', tarefa: 'Tarefa', presente: 'Presente', gasto: 'Gasto', doacao: 'Doação', rendimento: 'Moeda mágica' };
-  const icone = { semanada: '🪙', tarefa: '⭐', presente: '🎁', gasto: '🛒', doacao: '❤️', rendimento: '✨' };
+  const rotulo = { semanada: 'Semanada', tarefa: 'Tarefa', presente: 'Presente', gasto: 'Gasto', doacao: 'Doação', rendimento: 'Moeda mágica', inicial: 'Já tinha antes', divisao: 'Repartiu nos potes' };
+  const icone = { semanada: '🪙', tarefa: '⭐', presente: '🎁', gasto: '🛒', doacao: '❤️', rendimento: '✨', inicial: '🏁', divisao: '🫙' };
   const potinho = { gastar: '🍭', guardar: '🎯', doar: '❤️' };
 
   openModal(`
@@ -7713,6 +7713,7 @@ function openKidLancarSheet(kidId) {
     <div class="sheet-title">Lançar movimento<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <div class="field"><label>O que aconteceu?</label>
       <select id="kl-tipo">
+        <option value="inicial">Já tinha antes de começar</option>
         <option value="presente">Ganhou um presente em dinheiro</option>
         <option value="gasto">Gastou com alguma coisa</option>
         <option value="doacao">Doou para alguém</option>
@@ -7726,8 +7727,13 @@ function openKidLancarSheet(kidId) {
       </select></div>
     <div class="field"><label>Quanto?</label>
       <input class="amount-input" id="kl-valor" type="text" inputmode="numeric" autocomplete="off"></div>
+    <div class="field"><label>Quando?</label>
+      <input type="date" id="kl-data" value="${todayISO()}"></div>
     <div class="field"><label>Descrição</label>
       <input type="text" id="kl-desc" autocomplete="off" placeholder="opcional"></div>
+    <p class="muted">Para abrir o cofrinho com o que ele já tinha, use
+      <b>Já tinha antes de começar</b> — o histórico dele fica honesto, sem inventar
+      um presente que não houve.</p>
     <button class="btn" id="sh-save">Lançar</button>
   `);
   initMoney('#kl-valor', 0);
@@ -7735,9 +7741,14 @@ function openKidLancarSheet(kidId) {
   $('#sh-save').onclick = () => {
     const valor = moneyVal('#kl-valor');
     if (!valor) return toast('Informe o valor');
+    /* A DATA É EDITÁVEL porque o saldo de abertura é histórico: o dinheiro que a
+       criança já tinha não chegou hoje. Fixar em hoje faria o primeiro lançamento
+       do cofrinho mentir sobre quando aquilo aconteceu — e é o único registro que
+       ela vai ter do começo. */
+    const data = ($('#kl-data') && $('#kl-data').value) || todayISO();
     DB.upsert('kid_entries', {
       kid_id: kidId, tipo: $('#kl-tipo').value, pote: $('#kl-pote').value,
-      amount: valor, date: todayISO(), description: ($('#kl-desc').value || '').trim(), confirmada: true,
+      amount: valor, date: data, description: ($('#kl-desc').value || '').trim(), confirmada: true,
     });
     closeSheet(); Sync.autoSync(); openCriancaDetalhe(kidId);
     toast('Lançado ✓');

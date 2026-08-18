@@ -118,7 +118,7 @@ eval(appSrc + `; Object.assign(global, {
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openEditarContrato, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
-  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, blocoDaSemanada, notaDosFilhos, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
+  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, blocoDaSemanada, openKidLancarSheet, notaDosFilhos, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
 
 /* 'R$ 1.234,56' de volta para 1234.56.
 
@@ -6215,6 +6215,81 @@ try {
   DB.remove('kids', idF);
   DB.remove('accounts', contaF);
 } catch (e) { console.log(` FALHA | dinheiro dos filhos: ${e.message}`); fail++; }
+
+/* ---- ABRIR O COFRINHO COM O QUE A CRIANÇA JÁ TINHA ----
+
+   Quem começa a usar o app não começa do zero: o filho já tem dinheiro guardado.
+   O tipo mais próximo era "presente", que mente sobre o que aconteceu — e o
+   histórico dela é o único registro que vai existir do começo. */
+console.log('\n=== Saldo de abertura do cofrinho ===');
+try {
+  const hojeI = DB.hojeISO();
+  const idI = DB.upsert('kids', { name: 'Filho Inicial', semanada_valor: 10, semanada_dia: 1, active: true });
+
+  const ontem = DB.somarDiasISO(hojeI, -1);
+  DB.upsert('kid_entries', {
+    kid_id: idI, tipo: 'inicial', pote: 'gastar', amount: 60, date: ontem,
+    description: 'O que ele já tinha', confirmada: true,
+  });
+  check('o saldo de abertura entra no pote', DB.kidPotes(idI).gastar, 60);
+  check('  e no total do cofrinho', DB.kidPotes(idI).total, 60);
+  check('  e no dinheiro dos filhos da família', DB.dosFilhos() >= 60, true);
+
+  /* NÃO É SAÍDA. Um tipo desconhecido cairia no ramo de entrada por padrão, mas
+     depender do padrão é frágil: basta alguém trocar a ordem do teste em kidPotes
+     para o saldo de abertura virar dívida. */
+  DB.upsert('kid_entries', { kid_id: idI, tipo: 'inicial', pote: 'guardar', amount: 10, date: ontem, confirmada: true });
+  check('  somando, não subtraindo', DB.kidPotes(idI).total, 70);
+
+  /* A DATA É RESPEITADA: o dinheiro que ele já tinha não chegou hoje, e datar tudo
+     em hoje faria o começo do histórico dela mentir.
+
+     PELO BOTÃO DA FOLHA, não por DB.upsert. Inserindo direto eu testava a mim
+     mesmo: a sabotagem que fixava a data em hoje passava verde, porque nada
+     exercitava o caminho que a pessoa usa. */
+  const antesN = DB.all('kid_entries').filter(e => e.kid_id === idI).length;
+  openKidLancarSheet(idI);
+  /* el() CRIA o elemento se ainda não existe; els[...] só lê o que já foi tocado, e
+     os campos da folha só são tocados quando o botão salva. */
+  el('#kl-tipo').value = 'inicial';
+  el('#kl-pote').value = 'guardar';
+  el('#kl-valor').dataset.cents = 2500;      // R$ 25,00, como initMoney guarda
+  const anteontem = DB.somarDiasISO(hojeI, -2);
+  el('#kl-data').value = anteontem;
+  el('#sh-save').click();
+  const novo = DB.all('kid_entries')
+    .filter(e => e.kid_id === idI && e.date === anteontem);
+  check('lançar pela folha grava na data escolhida', novo.length, 1);
+  check('  com o tipo escolhido', novo[0] && novo[0].tipo, 'inicial');
+  check('  no pote escolhido', novo[0] && novo[0].pote, 'guardar');
+  check('  e o valor da folha', novo[0] && novo[0].amount, 25);
+  check('  criando um lançamento, não substituindo',
+    DB.all('kid_entries').filter(e => e.kid_id === idI).length, antesN + 1);
+
+  const dele = DB.kidEntries(idI);
+  check('a data informada é guardada', dele.every(e => e.date !== hojeI), true);
+
+  /* TEM NOME NA TELA DO ADULTO. Sem entrada no mapa de rótulos, o lançamento
+     apareceria com o nome cru do tipo — "inicial" — no meio de "Semanada" e
+     "Presente". */
+  openCriancaDetalhe(idI);
+  const detI = els['#modal'].innerHTML;
+  check('o detalhe mostra o tipo por extenso', detI.includes('Já tinha antes'), true);
+  check('  e não mostra o nome cru do tipo', /<b>inicial<\/b>|>inicial</.test(detI), false);
+
+  /* E A FOLHA DE LANÇAR oferece o tipo, com data. Função sem caminho na tela é
+     função que não existe para quem usa. */
+  openKidLancarSheet(idI);
+  const folha = els['#sheet'].innerHTML;
+  check('a folha oferece "já tinha antes"', folha.includes('value="inicial"'), true);
+  check('  e deixa escolher a data', folha.includes('id="kl-data"'), true);
+  check('  com hoje pré-preenchido', folha.includes(`value="${hojeI}"`), true);
+  closeSheet();
+
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idI)) DB.remove('kid_entries', e.id);
+  DB.remove('kids', idI);
+  closeModal();
+} catch (e) { console.log(` FALHA | saldo de abertura: ${e.message}`); fail++; }
 
 /* ---- APAGAR UM COFRINHO INTEIRO ----
 

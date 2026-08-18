@@ -412,6 +412,19 @@ console.log('\n=== O que a criança vê ===');
   check('  e a divisão aparece no histórico sem sinal de menos',
     telaCofrinho().includes('trocou de pote'), true);
 
+
+  /* O TIPO "inicial" TEM ÍCONE PRÓPRIO no histórico dela.
+
+     É o saldo de abertura — o que ela já tinha quando o cofrinho começou. Sem
+     entrada no mapa, cai no ícone genérico de moeda e fica indistinguível de uma
+     semanada, justamente no primeiro registro que ela vai ver. */
+  Dados.upsert('kid_entries', { kid_id: id, tipo: 'inicial', pote: 'guardar', amount: 60,
+    date: Dados.somarDiasISO(HOJE, -1), description: 'O que eu já tinha', confirmada: true });
+  const comInicial = telaCofrinho();
+  check('o saldo de abertura aparece no histórico', comInicial.includes('O que eu já tinha'), true);
+  check('  com a bandeira de largada, não a moeda genérica', comInicial.includes('🏁'), true);
+  check('  e conta no total', Dados.potes(id).guardar >= 60, true);
+
   /* NENHUMA TELA PODE FICAR SEM SAÍDA. Uma criança que chega num beco sem botão
      de voltar não sabe fechar app — ela desiste, e o cofrinho fica abandonado. */
   App.aba = 'tarefas';
