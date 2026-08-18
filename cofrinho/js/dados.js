@@ -184,9 +184,26 @@ const Dados = {
     return this.paraISO(d);
   },
 
+  /* O EXTRATO DELA: a SAÍDA pendente aparece; a ENTRADA pendente, não.
+
+     É a mesma assimetria de `potes`, e tem de ser — senão o extrato desmente o
+     saldo na própria tela. A criança gasta R$ 5, o pote cai na hora, e o histórico
+     não mostrava nada: sumiu dinheiro sem uma linha explicando por quê. Para quem
+     está aprendendo o que é um extrato, isso é o pior ensinamento possível.
+
+     A entrada pendente continua fora: mostrá-la seria dizer que a tarefa já foi
+     paga antes de o adulto conferir, e a criança aprenderia a contar com dinheiro
+     que ainda não é dela.
+
+     Se o adulto recusar, a linha some junto com o lançamento — que é exatamente o
+     comportamento pedido. */
   entradas(kidId) {
     return this.all('kid_entries')
-      .filter(e => e.kid_id === kidId && e.confirmada !== false)
+      .filter(e => {
+        if (e.kid_id !== kidId) return false;
+        if (e.confirmada !== false) return true;
+        return e.tipo === 'gasto' || e.tipo === 'doacao';
+      })
       .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.updated_at).localeCompare(String(a.updated_at)));
   },
 
@@ -569,20 +586,47 @@ const Dados = {
     return { meta, valor: alvo };
   },
 
+  /* COMPRAR O SONHO TAMBÉM ESPERA O ADULTO.
+
+     Era a única saída do cofrinho que passava direto: criava o lançamento já
+     confirmado e, na ponte seguinte, DEBITAVA A CONTA DA FAMÍLIA sem ninguém
+     aprovar — e logo no maior valor que a criança movimenta. Um toque num botão
+     dourado tirava R$ 60 da conta de quem paga.
+
+     Agora nasce pendente, como todo gasto dela. O pote cai na hora (é saída, e
+     saída pendente conta), então o retorno é imediato; o dinheiro só sai da conta
+     quando o adulto confirma — que é, afinal, quando ele de fato compra o
+     patinete.
+
+     E A META NÃO É ENCERRADA AQUI. Fechá-la agora e ter de reabrir numa recusa
+     deixaria a criança ver o sonho conquistado e depois desconquistado. Quem
+     encerra é a confirmação — ver `metaAguardando`, que deriva o estado do
+     lançamento pendente e não precisa de campo novo. */
   realizarSonho(kidId) {
     const pronto = this.metaAlcancada(kidId);
     if (!pronto) return false;
+    if (this.metaAguardando(kidId)) return false;   // já pediu, não pede duas vezes
     this.upsert('kid_entries', {
       kid_id: kidId, tipo: 'gasto', pote: 'guardar', amount: pronto.valor,
       date: this.hojeISO(),
       description: `Comprei: ${pronto.meta.name}`,
-      kid_goal_id: pronto.meta.id, confirmada: true,
+      kid_goal_id: pronto.meta.id, confirmada: false,
     });
-    /* A META É ENCERRADA, não apagada: o histórico dela precisa poder contar que
-       este sonho existiu e foi conquistado. Apagar tiraria da criança justamente a
-       memória que dá orgulho. */
-    this.upsert('kid_goals', { ...pronto.meta, done: true, done_at: this.hojeISO() });
     return true;
+  },
+
+  /* O SONHO PEDIDO E AINDA NÃO CONFIRMADO.
+
+     Derivado do lançamento pendente, sem campo novo: se existe um gasto pendente
+     apontando para esta meta, ela está esperando. Um campo "aguardando" no banco
+     seria um segundo lugar para a mesma verdade, e os dois divergiriam no primeiro
+     erro — a regra da casa é derivar, nunca materializar. */
+  metaAguardando(kidId) {
+    const meta = this.meta(kidId);
+    if (!meta) return null;
+    const pedido = this.all('kid_entries').find(e =>
+      e.kid_id === kidId && e.kid_goal_id === meta.id && e.confirmada === false);
+    return pedido ? { meta, entry: pedido } : null;
   },
 
   /* SELOS DA SEMANA: o que ela conquistou, sem prometer nada em dinheiro.

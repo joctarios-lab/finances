@@ -100,7 +100,10 @@ body {
 .balao-ar { animation: flutua 9s ease-in-out infinite; }
 @keyframes flutua { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-16px); } }
 
-#app { position: relative; z-index: 1; max-width: 580px; margin: 0 auto; padding: 12px 16px 132px; }
+/* A FOLGA DE BAIXO cobre a pílula flutuante inteira: 12 de topo + 76 do alvo + 8 de
+   padding + a área segura. Com 132px a última linha do conteúdo ficava por baixo da
+   barra — e a última linha costuma ser justamente a que explica a tela. */
+#app { position: relative; z-index: 1; max-width: 580px; margin: 0 auto; padding: 12px 16px 156px; }
 
 /* ---------- Tipografia: grande, pesada, redonda ---------- */
 h1 { font-size: 34px; margin: 4px 0 2px; font-weight: 700; letter-spacing: -.5px; }
@@ -755,39 +758,90 @@ h2 .emo { font-size: 27px; }
 .missao.diaria.feita-hoje, .missao.diaria.completa { animation: none; }
 
 /* ---------- Missão especial: o pergaminho ----------
-   Um card igual aos outros diria "mais uma tarefa". As bordas rasgadas, o papel
-   amarelado e o selo de cera dizem "isto é diferente" antes de qualquer texto —
-   que é como uma criança de seis anos lê uma tela. */
+
+   EM COLUNA, e não na linha dos outros cards. O card comum é ícone | texto | marca,
+   e dentro do pergaminho isso não cabe: as bordas rasgadas comem cerca de 12px de
+   cada lado, o selo disputa a mesma faixa horizontal do título, e o nome da missão
+   encavalava na borda direita.
+
+   Aqui o topo é ícone + nome, o prazo vem embaixo e o selo sai do fluxo, encostado
+   no canto como selo de cera de verdade. */
 .missao.especial {
+  display: block;
   position: relative;
   background: none; border: 0;
-  box-shadow: 0 8px 16px rgba(224, 185, 120, .35);
-  padding: 18px 16px;
+  box-shadow: none;
+  /* O padding lateral é maior que o do card comum: é o que mantém o texto longe
+     das bordas rasgadas do papel. */
+  padding: 20px 26px 18px;
+  min-height: 0;
   animation: none;
+  filter: drop-shadow(0 8px 14px rgba(224, 185, 120, .4));
 }
-.pergaminho-fundo {
+.missao.especial:active { transform: translateY(6px) scale(.99); box-shadow: none; }
+/* A ESPECIFICIDADE IMPORTA AQUI, e foi o que quebrou o card na primeira versão.
+
+   `.missao.especial > *` vale 0,2,0 e `.pergaminho-fundo` vale 0,1,0 — então a
+   regra genérica ganhava e reescrevia o `position: absolute` do fundo e do selo
+   para `relative`. O pergaminho virou um bloco vazio ACIMA do conteúdo, o selo foi
+   parar sobre o ícone, e o card estourou a largura da tela.
+
+   Por isso os dois são declarados com o mesmo peso do seletor genérico. */
+.missao.especial > .pergaminho-fundo {
   position: absolute; inset: 0; width: 100%; height: 100%;
   z-index: 0; pointer-events: none;
-  filter: drop-shadow(0 4px 0 rgba(224, 185, 120, .55));
 }
 .missao.especial > * { position: relative; z-index: 1; }
+
+/* O selo de cera SAI DO FLUXO. Dentro da linha ele roubava a largura do título;
+   no canto ele faz o que um selo faz — fecha o documento. */
+.missao.especial > .pg-selo { position: absolute; top: 10px; right: 18px; z-index: 2; }
+.selo-cera { width: 44px; height: 44px; filter: drop-shadow(0 3px 4px rgba(216, 27, 116, .4)); }
+
+.pg-topo { display: flex; align-items: center; gap: 14px; }
+/* Espaço reservado para o selo: sem isto o título passa por baixo dele. */
+.pg-nome { flex: 1; min-width: 0; padding-right: 44px; }
+.pg-nome b {
+  display: block; font-size: 20px; font-weight: 700; line-height: 1.2;
+  color: #7a5b00;
+}
 .missao.especial .missao-ico {
   background: radial-gradient(circle at 35% 28%, #fff, #ffe6a8);
   box-shadow: 0 4px 0 #e0b978, inset 0 3px 6px rgba(255, 255, 255, .9);
 }
-.missao.especial .missao-txt b { color: #7a5b00; }
-.selo-cera { width: 46px; height: 46px; filter: drop-shadow(0 3px 4px rgba(216, 27, 116, .4)); }
 
 /* O prazo em luas: uma por noite de sono. Sem relógio e sem número correndo —
    a criança precisa saber quanto tempo tem, não sentir que está atrasada. */
-.prazo { display: flex; align-items: center; gap: 7px; margin-top: 4px; }
-.luas { display: flex; gap: 3px; }
-.lua { width: 19px; height: 19px; flex: none; }
-/* O último dia fica laranja, não vermelho: é um aviso, não um alarme. */
+.pg-prazo {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin-top: 14px;
+  color: #8a5a00; font-weight: 700; font-size: 15px;
+}
+.luas { display: flex; gap: 4px; }
+.lua { width: 20px; height: 20px; flex: none; }
+/* O último dia fica laranja e pulsa: é um aviso, não um alarme. */
 .lua.hoje { animation: pulsa-lua 1.8s ease-in-out infinite; }
 @keyframes pulsa-lua { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.18); } }
 .lua-mais { font-size: 15px; font-weight: 700; color: #8a5a00; }
-.prazo small { color: #8a5a00; font-weight: 700; font-size: 14.5px; }
+
+/* A AÇÃO POR ESCRITO. O card inteiro é o botão, mas nada dizia isso — e descobrir
+   que dá para tocar não é tarefa de uma criança de seis anos. */
+.pg-acao {
+  display: block; margin-top: 14px;
+  background: var(--ouro); color: #6b4a00;
+  border-radius: 16px; padding: 12px;
+  text-align: center; font-size: 17px; font-weight: 700;
+  box-shadow: 0 5px 0 var(--ouro-fundo);
+  animation: chama 2.4s ease-in-out infinite;
+}
+.missao.especial:active .pg-acao { box-shadow: 0 1px 0 var(--ouro-fundo); }
+
+/* Feita: o estado substitui o convite, com o selo e a palavra juntos. */
+.pg-estado {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  margin-top: 14px; font-size: 16px; font-weight: 700; color: #7a5b00;
+}
+.pg-estado svg { width: 42px; height: 42px; flex: none; }
 
 .missao-conta.especial-cab {
   background: linear-gradient(165deg, #fff8e4, #ffe6a8);
@@ -795,7 +849,4 @@ h2 .emo { font-size: 27px; }
   box-shadow: 0 7px 0 #c99a4e, 0 12px 20px rgba(224, 185, 120, .3);
   color: #7a5b00;
 }
-
-.missao.especial.feita { box-shadow: 0 8px 16px rgba(0, 168, 111, .3); }
-.missao.especial.feita .pergaminho-fundo { filter: drop-shadow(0 4px 0 var(--gastar)); }
 

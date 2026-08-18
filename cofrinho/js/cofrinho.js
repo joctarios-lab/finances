@@ -419,7 +419,8 @@ function historico(kidId) {
       <div class="figurinha-ico ${cor}">${ico}</div>
       <div class="figurinha-txt">
         <b>${esc(e.description || e.tipo)}</b>
-        <small>${diaBonito(e.date)}${interno ? ' · trocou de pote' : ''}</small>
+        <small>${diaBonito(e.date)}${interno ? ' · trocou de pote' : ''}${
+          e.confirmada === false ? ' · esperando um adulto ⏳' : ''}</small>
       </div>
       <div class="figurinha-val ${interno ? 'troca' : saida ? 'menos' : 'mais'}">
         ${interno ? '' : saida ? '−' : '+'}${fmtKid(Math.abs(v))}
@@ -599,20 +600,25 @@ function telaTarefas() {
     <button class="missao especial ${t.feita ? (t.confirmada ? 'feita' : 'esperando') : ''}"
             data-tarefa="${t.id}">
       ${Arte.pergaminho()}
-      <span class="missao-ico">${esc(t.icon || '⭐')}</span>
-      <span class="missao-txt">
-        <b>${esc(t.name)}</b>
-        ${Number(t.amount) > 0
-          ? `<span class="missao-vale">${Arte.moeda(19)} ${fmtKid(t.amount)}</span>`
-          : '<small>sem moeda, mas conta ponto!</small>'}
-        ${t.feita
-          ? (t.confirmada ? '<small>conquistada! 🎉</small>' : '<small>esperando um adulto conferir</small>')
-          : `<span class="prazo"><span class="luas">${Arte.luas(t.noites)}</span>
-             <small>${esc(t.prazo || '')}</small></span>`}
+      <span class="pg-selo">${Arte.selo()}</span>
+      <span class="pg-topo">
+        <span class="missao-ico">${esc(t.icon || '⭐')}</span>
+        <span class="pg-nome">
+          <b>${esc(t.name)}</b>
+          ${Number(t.amount) > 0
+            ? `<span class="missao-vale">${Arte.moeda(19)} ${fmtKid(t.amount)}</span>`
+            : '<small>sem moeda, mas conta ponto!</small>'}
+        </span>
       </span>
-      <span class="missao-mar">
-        ${t.feita ? (t.confirmada ? Arte.checkOuro() : Arte.ampulheta()) : Arte.selo()}
-      </span>
+      ${t.feita
+        ? `<span class="pg-estado">${t.confirmada
+            ? `${Arte.checkOuro()} <span>Conquistada!</span>`
+            : `${Arte.ampulheta()} <span>Esperando um adulto conferir</span>`}</span>`
+        : `<span class="pg-prazo">
+             <span class="luas">${Arte.luas(t.noites)}</span>
+             <span>${esc(t.prazo || '')}</span>
+           </span>
+           <span class="pg-acao">👆 Toque aqui quando fizer</span>`}
     </button>`;
 
   const cardSemanal = t => `
@@ -634,7 +640,7 @@ function telaTarefas() {
     ${palco(faltamHoje === 0 ? 'feliz' : 'oi', 128)}
     ${balao(fala)}
     ${especiais.length ? `<div class="missao-conta especial-cab">
-      <span class="emo">🗺️</span> Missão especial
+      <span class="emo">🗺️</span> ${especiais.length > 1 ? 'Missões especiais' : 'Missão especial'}
     </div>` : ''}
     ${especiais.map(cardEspecial).join('')}
     ${diarias.length ? `<div class="missao-conta">
@@ -672,11 +678,14 @@ function telaSonho() {
   const pct = alvo > 0 ? Math.min(100, (p.guardar / alvo) * 100) : 0;
   const faltam = Dados.semanasParaMeta(kid.id);
   const chegou = pct >= 100;
+  const aguardando = Dados.metaAguardando(kid.id);
 
   return `
     ${palco(chegou ? 'feliz' : 'oi', 128)}
     ${balao(chegou
-      ? 'Você conseguiu! Já dá para comprar!'
+      ? (aguardando
+        ? 'Você pediu! Falta um adulto confirmar 🎉'
+        : 'Você conseguiu! Já dá para comprar!')
       : faltam === null ? 'Continue guardando, falta pouquinho!'
         : faltam <= 1 ? 'Falta só <b>uma semanada</b>!'
           : `Faltam <b>${faltam} semanadas</b>. Você consegue!`)}
@@ -694,7 +703,12 @@ function telaSonho() {
            Sem este botão o app enchia a barra, tocava o confete e não deixava
            realizar — ensinando a acumular em vez de planejar. Guardar sem nunca
            realizar é privação com gráfico bonito. */
-        chegou ? `
+        aguardando ? `
+      <div class="recado" style="margin-top:16px">
+        <b>Já pedi!</b> Um adulto vai confirmar a compra do seu
+        ${esc(meta.name)} — aí ele é seu de verdade 🎉
+      </div>`
+        : chegou ? `
       <button class="bt ouro chama" id="bt-comprar-sonho" style="margin-top:16px">
         <span class="emo">🎉</span> Comprar meu ${esc(meta.name)}
       </button>` : ''}
@@ -846,7 +860,9 @@ document.addEventListener('click', ev => {
     festa();
     App.aba = 'cofrinho';
     render();
-    aviso(`Você conquistou: ${pronto.meta.name}! 🎉`);
+    /* "Pedi", não "conquistei": a conquista é quando o adulto compra. Celebrar
+       o pedido como se fosse a entrega seria prometer o que ainda não aconteceu. */
+    aviso(`Você pediu o seu ${pronto.meta.name}! Falta um adulto confirmar 🎉`);
     return;
   }
   if (alvo.id === 'bt-sair') return sair();

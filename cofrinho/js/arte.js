@@ -285,7 +285,10 @@ const Arte = {
      é um combinado pontual, e ela precisa parecer um. */
   pergaminho() {
     return `
-<svg class="pergaminho-fundo" viewBox="0 0 340 120" preserveAspectRatio="none" aria-hidden="true">
+<!-- O viewBox CASA COM O PATH, e isso não é detalhe: o path termina em x=288 e o
+     viewBox dizia 340, então 15% da direita era papel vazio esticado. O selo de cera,
+     ancorado na borda do botão, caía fora do pergaminho — flutuando no céu. -->
+<svg class="pergaminho-fundo" viewBox="0 0 294 120" preserveAspectRatio="none" aria-hidden="true">
   <defs>
     <linearGradient id="pg-papel" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#fff8e4"/>

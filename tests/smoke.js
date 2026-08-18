@@ -6666,6 +6666,45 @@ try {
   const gastoTx2 = DB.all('transactions').find(x => /Gasto de Filho Espelho/.test(x.description || ''));
   check('a despesa e o pote batem no mesmo valor', gastoTx2.amount, 5);
   check('  e ela é do tipo despesa', DB.isExpense(gastoTx2), true);
+  /* A COMPRA DO SONHO ENCERRA A META — e só quando o adulto confirma.
+
+     Era a única saída do cofrinho que passava direto: criava o lançamento já
+     confirmado e debitava a conta da família sem ninguém aprovar, logo no maior
+     valor que a criança movimenta. */
+  const metaE = DB.upsert('kid_goals', {
+    kid_id: idE, name: 'Patinete', icon: '🛴', target_amount: 40, done: false });
+  DB.upsert('kid_entries', {
+    kid_id: idE, tipo: 'presente', pote: 'guardar', amount: 50, date: hojeE, confirmada: true });
+  const pedidoE = DB.upsert('kid_entries', {
+    kid_id: idE, tipo: 'gasto', pote: 'guardar', amount: 40, date: hojeE,
+    description: 'Comprei: Patinete', kid_goal_id: metaE, confirmada: false });
+
+  check('o pedido do sonho espera na fila do adulto',
+    DB.kidTarefasAConfirmar().some(x => x.entry.id === pedidoE), true);
+  check('  e a meta ainda não está encerrada', DB.get('kid_goals', metaE).done, false);
+
+  confirmarTarefa(pedidoE, true);
+  check('confirmado, a meta é encerrada', DB.get('kid_goals', metaE).done, true);
+  check('  com a data da conquista', !!DB.get('kid_goals', metaE).done_at, true);
+  /* ENCERRADA, NÃO APAGADA: o histórico dela precisa poder contar que este sonho
+     existiu e foi conquistado. */
+  check('  mas não é apagada', !!DB.get('kid_goals', metaE), true);
+  /* E VIRA DESPESA da família: quem compra o patinete é o adulto. */
+  check('  e a compra vira despesa da família',
+    DB.all('transactions').some(x => /Patinete/.test(x.description || '')), true);
+
+  /* RECUSADO, a meta continua aberta e o dinheiro volta ao pote — ela pode pedir
+     de novo, e o sonho não foi desconquistado. */
+  const meta2 = DB.upsert('kid_goals', {
+    kid_id: idE, name: 'Lego', icon: '🧱', target_amount: 5, done: false });
+  const pedido2 = DB.upsert('kid_entries', {
+    kid_id: idE, tipo: 'gasto', pote: 'guardar', amount: 5, date: hojeE,
+    description: 'Comprei: Lego', kid_goal_id: meta2, confirmada: false });
+  const guardadoAntes = DB.kidPotes(idE).guardar;
+  confirmarTarefa(pedido2, false);
+  check('recusado, a meta continua aberta', DB.get('kid_goals', meta2).done, false);
+  check('  e o dinheiro volta ao pote', DB.kidPotes(idE).guardar, guardadoAntes + 5);
+
   /* O GASTO PENDENTE ESPERA NA FILA DO ADULTO.
 
      É o que protege o dinheiro real: a criança está aprendendo e vai tocar sem

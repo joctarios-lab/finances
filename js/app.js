@@ -7925,6 +7925,16 @@ function confirmarTarefa(entryId, aceitar) {
   if (!e) return false;
   if (aceitar) {
     DB.upsert('kid_entries', { ...e, confirmada: true });
+    /* A COMPRA DO SONHO encerra a meta — e só aqui.
+
+       Fechá-la no momento em que a criança pede, e reabrir numa recusa, faria ela
+       ver o sonho conquistado e depois desconquistado. Quem encerra é quem de fato
+       compra o patinete. Encerrada, não apagada: o histórico dela precisa poder
+       contar que este sonho existiu. */
+    if (e.kid_goal_id) {
+      const meta = DB.get('kid_goals', e.kid_goal_id);
+      if (meta && !meta.done) DB.upsert('kid_goals', { ...meta, done: true, done_at: DB.hojeISO() });
+    }
     /* O GASTO CONFIRMADO VIRA DESPESA e debita a conta na hora.
 
        Sem isto o extrato ganhava a linha só na próxima ponte, e o saldo da conta

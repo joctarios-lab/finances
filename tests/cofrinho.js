@@ -430,6 +430,60 @@ console.log('\n=== A criança reparte o que já tinha ===');
   limpar(idP);
 }
 
+/* ================= O extrato dela é imediato ================= */
+console.log('\n=== A saída aparece no extrato na hora ===');
+{
+  /* O pote caía na hora e o histórico não mostrava nada: sumia dinheiro sem uma
+     linha explicando por quê. Para quem está aprendendo o que é um extrato, isso é
+     o pior ensinamento possível — a tela desmentia a própria tela. */
+  const id = novaCrianca({ name: 'Extrato' });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'semanada', pote: 'gastar', amount: 10, date: HOJE,
+    confirmada: true, repartido: true });
+
+  Dados.gastar(id, 'gastar', 4, 'Doce');
+  const hist = Dados.entradas(id);
+  check('o gasto pendente aparece no extrato dela', hist.some(e => e.description === 'Doce'), true);
+  check('  e o pote já caiu', Dados.potes(id).gastar, 6);
+
+  /* A TELA MOSTRA a linha e diz que está esperando: sem o aviso, ela pensaria que o
+     dinheiro já foi e não entenderia se o adulto recusasse depois. */
+  App.kid = Dados.get('kids', id);
+  const tela1 = telaCofrinho();
+  check('a tela do cofrinho mostra a linha', tela1.includes('Doce'), true);
+  check('  marcada como esperando um adulto', tela1.includes('esperando um adulto'), true);
+
+  /* RECUSADO, a linha SOME do extrato — que é exatamente o comportamento pedido. */
+  const g = Dados.all('kid_entries').find(e => e.description === 'Doce');
+  Dados.remove('kid_entries', g.id);
+  check('recusado, a linha some do extrato',
+    Dados.entradas(id).some(e => e.description === 'Doce'), false);
+  check('  e o dinheiro volta ao pote', Dados.potes(id).gastar, 10);
+
+  /* A DOAÇÃO segue a mesma regra: é saída, aparece na hora. */
+  Dados.gastar(id, 'gastar', 2, 'Presente');
+  check('a doação pendente também aparece',
+    Dados.entradas(id).some(e => e.description === 'Presente'), true);
+
+  /* A ENTRADA PENDENTE CONTINUA FORA. Mostrá-la seria dizer que a tarefa já foi
+     paga antes de o adulto conferir, e a criança aprenderia a contar com dinheiro
+     que ainda não é dela — é a mesma assimetria de `potes`. */
+  const tar = Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Regar', icon: '🪴', amount: 3, frequencia: 'semanal', active: true });
+  Dados.marcarTarefa(id, tar);
+  check('a tarefa pendente NÃO aparece no extrato',
+    Dados.entradas(id).some(e => e.task_id === tar), false);
+  check('  nem soma no pote', Dados.potes(id).gastar, 8);
+
+  /* CONFIRMADA, aparece. */
+  const marcada = Dados.all('kid_entries').find(e => e.task_id === tar);
+  Dados.upsert('kid_entries', { ...marcada, confirmada: true });
+  check('confirmada, a tarefa entra no extrato',
+    Dados.entradas(id).some(e => e.task_id === tar), true);
+  check('  e soma no pote', Dados.potes(id).gastar, 11);
+  limpar(id);
+}
+
 /* ================= Missão especial, com prazo ================= */
 console.log('\n=== A missão especial e o prazo em noites ===');
 {
@@ -472,6 +526,90 @@ console.log('\n=== A missão especial e o prazo em noites ===');
   check('feita há dez dias continua feita', dela().feita, true);
   limpar(id);
 }
+console.log('\n=== O pergaminho cabe na tela ===');
+{
+  /* DOIS DEFEITOS QUE SÓ A FOTO MOSTROU, e que teste nenhum pegava porque ambos
+     eram de geometria, não de texto. */
+
+  /* 1. O viewBox TEM DE CASAR COM O PATH.
+
+     O path terminava em x=288 e o viewBox declarava 340: 15% da direita era papel
+     vazio esticado. O selo de cera, ancorado na borda do botão, caía FORA do
+     pergaminho — flutuando no céu, ao lado do card. */
+  const pg = Arte.pergaminho();
+  const vb = (pg.match(/viewBox="0 0 (\d+) (\d+)"/) || []);
+  check('o pergaminho declara um viewBox', vb.length > 0, true);
+  const largura = Number(vb[1]);
+  /* Soma os avanços do path: o "M" inicial mais o segundo x de cada curva. */
+  /* O PATH É MULTILINHA no arquivo, e o primeiro parser parava na primeira quebra —
+     somava uma curva só e reprovava com o desenho correto. Pega o atributo inteiro
+     entre aspas e depois varre as curvas. */
+  const dTodo = (pg.match(/ d="([^"]+)"/) || [])[1] || '';
+  /* SÓ A BORDA DE CIMA. O path desenha o topo da esquerda para a direita, desce com
+     , e volta pela borda de baixo com curvas NEGATIVAS — somar tudo dá zero,
+     porque o traço fecha onde começou. O  é onde o topo termina. */
+  const dAttr = dTodo.split(' v')[0];
+  check('  e um path com curvas', /q/.test(dAttr), true);
+  const mIni = dAttr.match(/M([\d.]+)/);
+  let fim = mIni ? Number(mIni[1]) : 0;
+  for (const q of dAttr.split('q').slice(1)) {
+    const p = q.trim().split(/[\s,]+/).map(Number).filter(n => !isNaN(n));
+    if (p.length >= 3) fim += p[2];
+    else break;   // chegou no v/z do fecho
+  }
+  check('  sem sobrar papel vazio na direita', fim > largura * 0.9, true);
+
+  /* 2. A ESPECIFICIDADE DO CSS.
+
+     `.missao.especial > *` vale 0,2,0 e `.pergaminho-fundo` valia 0,1,0 — a regra
+     genérica ganhava e reescrevia o `position: absolute` do fundo para `relative`.
+     O pergaminho virou um bloco vazio ACIMA do conteúdo e o selo foi parar sobre o
+     ícone. */
+  const css = fs.readFileSync(BASE + 'cofrinho/css/cofrinho.css', 'utf8');
+  const pega = sel => { const m = css.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}')); return m ? m[1] : ''; };
+  check('o fundo do pergaminho é absoluto',
+    /position:\s*absolute/.test(pega('.missao.especial > .pergaminho-fundo')), true);
+  check('  e o selo também', /position:\s*absolute/.test(pega('.missao.especial > .pg-selo')), true);
+  /* As duas regras precisam ter ao menos o mesmo peso do seletor genérico: duas
+     classes mais o filho. Declaradas como `.pergaminho-fundo` solto, perdem. */
+  check('  declarados com peso suficiente para vencer o seletor genérico',
+    css.includes('.missao.especial > .pergaminho-fundo')
+    && css.includes('.missao.especial > .pg-selo'), true);
+
+  /* 3. O CARD DIZ O QUE FAZER. "Descobrir que dá para tocar" não é tarefa de uma
+     criança de seis anos: o card inteiro é o botão, mas nada dizia isso. */
+  const idL = novaCrianca({ name: 'Layout' });
+  Dados.upsert('kid_tasks', { kid_id: idL, name: 'Lavar o carro', icon: '🚗', amount: 5,
+    frequencia: 'especial', expira_em: Dados.somarDiasISO(HOJE, 2), active: true });
+  App.kid = Dados.get('kids', idL);
+  App.aba = 'tarefas';
+  const telaL = telaTarefas();
+  check('o card convida ao toque por escrito', telaL.includes('Toque aqui quando fizer'), true);
+  check('  e o nome fica numa faixa própria, longe da borda rasgada',
+    telaL.includes('pg-nome'), true);
+
+  /* FEITA, o convite dá lugar ao estado: continuar dizendo "toque aqui" depois de
+     feita mandaria a criança marcar de novo o que já marcou. */
+  Dados.marcarTarefa(idL, Dados.tarefas(idL)[0].id);
+  const telaF = telaTarefas();
+  check('feita, o convite some', telaF.includes('Toque aqui quando fizer'), false);
+  check('  e o estado aparece no lugar', telaF.includes('Esperando um adulto conferir'), true);
+  limpar(idL);
+
+  /* O CABEÇALHO CONCORDA EM NÚMERO. Duas missões sob o título "Missão especial" é o
+     tipo de detalhe que uma criança em alfabetização está justamente aprendendo. */
+  const idP = novaCrianca({ name: 'Plural' });
+  const dq = n => Dados.somarDiasISO(HOJE, n);
+  Dados.upsert('kid_tasks', { kid_id: idP, name: 'Uma', icon: '🚗', amount: 2,
+    frequencia: 'especial', expira_em: dq(1), active: true });
+  App.kid = Dados.get('kids', idP);
+  check('uma missão, título no singular', telaTarefas().includes('Missão especial'), true);
+  Dados.upsert('kid_tasks', { kid_id: idP, name: 'Duas', icon: '🧸', amount: 2,
+    frequencia: 'especial', expira_em: dq(2), active: true });
+  check('  duas missões, título no plural', telaTarefas().includes('Missões especiais'), true);
+  limpar(idP);
+}
+
 
 console.log('\n=== A ordem e o limite das luas ===');
 {
@@ -1072,16 +1210,63 @@ console.log('\n=== Comprar o sonho quando a meta enche ===');
   check('  a tela oferece comprar', telaSonho().includes('bt-comprar-sonho'), true);
   check('  dizendo o nome do sonho', telaSonho().includes('Patinete'), true);
 
-  check('realizar o sonho funciona', Dados.realizarSonho(id), true);
-  check('  sai do pote guardar', Dados.potes(id).guardar, 10);
-  /* O TROCO É DELA. Se juntou R$ 70 para um brinquedo de R$ 60, os R$ 10 ficam onde
-     estão — tirar tudo seria cobrar pelo troco. */
-  check('  e o que sobrou continua guardado', Dados.potes(id).guardar > 0, true);
-  check('  a meta é encerrada', Dados.get('kid_goals', meta).done, true);
+  /* PEDIR O SONHO NÃO É COMPRÁ-LO. Era a única saída do cofrinho que passava
+     direto: criava o lançamento confirmado e, na ponte seguinte, debitava a conta da
+     família sem ninguém aprovar — logo no maior valor que a criança movimenta. */
+  check('pedir o sonho funciona', Dados.realizarSonho(id), true);
+  const pedido = Dados.all('kid_entries').find(e => e.kid_goal_id === meta);
+  check('  mas nasce esperando o adulto', pedido.confirmada, false);
+
+  /* O POTE CAI JÁ: é saída, e saída pendente conta. O retorno é imediato para ela,
+     e o dinheiro só deixa a conta da família quando o adulto confirma. */
+  check('  o pote dela já cai', Dados.potes(id).guardar, 10);
+
+  /* A META NÃO É ENCERRADA AQUI. Fechá-la agora e reabrir numa recusa faria a
+     criança ver o sonho conquistado e depois desconquistado. */
+  check('  e a meta ainda não é encerrada', Dados.get('kid_goals', meta).done, false);
+  check('  ficando marcada como esperando', !!Dados.metaAguardando(id), true);
+
+  /* NÃO PEDE DUAS VEZES: sem isto, dois toques tirariam o valor do pote duas vezes
+     e a segunda cobrança sairia de um dinheiro que já não existe. */
+  /* PEDIR DUAS VEZES, COM SALDO DE SOBRA — é o caso que expõe a guarda.
+
+     No cenário acima o segundo pedido já falhava sozinho: o pote tinha caído
+     abaixo do alvo, então `metaAlcancada` devolvia null e a guarda nunca era
+     exercitada. Aqui ela juntou MAIS QUE O DOBRO, o pote continua acima do alvo
+     depois do primeiro pedido, e sem a guarda o valor sairia duas vezes. */
+  check('pedir de novo é recusado', Dados.realizarSonho(id), false);
+  check('  e o pote não cai de novo', Dados.potes(id).guardar, 10);
+
+  const idD = novaCrianca({ name: 'Dobro' });
+  const metaD = Dados.upsert('kid_goals', {
+    kid_id: idD, name: 'Bicicleta', icon: '🚲', target_amount: 60, done: false });
+  Dados.upsert('kid_entries', {
+    kid_id: idD, tipo: 'presente', pote: 'guardar', amount: 130, date: HOJE, confirmada: true });
+  check('pede o sonho com saldo de sobra', Dados.realizarSonho(idD), true);
+  check('  o pote cai o valor da meta', Dados.potes(idD).guardar, 70);
+  check('  e ainda estaria acima do alvo', Dados.potes(idD).guardar >= 60, true);
+  check('mesmo assim, pedir de novo é recusado', Dados.realizarSonho(idD), false);
+  check('  o pote não cai duas vezes', Dados.potes(idD).guardar, 70);
+  check('  e existe um pedido só',
+    Dados.all('kid_entries').filter(e => e.kid_goal_id === metaD).length, 1);
+  limpar(idD);
+
+  /* A TELA DELA diz que está esperando, em vez de oferecer comprar outra vez. */
+  App.kid = Dados.get('kids', id);
+  App.aba = 'sonho';
+  const telaAg = telaSonho();
+  check('a tela avisa que já pediu', telaAg.includes('Já pedi'), true);
+  check('  e não oferece comprar de novo', telaAg.includes('bt-comprar-sonho'), false);
+
+  /* O ADULTO CONFIRMA — e é aí que a meta se encerra. */
+  Dados.upsert('kid_entries', { ...pedido, confirmada: true });
+  Dados.upsert('kid_goals', { ...Dados.get('kid_goals', meta), done: true, done_at: HOJE });
+  check('confirmado, a meta é encerrada', Dados.get('kid_goals', meta).done, true);
   /* ENCERRADA, NÃO APAGADA: o histórico dela precisa poder contar que este sonho
      existiu e foi conquistado. */
   check('  mas não é apagada', !!Dados.get('kid_goals', meta), true);
   check('  e sai da lista de metas ativas', Dados.meta(id), null);
+  check('  o dinheiro saiu do pote', Dados.potes(id).guardar, 10);
 
   /* NÃO DÁ PARA COMPRAR DUAS VEZES: a meta encerrada não volta. */
   check('realizar de novo é recusado', Dados.realizarSonho(id), false);
