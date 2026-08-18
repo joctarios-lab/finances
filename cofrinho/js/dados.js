@@ -36,6 +36,11 @@ const COLUNAS = {
   kid_wishes: ['kid_id', 'name', 'icon', 'criada_em', 'resposta', 'respondida_em'],
 };
 
+/* Formata em real dentro da camada de dados: as lições carregam texto pronto com o
+   número dela, e depender do formatador da tela deixaria o dado incompleto — e
+   testável só através da tela. */
+function fmtMoeda(v) { return 'R$ ' + (Number(v) || 0).toFixed(2).replace('.', ','); }
+
 const Dados = {
   d: null,
 
@@ -969,6 +974,176 @@ const Dados = {
       total: +feitas.reduce((s, e) => s + Number(e.amount), 0).toFixed(2),
       quem: Object.keys(porQuem).sort((a, b) => porQuem[b] - porQuem[a]),
       ultima: feitas.map(e => String(e.date)).sort().pop() || null,
+    };
+  },
+
+  /* ---------- A LIÇÃO DE CADA PRÊMIO ----------
+
+     O prêmio bloqueado mostrava um cadeado e uma linha de texto, e o toque não fazia
+     nada. Uma criança de seis anos olhava para "Dividiu a semanada nos potes" sem ter
+     como saber o que fazer com aquilo — e o cadeado, sem caminho, é só uma porta fechada.
+
+     CADA LIÇÃO USA O DINHEIRO DELA, e isto é a decisão de projeto mais importante aqui.
+     Um exemplo genérico ("imagine que você tem R$ 100") ensina sobre dinheiro de
+     brincadeira, e o que se aprende brincando não atravessa sozinho para a vida real —
+     é justamente por isso que o cofrinho inteiro trabalha com o dinheiro verdadeiro dela.
+     Aqui é a mesma regra: os números vêm dos potes dela, agora.
+
+     E CADA UMA TERMINA NUM CAMINHO. Explicar sem oferecer o que fazer em seguida deixa a
+     criança sabendo mais e podendo o mesmo — que é a forma mais elegante de frustração. */
+  licaoDoSelo(kidId, id) {
+    const kid = this.get('kids', kidId);
+    if (!kid) return null;
+    const p = this.potes(kidId);
+    const meta = this.meta(kidId);
+    const ts = this.tarefas(kidId);
+    const rotina = ts.filter(t => !t.especial);
+    const faltam = rotina.filter(t => !t.feita);
+    const moeda = kid.rendimento_tipo === 'moeda' ? (Number(kid.rendimento_valor) || 0) : 0;
+    const semanada = Number(kid.semanada_valor) || 0;
+
+    const licoes = {
+      /* REPARTIR: a lição é que o mesmo dinheiro faz três trabalhos diferentes. */
+      dividiu: {
+        titulo: 'Repartir é dar um trabalho para cada moeda',
+        oque: 'Todo dinheiro que chega pode ir para três lugares. Cada pote faz uma coisa diferente com ele.',
+        pontos: [
+          ['🛒', 'Gastar', 'é para usar agora, no que você quiser'],
+          ['🏦', 'Guardar', 'fica esperando e vira uma coisa grande'],
+          ['💝', 'Doar', 'ajuda alguém que precisa mais que você'],
+        ],
+        /* SEM SUGERIR PROPORÇÃO. Dizer "guarde metade" seria decidir por ela, e a decisão
+           é o que esta tela existe para devolver. */
+        comoFaz: 'Quando a semanada chegar, você escolhe quanto vai para cada pote.',
+        botao: p.gastar > 0 ? { texto: 'Quero repartir agora', vai: 'ritual' } : null,
+      },
+
+      /* AS MISSÕES: a lição é sobre combinado cumprido, não sobre dinheiro. */
+      tarefas: {
+        titulo: 'Caprichoso é quem faz o que combinou',
+        oque: rotina.length
+          ? `Você tem ${rotina.length} ${rotina.length === 1 ? 'missão' : 'missões'}.`
+            + ' Este prêmio é de quem cuidou de todas elas.'
+          : 'Quando um adulto criar missões para você, elas aparecem aqui.',
+        pontos: faltam.length
+          ? faltam.slice(0, 3).map(t => [t.icon || '⭐', t.name,
+              Number(t.amount) > 0 ? 'ainda falta' : 'ainda falta · sem moeda, mas conta'])
+          : [['🏆', 'Todas feitas!', 'você já cuidou de tudo esta semana']],
+        comoFaz: faltam.length
+          ? 'Toque na missão quando você fizer. Um adulto confere depois.'
+          : 'Você já fez a sua parte. O prêmio é seu.',
+        botao: rotina.length ? { texto: 'Ver minhas missões', vai: 'tarefas' } : null,
+      },
+
+      /* A FORMIGUINHA: a única lição que precisa de uma demonstração, porque o efeito de
+         "deixar quieto" só aparece no futuro — e o futuro é invisível aos seis anos. */
+      guardou: {
+        titulo: 'Dinheiro que fica quieto vira dinheiro grande',
+        oque: 'Este prêmio é de quem não tirou nada do pote de guardar durante a semana inteira.',
+        simulador: true,
+        comoFaz: p.guardar > 0
+          ? 'Deixe o pote de guardar quieto até a próxima semanada.'
+          : 'Coloque um pouquinho no pote de guardar quando repartir.',
+        botao: p.gastar > 0 ? { texto: 'Quero guardar um pouco', vai: 'ritual' } : null,
+      },
+
+      /* DOAR: a lição é que ajudar não empobrece — e o número dela prova. */
+      doou: {
+        titulo: 'Ajudar não deixa você com pouco',
+        oque: 'Um pouquinho para você é muito para quem não tem nada. E você quase não sente falta.',
+        pontos: p.total > 0
+          ? [
+              ['💰', 'Você tem', fmtMoeda(p.total)],
+              ['💝', 'Se doar R$ 2', 'você fica com ' + fmtMoeda(Math.max(0, p.total - 2))],
+              ['🙂', 'Quase igual', 'e alguém ficou muito melhor'],
+            ]
+          : [['💝', 'Doar', 'é dividir um pouco do que você tem']],
+        comoFaz: 'Quando a semanada chegar, ponha um pouquinho no pote de doar.',
+        botao: p.doar > 0
+          ? { texto: 'Quero doar agora', vai: 'doar' }
+          : (p.gastar > 0 ? { texto: 'Quero repartir para doar', vai: 'ritual' } : null),
+      },
+
+      /* A MOEDA MÁGICA: a lição é que a espera tem prêmio. */
+      moeda: {
+        titulo: 'Quem espera ganha uma moeda de presente',
+        oque: moeda > 0
+          ? `Se você não tirar nada do pote de guardar durante a semana, ganha`
+            + ` ${fmtMoeda(moeda)} de presente na próxima semanada.`
+          : 'A moeda mágica ainda não está ligada. Fale com um adulto!',
+        pontos: moeda > 0
+          ? [
+              ['⏳', 'Você espera', 'a semana inteira sem tirar do guardar'],
+              ['✨', 'O cofrinho dá', fmtMoeda(moeda) + ' de presente'],
+              ['🎯', 'O seu sonho', 'chega mais rápido sem você fazer nada'],
+            ]
+          : [],
+        comoFaz: 'É só não tirar do pote de guardar. Esperar já é o trabalho.',
+        botao: null,
+      },
+
+      /* O SONHO: a lição é que uma coisa grande é feita de pedaços pequenos. */
+      meta: {
+        titulo: 'Uma coisa grande é feita de pedacinhos',
+        oque: meta
+          ? `O seu ${meta.name} custa ${fmtMoeda(Number(meta.target_amount) || 0)}.`
+            + ' Ninguém junta isso de uma vez — junta um pouquinho por semanada.'
+          : 'Escolha um sonho com um adulto. Aí você vê a barrinha andar toda semana.',
+        pontos: meta
+          ? [
+              ['🎯', 'Você já tem', fmtMoeda(p.guardar)],
+              ['📅', 'Cada semanada', semanada > 0
+                ? 'coloca mais um pedaço' : 'vai colocando mais um pedaço'],
+              ['🎉', 'E um dia', 'a barrinha enche e ele é seu'],
+            ]
+          : [],
+        comoFaz: meta ? 'Guarde um pouquinho toda semanada. A barrinha mostra o resto.'
+          : 'Um adulto cadastra o sonho, e a barrinha começa a andar.',
+        botao: meta ? { texto: 'Ver o meu sonho', vai: 'sonho' } : null,
+      },
+    };
+
+    const l = licoes[id];
+    if (!l) return null;
+    const selo = this.selos(kidId).find(s => s.id === id);
+    return { ...l, id, ganho: !!(selo && selo.ganho), nome: selo ? selo.nome : '' };
+  },
+
+  /* ---------- O SIMULADOR DA FORMIGUINHA ----------
+
+     A única lição que precisa de mais que texto: o efeito de deixar o dinheiro quieto só
+     aparece no futuro, e o futuro é invisível aos seis anos. Aqui ela mexe num controle e
+     vê o próprio dinheiro crescer — a manipulação é o que faz a ligação entre esperar e
+     ter mais, que nenhuma frase constrói sozinha.
+
+     COMEÇA DO QUE ELA TEM HOJE, não de um valor bonito. Um exemplo com R$ 100 seria mais
+     fácil de ler e ensinaria sobre o dinheiro de outra pessoa. */
+  crescimentoDoGuardado(kidId, semanas) {
+    const kid = this.get('kids', kidId);
+    if (!kid) return null;
+    const n = Math.max(0, Math.min(8, Math.round(Number(semanas) || 0)));
+    const hoje = this.potes(kidId).guardar;
+    const semanada = Number(kid.semanada_valor) || 0;
+    const moeda = kid.rendimento_tipo === 'moeda' ? (Number(kid.rendimento_valor) || 0) : 0;
+
+    /* GUARDANDO METADE da semanada, e o app diz isso em voz alta: a proporção é uma
+       suposição do exemplo, não uma recomendação. Sugerir quanto guardar seria decidir no
+       lugar dela, e a divisão é dela desde o primeiro dia. */
+    const porSemana = Math.floor(semanada / 2);
+    const passos = [];
+    let comMoeda = hoje, semMoeda = hoje;
+    for (let k = 1; k <= n; k++) {
+      comMoeda = +(comMoeda + porSemana + moeda).toFixed(2);
+      semMoeda = +(semMoeda + porSemana).toFixed(2);
+      passos.push({ semana: k, com: comMoeda, sem: semMoeda });
+    }
+    return {
+      hoje, porSemana, moeda, semanas: n,
+      passos,
+      /* O GANHO DA ESPERA é a diferença entre as duas colunas: é o número que responde
+         "para que serve esperar?" sem precisar de nenhuma palavra abstrata. */
+      ganho: n ? +(comMoeda - semMoeda).toFixed(2) : 0,
+      total: n ? comMoeda : hoje,
     };
   },
 

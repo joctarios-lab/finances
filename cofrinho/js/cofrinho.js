@@ -1050,6 +1050,97 @@ function telaNovaVontade() {
   desenhar();
 }
 
+/* ---------- A LIÇÃO DE UM PRÊMIO ----------
+
+   CURTA DE PROPÓSITO: uma frase do que é, três linhas do como, um caminho. Uma criança de
+   seis anos não lê parágrafo — ela lê a primeira linha, olha os desenhos e procura o
+   botão. Texto a mais aqui não ensina mais; ensina a pular o texto.
+
+   E TERMINA NUMA AÇÃO REAL, no dinheiro dela. Foi a decisão mais importante desta tela:
+   um joguinho com dinheiro de brincadeira seria mais fácil de fazer e ensinaria sobre
+   dinheiro de brincadeira — o que se aprende jogando não atravessa sozinho para a vida.
+   Aqui ela sai da lição direto para o pote de verdade. */
+function telaSelo(id) {
+  const kid = App.kid;
+  const l = Dados.licaoDoSelo(kid.id, id);
+  if (!l) { App.aba = 'selos'; render(); return; }
+
+  /* O SIMULADOR começa em duas semanas: zero não mostra nada e o máximo já entrega tudo
+     de graça. Duas dá o primeiro degrau e convida a arrastar. */
+  let semanas = 2;
+
+  const desenhar = () => {
+    const sim = l.simulador ? Dados.crescimentoDoGuardado(kid.id, semanas) : null;
+    raiz().innerHTML = `
+      ${palco(l.ganho ? 'feliz' : 'oi', 112)}
+      ${balao(`<b>${esc(l.titulo)}</b>`)}
+
+      <div class="licao">
+        <div class="licao-ico">${Arte.premio(l.id, l.ganho)}</div>
+        <p class="licao-oque">${l.oque}</p>
+      </div>
+
+      ${(l.pontos || []).length ? `<div class="licao-pontos">
+        ${l.pontos.map(([e, t, d]) => `
+          <div class="lp">
+            <span class="lp-e">${esc(e)}</span>
+            <span class="lp-t"><b>${esc(t)}</b><small>${esc(d)}</small></span>
+          </div>`).join('')}
+      </div>` : ''}
+
+      ${sim ? `
+        ${/* O SIMULADOR. Ela arrasta e vê o próprio dinheiro crescer — a manipulação é o
+             que liga esperar a ter mais, e nenhuma frase constrói essa ligação sozinha.
+             Aos seis anos, "daqui a quatro semanas" não é imaginável; quatro degraus na
+             tela, com o número dela em cada um, são. */''}
+        <div class="sim">
+          <div class="sim-cab">E se você deixar quietinho...</div>
+          <div class="sim-luas">${Arte.luas(semanas, 8)}</div>
+          <input type="range" class="sim-range" id="sim-r" min="1" max="8" value="${semanas}">
+          <div class="sim-quantas">${semanas} ${semanas === 1 ? 'semanada' : 'semanadas'}</div>
+          <div class="sim-total">${fmtKid(sim.total)}</div>
+          ${sim.moeda > 0 && sim.ganho > 0 ? `<div class="sim-ganho">
+            <b>+${fmtKid(sim.ganho)}</b> só de moeda mágica, por ter esperado ✨
+          </div>` : ''}
+          ${sim.porSemana > 0
+            ? `<div class="sim-nota">contando que você guarde ${fmtKid(sim.porSemana)} por
+                semanada — quem escolhe quanto é você</div>`
+            : `<div class="sim-nota">quando a sua semanada começar, este número cresce</div>`}
+        </div>` : ''}
+
+      <div class="licao-como">
+        <span class="lc-cab">Como conseguir</span>
+        ${esc(l.comoFaz)}
+      </div>
+
+      ${l.botao ? `<button class="bt verde" id="lic-vai" style="margin-top:14px">
+        <span class="emo">👉</span> ${esc(l.botao.texto)}
+      </button>` : ''}
+      <button class="bt clara" id="lic-volta" style="margin-top:12px">
+        <span class="emo">↩️</span> Voltar aos prêmios
+      </button>`;
+
+    const r = el('#sim-r');
+    if (r) {
+      /* `input` e não `change`: a criança precisa ver o número mudar ENQUANTO arrasta.
+         Com change, o efeito só aparece quando ela solta — e aí a ligação entre o gesto
+         e a consequência se perde no meio. */
+      r.oninput = () => { semanas = Number(r.value) || 1; Som.toque(); desenhar(); };
+    }
+    if (el('#lic-vai')) {
+      el('#lic-vai').onclick = () => {
+        Som.toque(); vibra(12);
+        const vai = l.botao.vai;
+        if (vai === 'ritual') return telaRitual();
+        if (vai === 'doar') return telaGastar('doar');
+        App.aba = vai; render();
+      };
+    }
+    el('#lic-volta').onclick = () => { Som.toque(); App.aba = 'selos'; render(); };
+  };
+  desenhar();
+}
+
 function telaSelos() {
   const selos = Dados.selos(App.kid.id);
   const n = selos.filter(s => s.ganho).length;
@@ -1060,14 +1151,22 @@ function telaSelos() {
         : `Você já tem <b>${n} ${n === 1 ? 'prêmio' : 'prêmios'}</b> esta semana!`)}
     <div class="premios">
       ${selos.map(s => `
-        <div class="premio ${s.ganho ? 'ganho' : ''}">
+        ${/* O PRÊMIO VIRA BOTÃO. Antes era uma div: o cadeado mostrava que faltava algo e
+             o toque não fazia nada — uma porta fechada sem maçaneta. A criança lia
+             "dividiu a semanada nos potes" sem ter como saber o que fazer com aquilo.
+
+             O GANHO TAMBÉM ABRE, e não só o bloqueado: ela quer saber por que ganhou, e
+             a lição lida depois de conquistar é a que fica — o exemplo já aconteceu com
+             ela. */''}
+        <button class="premio ${s.ganho ? 'ganho' : ''}" data-selo="${s.id}">
           <span class="premio-trava">
             ${Arte.premio(s.id, s.ganho)}
             ${s.ganho ? '' : Arte.cadeadoMini()}
           </span>
           <b>${s.nome}</b>
           <small>${s.dica}</small>
-        </div>`).join('')}
+          <span class="premio-toque">${s.ganho ? 'como você ganhou' : 'como ganhar'}</span>
+        </button>`).join('')}
     </div>
     <div class="vazio" style="font-size:15px">
       Os prêmios recomeçam toda semana, no dia da sua semanada 🗓️
@@ -1407,7 +1506,7 @@ function telaGastar(pote) {
 /* ---------- Cliques que valem em qualquer tela ---------- */
 
 document.addEventListener('click', ev => {
-  const alvo = ev.target.closest('[id], [data-tarefa], [data-pote], [data-ir-sonho]');
+  const alvo = ev.target.closest('[id], [data-tarefa], [data-pote], [data-ir-sonho], [data-selo]');
   if (!alvo || !App.kid) return;
 
   if (alvo.id === 'ir-ritual') return telaRitual();
@@ -1429,6 +1528,7 @@ document.addEventListener('click', ev => {
   if (alvo.dataset && alvo.dataset.irSonho) { Som.toque(); App.aba = 'sonho'; render(); return; }
   if (alvo.id === 'bt-extrato') { Som.toque(); return telaExtrato(); }
   if (alvo.id === 'vont-nova') { Som.toque(); return telaNovaVontade(); }
+  if (alvo.dataset && alvo.dataset.selo) { Som.toque(); return telaSelo(alvo.dataset.selo); }
   if (alvo.dataset && alvo.dataset.resp) {
     Som.toque(); vibra(12);
     Dados.responderVontade(App.kid.id, alvo.dataset.w, alvo.dataset.resp);

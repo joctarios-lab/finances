@@ -540,7 +540,11 @@ h2 .emo { font-size: 27px; }
 
 /* ---------- Prêmios: troféus e medalhas ---------- */
 .premios { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+/* O PRÊMIO VIROU BOTÃO e por isso reseta o que o navegador dá a controles: sem isto ele
+   herda a borda, a fonte e o alinhamento do sistema, e a grade dos seis quebra. */
 .premio {
+  appearance: none; -webkit-appearance: none; font-family: inherit;
+  cursor: pointer; width: 100%;
   background: var(--carta); border: 4px solid var(--carta);
   border-radius: var(--raio); padding: 14px 10px 16px; text-align: center;
   box-shadow: var(--clay);
@@ -1188,4 +1192,116 @@ h2 .emo { font-size: 27px; }
   cursor: pointer; line-height: 1;
 }
 .vont-x:active { transform: translateY(2px); }
+
+/* ---------- A LIÇÃO DE UM PRÊMIO ----------
+
+   O CONVITE ESCRITO no card, porque descobrir que um desenho é tocável não é tarefa de
+   uma criança de seis anos — foi o mesmo motivo da faixa no pergaminho e da linha nos
+   potes. Sem ele, o cadeado continua sendo uma porta sem maçaneta. */
+.premio-toque {
+  display: block; margin-top: 7px; padding: 4px 8px; border-radius: 9px;
+  font-size: 11.5px; font-weight: 800;
+  background: var(--ceu-2); color: var(--tinta-fraca);
+}
+.premio.ganho .premio-toque { background: var(--ouro-claro, #fff2cf); color: #6b4a00; }
+.premio:active { transform: translateY(4px); }
+
+/* O QUE O PRÊMIO SIGNIFICA: uma frase, ao lado do desenho grande dele. O desenho vem
+   junto para ela saber de qual prêmio a tela está falando — aos seis anos, o título não
+   basta para fazer essa ligação. */
+.licao {
+  display: flex; align-items: center; gap: 14px;
+  background: var(--carta); border-radius: var(--raio); padding: 16px 18px;
+  box-shadow: 0 5px 0 #cfe2ec, 0 8px 14px rgba(43, 58, 68, .1);
+  margin-bottom: 14px;
+}
+.licao-ico { flex: none; }
+.licao-ico svg { width: 72px; height: 72px; display: block; }
+.licao-oque { margin: 0; font-size: 16.5px; line-height: 1.5; font-weight: 600; color: var(--tinta); }
+
+/* OS TRÊS PONTOS: emoji, nome, explicação. Três é o limite — o quarto item já não é
+   lido, e a lista deixa de ser leitura e vira parede. */
+.licao-pontos { display: flex; flex-direction: column; gap: 9px; margin-bottom: 14px; }
+.lp {
+  display: flex; align-items: center; gap: 13px;
+  background: var(--carta); border-radius: 16px; padding: 11px 15px;
+  box-shadow: 0 3px 0 #cfe2ec;
+}
+.lp-e {
+  font-size: 25px; width: 46px; height: 46px; flex: none;
+  display: grid; place-items: center; border-radius: 50%; background: var(--ceu-2);
+}
+.lp-t { flex: 1; min-width: 0; }
+.lp-t b { display: block; font-size: 16px; font-weight: 800; color: var(--tinta); }
+.lp-t small { display: block; font-size: 13.5px; color: var(--tinta-fraca); font-weight: 600; line-height: 1.35; }
+
+/* ---------- O SIMULADOR DA FORMIGUINHA ----------
+
+   Azul do pote de guardar, porque é dele que a lição fala. O número grande é o
+   protagonista: é ele que muda quando ela arrasta, e é a mudança que ensina. */
+.sim {
+  background: linear-gradient(165deg, #fff, #eaf4ff);
+  border: 4px solid var(--guardar); border-radius: var(--raio-g);
+  box-shadow: 0 7px 0 var(--guardar-fundo), 0 12px 20px rgba(26, 95, 208, .2);
+  padding: 18px 18px 16px; margin-bottom: 14px; text-align: center;
+}
+.sim-cab { font-size: 15px; font-weight: 700; color: var(--tinta-fraca); margin-bottom: 10px; }
+.sim-luas { display: flex; justify-content: center; gap: 5px; flex-wrap: wrap; margin-bottom: 12px; min-height: 26px; }
+.sim-luas svg { width: 24px; height: 24px; }
+
+/* O CONTROLE PRECISA CABER NO DEDO DELA, e o padrão do navegador é fino demais: um
+   deslizante de 4px com um punho de 12px é feito para ponteiro de mouse. O trilho vai a
+   14px e o punho a 40px — acima do piso de acessibilidade mesmo depois da escala do app. */
+.sim-range {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 40px; background: transparent; cursor: pointer; margin: 0;
+}
+.sim-range::-webkit-slider-runnable-track {
+  height: 14px; border-radius: 7px; background: #c3d9e8;
+  box-shadow: inset 0 2px 3px rgba(43, 58, 68, .14);
+}
+.sim-range::-moz-range-track {
+  height: 14px; border-radius: 7px; background: #c3d9e8;
+}
+.sim-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 40px; height: 40px; border-radius: 50%; margin-top: -13px;
+  background: radial-gradient(circle at 35% 30%, #fff, var(--guardar));
+  border: 3px solid var(--guardar-fundo);
+  box-shadow: 0 3px 6px rgba(26, 95, 208, .35);
+}
+.sim-range::-moz-range-thumb {
+  width: 40px; height: 40px; border-radius: 50%; border: 3px solid var(--guardar-fundo);
+  background: radial-gradient(circle at 35% 30%, #fff, var(--guardar));
+}
+
+.sim-quantas { font-size: 14px; font-weight: 700; color: var(--tinta-fraca); margin-top: 2px; }
+.sim-total {
+  font-size: 44px; font-weight: 800; color: var(--guardar-fundo);
+  font-variant-numeric: tabular-nums; letter-spacing: -1.5px;
+  text-shadow: 0 3px 0 #fff; margin: 2px 0 4px;
+}
+/* O GANHO DA ESPERA em destaque próprio: é a resposta à pergunta "para que esperar?", e
+   somado ao total ele desapareceria dentro de um número maior. */
+.sim-ganho {
+  font-size: 14px; font-weight: 700; color: #6b4a00;
+  background: var(--ouro-claro, #fff2cf); border-radius: 12px;
+  padding: 7px 12px; margin: 8px 0 4px;
+}
+.sim-ganho b { font-size: 16px; }
+/* A SUPOSIÇÃO DITA EM VOZ ALTA: o exemplo guarda metade da semanada, e isso é uma conta
+   do exemplo — não uma recomendação. Quem escolhe quanto guardar é ela, desde o
+   primeiro dia, e uma sugestão escondida numa nota de rodapé ainda é uma sugestão. */
+.sim-nota { font-size: 12px; color: var(--tinta-fraca); line-height: 1.4; margin-top: 6px; opacity: .9; }
+
+/* COMO CONSEGUIR: a última coisa antes do botão, e a que precisa sobrar na cabeça dela. */
+.licao-como {
+  background: var(--carta); border-left: 5px solid var(--gastar);
+  border-radius: 14px; padding: 14px 16px;
+  font-size: 16px; font-weight: 600; line-height: 1.5; color: var(--tinta);
+}
+.lc-cab {
+  display: block; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--gastar-fundo); font-weight: 800; margin-bottom: 5px;
+}
 

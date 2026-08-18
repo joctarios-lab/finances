@@ -91,7 +91,7 @@ eval(fs.readFileSync(BASE + 'cofrinho/js/dados.js', 'utf8') + '; global.Dados = 
 eval(fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8') + `; Object.assign(global, {
   App, fmtKid, diaBonito, hashDaSenha, esc, telaQuem, telaSenha, telaCofrinho, telaTarefas,
   COISAS_GASTAR, COISAS_DOAR, emojiDe,
-  telaSonho, telaSelos, telaRitual, telaGastar, telaEscolha, telaExtrato, telaSemCrianca, historico, barraDeAbas,
+  telaSonho, telaSelos, telaSelo, telaRitual, telaGastar, telaEscolha, telaExtrato, telaSemCrianca, historico, barraDeAbas,
   render, entrar, sair, clarear, sombrear, Som, aviso, festa,
 });`);
 
@@ -846,6 +846,172 @@ console.log('\n=== O que é da família e o que é trabalho ===');
     telaTarefas().includes('Porque somos uma família'), false);
   check('  e a missão paga continua na tela', telaTarefas().includes('Lavar o carro'), true);
   limpar(idP);
+}
+
+console.log('\n=== A lição de cada prêmio ===');
+{
+  /* O prêmio bloqueado mostrava um cadeado e uma linha de texto, e o toque não fazia
+     nada. Uma criança de seis anos olhava para "dividiu a semanada nos potes" sem ter como
+     saber o que fazer — e cadeado sem caminho é porta sem maçaneta. */
+  const id = novaCrianca({ name: 'Licoes', semanada_valor: 10,
+    rendimento_tipo: 'moeda', rendimento_valor: 1 });
+  Dados.upsert('kid_goals', {
+    kid_id: id, name: 'Patinete', icon: '🛴', target_amount: 60, done: false });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'gastar', amount: 12, date: HOJE, confirmada: true });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+  App.kid = Dados.get('kids', id);
+
+  /* TODO PRÊMIO TEM LIÇÃO. Um sem explicação seria justamente o que ela mais tentaria
+     abrir, e o único que não responderia. */
+  const todos = Dados.selos(id).map(s => s.id);
+  check('há seis prêmios', todos.length, 6);
+  for (const s of todos) {
+    const l = Dados.licaoDoSelo(id, s);
+    check(`o prêmio ${s} tem lição`, !!l, true);
+    check(`  com título`, (l.titulo || '').length > 8, true);
+    check(`  e com o caminho de como conseguir`, (l.comoFaz || '').length > 10, true);
+  }
+  check('prêmio inventado não tem lição', Dados.licaoDoSelo(id, 'nada'), null);
+
+  /* AS LIÇÕES USAM O DINHEIRO DELA, e esta é a decisão de projeto que mais importa aqui:
+     um exemplo genérico ensinaria sobre dinheiro de brincadeira, e o que se aprende
+     brincando não atravessa sozinho para a vida real. */
+  const doar = Dados.licaoDoSelo(id, 'doou');
+  const texto = JSON.stringify(doar.pontos);
+  check('a lição de doar usa o saldo real dela', texto.includes(fmtKid(42)), true);
+
+  const meta = Dados.licaoDoSelo(id, 'meta');
+  check('a lição do sonho usa o sonho dela', meta.oque.includes('Patinete'), true);
+  check('  e o valor dele', meta.oque.includes(fmtKid(60)), true);
+
+  /* CADA LIÇÃO TERMINA NUM CAMINHO quando há um. Explicar sem oferecer o que fazer em
+     seguida deixa a criança sabendo mais e podendo o mesmo. */
+  check('a lição de repartir leva ao ritual', Dados.licaoDoSelo(id, 'dividiu').botao.vai, 'ritual');
+  check('a lição do sonho leva ao sonho', meta.botao.vai, 'sonho');
+
+  /* SEM PODER AGIR, NÃO PROMETE AÇÃO: um botão que abre uma tela onde tudo é recusado é
+     frustração sem lição — a mesma regra do pote vazio. */
+  const idVazio = novaCrianca({ name: 'Sem nada', semanada_valor: 10 });
+  check('sem dinheiro para repartir, não oferece o ritual',
+    Dados.licaoDoSelo(idVazio, 'dividiu').botao, null);
+  check('sem sonho cadastrado, não oferece a aba do sonho',
+    Dados.licaoDoSelo(idVazio, 'meta').botao, null);
+  limpar(idVazio);
+
+console.log('\n=== O simulador da formiguinha ===');
+  /* A única lição que precisa de mais que texto: o efeito de deixar quieto só aparece no
+     futuro, e o futuro é invisível aos seis anos. */
+  const s2 = Dados.crescimentoDoGuardado(id, 2);
+  check('começa do que ela tem hoje', s2.hoje, 30);
+  check('  guardando metade da semanada', s2.porSemana, 5);
+  /* 30 + 2x(5 + 1 de moeda) = 42 */
+  check('  duas semanadas viram o total certo', s2.total, 42);
+  check('  e o ganho da espera é só a moeda', s2.ganho, 2);
+
+  /* MAIS SEMANAS, MAIS DINHEIRO: é a relação que ela descobre arrastando, e se o número
+     não crescer o gesto não ensina nada. */
+  const s5 = Dados.crescimentoDoGuardado(id, 5);
+  check('mais semanadas dão mais dinheiro', s5.total > s2.total, true);
+  check('  e mais moeda mágica acumulada', s5.ganho, 5);
+
+  /* O TETO DE OITO: passar disso deixa de ser uma espera imaginável e vira "muito tempo",
+     que é o que ela já achava antes do simulador. */
+  check('não projeta além de oito semanadas', Dados.crescimentoDoGuardado(id, 99).semanas, 8);
+  check('  nem para trás', Dados.crescimentoDoGuardado(id, -3).semanas, 0);
+
+  /* SEM MOEDA MÁGICA não há ganho de espera a mostrar, e prometer um seria inventar. */
+  const idSemMoeda = novaCrianca({ name: 'Sem moeda licao', semanada_valor: 10, rendimento_valor: 0 });
+  Dados.upsert('kid_entries', {
+    kid_id: idSemMoeda, tipo: 'presente', pote: 'guardar', amount: 20, date: HOJE, confirmada: true });
+  check('sem moeda mágica, o ganho da espera é zero',
+    Dados.crescimentoDoGuardado(idSemMoeda, 4).ganho, 0);
+  limpar(idSemMoeda);
+
+console.log('\n=== A tela da lição ===');
+  /* O PRÊMIO É TOCÁVEL, e diz que é: descobrir que um desenho abre algo não é tarefa de
+     uma criança de seis anos — foi o mesmo motivo da faixa no pergaminho. */
+  const grade = telaSelos();
+  check('todo prêmio é tocável', (grade.match(/data-selo=/g) || []).length, 6);
+  check('  e convida ao toque', grade.includes('como ganhar'), true);
+
+  /* O CONQUISTADO TAMBÉM ABRE: ela quer saber por que ganhou, e a lição lida depois de
+     conquistar é a que fica, porque o exemplo já aconteceu com ela. */
+  check('o prêmio já ganho fala em como você ganhou',
+    grade.includes('como você ganhou'), true);
+
+  telaSelo('guardou');
+  const t = tela();
+  check('a tela da lição mostra o título', t.includes('vira dinheiro grande'), true);
+  check('  e o simulador', t.includes('sim-range'), true);
+  check('  com o total projetado', t.includes(fmtKid(42)), true);
+  check('  e diz que a proporção é suposição, não conselho',
+    t.includes('quem escolhe quanto é você'), true);
+  check('  com caminho de volta', t.includes('lic-volta'), true);
+
+  /* O TOQUE NO PRÊMIO É O QUE ABRE A LIÇÃO, e isto precisa ser disparado pelo listener
+     real. Chamar `telaSelo()` na mão prova que a tela existe — não que o prêmio leva até
+     ela. A sabotagem que arrancou o handler do clique passou verde por isso, e a criança
+     tocaria no cadeado sem nada acontecer, exatamente como antes.
+
+     Também exercita o `closest`: sem `[data-selo]` na lista de seletores que ele aceita, o
+     toque morre antes de chegar ao handler. */
+  {
+    App.aba = 'selos'; render();
+    const alvo = { id: '', dataset: { selo: 'guardou' }, closest: () => alvo };
+    for (const fn of cliques) fn({ target: alvo });
+    check('tocar no prêmio abre a lição dele', tela().includes('vira dinheiro grande'), true);
+
+    /* O SELETOR DO LISTENER precisa aceitar o atributo, e isto é medido no código porque o
+       alvo falso acima traz o seu próprio `closest` -- ele prova que o handler age, não que
+       o clique real chega até ele. No navegador, um atributo fora dessa lista faz o toque
+       morrer antes do handler, sem erro nenhum na tela. */
+    const fonteC = fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8');
+    const sel = (fonteC.match(/closest\((['"])(.+?)\1\)/) || [])[2] || '';
+    check('  e o listener aceita o atributo do prêmio', sel.includes('[data-selo]'), true);
+    check('  sem perder os outros caminhos',
+      ['[data-tarefa]', '[data-pote]', '[data-ir-sonho]'].every(a => sel.includes(a)), true);
+
+    /* CADA PRÊMIO ABRE A SUA, e não uma tela genérica: se todas mostrassem a mesma coisa,
+       o toque seria decoração. */
+    const outro = { id: '', dataset: { selo: 'doou' }, closest: () => outro };
+    for (const fn of cliques) fn({ target: outro });
+    check('  e cada prêmio abre a sua', tela().includes('Ajudar não deixa'), true);
+    check('  sem misturar com a anterior', tela().includes('vira dinheiro grande'), false);
+  }
+
+  /* ARRASTAR O CONTROLE MUDA O NÚMERO. É o gesto que ensina — a criança vê a consequência
+     de esperar acontecer na mão dela —, e um controle que não reage é enfeite que parece
+     interativo, o que é pior que enfeite nenhum.
+
+     Mede pelo HTML antes e depois, e não pela função de dados: `crescimentoDoGuardado` já
+     tem teste próprio, e o que faltava era o elo entre o gesto e a tela. */
+  {
+    telaSelo('guardou');
+    const antes = tela();
+    const r = els['#sim-r'];
+    check('o simulador tem controle', !!r, true);
+    check('  que responde ao arrastar', typeof r.oninput, 'function');
+    r.value = 6;
+    r.oninput();
+    const depois = tela();
+    check('arrastar muda o que a tela mostra', antes !== depois, true);
+    check('  e o número cresce', depois.includes(fmtKid(66)), true);
+    check('  com as luas acompanhando', depois.includes('6 semanadas'), true);
+  }
+
+  /* AS OUTRAS LIÇÕES NÃO TÊM SIMULADOR: um controle numa tela que não fala de crescimento
+     seria enfeite, e enfeite que parece interativo frustra. */
+  telaSelo('doou');
+  check('a lição de doar não tem simulador', tela().includes('sim-range'), false);
+  check('  mas mostra o que sobra depois de doar', tela().includes(fmtKid(40)), true);
+
+  /* DEIXA A TELA COMO ACHOU. Este bloco terminava com a lição aberta, e o teste seguinte
+     — que toca num pote — reprovava por não encontrar a tela do cofrinho. Um teste que
+     quebra o próximo mede a ordem em que rodaram, não o código. */
+  App.aba = 'cofrinho'; render();
+  limpar(id);
 }
 
 /* ================= A memória do que já aconteceu ================= */
