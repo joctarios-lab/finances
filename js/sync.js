@@ -63,7 +63,7 @@ const SYNC_TABLES = {
     'rendimento_tipo', 'rendimento_valor', 'pin_hash', 'pin_salt', 'active'],
   kid_goals: ['kid_id', 'name', 'icon', 'target_amount', 'done', 'done_at'],
   kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active'],
-  kid_entries: ['kid_id', 'tipo', 'amount', 'date', 'description', 'pote', 'task_id', 'kid_goal_id', 'confirmada'],
+  kid_entries: ['kid_id', 'tipo', 'amount', 'date', 'description', 'pote', 'task_id', 'kid_goal_id', 'confirmada', 'repartido'],
 };
 
 /* Tipo de cada coluna do banco, por nome (nenhum nome se repete com tipo
@@ -102,7 +102,7 @@ const COLUNAS = {
   'recurrences.kid_id': 'uuid',
   'transactions.kid_id': 'uuid',
   semanada_valor: 'num#', rendimento_valor: 'num#', semanada_dia: 'int#', nascimento_ano: 'int',
-  done_at: 'date', confirmada: 'bool',
+  done_at: 'date', confirmada: 'bool', repartido: 'bool',
   deleted: 'bool', active: 'bool', is_reserve: 'bool', recurring: 'bool',
   adjustment: 'bool', paid: 'bool', done: 'bool', pontual: 'bool',
   members: 'json', tags: 'json',
@@ -122,6 +122,8 @@ const COLUNAS_OPCIONAIS = {
      os contratos da família, por causa de uma coluna que só existe quando há
      criança cadastrada. */
   recurrences: ['kid_id'],
+  // A marca de "a criança já repartiu" chegou depois do resto do cofrinho
+  kid_entries: ['repartido'],
 };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -1,7 +1,7 @@
 /* Finanças da Família — service worker: app shell offline-first */
 'use strict';
 
-const VERSAO = '140';
+const VERSAO = '141';
 const CACHE = 'financas-' + VERSAO;
 const SHELL = [
   './',

@@ -27,11 +27,9 @@ alter table transactions add column if not exists pontual boolean not null defau
 alter table recurrences add column if not exists kid_id uuid;
 create index if not exists idx_rec_kid on recurrences(kid_id);
 
--- E o LANCAMENTO da semanada tambem se identifica, porque isso muda o que ele
--- faz: dar a semanada nao e gastar. O dinheiro fica na conta da familia e passa a
--- ter outro dono, entao o lancamento e NEUTRO no saldo. Debita-lo faria a conta
--- divergir do extrato do banco em uma semanada por semana, acumulando — e o
--- defeito so apareceria na conciliacao, meses depois.
+-- E o LANCAMENTO da semanada tambem se identifica: dar a semanada nao e gastar.
+-- O dinheiro fica na conta da familia e passa a ter outro dono, entao o lancamento
+-- e NEUTRO no saldo.
 alter table transactions add column if not exists kid_id uuid;
 create index if not exists idx_tx_kid on transactions(kid_id);
 
@@ -98,7 +96,12 @@ create table if not exists kid_entries (
   id uuid primary key,
   family_id uuid not null references families(id) on delete cascade,
   kid_id uuid not null,
-  -- semanada | tarefa | presente | gasto | doacao | rendimento
+  -- Entra: semanada | tarefa | presente | rendimento | inicial (o que ela já tinha
+  -- quando o cofrinho começou) — e divisao, que soma zero: são três linhas que
+  -- movem dinheiro entre potes, e existem para o histórico dela MOSTRAR a escolha.
+  -- Sai: gasto | doacao
+  -- Texto livre de propósito, sem CHECK: um tipo novo no app não pode exigir
+  -- migração de banco para funcionar, senão o app novo quebra contra o banco velho.
   tipo text not null default 'semanada',
   amount numeric not null,
   date date not null,
@@ -110,6 +113,15 @@ create table if not exists kid_entries (
   kid_goal_id uuid,                      -- quando a saída foi para realizar a meta
   -- A criança marca a tarefa, o adulto confirma. Só vale para tipo='tarefa'.
   confirmada boolean not null default true,
+  -- A criança já repartiu este dinheiro nos três potes? Vale para 'semanada' e
+  -- para 'inicial' (o saldo de abertura).
+  --
+  -- A marca fica no LANÇAMENTO em vez de ser uma pergunta ao calendário. Antes o
+  -- app perguntava "houve divisão nesta semana?", o que serve para a semanada e
+  -- falha para o saldo de abertura: ele é datado no passado, porque o dinheiro não
+  -- chegou hoje, e a busca por data nunca o encontrava — a criança repartia e o
+  -- app pedia de novo, em looping.
+  repartido boolean not null default false,
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );

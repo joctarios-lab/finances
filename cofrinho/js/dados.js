@@ -32,7 +32,7 @@ const COLUNAS = {
     'rendimento_tipo', 'rendimento_valor', 'pin_hash', 'pin_salt', 'active'],
   kid_goals: ['kid_id', 'name', 'icon', 'target_amount', 'done'],
   kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active'],
-  kid_entries: ['kid_id', 'tipo', 'pote', 'amount', 'date', 'description', 'task_id', 'kid_goal_id', 'confirmada'],
+  kid_entries: ['kid_id', 'tipo', 'pote', 'amount', 'date', 'description', 'task_id', 'kid_goal_id', 'confirmada', 'repartido'],
 };
 
 const Dados = {
@@ -168,17 +168,87 @@ const Dados = {
      opinião. A divisão nos três potes é o momento de aprendizado, e é aqui, no
      app dela. Uma semanada só espera divisão se a criança ainda não mexeu nela
      nesta semana: se já dividiu, o ritual está cumprido. */
-  semanadaADividir(kidId) {
+  /* O QUE ESPERA A DECISÃO DELA.
+
+     Duas coisas passam por aqui, e a segunda foi pedida depois: a semanada e o
+     SALDO DE ABERTURA — o dinheiro que a criança já tinha quando o cofrinho
+     começou. Antes ele ia direto para o pote que o adulto escolheu, e a criança
+     perdia justamente o melhor primeiro contato com o app: decidir onde o
+     dinheiro dela vai.
+
+     A MARCA `repartido` SUBSTITUIU A JANELA SEMANAL, e a troca importa. Antes o
+     app perguntava "houve divisão nesta semana?", o que funciona para a semanada e
+     falha para o saldo de abertura: ele é datado no passado (o dinheiro não chegou
+     hoje), e a busca por `date >= início da semana` nunca o encontrava. Com a
+     marca, a pergunta passa a ser sobre o LANÇAMENTO e não sobre o calendário.
+
+     SÓ O QUE ESTÁ NO POTE GASTAR. Se o adulto lançou o saldo de abertura direto em
+     "guardar", ele já decidiu o destino — pedir para a criança repartir de novo
+     seria desfazer a escolha dele.
+
+     A ABERTURA VEM PRIMEIRO, sem janela de tempo: é uma vez na vida do cofrinho e
+     não expira. A semanada continua limitada à semana corrente — uma de três
+     semanas atrás não volta a pedir ritual, porque aquele dinheiro já foi gasto e
+     o ritual perdeu o sentido. */
+  aRepartir(kidId) {
     const kid = this.get('kids', kidId);
     if (!kid) return null;
+    const pendente = e => e.kid_id === kidId && e.pote === 'gastar'
+      && e.repartido !== true && (Number(e.amount) || 0) > 0;
+
+    const abertura = this.all('kid_entries').find(e => pendente(e) && e.tipo === 'inicial');
+    if (abertura) return { entry: abertura, valor: Number(abertura.amount) || 0, abertura: true };
+
     const inicio = this.inicioDaSemana(kid);
     const sem = this.all('kid_entries').find(e =>
-      e.kid_id === kidId && e.tipo === 'semanada' && String(e.date) >= inicio);
+      pendente(e) && e.tipo === 'semanada' && String(e.date) >= inicio);
     if (!sem) return null;
-    const jaDividiu = this.all('kid_entries').some(e =>
-      e.kid_id === kidId && e.tipo === 'divisao' && String(e.date) >= inicio);
-    if (jaDividiu) return null;
-    return { entry: sem, valor: Number(sem.amount) || 0 };
+
+    /* Compatibilidade com semanadas gravadas ANTES da marca existir.
+
+       Elas não têm o campo `repartido` — nem `true` nem `false` —, e para elas a
+       pergunta antiga (houve divisão nesta semana?) continua sendo a única resposta
+       possível. Sem isto, toda semanada já repartida em versão anterior voltaria a
+       pedir o ritual, e a criança repartiria DE NOVO, tirando mais do pote gastar.
+
+       `=== undefined` E NÃO `!== true`: a diferença apareceu no teste. Uma semanada
+       nova nasce com `repartido: false` explícito, e tratá-la como antiga fazia o
+       calendário decidir por ela — a divisão da ABERTURA, feita hoje, bloqueava a
+       semanada desta mesma semana. Quem repartisse o saldo inicial na segunda
+       perdia o ritual da semanada da segunda. */
+    if (sem.repartido === undefined) {
+      const jaDividiu = this.all('kid_entries').some(e =>
+        e.kid_id === kidId && e.tipo === 'divisao' && String(e.date) >= inicio);
+      if (jaDividiu) return null;
+    }
+    return { entry: sem, valor: Number(sem.amount) || 0, abertura: false };
+  },
+
+  // Nome antigo, mantido enquanto houver chamada por aí
+  semanadaADividir(kidId) { return this.aRepartir(kidId); },
+
+  /* DE QUANTO EM QUANTO O BOTÃO SOMA no ritual.
+
+     R$ 1 é o passo natural: contar moedas de um real é a conta que a criança faz.
+     Mas o saldo de abertura pode ser muito maior que uma semanada — repartir R$ 70
+     de um em um são 70 toques, e ela desiste no meio ou aprende que repartir é
+     castigo.
+
+     A regra vive aqui, e não na tela, para poder ser medida: dentro da função que
+     desenha, o teste só conseguia refazer a mesma conta ao lado e comparar consigo
+     mesmo — e a sabotagem que fixava o passo em R$ 1 passava verde. */
+  passoDoRitual(total) {
+    const v = Number(total) || 0;
+    if (v >= 40) return 5;
+    if (v >= 20) return 2;
+    if (v >= 3) return 1;
+    return 0.5;
+  },
+
+  // Quantos toques a criança precisa para repartir tudo, no pior caso
+  toquesDoRitual(total) {
+    const passo = this.passoDoRitual(total);
+    return passo > 0 ? Math.ceil((Number(total) || 0) / passo) : 0;
   },
 
   /* DIVIDIR: três lançamentos de 'divisao' que somam zero.
@@ -191,6 +261,17 @@ const Dados = {
     const hoje = this.hojeISO();
     const g = Math.max(0, Number(guardar) || 0);
     const d = Math.max(0, Number(doar) || 0);
+    /* MARCA A ORIGEM COMO REPARTIDA, e é o que fecha o ritual.
+
+       Sem a marca, o app decidia por calendário — "houve divisão nesta semana?" — e
+       o saldo de abertura, datado no passado, nunca saía da fila: a criança
+       repartia e o app pedia de novo. */
+    const origem = this.aRepartir(kidId);
+    const fechar = () => {
+      if (origem) this.upsert('kid_entries', { ...origem.entry, repartido: true });
+    };
+    const rotulo = origem && origem.abertura ? 'Reparti o meu dinheiro' : 'Reparti a semanada';
+
     if (g + d <= 0) {
       // Escolheu não repartir: o registro existe assim mesmo, para o ritual não
       // ficar aberto para sempre pedindo uma divisão que já foi decidida.
@@ -198,11 +279,12 @@ const Dados = {
         kid_id: kidId, tipo: 'divisao', pote: 'gastar', amount: 0,
         date: hoje, description: 'Deixei tudo para gastar', confirmada: true,
       });
+      fechar();
       return true;
     }
     this.upsert('kid_entries', {
       kid_id: kidId, tipo: 'divisao', pote: 'gastar', amount: -(g + d),
-      date: hoje, description: 'Reparti a semanada', confirmada: true,
+      date: hoje, description: rotulo, confirmada: true,
     });
     if (g > 0) this.upsert('kid_entries', {
       kid_id: kidId, tipo: 'divisao', pote: 'guardar', amount: g,
@@ -212,6 +294,7 @@ const Dados = {
       kid_id: kidId, tipo: 'divisao', pote: 'doar', amount: d,
       date: hoje, description: 'Para doar', confirmada: true,
     });
+    fechar();
     return true;
   },
 

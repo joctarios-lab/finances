@@ -500,6 +500,15 @@ create table if not exists kid_entries (
   kid_goal_id uuid,                      -- quando a saída foi para realizar a meta
   -- A criança marca a tarefa, o adulto confirma. Só vale para tipo='tarefa'.
   confirmada boolean not null default true,
+  -- A criança já repartiu este dinheiro nos três potes? Vale para 'semanada' e
+  -- para 'inicial' (o saldo de abertura).
+  --
+  -- A marca fica no LANÇAMENTO em vez de ser uma pergunta ao calendário. Antes o
+  -- app perguntava "houve divisão nesta semana?", o que serve para a semanada e
+  -- falha para o saldo de abertura: ele é datado no passado, porque o dinheiro não
+  -- chegou hoje, e a busca por data nunca o encontrava — a criança repartia e o
+  -- app pedia de novo, em looping.
+  repartido boolean not null default false,
   updated_at timestamptz not null default now(),
   deleted boolean not null default false
 );

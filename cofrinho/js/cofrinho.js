@@ -310,11 +310,13 @@ function telaCofrinho() {
   const kid = App.kid;
   const p = Dados.potes(kid.id);
   const teto = Math.max(p.gastar, p.guardar, p.doar, 1);
-  const ritual = Dados.semanadaADividir(kid.id);
+  const ritual = Dados.aRepartir(kid.id);
   const aConfirmar = Dados.tarefas(kid.id).filter(t => t.feita && !t.confirmada).length;
 
   const fala = ritual
-    ? 'Chegou a sua semanada! Vamos repartir?'
+    ? (ritual.abertura
+      ? 'Este dinheiro é seu! Onde você quer guardar?'
+      : 'Chegou a sua semanada! Vamos repartir?')
     : p.total <= 0
       ? 'Seu cofrinho está vazinho. Logo enche!'
       : `Você tem <b>${fmtKid(p.total)}</b>. Que legal!`;
@@ -332,7 +334,7 @@ function telaCofrinho() {
 
     ${ritual ? `
       <button class="bt ouro chama" id="ir-ritual" style="margin-bottom:18px">
-        <span class="emo">🎉</span> Repartir ${fmtKid(ritual.valor)}
+        <span class="emo">🎉</span> ${ritual.abertura ? 'Guardar meus' : 'Repartir'} ${fmtKid(ritual.valor)}
       </button>` : ''}
 
     <div class="potes">
@@ -423,11 +425,11 @@ function diaBonito(iso) {
 
 function telaRitual() {
   const kid = App.kid;
-  const r = Dados.semanadaADividir(kid.id);
+  const r = Dados.aRepartir(kid.id);
   if (!r) { render(); return; }
   const total = r.valor;
-  // Passo de R$ 1 sempre que der: contar moedas de um real é a conta que ela faz
-  const passo = total >= 3 ? 1 : 0.5;
+  // A regra do passo vive em Dados, para poder ser medida — ver passoDoRitual
+  const passo = Dados.passoDoRitual(total);
   let guardar = 0, doar = 0;
 
   const desenhar = () => {
@@ -435,7 +437,9 @@ function telaRitual() {
     const teto = Math.max(gastar, guardar, doar, 1);
     raiz().innerHTML = `
       ${palco('uau', 138)}
-      ${balao('Chegou a sua semanada! Quanto você quer <b>guardar</b> e quanto quer <b>doar</b>?')}
+      ${balao(r.abertura
+        ? 'Este dinheiro é todo seu! Quanto você quer <b>guardar</b> e quanto quer <b>doar</b>?'
+        : 'Chegou a sua semanada! Quanto você quer <b>guardar</b> e quanto quer <b>doar</b>?')}
       <div class="ritual-valor">${fmtKid(total)}</div>
       <div class="reparte">
         ${[['gastar', gastar, 'Gastar', false], ['guardar', guardar, 'Guardar', true], ['doar', doar, 'Doar', true]]
@@ -445,8 +449,12 @@ function telaRitual() {
             <div class="rep-n">${fmtKid(v)}</div>
             <div class="pote-nome">${nome}</div>
             ${mexe ? `<div class="rep-bts" style="margin-top:8px">
-              <button class="rep-bt menos" data-menos="${t}" ${v <= 0 ? 'disabled' : ''}>−</button>
-              <button class="rep-bt" data-mais="${t}" ${gastar < passo ? 'disabled' : ''}>+</button>
+              <!-- O botão DIZ QUANTO SOMA. Com passo variável — R$ 1 numa semanada
+                   pequena, R$ 5 num saldo de abertura grande — um "+" sozinho esconde
+                   a regra: a criança toca e o número salta cinco sem ela entender por
+                   quê. Mostrar o passo também é o que torna a regra verificável. -->
+              <button class="rep-bt menos" data-menos="${t}" data-passo="${passo}" ${v <= 0 ? 'disabled' : ''}>−${fmtKid(passo).replace('R$ ', '')}</button>
+              <button class="rep-bt" data-mais="${t}" data-passo="${passo}" ${gastar < passo ? 'disabled' : ''}>+${fmtKid(passo).replace('R$ ', '')}</button>
             </div>` : '<div style="height:10px"></div>'}
           </div>`).join('')}
       </div>
@@ -478,7 +486,9 @@ function telaRitual() {
       festa();
       App.aba = 'cofrinho';
       render();
-      aviso(guardar + doar > 0 ? 'Muito bem! Você repartiu 🫙' : 'Tudo no pote de gastar!', '🎉');
+      aviso(guardar + doar > 0
+        ? (r.abertura ? 'Pronto! Seu cofrinho está montado 🫙' : 'Muito bem! Você repartiu 🫙')
+        : 'Tudo no pote de gastar!', '🎉');
     };
     el('#rit-volta').onclick = () => { App.aba = 'cofrinho'; render(); };
   };

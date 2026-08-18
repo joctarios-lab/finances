@@ -7761,6 +7761,8 @@ function openKidLancarSheet(kidId) {
     DB.upsert('kid_entries', {
       kid_id: kidId, tipo: $('#kl-tipo').value, pote: $('#kl-pote').value,
       amount: valor, date: data, description: ($('#kl-desc').value || '').trim(), confirmada: true,
+      // Nasce esperando a criança repartir; ver Dados.aRepartir
+      repartido: false,
     });
     closeSheet(); Sync.autoSync(); openCriancaDetalhe(kidId);
     toast('Lançado ✓');

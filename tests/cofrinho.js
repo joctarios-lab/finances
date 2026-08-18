@@ -281,6 +281,146 @@ console.log('\n=== Onde a semana começa ===');
   limpar(id);
 }
 
+/* ================= O saldo de abertura passa pelo ritual ================= */
+console.log('\n=== A criança reparte o que já tinha ===');
+{
+  /* O saldo de abertura ia direto para o pote que o adulto escolheu, e a criança
+     perdia o melhor primeiro contato com o app: decidir onde o dinheiro DELA vai.
+     Agora ele passa pelo mesmo ritual da semanada. */
+  const idA = novaCrianca({ name: 'Abertura' });
+  const semanaPassada = Dados.somarDiasISO(HOJE, -7);
+  Dados.upsert('kid_entries', {
+    kid_id: idA, tipo: 'inicial', pote: 'gastar', amount: 70,
+    date: semanaPassada, description: 'O que ele já tinha', confirmada: true,
+  });
+
+  /* DATADO NO PASSADO e ainda assim aparece. É o caso que a janela semanal não
+     pegava: o dinheiro que a criança já tinha não chegou hoje, e a busca por
+     "desta semana" nunca o encontrava. */
+  const r = Dados.aRepartir(idA);
+  check('o saldo de abertura pede para ser repartido', !!r, true);
+  check('  mesmo datado na semana passada', r.entry.date, semanaPassada);
+  check('  com o valor inteiro', r.valor, 70);
+  check('  e o app sabe que é a abertura, não a semanada', r.abertura, true);
+
+  /* O TOTAL NÃO MUDA ao repartir: é o mesmo dinheiro trocando de pote. */
+  Dados.dividir(idA, 40, 10);
+  const p = Dados.potes(idA);
+  check('repartir move para os potes escolhidos', [p.gastar, p.guardar, p.doar], [20, 40, 10]);
+  check('  sem mudar o total', p.total, 70);
+
+  /* NÃO PEDE DE NOVO. Era o defeito que a marca resolve: sem ela, o app perguntava
+     ao calendário e o lançamento datado no passado voltava a pedir para sempre —
+     a criança repartia, saía da tela e o ritual reaparecia. */
+  check('e não pede de novo depois de repartido', Dados.aRepartir(idA), null);
+  const t2 = telaCofrinho ? true : true;
+  App.kid = Dados.get('kids', idA);
+  check('  o convite sai da tela do cofrinho', telaCofrinho().includes('id="ir-ritual"'), false);
+
+  /* A SEMANADA DEPOIS DA ABERTURA continua funcionando, e vem depois dela: a
+     abertura é uma vez na vida do cofrinho, e é o primeiro contato. */
+  /* Com a marca explícita, que é como o app da família grava (ver pagarSemanada).
+     Sem ela o registro parece LEGADO — de antes da marca existir — e o app cai no
+     caminho de compatibilidade, deixando o calendário decidir. */
+  Dados.upsert('kid_entries', {
+    kid_id: idA, tipo: 'semanada', pote: 'gastar', amount: 8, date: HOJE,
+    confirmada: true, repartido: false,
+  });
+  const r2 = Dados.aRepartir(idA);
+  check('a semanada da semana também pede ritual', !!r2 && r2.valor, 8);
+  check('  e agora não é abertura', r2.abertura, false);
+  limpar(idA);
+
+/* O LEGADO: semanada gravada ANTES da marca existir.
+
+     Ela não tem o campo — nem true nem false —, e para ela a única resposta
+     possível é a pergunta antiga: houve divisão nesta semana? Sem esse caminho,
+     toda semanada já repartida em versão anterior voltaria a pedir o ritual, e a
+     criança repartiria DE NOVO, tirando mais do pote gastar. */
+  const idL = novaCrianca({ name: 'Legado' });
+  Dados.upsert('kid_entries', {
+    kid_id: idL, tipo: 'semanada', pote: 'gastar', amount: 8, date: HOJE, confirmada: true,
+  });
+  check('semanada legada, sem a marca, pede o ritual', !!Dados.aRepartir(idL), true);
+  check('  e de fato não tem a marca', Dados.aRepartir(idL).entry.repartido, undefined);
+  Dados.dividir(idL, 3, 0);
+  check('  depois de repartida, não pede de novo', Dados.aRepartir(idL), null);
+  /* E aqui está o motivo de o caminho existir: mesmo que a marca não pegue no
+     registro legado, a divisão da semana o segura. */
+  Dados.upsert('kid_entries', {
+    kid_id: idL, tipo: 'semanada', pote: 'gastar', amount: 8, date: HOJE, confirmada: true,
+  });
+  check('  e outra semanada legada da mesma semana também não', Dados.aRepartir(idL), null);
+  limpar(idL);
+
+  /* A TELA DO RITUAL: o passo aparece no botão e o texto muda com o caso.
+
+     Duas sabotagens passaram verdes antes disto: a tela ignorando a regra do passo
+     e o balão tratando o saldo de abertura como se fosse semanada. Nada olhava o
+     HTML do ritual — só a regra, que a tela podia não usar. */
+  const idT2 = novaCrianca({ name: 'Tela Ritual' });
+  Dados.upsert('kid_entries', { kid_id: idT2, tipo: 'inicial', pote: 'gastar', amount: 70, date: HOJE, confirmada: true });
+  App.kid = Dados.get('kids', idT2);
+  telaRitual();
+  const tr = tela();
+  check('no ritual da abertura, o Dino diz que o dinheiro é dela',
+    tr.includes('Este dinheiro é todo seu'), true);
+  check('  e não fala de semanada', tr.includes('Chegou a sua semanada'), false);
+  check('  o botão mostra quanto soma', tr.includes('data-passo="5"'), true);
+  check('  com o número à vista, não um "+" solto', tr.includes('+5</button>'), true);
+
+  /* SEMANADA PEQUENA: passo de R$ 1 e o texto da semanada. */
+  Dados.dividir(idT2, 0, 0);
+  Dados.upsert('kid_entries', { kid_id: idT2, tipo: 'semanada', pote: 'gastar', amount: 8,
+    date: HOJE, confirmada: true, repartido: false });
+  telaRitual();
+  const tr2 = tela();
+  check('no ritual da semanada, o texto é o da semanada', tr2.includes('Chegou a sua semanada'), true);
+  check('  e o passo volta para R$ 1', tr2.includes('data-passo="1"'), true);
+  limpar(idT2);
+  /* A ORDEM: com abertura E semanada esperando, a abertura vem primeiro. É o
+     dinheiro que já era dela, e é o que explica o cofrinho antes de qualquer
+     rotina semanal. */
+  const idO = novaCrianca({ name: 'Ordem' });
+  Dados.upsert('kid_entries', { kid_id: idO, tipo: 'semanada', pote: 'gastar', amount: 8, date: HOJE, confirmada: true });
+  Dados.upsert('kid_entries', { kid_id: idO, tipo: 'inicial', pote: 'gastar', amount: 50, date: HOJE, confirmada: true });
+  check('com as duas esperando, a abertura vem primeiro', Dados.aRepartir(idO).abertura, true);
+  check('  pelo valor dela', Dados.aRepartir(idO).valor, 50);
+  limpar(idO);
+
+  /* O QUE O ADULTO JÁ DESTINOU não volta para o ritual. Se ele lançou a abertura
+     direto em "guardar", a decisão foi dele — pedir para a criança repartir de
+     novo seria desfazer a escolha do adulto. */
+  const idG = novaCrianca({ name: 'Ja Guardado' });
+  Dados.upsert('kid_entries', { kid_id: idG, tipo: 'inicial', pote: 'guardar', amount: 60, date: HOJE, confirmada: true });
+  check('abertura lançada em guardar não pede ritual', Dados.aRepartir(idG), null);
+  check('  e o dinheiro está no pote que o adulto escolheu', Dados.potes(idG).guardar, 60);
+  limpar(idG);
+
+  /* O PASSO CRESCE COM O VALOR. Repartir R$ 70 de um em um são 70 toques: a
+     criança desiste no meio, ou aprende que repartir é castigo.
+
+     MEDIDO PELA REGRA DO APP, não por uma conta refeita aqui. A primeira versão
+     deste teste calculava o passo do próprio lado e comparava consigo mesma — e a
+     sabotagem que fixava o passo em R$ 1 passava verde. */
+  check('semanada pequena soma de 1 em 1', Dados.passoDoRitual(8), 1);
+  check('  valor de centavos soma de 50 em 50', Dados.passoDoRitual(2), 0.5);
+  check('  a partir de R$ 20 soma de 2 em 2', Dados.passoDoRitual(20), 2);
+  check('  e a partir de R$ 40 soma de 5 em 5', Dados.passoDoRitual(70), 5);
+  /* O QUE IMPORTA É O NÚMERO DE TOQUES: é o que a criança sente na mão. */
+  check('repartir R$ 70 leva no máximo 14 toques', Dados.toquesDoRitual(70) <= 14, true);
+  check('  e nenhum valor até R$ 200 passa de 40 toques',
+    [8, 20, 40, 70, 100, 150, 200].every(v => Dados.toquesDoRitual(v) <= 40), true);
+  check('  sem virar passo grosso numa semanada pequena', Dados.toquesDoRitual(8), 8);
+
+  const idP = novaCrianca({ name: 'Passo' });
+  Dados.upsert('kid_entries', { kid_id: idP, tipo: 'inicial', pote: 'gastar', amount: 70, date: HOJE, confirmada: true });
+  App.kid = Dados.get('kids', idP);
+  telaRitual();
+  check('o ritual de valor alto abre com os botões de somar', tela().includes('data-mais="guardar"'), true);
+  limpar(idP);
+}
+
 /* ================= Gastar e doar ================= */
 console.log('\n=== Gastar só o que tem ===');
 {
