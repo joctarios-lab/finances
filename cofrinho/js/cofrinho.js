@@ -755,6 +755,90 @@ function telaSelos() {
     </div>`;
 }
 
+/* ---------- As duas estradas: o custo de oportunidade ---------- */
+
+/* Tirar do pote de guardar não é errado — é o dinheiro dela, e o app não faz cara
+   feia para quem gasta o que é seu. Mas é uma escolha com consequência, e a
+   consequência é INVISÍVEL: o sorvete acontece hoje e o atraso do patinete só se
+   sente daqui a três semanas. Aos seis anos esse intervalo é longo demais para a
+   ligação se formar sozinha.
+
+   Então as duas estradas aparecem lado a lado, com o preço à vista, e as duas são
+   tocáveis. O Dino fica PENSANDO, não triste: isto é uma decisão, não um erro — e
+   um mascote de cara fechada transformaria escolher em culpa.
+
+   O que a tela NÃO faz: chamar o desejo dela de bobagem. Para ela o sorvete não é
+   fútil, é o que ela quer. O app mostra a troca; julgar o desejo ensinaria que
+   querer coisas é errado, e forma o adulto que não consegue se permitir nada. */
+function telaEscolha(pote, valor, oque, aoSeguir) {
+  const kid = App.kid;
+  /* SÓ O QUE SAI DO GUARDADO tem custo de oportunidade. Gastar do pote de gastar não
+     adia sonho nenhum — aquele dinheiro nunca foi do patinete —, e a função recebia o
+     pote sem olhar para ele: uma compra comum abria a tela de escolha e virava
+     obstáculo onde não havia troca. */
+  if (pote !== 'guardar') { aoSeguir(); return; }
+  const custo = Dados.custoDoSaque(kid.id, valor);
+  if (!custo) { aoSeguir(); return; }          // não adia nada: não há troca a mostrar
+  const semanas = n => `${n} ${n === 1 ? 'semanada' : 'semanadas'}`;
+
+  /* A POSE É NEUTRA, e a troca veio da foto: com "pensando" o Dino fica de
+     sobrancelha franzida, e na tela isso lê como DESAPROVAÇÃO — o mascote julgando a
+     criança por querer o sorvete. É o oposto do que esta tela existe para fazer. */
+  raiz().innerHTML = `
+    ${palco('oi', 118)}
+    ${balao(`Esse dinheiro é do seu <b>${esc(custo.meta.name)}</b>. Quer usar mesmo assim?`)}
+
+    <div class="estradas">
+      <button class="estrada agora" id="es-agora">
+        <span class="estrada-ico">${esc(oque ? emojiDe(oque) : '🛒')}</span>
+        <b>Uso agora</b>
+        <span class="estrada-val">${fmtKid(valor)}</span>
+        <span class="estrada-fim">
+          <span class="estrada-seta">↓</span>
+          ${esc(custo.meta.icon || '🎁')} demora
+          <b>+${semanas(custo.atraso)}</b>
+        </span>
+      </button>
+
+      <button class="estrada espero" id="es-espero">
+        <span class="estrada-ico">${esc(custo.meta.icon || '🎁')}</span>
+        <b>Espero</b>
+        <span class="estrada-val">guardo tudo</span>
+        <span class="estrada-fim">
+          <span class="estrada-seta">↓</span>
+          ${esc(custo.meta.name)} em
+          <b>${semanas(custo.antes)}</b>
+        </span>
+      </button>
+    </div>
+
+    <p class="vazio" style="font-size:15px">
+      Os dois caminhos valem. O dinheiro é seu 🙂
+    </p>`;
+
+  el('#es-agora').onclick = () => { Som.toque(); vibra(12); aoSeguir(); };
+  el('#es-espero').onclick = () => {
+    Som.moeda(); vibra(20);
+    App.aba = 'cofrinho';
+    render();
+    /* Elogia a espera SEM cobrar quem não esperou: quem escolhe o sorvete não vê
+       nada a menos, só segue o fluxo normal. Aplaudir um lado e calar no outro
+       ainda é julgamento, só que mais silencioso. */
+    aviso('Você guardou! O seu sonho continua chegando ⭐');
+  };
+}
+
+/* O desenho do que ela escolheu comprar, para a estrada mostrar a coisa e não um
+   carrinho genérico. Cai no carrinho quando o item não está na lista. */
+function emojiDe(nome) {
+  const mapa = {
+    'Doce': '🍭', 'Brinquedo': '🧸', 'Livro': '📚', 'Jogo': '🎮',
+    'Sorvete': '🍦', 'Escola': '✏️', 'Bichinhos': '🐶', 'Hospital': '🏥',
+    'Outra criança': '🧒', 'Igreja': '⛪', 'Natureza': '🌳',
+  };
+  return mapa[nome] || '🛒';
+}
+
 /* ---------- Gastar e doar ---------- */
 
 /* GASTAR, DOAR ou USAR O QUE ESTÁ GUARDADO — a mesma tela, três origens.
@@ -824,6 +908,18 @@ function telaGastar(pote) {
       Som.toque(); vibra(10); oque = b.dataset.o; desenhar();
     });
     el('#conf').onclick = () => {
+      /* A ESCOLHA VEM ANTES DO LANÇAMENTO, e só quando sai do guardado com uma meta
+         viva que o saque adia. Mostrar depois seria informar um preço já pago; em
+         qualquer outro caso não há troca a apresentar, e a tela extra viraria
+         obstáculo — o pote de gastar existe para ser gasto. */
+      if (doGuardado && Dados.custoDoSaque(kid.id, valor)) {
+        telaEscolha(de, valor, oque, gravar);
+        return;
+      }
+      gravar();
+    };
+
+    const gravar = () => {
       const r = Dados.gastar(kid.id, de, valor, oque);
       if (!r.ok) {
         Som.nao(); vibra([60, 40, 60]);

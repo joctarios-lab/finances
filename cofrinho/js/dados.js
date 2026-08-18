@@ -131,16 +131,67 @@ const Dados = {
 
   meta(kidId) { return this.all('kid_goals').find(g => g.kid_id === kidId && !g.done) || null; },
 
-  semanasParaMeta(kidId) {
+  /* QUANTAS SEMANADAS FALTAM para a meta, dado um valor guardado.
+
+     Recebe o guardado por parâmetro para poder responder à pergunta hipotética
+     "e SE eu tirasse R$ 5 daqui?" — que é o coração do simulador de escolha. Sem
+     isso a conta só sabe falar do presente, e o custo de uma decisão só apareceria
+     depois de ela ser tomada. */
+  semanasParaMetaCom(kidId, guardado) {
     const meta = this.meta(kidId);
     const kid = this.get('kids', kidId);
     if (!meta || !kid) return null;
-    const falta = (Number(meta.target_amount) || 0) - this.potes(kidId).guardar;
+    const falta = (Number(meta.target_amount) || 0) - (Number(guardado) || 0);
     if (falta <= 0) return 0;
     const porSemana = (Number(kid.semanada_valor) || 0)
       + (kid.rendimento_tipo === 'moeda' ? (Number(kid.rendimento_valor) || 0) : 0);
     if (porSemana <= 0) return null;
     return Math.ceil(falta / porSemana);
+  },
+
+  semanasParaMeta(kidId) {
+    return this.semanasParaMetaCom(kidId, this.potes(kidId).guardar);
+  },
+
+  /* O CUSTO DE OPORTUNIDADE, na única moeda que a idade manipula: semanadas.
+
+     Tirar do pote de guardar não é errado — é o dinheiro dela. Mas é uma escolha
+     com consequência, e a consequência é invisível: o sorvete acontece hoje e o
+     atraso do patinete só se sente daqui a três semanas. Aos seis anos, esse
+     intervalo é longo demais para a ligação se formar sozinha.
+
+     Então o app faz a conta ANTES e mostra as duas estradas. Não para dizer que
+     ela está errada: para que a escolha seja dela de verdade, com o preço à vista.
+
+     A MOEDA MÁGICA FICA FORA desta conta, de propósito. Tirar do guardado também
+     custa a moeda da semana, e somar as duas coisas daria um número mais assustador
+     e menos confiável — a moeda é condicional e o atraso é aritmético. A tela avisa
+     das duas, cada uma no seu lugar.
+
+     Devolve null quando não há o que comparar: sem meta, sem semanada para projetar
+     ritmo, ou quando o saque não adia nada (ela tem de sobra). */
+  custoDoSaque(kidId, valor) {
+    const meta = this.meta(kidId);
+    if (!meta) return null;
+    const v = Number(valor) || 0;
+    if (v <= 0) return null;
+    const guardado = this.potes(kidId).guardar;
+    const antes = this.semanasParaMetaCom(kidId, guardado);
+    const depois = this.semanasParaMetaCom(kidId, guardado - v);
+    /* AS DUAS GUARDAS ABAIXO SÃO REDUNDANTES, e ficam por clareza — não por medo.
+
+       Sem meta, `semanasParaMetaCom` devolve null dos dois lados e `null - null` é
+       zero, que o `atraso <= 0` já barra. Sem ritmo, idem. Nenhuma sabotagem passa
+       por aqui, e é correto que não passe: exigir estas linhas num teste seria
+       testar a implementação em vez do que a criança vê.
+
+       Elas continuam porque dizem a intenção em voz alta — "isto aqui não tem
+       resposta" — em vez de deixar o leitor deduzir que uma subtração de nulos
+       calha de cair no zero. */
+    if (antes === null || depois === null) return null;   // sem ritmo, sem previsão
+    const atraso = depois - antes;
+    if (atraso <= 0) return null;                          // não adia nada
+    return { meta, valor: v, antes, depois, atraso };
   },
 
   /* QUANTAS NOITES DE SONO FALTAM até uma data.

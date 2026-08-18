@@ -90,7 +90,7 @@ eval(fs.readFileSync(BASE + 'cofrinho/js/arte.js', 'utf8') + '; global.Arte = Ar
 eval(fs.readFileSync(BASE + 'cofrinho/js/dados.js', 'utf8') + '; global.Dados = Dados; global.Nuvem = Nuvem; global.COLUNAS_KID = COLUNAS; global.TABELAS_KID = TABELAS;');
 eval(fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8') + `; Object.assign(global, {
   App, fmtKid, diaBonito, hashDaSenha, esc, telaQuem, telaSenha, telaCofrinho, telaTarefas,
-  telaSonho, telaSelos, telaRitual, telaGastar, telaSemCrianca, historico, barraDeAbas,
+  telaSonho, telaSelos, telaRitual, telaGastar, telaEscolha, telaSemCrianca, historico, barraDeAbas,
   render, entrar, sair, clarear, sombrear, Som, aviso, festa,
 });`);
 
@@ -481,6 +481,162 @@ console.log('\n=== A saída aparece no extrato na hora ===');
   check('confirmada, a tarefa entra no extrato',
     Dados.entradas(id).some(e => e.task_id === tar), true);
   check('  e soma no pote', Dados.potes(id).gastar, 11);
+  limpar(id);
+}
+
+/* ================= O custo de oportunidade ================= */
+console.log('\n=== Tirar do guardado adia o sonho, e ela vê antes ===');
+{
+  /* A consequência é INVISÍVEL: o sorvete acontece hoje e o atraso do patinete só
+     se sente daqui a três semanas. Aos seis anos esse intervalo é longo demais para
+     a ligação se formar sozinha — então o app faz a conta antes. */
+  const id = novaCrianca({ name: 'Escolha', semanada_valor: 10, rendimento_valor: 0 });
+  Dados.upsert('kid_goals', {
+    kid_id: id, name: 'Patinete', icon: '🛴', target_amount: 60, done: false });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+
+  check('faltam três semanadas para o sonho', Dados.semanasParaMeta(id), 3);
+
+  /* A CONTA HIPOTÉTICA: e SE ela tirasse R$ 10? Faltariam 40, que a R$ 10 por semana
+     são 4 semanadas — uma a mais. */
+  const c = Dados.custoDoSaque(id, 10);
+  check('o app calcula o custo do saque', !!c, true);
+  check('  dizendo em quantas estava', c.antes, 3);
+  check('  em quantas ficaria', c.depois, 4);
+  check('  e o atraso em semanadas', c.atraso, 1);
+  check('  com o nome do sonho em jogo', c.meta.name, 'Patinete');
+
+  /* O ATRASO CRESCE COM O VALOR: é o que torna a tela uma escolha, e não um aviso
+     genérico. Tirar R$ 30 zera o guardado e joga o sonho para 6 semanadas. */
+  check('tirar mais adia mais', Dados.custoDoSaque(id, 30).atraso, 3);
+  check('  e o total bate com o calendário', Dados.custoDoSaque(id, 30).depois, 6);
+
+  /* NÃO MOSTRA QUANDO NÃO HÁ TROCA. Uma tela extra que não informa nada vira
+     obstáculo, e o pote de gastar existe para ser gasto. */
+  const idSemMeta = novaCrianca({ name: 'Sem meta' });
+  check('sem meta, não há custo a mostrar', Dados.custoDoSaque(idSemMeta, 5), null);
+  limpar(idSemMeta);
+
+  const idSobra = novaCrianca({ name: 'Sobra', semanada_valor: 10, rendimento_valor: 0 });
+  Dados.upsert('kid_goals', {
+    kid_id: idSobra, name: 'Livro', icon: '📚', target_amount: 20, done: false });
+  Dados.upsert('kid_entries', {
+    kid_id: idSobra, tipo: 'presente', pote: 'guardar', amount: 100, date: HOJE, confirmada: true });
+  check('com dinheiro de sobra, o saque não adia nada', Dados.custoDoSaque(idSobra, 10), null);
+  limpar(idSobra);
+
+  /* SEM SEMANADA não há ritmo para projetar, e inventar um número seria mentir sobre
+     uma data que o app não tem como conhecer. */
+  const idSemR = novaCrianca({ name: 'Sem ritmo', semanada_valor: 0, rendimento_valor: 0 });
+  Dados.upsert('kid_goals', {
+    kid_id: idSemR, name: 'Bola', icon: '⚽', target_amount: 50, done: false });
+  Dados.upsert('kid_entries', {
+    kid_id: idSemR, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+  check('sem semanada, não há previsão para comparar', Dados.custoDoSaque(idSemR, 10), null);
+  limpar(idSemR);
+
+  /* A MOEDA MÁGICA FICA FORA da conta. Somar as duas coisas daria um número mais
+     assustador e menos confiável: a moeda é condicional, o atraso é aritmético. */
+  const idM = novaCrianca({ name: 'Com moeda', semanada_valor: 10, rendimento_valor: 2 });
+  Dados.upsert('kid_goals', {
+    kid_id: idM, name: 'Lego', icon: '🧱', target_amount: 60, done: false });
+  Dados.upsert('kid_entries', {
+    kid_id: idM, tipo: 'presente', pote: 'guardar', amount: 24, date: HOJE, confirmada: true });
+  /* Faltam 36, a R$ 12 por semana (semanada + moeda) = 3 semanadas. */
+  check('o ritmo inclui a moeda mágica, como no resto do app', Dados.semanasParaMeta(idM), 3);
+  limpar(idM);
+  limpar(id);
+}
+
+console.log('\n=== As duas estradas na tela ===');
+{
+  const id = novaCrianca({ name: 'Estradas', semanada_valor: 10, rendimento_valor: 0 });
+  Dados.upsert('kid_goals', {
+    kid_id: id, name: 'Patinete', icon: '🛴', target_amount: 60, done: false });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+  App.kid = Dados.get('kids', id);
+
+  let seguiu = false;
+  telaEscolha('guardar', 10, 'Doce', () => { seguiu = true; });
+  const t = tela();
+  check('a tela mostra as duas estradas', (t.match(/class="estrada /g) || []).length, 2);
+  check('  uma para usar agora', t.includes('id="es-agora"'), true);
+  check('  outra para esperar', t.includes('id="es-espero"'), true);
+  check('  dizendo quanto o sonho atrasa', t.includes('+1 semanada'), true);
+  check('  e em quanto ele chega se ela esperar', t.includes('3 semanadas'), true);
+  check('  com o nome do sonho', t.includes('Patinete'), true);
+
+  /* O DINO FICA PENSANDO, não triste. Isto é uma decisão, não um erro — e um mascote
+     de cara fechada transformaria escolher em culpa. */
+  /* A POSE É NEUTRA. Com 'pensando' o Dino fica de sobrancelha franzida e a tela lê
+     como desaprovação — o mascote julgando a criança por querer o sorvete. */
+  check('o Dino está neutro', t.includes('dino-oi'), true);
+  check('  não está triste', t.includes('dino-triste'), false);
+  check('  nem de sobrancelha franzida', t.includes('dino-pensando'), false);
+
+  /* O APP NÃO JULGA O DESEJO. Para ela o sorvete não é fútil, é o que ela quer:
+     julgar ensinaria que querer coisas é errado. */
+  check('a tela não chama o desejo de bobagem', /fútil|bobagem|besteira|errado/i.test(t), false);
+  check('  e diz que os dois caminhos valem', t.includes('Os dois caminhos valem'), true);
+
+  /* NÃO SEGUIU SOZINHO: a tela é uma parada de verdade, não um aviso que passa. */
+  check('nada foi lançado só por mostrar a tela', seguiu, false);
+  check('  e o pote continua intacto', Dados.potes(id).guardar, 30);
+
+  /* ESCOLHER "USO AGORA" segue o fluxo. É uma opção legítima: o dinheiro é dela. */
+  els['#es-agora'].onclick();
+  check('escolher usar agora segue com o gasto', seguiu, true);
+
+  /* ESCOLHER "ESPERO" volta ao cofrinho sem lançar nada. */
+  seguiu = false;
+  telaEscolha('guardar', 10, 'Doce', () => { seguiu = true; });
+  els['#es-espero'].onclick();
+  check('escolher esperar não lança nada', seguiu, false);
+  check('  o pote fica intacto', Dados.potes(id).guardar, 30);
+  check('  e volta para o cofrinho', App.aba, 'cofrinho');
+
+  /* SEM TROCA A MOSTRAR, a tela nem aparece: segue direto. Uma tela extra que não
+     informa nada vira obstáculo. */
+  seguiu = false;
+  telaEscolha('gastar', 5, 'Doce', () => { seguiu = true; });
+  check('sem custo, a tela não interrompe', seguiu, true);
+
+  /* O FLUXO PASSA PELA ESCOLHA — medido no código, e digo por quê.
+
+     Todos os casos acima invocam `telaEscolha` na mão: provam a tela, não o fluxo.
+     A sabotagem que arrancava a chamada do botão de confirmar passava verde — a
+     criança tocaria em "Usar este dinheiro" e o gasto iria direto, sem escolha
+     nenhuma.
+
+     Dirigir o botão de verdade exigiria o DOM falso entregar os chips de valor, e
+     ele devolve lista vazia em `querySelectorAll` — o valor vive num closure que o
+     teste não alcança. Então esta asserção é ESTRUTURAL, e assumo a fraqueza: ela
+     garante que a chamada existe e vem antes de gravar, não que a tela apareceu.
+     O comportamento da tela está coberto acima; o que faltava era o elo. */
+  const fonte = fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8');
+  const iConf = fonte.indexOf("el('#conf').onclick");
+  check('o botão de confirmar existe no código', iConf > 0, true);
+  const corpo = fonte.slice(iConf, iConf + 700);
+  check('  e ele passa pela tela de escolha', corpo.includes('telaEscolha('), true);
+  check('  antes de gravar o gasto',
+    corpo.indexOf('telaEscolha(') < corpo.indexOf('gravar()'), true);
+  check('  só quando o dinheiro sai do guardado', corpo.includes('doGuardado'), true);
+  check('  e só quando existe um custo a mostrar', corpo.includes('custoDoSaque'), true);
+
+  /* AS DUAS ESTRADAS TÊM O MESMO PESO. Fazer a de gastar menor, ou vermelha, seria
+     dizer qual é a resposta certa — e aí não é escolha, é obediência. O laranja é
+     preço; vermelho seria alarme. */
+  const css = fs.readFileSync(BASE + 'cofrinho/css/cofrinho.css', 'utf8');
+  const grid = (css.match(/\.estradas\s*\{([^}]*)\}/) || [])[1] || '';
+  check('as duas estradas dividem a largura em partes iguais',
+    /grid-template-columns:\s*1fr\s+1fr/.test(grid), true);
+  const agora = (css.match(/\.estrada\.agora\s*\{([^}]*)\}/) || [])[1] || '';
+  check('  a de gastar não é vermelha', /#d00|#f00|red/i.test(agora), false);
+  check('  e usa o laranja de preço', /--laranja/.test(agora), true);
+
+  limpar(id);
   limpar(id);
 }
 
