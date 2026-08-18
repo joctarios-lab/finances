@@ -258,12 +258,19 @@ const Arte = {
      correndo: pressa que ela não tem como administrar vira ansiedade, não
      compromisso.
 
-     Acima de cinco noites vira "5+", porque a partir dali a contagem exata deixa de
-     significar algo para ela e a fileira só polui o card. */
-  luas(n) {
+     O TETO É DE QUEM CHAMA, e o padrão de cinco continua valendo para a missão especial:
+     um prazo longo vira "5+" porque a partir dali a contagem exata deixa de significar
+     algo para ela e a fileira só polui o card.
+
+     MAS A SEMANADA PASSA SETE, e o motivo é que ali o número nunca é grande: a semana
+     tem sete dias, então no máximo faltam seis noites — sempre cabe na fileira. E o
+     texto ao lado diz o número exato, então cinco luas ao lado de "6 noites" era uma
+     contradição na mesma linha. Quando os dois discordam, a criança que sabe contar até
+     seis descobre que um dos dois está mentindo — e ela não tem como saber qual. */
+  luas(n, teto = 5) {
     if (n === null || n === undefined) return '';
     if (n < 0) return '';
-    const quantas = Math.min(5, Math.max(1, n === 0 ? 1 : n));
+    const quantas = Math.min(teto, Math.max(1, n === 0 ? 1 : n));
     let out = '';
     for (let k = 0; k < quantas; k++) {
       const hoje = n === 0 && k === 0;
@@ -273,7 +280,7 @@ const Arte = {
         ${hoje ? '' : '<circle cx="15.5" cy="9.5" r="7" fill="#fff8e0"/>'}
       </svg>`;
     }
-    if (n > 5) out += '<span class="lua-mais">+</span>';
+    if (n > teto) out += '<span class="lua-mais">+</span>';
     return out;
   },
 

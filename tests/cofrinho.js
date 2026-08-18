@@ -941,6 +941,36 @@ console.log('\n=== A contagem até a semanada ===');
   check('  e não conta uma noite', telaCofrinho().includes('1 noites'), false);
   limpar(id1);
 
+  /* AS LUAS BATEM COM O NÚMERO ESCRITO AO LADO.
+
+     A fileira tinha teto de cinco, decidido para a missão especial — onde o prazo pode
+     ser longo e a contagem exata deixa de importar. Na semanada o caso é outro: o máximo
+     são seis noites, sempre cabe, e cinco luas ao lado de "6 noites" é uma contradição na
+     mesma linha. A criança que sabe contar até seis descobre que um dos dois está
+     mentindo, e não tem como saber qual. */
+  {
+    const diaBase = new Date(HOJE + 'T12:00:00').getDay();
+    for (const faltam of [2, 5, 6]) {
+      const idL = novaCrianca({ name: 'Luas ' + faltam, semanada_valor: 10,
+        semanada_dia: (diaBase + faltam) % 7 });
+      App.kid = Dados.get('kids', idL);
+      const t = telaCofrinho();
+      const desenhadas = (t.match(/class="lua /g) || []).length;
+      check(`faltando ${faltam} noites, desenha ${faltam} luas`, desenhadas, faltam);
+      check(`  e o texto diz ${faltam}`, t.includes(`${faltam} noites`), true);
+      check('  sem o sinal de mais', t.includes('lua-mais'), false);
+      limpar(idL);
+    }
+  }
+
+  /* O TETO DE CINCO CONTINUA VALENDO NA MISSÃO ESPECIAL, que é onde ele foi decidido:
+     um prazo de dez noites vira "5+" porque ali a contagem exata não significa nada. */
+  check('a missão especial mantém o teto de cinco',
+    (Arte.luas(10).match(/class="lua /g) || []).length, 5);
+  check('  com o sinal de mais', Arte.luas(10).includes('lua-mais'), true);
+  check('e o teto de sete não põe mais quando cabe',
+    Arte.luas(6, 7).includes('lua-mais'), false);
+
   /* SEM SEMANADA CONFIGURADA não há dia para contar, e prometer um que não existe é uma
      promessa que o app não pode cumprir. */
   const idS = novaCrianca({ name: 'Sem semanada', semanada_valor: 0 });

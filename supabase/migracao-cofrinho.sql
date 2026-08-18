@@ -261,15 +261,27 @@ begin
     || ' using (is_member(family_id)) with check (is_member(family_id))';
 end $$;
 
--- O carimbo de server_at, igual ao das outras tabelas do cofrinho.
+-- O CARIMBO DO SERVIDOR (server_at) para a tabela nova.
+--
+-- A primeira versão deste bloco chamava `stamp_server_at()`, uma função que NUNCA
+-- existiu -- o nome real é `marca_server_at`, e o erro só aparecia na hora de rodar,
+-- com a migração já pela metade. Pior: a condição olhava se a COLUNA server_at existia
+-- em kid_entries, quando o que o gatilho precisa é da FUNÇÃO. Num banco com a coluna e
+-- sem a função, a condição dizia sim e o create trigger falhava.
+--
+-- Agora a condição pergunta exatamente o que vai usar: a função existe?
 do $$
 begin
-  if exists (select 1 from information_schema.columns
-             where table_name = 'kid_entries' and column_name = 'server_at') then
-    execute 'alter table kid_wishes add column if not exists server_at timestamptz default now()';
-    execute 'drop trigger if exists trg_kid_wishes_server_at on kid_wishes';
-    execute 'create trigger trg_kid_wishes_server_at before insert or update on kid_wishes'
-      || ' for each row execute function stamp_server_at()';
+  if exists (select 1 from pg_proc where proname = 'marca_server_at') then
+    execute 'alter table kid_wishes add column if not exists server_at timestamptz'
+      || ' not null default clock_timestamp()';
+    -- O pull filtra por família e ordena por server_at: sem o índice, cada
+    -- sincronização varreria a tabela inteira.
+    execute 'create index if not exists kid_wishes_family_server_idx'
+      || ' on kid_wishes (family_id, server_at)';
+    execute 'drop trigger if exists trg_server_at on kid_wishes';
+    execute 'create trigger trg_server_at before insert or update on kid_wishes'
+      || ' for each row execute function marca_server_at()';
   end if;
 end $$;
 

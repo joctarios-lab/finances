@@ -382,7 +382,10 @@ function telaCofrinho() {
         const noites = Dados.noitesAteSemanada(kid.id);
         if (noites === null) return '';
         return `<div class="semanada-conta ${noites === 0 ? 'hoje' : ''}">
-          <span class="sc-ico">${noites === 0 ? '🪙' : Arte.luas(noites)}</span>
+          ${/* TETO DE SETE: uma lua por noite, sem "+". A semana tem sete dias, então no
+               máximo faltam seis — e o número escrito ao lado tem de bater com o que ela
+               consegue contar no desenho. */''}
+          <span class="sc-ico">${noites === 0 ? '🪙' : Arte.luas(noites, 7)}</span>
           <span class="sc-txt">${noites === 0
             ? '<b>Hoje é dia de semanada!</b>'
             : noites === 1
