@@ -170,6 +170,53 @@ const Dados = {
 
      Devolve null quando não há o que comparar: sem meta, sem semanada para projetar
      ritmo, ou quando o saque não adia nada (ela tem de sobra). */
+  /* A CONSEQUÊNCIA DE TIRAR DO GUARDADO, que existe SEMPRE — e é por isso que esta
+     função não devolve null como a `custoDoSaque` faz.
+
+     Antes, a tela de decisão só aparecia quando o saque adiava o sonho em uma semanada
+     inteira. Três situações escapavam, e nas três o dinheiro saía do pote sem ela
+     parar para pensar: saque pequeno que cabia na sobra do arredondamento, criança sem
+     sonho cadastrado, e criança sem ritmo de semanada para projetar.
+
+     O PROBLEMA NÃO É O NÚMERO, É O COMPROMISSO. O pote de guardar existe para ser
+     dinheiro que ela decidiu não gastar; se dá para tirar de lá no mesmo número de
+     toques que do pote de gastar, os dois potes são o mesmo pote com cores
+     diferentes. A parada é o que faz o guardado significar algo.
+
+     MAS A CONSEQUÊNCIA MOSTRADA TEM DE SER VERDADE. Um app que diz "vai atrasar o seu
+     sonho" quando não vai atrasa nada ensina que ele exagera, e no dia em que o atraso
+     for real ela não vai acreditar. Então cada caso mostra o que de fato acontece:
+     atraso em semanadas quando há atraso, a data igual quando a data não muda, e o
+     saldo que fica quando não há sonho para comparar. */
+  consequenciaDoSaque(kidId, valor) {
+    const v = Number(valor) || 0;
+    if (v <= 0) return null;
+    const kid = this.get('kids', kidId);
+    if (!kid) return null;
+
+    const guardado = this.potes(kidId).guardar;
+    const meta = this.meta(kidId);
+    const custo = this.custoDoSaque(kidId, v);
+
+    /* A MOEDA MÁGICA É UM CUSTO REAL, e não só um aviso: quem tira do guardar não
+       recebe a moeda no pagamento seguinte da semanada (a regra vive em
+       `DB.kidMoedaMagicaDevida`, no app do adulto). Fica de fora da conta de semanadas
+       de propósito — somar uma coisa condicional a uma aritmética daria um número
+       maior e menos confiável —, e aparece como linha própria. */
+    const perdeMoeda = kid.rendimento_tipo === 'moeda' && (Number(kid.rendimento_valor) || 0) > 0;
+
+    return {
+      valor: v, meta, guardado,
+      sobra: Math.max(0, guardado - v),
+      alvo: meta ? (Number(meta.target_amount) || 0) : 0,
+      atraso: custo ? custo.atraso : 0,
+      antes: custo ? custo.antes : this.semanasParaMeta(kidId),
+      depois: custo ? custo.depois : null,
+      perdeMoeda,
+      moeda: perdeMoeda ? Number(kid.rendimento_valor) : 0,
+    };
+  },
+
   custoDoSaque(kidId, valor) {
     const meta = this.meta(kidId);
     if (!meta) return null;

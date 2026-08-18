@@ -873,37 +873,94 @@ function telaEscolha(pote, valor, oque, aoSeguir) {
      pote sem olhar para ele: uma compra comum abria a tela de escolha e virava
      obstáculo onde não havia troca. */
   if (pote !== 'guardar') { aoSeguir(); return; }
-  const custo = Dados.custoDoSaque(kid.id, valor);
-  if (!custo) { aoSeguir(); return; }          // não adia nada: não há troca a mostrar
+
+  /* QUALQUER SAQUE DO GUARDADO PARA AQUI, e não só o que adia o sonho.
+
+     O pote de guardar existe para ser dinheiro que ela decidiu não gastar. Se dá para
+     tirar de lá com os mesmos toques do pote de gastar, os dois são o mesmo pote com
+     cores diferentes — e a parada é justamente o que faz o guardado significar algo.
+
+     O que muda de caso para caso é a CONSEQUÊNCIA mostrada, porque ela tem de ser
+     verdade: dizer "vai atrasar o seu sonho" quando não atrasa ensina que o app
+     exagera, e no dia do atraso real ela não acredita. */
+  const c = Dados.consequenciaDoSaque(kid.id, valor);
+  if (!c) { aoSeguir(); return; }              // valor zerado: não há saque a decidir
   const semanas = n => `${n} ${n === 1 ? 'semanada' : 'semanadas'}`;
+
+  /* ZERO SEMANADAS NÃO É UM NÚMERO, é um estado: o dinheiro já dá para comprar.
+
+     A foto pegou "PATINETE EM 0 SEMANADAS", que aos seis anos não quer dizer nada — ou
+     pior, lê como "nunca". Quando falta zero, a frase é a conquista. */
+  const quando = n => (n > 0 ? `em<b>${semanas(n)}</b>` : `<b>já dá para comprar</b>`);
+
+  /* O DESFECHO DE CADA ESTRADA, na forma mais verdadeira disponível.
+
+     A ordem é a da informação mais útil para a idade: uma data que muda vale mais que
+     um saldo que muda, porque "daqui a quantas semanadas" é a pergunta que ela faz.
+     Quando não há data, o saldo é o que sobra de concreto. */
+  let fimAgora, fimEspero, pergunta;
+
+  if (c.meta && c.atraso > 0) {
+    // ATRASA: o caso mais forte, e o único que existia antes.
+    pergunta = `Esse dinheiro é do seu <b>${esc(c.meta.name)}</b>. Quer usar mesmo assim?`;
+    fimAgora = `${esc(c.meta.icon || '🎁')} demora<b>+${semanas(c.atraso)}</b>`;
+    fimEspero = `${esc(c.meta.name)} ${quando(c.antes)}`;
+  } else if (c.meta && c.antes !== null) {
+    /* NÃO ATRASA, e o app DIZ isso. O saque cabe na sobra do arredondamento, então a
+       data do sonho é a mesma nas duas estradas — e contar a verdade aqui é o que
+       torna o "+2 semanadas" do outro caso digno de crédito. */
+    pergunta = `Esse dinheiro é do seu <b>${esc(c.meta.name)}</b>. Quer usar um pouco?`;
+    /* SE JÁ DAVA PARA COMPRAR e continua dando, é isso que importa — não a data, que
+       nas duas estradas é hoje. */
+    fimAgora = c.antes === 0
+      ? `${esc(c.meta.icon || '🎁')}<b>ainda dá para comprar</b>`
+      : `${esc(c.meta.icon || '🎁')} chega no<b>mesmo dia</b>`;
+    fimEspero = `${esc(c.meta.name)} ${quando(c.antes)}`;
+  } else if (c.meta) {
+    /* TEM SONHO, MAS NÃO HÁ RITMO para projetar data — inventar uma seria mentir sobre
+       um dia que o app não conhece. Então a comparação é em dinheiro. */
+    pergunta = `Esse dinheiro é do seu <b>${esc(c.meta.name)}</b>. Quer usar um pouco?`;
+    fimAgora = `fica<b>${fmtKid(c.sobra)} de ${fmtKid(c.alvo)}</b>`;
+    fimEspero = `fica<b>${fmtKid(c.guardado)} de ${fmtKid(c.alvo)}</b>`;
+  } else {
+    /* SEM SONHO CADASTRADO ainda há uma decisão: ela guardou este dinheiro de propósito.
+       Não há data nem alvo para comparar, então as estradas mostram o que fica no pote. */
+    pergunta = 'Esse é o dinheiro que você <b>guardou</b>. Quer usar um pouco?';
+    fimAgora = `fica<b>${fmtKid(c.sobra)} guardado</b>`;
+    fimEspero = `fica<b>${fmtKid(c.guardado)} guardado</b>`;
+  }
 
   /* A POSE É NEUTRA, e a troca veio da foto: com "pensando" o Dino fica de
      sobrancelha franzida, e na tela isso lê como DESAPROVAÇÃO — o mascote julgando a
      criança por querer o sorvete. É o oposto do que esta tela existe para fazer. */
   raiz().innerHTML = `
     ${palco('oi', 118)}
-    ${balao(`Esse dinheiro é do seu <b>${esc(custo.meta.name)}</b>. Quer usar mesmo assim?`)}
+    ${balao(pergunta)}
 
     <div class="estradas">
       <button class="estrada agora" id="es-agora">
         <span class="estrada-ico">${esc(oque ? emojiDe(oque) : '🛒')}</span>
         <b>Uso agora</b>
-        <span class="estrada-val">${fmtKid(valor)}</span>
+        <span class="estrada-val">${fmtKid(c.valor)}</span>
         <span class="estrada-fim">
           <span class="estrada-seta">↓</span>
-          ${esc(custo.meta.icon || '🎁')} demora
-          <b>+${semanas(custo.atraso)}</b>
+          ${fimAgora}
+          ${/* A MOEDA MÁGICA, quando está em jogo, é um custo REAL: quem tira do guardar
+               não recebe a moeda no próximo pagamento da semanada. Fica numa linha à
+               parte porque é condicional, enquanto o atraso é aritmético — misturar as
+               duas daria um número maior e menos confiável. */
+            c.perdeMoeda ? `<span class="estrada-moeda">✨ sem a moeda mágica</span>` : ''}
         </span>
       </button>
 
       <button class="estrada espero" id="es-espero">
-        <span class="estrada-ico">${esc(custo.meta.icon || '🎁')}</span>
+        <span class="estrada-ico">${esc(c.meta ? (c.meta.icon || '🎁') : '🏦')}</span>
         <b>Espero</b>
         <span class="estrada-val">guardo tudo</span>
         <span class="estrada-fim">
           <span class="estrada-seta">↓</span>
-          ${esc(custo.meta.name)} em
-          <b>${semanas(custo.antes)}</b>
+          ${fimEspero}
+          ${c.perdeMoeda ? `<span class="estrada-moeda ok">✨ ganho ${fmtKid(c.moeda)}</span>` : ''}
         </span>
       </button>
     </div>
@@ -920,7 +977,9 @@ function telaEscolha(pote, valor, oque, aoSeguir) {
     /* Elogia a espera SEM cobrar quem não esperou: quem escolhe o sorvete não vê
        nada a menos, só segue o fluxo normal. Aplaudir um lado e calar no outro
        ainda é julgamento, só que mais silencioso. */
-    aviso('Você guardou! O seu sonho continua chegando ⭐');
+    aviso(c.meta
+      ? 'Você guardou! O seu sonho continua chegando ⭐'
+      : 'Você guardou! O seu dinheiro continua crescendo ⭐');
   };
 }
 
@@ -968,7 +1027,7 @@ function telaGastar(pote) {
           : `Quanto você gastou? Tem <b>${fmtKid(disponivel)}</b> para gastar.`)}
       ${perdeMoeda ? `<div class="recado" style="margin-bottom:14px">
         <b>Espera um pouquinho...</b> Se você tirar do que guardou, não ganha a
-        <b>moeda mágica</b> desta semana ✨
+        <b>moeda mágica</b> na próxima semanada ✨
       </div>` : ''}
       <div class="valor-mostra ${demais ? 'demais' : ''}">${fmtKid(valor)}</div>
       <div class="chips">
@@ -1008,7 +1067,11 @@ function telaGastar(pote) {
          viva que o saque adia. Mostrar depois seria informar um preço já pago; em
          qualquer outro caso não há troca a apresentar, e a tela extra viraria
          obstáculo — o pote de gastar existe para ser gasto. */
-      if (doGuardado && Dados.custoDoSaque(kid.id, valor)) {
+      /* TODO SAQUE DO GUARDADO PASSA PELA DECISÃO. O portão era `custoDoSaque`, que
+         devolve null quando o saque não adia o sonho — então saque pequeno, criança sem
+         sonho e criança sem ritmo saíam direto, sem parar. E é justamente a parada que
+         faz o pote de guardar ser diferente do pote de gastar. */
+      if (doGuardado) {
         telaEscolha(de, valor, oque, gravar);
         return;
       }

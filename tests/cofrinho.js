@@ -925,12 +925,150 @@ console.log('\n=== As duas estradas na tela ===');
   const fonte = fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8');
   const iConf = fonte.indexOf("el('#conf').onclick");
   check('o botão de confirmar existe no código', iConf > 0, true);
-  const corpo = fonte.slice(iConf, iConf + 700);
+  /* A JANELA VAI ATÉ O FIM DO HANDLER, e não 700 caracteres: a fatia fixa quebrou
+     quando um comentário empurrou a chamada para fora dela — um teste que falha por
+     comentário escrito acima do código não está medindo o código. */
+  const corpo = fonte.slice(iConf, fonte.indexOf('const gravar =', iConf));
   check('  e ele passa pela tela de escolha', corpo.includes('telaEscolha('), true);
   check('  antes de gravar o gasto',
     corpo.indexOf('telaEscolha(') < corpo.indexOf('gravar()'), true);
   check('  só quando o dinheiro sai do guardado', corpo.includes('doGuardado'), true);
-  check('  e só quando existe um custo a mostrar', corpo.includes('custoDoSaque'), true);
+
+  /* E SEM CONDIÇÃO DE ATRASO NO PORTÃO. Era `custoDoSaque(...)` ali, que devolve null
+     quando o saque não adia o sonho — então saque pequeno, criança sem sonho e criança
+     sem ritmo saíam direto, sem parar para decidir. */
+  check('  e sem exigir que o saque atrase o sonho',
+    /if \(doGuardado\)/.test(corpo), true);
+
+  /* ---- QUALQUER SAQUE DO GUARDADO PARA PARA DECIDIR ----
+
+     Antes a tela só aparecia quando o saque adiava o sonho em uma semanada inteira, e
+     três situações escapavam: saque que cabia na sobra do arredondamento, criança sem
+     sonho cadastrado, criança sem ritmo de semanada. Nas três o dinheiro saía do pote
+     de guardar com os mesmos toques do pote de gastar — e aí os dois potes são o mesmo
+     pote com cores diferentes. */
+
+  /* CASO 1: O SAQUE NÃO ADIA NADA (cabe na sobra do arredondamento). A tela aparece,
+     e diz a VERDADE: o sonho chega no mesmo dia. Contar isso é o que dá crédito ao
+     "+2 semanadas" do outro caso — um app que sempre grita perde a força quando o
+     custo é real. */
+  {
+    /* O CENÁRIO PRECISA DE META NÃO ALCANÇADA: com o alvo já batido a tela fala de
+       comprar, não de data. Faltam R$ 35 a R$ 10 por semana = 4 semanadas; tirar R$ 5
+       deixa R$ 40 a faltar, que ainda são 4 -- o saque cabe na sobra do arredondamento. */
+    const idS = novaCrianca({ name: 'Sobra dois', semanada_valor: 10, rendimento_valor: 0 });
+    Dados.upsert('kid_goals', {
+      kid_id: idS, name: 'Livro', icon: '📚', target_amount: 60, done: false });
+    Dados.upsert('kid_entries', {
+      kid_id: idS, tipo: 'presente', pote: 'guardar', amount: 25, date: HOJE, confirmada: true });
+    App.kid = Dados.get('kids', idS);
+
+    check('sem atraso, ainda há consequência a mostrar',
+      !!Dados.consequenciaDoSaque(idS, 5), true);
+    check('  e o atraso é honestamente zero', Dados.consequenciaDoSaque(idS, 5).atraso, 0);
+
+    let passou = false;
+    telaEscolha('guardar', 5, 'Doce', () => { passou = true; });
+    check('a tela para mesmo sem atraso', passou, false);
+    check('  e diz que o sonho chega no mesmo dia', tela().includes('mesmo dia'), true);
+    check('  sem inventar semanadas de atraso', tela().includes('demora'), false);
+    limpar(idS);
+  }
+
+  /* ZERO SEMANADAS NÃO É UM NÚMERO, é um estado. A foto pegou "PATINETE EM 0
+     SEMANADAS", que aos seis anos não quer dizer nada — ou pior, lê como "nunca". */
+  {
+    const idZ = novaCrianca({ name: 'Ja deu', semanada_valor: 10, rendimento_valor: 0 });
+    Dados.upsert('kid_goals', {
+      kid_id: idZ, name: 'Livro', icon: '📚', target_amount: 20, done: false });
+    Dados.upsert('kid_entries', {
+      kid_id: idZ, tipo: 'presente', pote: 'guardar', amount: 100, date: HOJE, confirmada: true });
+    App.kid = Dados.get('kids', idZ);
+    telaEscolha('guardar', 10, 'Doce', () => {});
+    check('meta alcançada, a tela não fala em zero semanadas',
+      /0 semanadas?/.test(tela()), false);
+    check('  e diz que já dá para comprar', tela().includes('dá para comprar'), true);
+    limpar(idZ);
+  }
+
+  /* CASO 2: SEM SONHO CADASTRADO ainda há decisão — ela guardou aquele dinheiro de
+     propósito. Não há data nem alvo, então as estradas comparam o que fica no pote. */
+  {
+    const idN = novaCrianca({ name: 'Sem sonho', semanada_valor: 10, rendimento_valor: 0 });
+    Dados.upsert('kid_entries', {
+      kid_id: idN, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+    App.kid = Dados.get('kids', idN);
+
+    let passou = false;
+    telaEscolha('guardar', 10, 'Doce', () => { passou = true; });
+    check('sem sonho, a tela ainda para', passou, false);
+    check('  falando do dinheiro que ela guardou', tela().includes('guardou'), true);
+    check('  e comparando o que fica', tela().includes(fmtKid(20)) && tela().includes(fmtKid(30)), true);
+    check('  sem falar de sonho nenhum', tela().includes('demora'), false);
+    limpar(idN);
+  }
+
+  /* CASO 3: SEM RITMO DE SEMANADA não há data para projetar, e inventar uma seria
+     mentir sobre um dia que o app não conhece. A comparação vira dinheiro contra alvo. */
+  {
+    const idR = novaCrianca({ name: 'Sem ritmo dois', semanada_valor: 0, rendimento_valor: 0 });
+    Dados.upsert('kid_goals', {
+      kid_id: idR, name: 'Bola', icon: '⚽', target_amount: 50, done: false });
+    Dados.upsert('kid_entries', {
+      kid_id: idR, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+    App.kid = Dados.get('kids', idR);
+
+    let passou = false;
+    telaEscolha('guardar', 10, 'Doce', () => { passou = true; });
+    check('sem ritmo, a tela ainda para', passou, false);
+    check('  comparando em dinheiro, não em data', tela().includes(fmtKid(50)), true);
+    check('  sem prometer uma data que não conhece', tela().includes('semanada'), false);
+    limpar(idR);
+  }
+
+  /* A MOEDA MÁGICA É UM CUSTO REAL, e não retórica: quem tira do pote de guardar não
+     recebe a moeda no pagamento seguinte da semanada — a regra vive em
+     `DB.kidMoedaMagicaDevida`, no app do adulto, e é ela que decide. Então a tela pode
+     mostrar isso como preço, e mostra nas DUAS estradas: perde de um lado, ganha do
+     outro, que é o que torna a comparação uma escolha. */
+  {
+    const idM = novaCrianca({ name: 'Moeda escolha', semanada_valor: 10,
+      rendimento_tipo: 'moeda', rendimento_valor: 2 });
+    Dados.upsert('kid_goals', {
+      kid_id: idM, name: 'Patins', icon: '🛼', target_amount: 60, done: false });
+    Dados.upsert('kid_entries', {
+      kid_id: idM, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+    App.kid = Dados.get('kids', idM);
+
+    check('a moeda em jogo entra na consequência',
+      Dados.consequenciaDoSaque(idM, 10).perdeMoeda, true);
+    telaEscolha('guardar', 10, 'Doce', () => {});
+    check('  a estrada de usar avisa que perde a moeda',
+      tela().includes('sem a moeda mágica'), true);
+    check('  e a de esperar mostra o que ganha', tela().includes(fmtKid(2)), true);
+
+    /* SEM MOEDA CONFIGURADA a linha não aparece: prometer ou cobrar uma moeda que não
+       existe seria inventar consequência. */
+    const idX = novaCrianca({ name: 'Sem moeda', semanada_valor: 10, rendimento_valor: 0 });
+    Dados.upsert('kid_goals', {
+      kid_id: idX, name: 'Bola', icon: '⚽', target_amount: 60, done: false });
+    Dados.upsert('kid_entries', {
+      kid_id: idX, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+    App.kid = Dados.get('kids', idX);
+    telaEscolha('guardar', 10, 'Doce', () => {});
+    check('sem moeda configurada, nada é prometido',
+      tela().includes('moeda mágica'), false);
+    limpar(idM); limpar(idX);
+  }
+
+  /* O AVISO DA MOEDA DIZ A SEMANA CERTA. A regra olha a semana ANTERIOR fechada, então
+     o saque de hoje anula a moeda do PRÓXIMO pagamento, não a de hoje — o texto dizia
+     "desta semana", que é uma data errada dita com confiança. */
+  {
+    const fonteC = fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8');
+    check('o aviso da moeda não promete a semana errada',
+      fonteC.includes('moeda mágica</b> desta semana'), false);
+  }
 
   /* AS DUAS ESTRADAS TÊM O MESMO PESO. Fazer a de gastar menor, ou vermelha, seria
      dizer qual é a resposta certa — e aí não é escolha, é obediência. O laranja é
