@@ -133,6 +133,68 @@ create table if not exists kid_entries (
   deleted boolean not null default false
 );
 
+-- ============================================================
+-- AS COLUNAS QUE CHEGARAM DEPOIS
+--
+-- ESTE BLOCO EXISTE PORQUE `create table if not exists` NÃO ADICIONA COLUNA.
+--
+-- Os creates acima descrevem a tabela COMPLETA, com as colunas novas dentro. Isso
+-- funciona num banco vazio e não faz absolutamente nada num banco que já tem a tabela:
+-- o Postgres vê que ela existe, pula o comando inteiro em silêncio, e as colunas novas
+-- nunca aparecem. Nenhum erro é levantado — a migração diz "sucesso" e não migrou nada.
+--
+-- Foi exatamente o que aconteceu: só `kid_wishes` foi criada, porque era a única tabela
+-- que ainda não existia. `frequencia` e `expira_em` continuaram faltando, e a missão
+-- especial chegava no celular sem saber que era especial.
+--
+-- Toda coluna que chega depois precisa de um `alter table ... add column if not exists`.
+-- Há teste garantindo que nenhuma coluna dos creates acima fique sem o alter dela.
+-- ============================================================
+
+-- kids
+alter table kids add column if not exists avatar text;
+alter table kids add column if not exists cor text;
+alter table kids add column if not exists nascimento_ano int;
+alter table kids add column if not exists semanada_valor numeric not null default 0;
+alter table kids add column if not exists semanada_dia int not null default 1;
+alter table kids add column if not exists rendimento_tipo text not null default 'nenhum';
+alter table kids add column if not exists rendimento_valor numeric not null default 0;
+alter table kids add column if not exists pin_hash text;
+alter table kids add column if not exists pin_salt text;
+alter table kids add column if not exists active boolean not null default true;
+
+-- kid_goals
+alter table kid_goals add column if not exists icon text default '🎁';
+alter table kid_goals add column if not exists target_amount numeric not null default 0;
+alter table kid_goals add column if not exists done boolean not null default false;
+alter table kid_goals add column if not exists done_at date;
+
+-- kid_tasks: `frequencia` e `expira_em` são as que faltavam, e são as que fazem a
+-- missão especial ser especial. Sem elas o app recebe a missão como semanal.
+alter table kid_tasks add column if not exists icon text default '⭐';
+alter table kid_tasks add column if not exists amount numeric not null default 0;
+alter table kid_tasks add column if not exists frequencia text not null default 'semanal';
+alter table kid_tasks add column if not exists expira_em date;
+alter table kid_tasks add column if not exists active boolean not null default true;
+
+-- kid_entries. As três primeiras eu tinha esquecido, e o teste as pegou: um banco muito
+-- antigo, de antes do cofrinho ganhar potes, não teria nenhuma delas.
+alter table kid_entries add column if not exists tipo text;
+alter table kid_entries add column if not exists amount numeric not null default 0;
+alter table kid_entries add column if not exists date date;
+alter table kid_entries add column if not exists pote text;
+alter table kid_entries add column if not exists description text;
+alter table kid_entries add column if not exists task_id uuid;
+alter table kid_entries add column if not exists kid_goal_id uuid;
+alter table kid_entries add column if not exists confirmada boolean not null default true;
+alter table kid_entries add column if not exists repartido boolean not null default false;
+
+-- kid_wishes
+alter table kid_wishes add column if not exists icon text default '⭐';
+alter table kid_wishes add column if not exists criada_em date;
+alter table kid_wishes add column if not exists resposta text;
+alter table kid_wishes add column if not exists respondida_em date;
+
 create index if not exists idx_kid_entries_kid on kid_entries(family_id, kid_id, date);
 create index if not exists idx_kid_goals_kid on kid_goals(family_id, kid_id);
 create index if not exists idx_kid_tasks_kid on kid_tasks(family_id, kid_id);

@@ -6788,6 +6788,76 @@ try {
   for (const r of DB.all('recurrences').filter(r => r.kid_id === idE)) DB.remove('recurrences', r.id);
   DB.remove('kids', idE); DB.remove('accounts', contaE);
 } catch (e) { console.log(` FALHA | gasto da criança: ${e.message}`); fail++; }
+/* ---- A MIGRAÇÃO PRECISA MIGRAR ----
+
+   `create table if not exists` NÃO ADICIONA COLUNA. Num banco que já tem a tabela, o
+   Postgres pula o comando inteiro em silêncio — nenhum erro, nenhum aviso, e a migração
+   termina dizendo "sucesso" sem ter migrado nada.
+
+   Aconteceu de verdade: a migração descrevia kid_tasks completa, com `frequencia` e
+   `expira_em` dentro do create, e num banco real só criou a tabela que ainda não existia.
+   A missão especial chegava no celular sem saber que era especial, porque a coluna que a
+   distingue nunca foi criada. Levou duas rodadas de investigação para achar.
+
+   Toda coluna descrita num create da migração precisa do `alter table add column if not
+   exists` dela. Este teste compara as duas listas. */
+console.log('\n=== A migração migra bancos que já existem ===');
+try {
+  const mig = fs.readFileSync(BASE + 'supabase/migracao-cofrinho.sql', 'utf8');
+
+  /* As colunas de cada create table da migração. */
+  const doCreate = {};
+  for (const m of mig.matchAll(/create table if not exists (\w+)\s*\(([\s\S]*?)\n\);/g)) {
+    const tab = m[1];
+    doCreate[tab] = m[2].split(/\r?\n/)
+      .map(l => l.replace(/--.*$/, '').trim())
+      .map(l => (l.match(/^(\w+)\s+/) || [])[1])
+      .filter(Boolean)
+      /* `id` e `family_id` nascem com a tabela e nunca são adicionados depois: são a
+         chave e o vínculo, e uma tabela sem eles não existe. `updated_at` e `deleted`
+         idem — vêm do desenho original de toda tabela sincronizada. */
+      .filter(col => !['id', 'family_id', 'kid_id', 'name', 'updated_at', 'deleted'].includes(col));
+  }
+
+  /* As colunas que a migração de fato adiciona. */
+  const doAlter = new Set(
+    [...mig.matchAll(/alter table (\w+) add column if not exists (\w+)/g)]
+      .map(m => m[1] + '.' + m[2]));
+
+  const semAlter = [];
+  for (const tab of Object.keys(doCreate)) {
+    for (const col of doCreate[tab]) {
+      if (!doAlter.has(tab + '.' + col)) semAlter.push(tab + '.' + col);
+    }
+  }
+  check('toda coluna do create tem o alter dela',
+    semAlter.length ? semAlter.join(', ') : true, true);
+
+  /* AS TRÊS QUE FALTAVAM DE VERDADE, nomeadas: um teste genérico que passasse a mudar
+     junto com a implementação deixaria justamente estas escaparem de novo. */
+  for (const alvo of ['kid_tasks.frequencia', 'kid_tasks.expira_em', 'kid_entries.repartido']) {
+    check(`a migração adiciona ${alvo}`, doAlter.has(alvo), true);
+  }
+
+  /* O NOME DA FUNÇÃO DO CARIMBO tem de existir no schema. A migração chamou
+     `stamp_server_at()` durante um tempo — um nome inventado — e o erro só aparecia na
+     hora de rodar, com a migração já pela metade. */
+  const sch = fs.readFileSync(BASE + 'supabase/schema.sql', 'utf8');
+  const chamadas = [...mig.matchAll(/execute function (\w+)\(\)/g)].map(m => m[1]);
+  const inventadas = chamadas.filter(f =>
+    !new RegExp('create (or replace )?function ' + f + '\\b').test(sch));
+  check('a migração só chama função que o schema cria',
+    inventadas.length ? [...new Set(inventadas)].join(', ') : true, true);
+
+  /* IDEMPOTENTE: rodar duas vezes não pode quebrar. Todo comando que cria coisa precisa
+     do "if not exists" ou do "or replace" — e este arquivo é feito para ser colado no
+     SQL Editor por alguém que não sabe se já rodou antes. */
+  const criaSemGuarda = [...mig.matchAll(/^\s*(create (?:table|index|policy|trigger)) (?!if not exists)(\w+)/gmi)]
+    .map(m => m[0].trim());
+  check('nenhum create sem proteção contra rodar duas vezes',
+    criaSemGuarda.length ? criaSemGuarda.join(' | ') : true, true);
+} catch (e) { console.log(` FALHA | migração: ${e.message}`); fail++; }
+
 /* ---- APAGAR O COFRINHO LEVA AS VONTADES JUNTO ----
 
    Uma tabela nova precisa entrar em TODOS os lugares que varrem o cofrinho, e apagar é o
