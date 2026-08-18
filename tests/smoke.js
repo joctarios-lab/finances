@@ -6524,6 +6524,173 @@ try {
   DB.remove('kids', idD);
   closeSheet(); closeModal();
 } catch (e) { console.log(` FALHA | missão de todo dia: ${e.message}`); fail++; }
+/* ---- QUANDO A CRIANÇA GASTA, O DINHEIRO SAI DA CONTA ----
+
+   Era o buraco que fechava o ciclo pela metade. Dar a semanada não move dinheiro
+   (fica no banco e troca de dono), mas quando ela GASTA o dinheiro sai da casa —
+   quem paga o sorvete é o adulto.
+
+   Sem lançar, acontecia o pior dos mundos: o acumulado do cofrinho caía R$ 5 e o
+   "Livre ao fim" SUBIA R$ 5, como se a família tivesse ficado mais rica por a
+   criança ter gasto. Dinheiro saía do bolso e aparecia como sobra. */
+console.log('\n=== O gasto da criança debita a conta ===');
+try {
+  const hojeE = DB.hojeISO();
+  const contaE = DB.upsert('accounts', {
+    name: 'Conta do espelho', type: 'Conta Corrente', balance: 1000, active: true });
+  const idE = DB.upsert('kids', {
+    name: 'Filho Espelho', semanada_valor: 10,
+    semanada_dia: new Date(hojeE + 'T12:00:00').getDay(), active: true });
+  DB.acertarContratoDaSemanada(idE, { account_id: contaE });
+
+  DB.upsert('kid_entries', {
+    kid_id: idE, tipo: 'semanada', pote: 'gastar', amount: 10, date: hojeE,
+    confirmada: true, repartido: false });
+  const periodoE = DB.monthPeriod(new Date(hojeE + 'T12:00:00'));
+
+  /* ANTES: nada no extrato. É o estado que o defeito produzia. */
+  check('a semanada não gera despesa no extrato', DB.espelharGastosDosFilhos().length, 0);
+
+  /* A CRIANÇA GASTA R$ 5 — e o gasto NASCE PENDENTE.
+
+     Ela está aprendendo e vai tocar sem querer. Como o gasto agora debita a conta
+     da família, um toque de curiosidade mexeria no dinheiro real: por isso ele
+     espera o adulto, igual à tarefa. */
+  const idGasto = DB.upsert('kid_entries', {
+    kid_id: idE, tipo: 'gasto', pote: 'gastar', amount: 5, date: hojeE,
+    description: 'Doce', confirmada: false });
+  check('gasto pendente não vira despesa da família', DB.espelharGastosDosFilhos().length, 0);
+  /* MAS O POTE DELA JÁ CAI: aos seis anos, ação sem retorno visível é ação que ela
+     repete achando que não funcionou. E mostrar menos do que ela talvez tenha é o
+     lado seguro de errar num app que ensina a não gastar o que não tem. */
+  check('  mas o pote dela já cai na hora', DB.kidPotes(idE).gastar, 5);
+
+  /* O ADULTO CONFIRMA: aí sim a despesa entra e a conta é debitada. */
+  /* A CONTA É A DO CONTRATO — e o teste mede a conta que o app de fato usa.
+
+     Media a conta que EU criei, e o espelhamento usa a do contrato da semanada.
+     Como o cenário tem outras contas ativas, o débito caía numa terceira e o teste
+     reprovava sem haver defeito. Perguntar ao app qual conta ele escolheu é o que
+     torna a asserção sobre o comportamento, e não sobre a minha suposição. */
+  const contaUsada = (DB.contratoDaSemanada(idE) || {}).account_id
+    || (DB.all('accounts').find(a => a.active !== false) || {}).id;
+  const saldoAntes = DB.get('accounts', contaUsada).balance;
+  confirmarTarefa(idGasto, true);
+  check('confirmado, o gasto vira despesa da família',
+    DB.all('transactions').some(x => /Gasto de Filho Espelho/.test(x.description || '')), true);
+  check('  e o saldo da conta cai de verdade', DB.get('accounts', contaUsada).balance, saldoAntes - 5);
+
+  const desp = DB.all('transactions').filter(x => x.kid_id === idE && DB.isExpense(x)
+    && !DB.isSemanada(x) === false);
+  const gastoTx = DB.all('transactions').find(x => /Gasto de Filho Espelho/.test(x.description || ''));
+  check('  com o nome da criança e o que foi', !!gastoTx, true);
+  check('  dizendo o que ela comprou', /Doce/.test(gastoTx.description), true);
+  check('  no valor que ela gastou', gastoTx.amount, 5);
+  check('  na data do gasto', gastoTx.date, hojeE);
+  /* PAGO, e não "A Pagar": o dinheiro já saiu quando ela comprou. Deixar em aberto
+     criaria pendência para uma decisão que ninguém precisa tomar. */
+  check('  já como pago', gastoTx.status, 'Pago');
+  check('  e na conta que o contrato usa', gastoTx.account_id, contaUsada);
+
+  /* NÃO DUPLICA. O id é determinístico: mesmo lançamento do cofrinho, mesmo id de
+     transação. Rodar em cada ponte, ou em dois aparelhos, é inofensivo. */
+  check('espelhar de novo não duplica', DB.espelharGastosDosFilhos().length, 0);
+  check('  continua uma despesa só',
+    DB.all('transactions').filter(x => /Gasto de Filho Espelho/.test(x.description || '')).length, 1);
+
+  /* A CONTA FECHA: o acumulado dela cai e a despesa entra. Os dois se cancelam no
+     livre, que é exatamente o que aconteceu na realidade — o dinheiro era dela, foi
+     gasto, e saiu do banco. */
+  const fimE = DB.fimISO(periodoE);
+  /* A CONTA FECHA DOS DOIS LADOS. O pote dela caiu R$ 5 e a conta da família caiu
+     R$ 5: o dinheiro era dela, foi gasto, e saiu do banco. Antes o acumulado caía e
+     o "Livre ao fim" SUBIA — a família parecia mais rica por a criança ter gasto. */
+  const gastoTx2 = DB.all('transactions').find(x => /Gasto de Filho Espelho/.test(x.description || ''));
+  check('a despesa e o pote batem no mesmo valor', gastoTx2.amount, 5);
+  check('  e ela é do tipo despesa', DB.isExpense(gastoTx2), true);
+  /* O GASTO PENDENTE ESPERA NA FILA DO ADULTO.
+
+     É o que protege o dinheiro real: a criança está aprendendo e vai tocar sem
+     querer, e como o gasto dela debita a conta da família, um toque de curiosidade
+     não pode sair do bolso de ninguém sem alguém ver. */
+  const idPend = DB.upsert('kid_entries', {
+    kid_id: idE, tipo: 'gasto', pote: 'gastar', amount: 3, date: hojeE,
+    description: 'Figurinha', confirmada: false });
+  const fila = DB.kidTarefasAConfirmar().filter(x => x.kid.id === idE);
+  check('o gasto pendente entra na fila do adulto', fila.length, 1);
+  check('  identificado como gasto', fila[0].entry.tipo, 'gasto');
+  check('  com o valor e o que foi', fila[0].entry.amount, 3);
+
+  /* A TELA MOSTRA O QUE É. Sem dizer que é uma compra, o adulto confirma achando
+     que está aprovando uma tarefa — e o que ele estaria aprovando é uma saída da
+     conta dele. */
+  openConfirmarTarefas(idE);
+  const telaFila = els['#modal'].innerHTML;
+  check('a tela de confirmar mostra o gasto', /Figurinha/.test(telaFila), true);
+  /* MEDE O AVISO, não a palavra. A primeira versão procurava /compr|gast/, que casa
+     com a DESCRIÇÃO da compra — "Figurinha" não, mas qualquer item chamado "gasto do
+  /* O AVISO TEM DE ESTAR NA LINHA DA COMPRA, e é isso que se mede: procurar o texto
+     solto na tela deixava passar a troca por outro rótulo qualquer que também
+     contivesse a palavra. */
+  const iIco = telaFila.indexOf(String.fromCodePoint(0x1F6D2));
+  const linhaCompra = iIco < 0 ? ''
+    : telaFila.slice(iIco, telaFila.indexOf('</span>', iIco) + 7);
+  check('  avisando, na própria linha, que debita a conta',
+    /debita a sua conta/.test(linhaCompra), true);
+  /* A SEÇÃO "Ela gastou" aparece porque há uma compra pendente. A de "Ela ganhou"
+     só existe quando há ganho pendente — e neste ponto do cenário não há, então
+     exigir as duas era exigir um estado que a cena não montou. */
+  check('  numa seção que diz que ela gastou', /Ela gastou/.test(telaFila), true);
+  check('  com o ícone que identifica a compra', /🛒/.test(telaFila), true);
+  check('  e o valor com sinal de saída', /−/.test(telaFila), true);
+
+  /* RECUSAR devolve o dinheiro ao pote dela e não deixa despesa nenhuma. */
+  const antesRec = DB.kidPotes(idE).gastar;
+  confirmarTarefa(idPend, false);
+  check('recusar devolve o dinheiro ao pote', DB.kidPotes(idE).gastar, antesRec + 3);
+  check('  e não cria despesa para a família',
+    DB.all('transactions').some(x => /Figurinha/.test(x.description || '')), false);
+  closeModal();
+
+  /* A DOAÇÃO também sai do bolso, e a descrição diz o que foi: o extrato da família
+     não pode mentir sobre o destino do dinheiro. */
+  DB.upsert('kid_entries', {
+    kid_id: idE, tipo: 'doacao', pote: 'doar', amount: 3, date: hojeE,
+    description: 'Bichinhos', confirmada: false });
+  const idDoacao = DB.all('kid_entries').find(e => e.kid_id === idE && e.tipo === 'doacao').id;
+  confirmarTarefa(idDoacao, true);
+  const doacaoTx = DB.all('transactions').find(x => /Doação de Filho Espelho/.test(x.description || ''));
+  check('a doação dela também debita', !!doacaoTx, true);
+  check('  identificada como doação, não como gasto', /Doação/.test(doacaoTx.description), true);
+  check('  dizendo para quem', /Bichinhos/.test(doacaoTx.description), true);
+
+  /* TAREFA E SEMANADA NÃO SÃO GASTO: elas põem dinheiro no cofrinho, não tiram da
+     conta. Espelhá-las inverteria o sinal do dinheiro da família. */
+  DB.upsert('kid_entries', {
+    kid_id: idE, tipo: 'tarefa', pote: 'gastar', amount: 2, date: hojeE,
+    description: 'Regar', confirmada: true });
+  DB.upsert('kid_entries', {
+    kid_id: idE, tipo: 'presente', pote: 'guardar', amount: 20, date: hojeE, confirmada: true });
+  check('tarefa e presente não geram despesa', DB.espelharGastosDosFilhos().length, 0);
+
+  /* NÃO CONFIRMADO não gera: se a tarefa dela ainda espera o adulto, não houve
+     saída de dinheiro nenhuma. */
+  DB.upsert('kid_entries', {
+    kid_id: idE, tipo: 'gasto', pote: 'gastar', amount: 4, date: hojeE,
+    description: 'Pendente', confirmada: false });
+  check('gasto não confirmado não vira despesa', DB.espelharGastosDosFilhos().length, 0);
+
+  /* APAGADO PELO ADULTO NÃO VOLTA. Recriar seria o app desfazendo a decisão dele a
+     cada abertura — o mesmo defeito que já apareceu com as semanadas apagadas. */
+  DB.remove('transactions', doacaoTx.id);
+  check('despesa apagada pelo adulto não é recriada', DB.espelharGastosDosFilhos().length, 0);
+
+  // Limpeza
+  for (const x of DB.data.transactions.filter(x => x.kid_id === idE)) DB.remove('transactions', x.id);
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idE)) DB.remove('kid_entries', e.id);
+  for (const r of DB.all('recurrences').filter(r => r.kid_id === idE)) DB.remove('recurrences', r.id);
+  DB.remove('kids', idE); DB.remove('accounts', contaE);
+} catch (e) { console.log(` FALHA | gasto da criança: ${e.message}`); fail++; }
 /* ---- APAGAR UM COFRINHO INTEIRO ----
 
    Existia só "pausar", que esconde e guarda tudo. A falta de "excluir" apareceu

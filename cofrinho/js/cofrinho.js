@@ -362,6 +362,15 @@ function telaCofrinho() {
       <button class="bt rosa" id="bt-doar"><span class="emo">💝</span> Doei</button>
     </div>
 
+    ${/* USAR O QUE ESTÁ GUARDADO. Faltava por completo, e a falta tinha um efeito
+         colateral silencioso: a moeda mágica premia a semana em que ela NÃO tira do
+         guardado, e sem caminho para tirar a moeda caía sempre. Um prêmio que não se
+         pode perder não é prêmio, é mensalidade. */
+      p.guardar > 0 ? `
+      <button class="bt clara" id="bt-usar-guardado" style="margin-top:14px">
+        <span class="emo">🏦</span> Usar o que guardei
+      </button>` : ''}
+
     ${aConfirmar ? `<div class="recado" style="margin-top:18px">
       <b>Quase lá!</b> ${aConfirmar === 1 ? 'Uma missão está' : `${aConfirmar} missões estão`}
       esperando um adulto conferir. Aí a moeda cai no seu pote 🪙
@@ -644,6 +653,14 @@ function telaSonho() {
         </span>
       </div>
       <div class="trilha">${Arte.trilha(pct, meta.icon || '🎁')}</div>
+      ${/* CHEGOU: a hora de comprar. É o fim da história que a barra vinha contando.
+           Sem este botão o app enchia a barra, tocava o confete e não deixava
+           realizar — ensinando a acumular em vez de planejar. Guardar sem nunca
+           realizar é privação com gráfico bonito. */
+        chegou ? `
+      <button class="bt ouro chama" id="bt-comprar-sonho" style="margin-top:16px">
+        <span class="emo">🎉</span> Comprar meu ${esc(meta.name)}
+      </button>` : ''}
       ${faltam !== null && faltam > 0 ? `
         <div class="pote-nome" style="text-align:center;margin-top:10px">quantas semanadas faltam</div>
         <div class="semanas">
@@ -689,13 +706,25 @@ function telaSelos() {
 
 /* ---------- Gastar e doar ---------- */
 
+/* GASTAR, DOAR ou USAR O QUE ESTÁ GUARDADO — a mesma tela, três origens.
+
+   O pote de onde o dinheiro sai muda o significado da saída, e a tela precisa dizer
+   isso: gastar do "gastar agora" é o uso previsto; tirar do "guardar" é desfazer uma
+   espera, e a criança tem de saber o que perde ao fazer isso. */
 function telaGastar(pote) {
   const kid = App.kid;
   const p = Dados.potes(kid.id);
-  const doando = pote === 'doar';
+  const de = pote === 'doar' ? 'doar' : pote === 'guardar' ? 'guardar' : 'gastar';
+  const doando = de === 'doar';
+  const doGuardado = de === 'guardar';
   let valor = 0, oque = '';
-  const disponivel = p[doando ? 'doar' : 'gastar'];
+  const disponivel = p[de];
   const sugestoes = [1, 2, 5, 10, 20].filter(v => v <= Math.max(1, disponivel));
+  /* PERDE A MOEDA MÁGICA se tirar do guardado nesta semana. Avisar ANTES é a
+     diferença entre uma escolha e uma surpresa: ela pode decidir esperar mais três
+     dias, e é essa decisão que o app existe para provocar. */
+  const perdeMoeda = doGuardado && kid.rendimento_tipo === 'moeda'
+    && (Number(kid.rendimento_valor) || 0) > 0;
 
   const desenhar = () => {
     const demais = valor > disponivel;
@@ -703,7 +732,13 @@ function telaGastar(pote) {
       ${palco(demais ? 'triste' : 'oi', 122)}
       ${balao(doando
         ? `Que legal doar! Você tem <b>${fmtKid(disponivel)}</b> no pote de doar.`
-        : `Quanto você gastou? Tem <b>${fmtKid(disponivel)}</b> para gastar.`)}
+        : doGuardado
+          ? `Você tem <b>${fmtKid(disponivel)}</b> guardado. Quanto quer usar?`
+          : `Quanto você gastou? Tem <b>${fmtKid(disponivel)}</b> para gastar.`)}
+      ${perdeMoeda ? `<div class="recado" style="margin-bottom:14px">
+        <b>Espera um pouquinho...</b> Se você tirar do que guardou, não ganha a
+        <b>moeda mágica</b> desta semana ✨
+      </div>` : ''}
       <div class="valor-mostra ${demais ? 'demais' : ''}">${fmtKid(valor)}</div>
       <div class="chips">
         ${sugestoes.map(v => `<button class="chip ${valor === v ? 'on' : ''}" data-v="${v}">
@@ -722,9 +757,9 @@ function telaGastar(pote) {
           ).map(([e, n]) => `<button class="chip ${oque === n ? 'on' : ''}" data-o="${n}">${e} ${n}</button>`).join('')}
         </div>
       </div>
-      <button class="bt ${doando ? 'rosa' : 'verde'}" id="conf" ${valor <= 0 || demais ? 'disabled' : ''}>
-        <span class="emo">${doando ? '💝' : '🛒'}</span>
-        ${demais ? 'Não tem tudo isso' : doando ? 'Doei!' : 'Gastei!'}
+      <button class="bt ${doando ? 'rosa' : doGuardado ? '' : 'verde'}" id="conf" ${valor <= 0 || demais ? 'disabled' : ''}>
+        <span class="emo">${doando ? '💝' : doGuardado ? '🏦' : '🛒'}</span>
+        ${demais ? 'Não tem tudo isso' : doando ? 'Doei!' : doGuardado ? 'Usar este dinheiro' : 'Gastei!'}
       </button>
       <button class="bt clara" id="volta" style="margin-top:12px"><span class="emo">↩️</span> Voltar</button>`;
 
@@ -738,7 +773,7 @@ function telaGastar(pote) {
       Som.toque(); vibra(10); oque = b.dataset.o; desenhar();
     });
     el('#conf').onclick = () => {
-      const r = Dados.gastar(kid.id, doando ? 'doar' : 'gastar', valor, oque);
+      const r = Dados.gastar(kid.id, de, valor, oque);
       if (!r.ok) {
         Som.nao(); vibra([60, 40, 60]);
         aviso(r.motivo === 'falta' ? 'Não tem tudo isso no pote' : 'Escolha um valor', '😕');
@@ -748,7 +783,8 @@ function telaGastar(pote) {
       if (doando) festa(); else { Som.moeda(); vibra(25); }
       App.aba = 'cofrinho';
       render();
-      aviso(doando ? 'Você doou! Que coração grande 💝' : 'Anotado no cofrinho!', '');
+      aviso(doando ? 'Você doou! Que coração grande 💝'
+        : doGuardado ? 'Usou o que tinha guardado 🏦' : 'Anotado no cofrinho!', '');
     };
     el('#volta').onclick = () => { App.aba = 'cofrinho'; render(); };
   };
@@ -764,6 +800,18 @@ document.addEventListener('click', ev => {
   if (alvo.id === 'ir-ritual') return telaRitual();
   if (alvo.id === 'bt-gastar') { Som.toque(); return telaGastar('gastar'); }
   if (alvo.id === 'bt-doar') { Som.toque(); return telaGastar('doar'); }
+  if (alvo.id === 'bt-usar-guardado') { Som.toque(); return telaGastar('guardar'); }
+  if (alvo.id === 'bt-comprar-sonho') {
+    const pronto = Dados.metaAlcancada(App.kid.id);
+    if (!pronto) { render(); return; }
+    Dados.realizarSonho(App.kid.id);
+    Nuvem.sincronizar();
+    festa();
+    App.aba = 'cofrinho';
+    render();
+    aviso(`Você conquistou: ${pronto.meta.name}! 🎉`);
+    return;
+  }
   if (alvo.id === 'bt-sair') return sair();
 
   if (alvo.dataset && alvo.dataset.tarefa) {

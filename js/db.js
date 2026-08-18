@@ -408,7 +408,19 @@ const DB = {
      é uma despesa comum, lançada como qualquer outra. Os dois efeitos se cancelam
      no dinheiro livre — o acumulado cai e a despesa entra —, que é exatamente o
      que aconteceu na realidade. */
-  isSemanada(t) { return !!t && !!t.kid_id; },
+  /* SEMANADA é o lançamento que ENTREGA o dinheiro à criança — e só ele.
+
+     O teste era `!!t.kid_id`, e isso pegava demais: o GASTO dela também carrega o
+     kid_id, e passou a ser tratado como neutro. O efeito foi silencioso e errado —
+     a despesa entrava no extrato e o saldo da conta não caía, então a família via a
+     compra listada e o dinheiro parado no banco.
+
+     A distinção é de direção. A semanada não move dinheiro: ele fica na conta e
+     troca de dono. O gasto move: sai da casa quando a criança compra o sorvete.
+
+     Por isso o teste é o VÍNCULO COM O CONTRATO, e não a presença da criança: só o
+     que nasce do contrato da semanada é entrega. */
+  isSemanada(t) { return !!t && !!t.kid_id && !!t.recurrence_id; },
   isNeutral(t) { return !!t && (!!t.adjustment || !!t.pays_invoice || this.isSemanada(t) || this.isTransfer(t)); },
   expensesOf(period) { return this.txOfPeriod(period).filter(t => this.isExpense(t) && !this.isNeutral(t)); },
   incomesOf(period) { return this.txOfPeriod(period).filter(t => !this.isExpense(t) && !this.isNeutral(t)); },
@@ -2168,10 +2180,16 @@ const DB = {
      doação são saídas — e é por isso que `pote` existe nos dois: gastar do pote
      "guardar" tem significado diferente de gastar do pote "gastar agora", e a
      criança precisa ver essa diferença. */
+  /* ENTRADA pendente não conta; SAÍDA pendente conta — a mesma regra do app da
+     criança, e tem de ser a mesma. Creditar antes de conferir seria pagar por ela
+     dizer que fez; debitar antes é conservador, e mostrar menos do que ela talvez
+     tenha é o lado seguro de errar. */
   kidPotes(kidId) {
     const potes = { gastar: 0, guardar: 0, doar: 0 };
     for (const e of this.all('kid_entries')) {
-      if (e.kid_id !== kidId || e.confirmada === false) continue;
+      if (e.kid_id !== kidId) continue;
+      const saida = e.tipo === 'gasto' || e.tipo === 'doacao';
+      if (e.confirmada === false && !saida) continue;
       const p = potes[e.pote] === undefined ? 'gastar' : e.pote;
       const v = Number(e.amount) || 0;
       potes[p] += (e.tipo === 'gasto' || e.tipo === 'doacao') ? -v : v;
@@ -2330,7 +2348,14 @@ const DB = {
       const inicio = this.kidInicioDaSemana(kid);
       for (const e of this.all('kid_entries')) {
         if (e.kid_id !== kid.id || e.confirmada !== false) continue;
-        if (e.tipo !== 'tarefa' && e.tipo !== 'bonus') continue;
+        /* GASTO E DOAÇÃO ENTRAM NA FILA, e é o que protege o dinheiro de verdade.
+
+           A criança está aprendendo e vai tocar sem querer — é o que ela faz com
+           qualquer app. Como o gasto dela agora DEBITA A CONTA DA FAMÍLIA, um toque
+           de curiosidade mexeria no dinheiro real. Então ele espera o adulto, igual
+           à tarefa: confirmar credita a saída de verdade; recusar apaga e o pote
+           dela volta ao que era. */
+        if (!['tarefa', 'bonus', 'gasto', 'doacao'].includes(e.tipo)) continue;
         if (String(e.date) < inicio) continue;
         // Marcação de dia vale zero: não há dinheiro a liberar, nada a conferir
         if (!(Number(e.amount) > 0)) continue;
@@ -2572,6 +2597,86 @@ const DB = {
     });
   },
 
+  /* ---------- QUANDO A CRIANÇA GASTA, O DINHEIRO SAI DA CONTA ----------
+
+     Este era o buraco que fechava o ciclo pela metade.
+
+     Dar a semanada não move dinheiro: ele fica no banco e troca de dono (ver
+     isSemanada). Mas quando a criança GASTA, o dinheiro sai da casa de verdade —
+     quem paga o sorvete é o adulto, com o cartão ou a cédula dele. Sem lançar,
+     acontecia o pior dos mundos: o acumulado do cofrinho caía R$ 5 e o "Livre ao
+     fim" SUBIA R$ 5, como se a família tivesse ficado mais rica por a criança ter
+     gasto. Dinheiro saía do bolso e aparecia como sobra.
+
+     Agora o par fecha: o pote dela cai e a despesa entra. Os dois se cancelam no
+     livre, que é exatamente o que aconteceu na realidade.
+
+     ID DETERMINÍSTICO, a mesma técnica das recorrências: mesmo lançamento do
+     cofrinho, mesmo id de transação. Rodar duas vezes, ou em dois aparelhos, não
+     duplica — e é o que permite chamar isto em cada ponte sem medo.
+
+     NÃO ESPELHA A DOAÇÃO como categoria de gasto qualquer: ela sai do bolso igual,
+     mas a descrição diz o que foi, para o extrato da família não mentir sobre o
+     destino do dinheiro.
+
+     A CONTA é a do contrato da semanada, quando existe — é a que o adulto já
+     escolheu para esse dinheiro. Sem contrato, a primeira conta ativa; e como é uma
+     transação comum, ele pode corrigir depois. */
+  espelharGastosDosFilhos() {
+    if (!this.data) return [];
+    const kids = this.all('kids');
+    if (!kids.length) return [];
+    const criadas = [];
+
+    return this.emLote(() => {
+      for (const kid of kids) {
+        const contrato = this.contratoDaSemanada(kid.id);
+        const contaPadrao = (contrato && contrato.account_id)
+          || (this.all('accounts').find(a => a.active !== false) || {}).id || null;
+
+        for (const e of this.all('kid_entries')) {
+          if (e.kid_id !== kid.id) continue;
+          if (e.tipo !== 'gasto' && e.tipo !== 'doacao') continue;
+          if (e.confirmada === false) continue;
+          if (!(Number(e.amount) > 0)) continue;
+
+          const id = this.idDaOcorrencia(e.id, String(e.date));
+          /* Procura inclusive o APAGADO: se o adulto excluiu a despesa de propósito,
+             recriá-la seria o app desfazendo a decisão dele a cada abertura — o
+             mesmo defeito que já apareceu com as semanadas apagadas. */
+          if (this.data.transactions.some(x => x.id === id)) continue;
+
+          const oque = String(e.description || '').trim();
+          const rotulo = e.tipo === 'doacao'
+            ? `Doação de ${kid.name}${oque ? ' — ' + oque : ''}`
+            : `Gasto de ${kid.name}${oque ? ' — ' + oque : ''}`;
+
+          this.upsert('transactions', {
+            id,
+            description: rotulo,
+            amount: Number(e.amount) || 0,
+            date: String(e.date),
+            type: 'Despesa',
+            /* PAGO, e não "A Pagar": o dinheiro já saiu quando ela comprou o sorvete.
+               Deixar em aberto criaria uma pendência para uma decisão que ninguém
+               precisa tomar — e a fila de pendências existe para o que espera ação. */
+            status: 'Pago',
+            scope: 'Familiar',
+            account_id: contaPadrao,
+            kid_id: kid.id,
+            notes: 'Lançado pelo cofrinho da criança',
+          });
+          /* DEVOLVE O QUE CRIOU, e não só quantos. Quem chama precisa aplicar o
+             efeito no saldo da conta — e sem a lista teria de adivinhar quais das
+             transações são novas, o que na prática significa reaplicar o saldo de
+             todas a cada chamada. */
+          criadas.push(this.get('transactions', id));
+        }
+      }
+      return criadas;
+    });
+  },
+
   /* ---------- A PONTE COM O APP DA CRIANÇA ----------
 
      O app dela (em cofrinho/) tem armazém próprio, `financas.cofrinho.v1`, e não
@@ -2663,6 +2768,10 @@ const DB = {
       });
     }
 
+    /* ESPELHA OS GASTOS aqui, e não no boot: é neste ponto que os lançamentos dela
+       acabaram de chegar. Esperar a próxima abertura deixaria o extrato da família
+       sem a compra que a criança fez agora. */
+    if (mudouAqui) { try { this.espelharGastosDosFilhos(); } catch (_) { } }
     lado.meta.lastSync = this.now();
     try { localStorage.setItem(this.PONTE_COFRINHO, JSON.stringify(lado)); } catch (_) { }
     if (mudouAqui) this.save();

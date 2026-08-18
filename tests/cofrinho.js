@@ -805,6 +805,125 @@ console.log('\n=== O sonho ===');
   limpar(id);
 }
 
+/* ================= O gasto espera o adulto ================= */
+console.log('\n=== Gastar precisa da confirmação de um adulto ===');
+{
+  /* A criança está aprendendo e vai tocar sem querer — é o que ela faz com qualquer
+     app. Como o gasto dela agora DEBITA A CONTA DA FAMÍLIA, um toque de curiosidade
+     mexeria no dinheiro real. */
+  const id = novaCrianca({ name: 'Confirma' });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'semanada', pote: 'gastar', amount: 10, date: HOJE,
+    confirmada: true, repartido: true });
+
+  check('gastar funciona', Dados.gastar(id, 'gastar', 4, 'Doce').ok, true);
+  const g = Dados.all('kid_entries').find(e => e.kid_id === id && e.tipo === 'gasto');
+  check('  mas nasce esperando o adulto', g.confirmada, false);
+
+  /* O POTE CAI JÁ. Aos seis anos, ação sem retorno visível é ação que ela repete
+     achando que não funcionou — e mostrar menos do que ela talvez tenha é o lado
+     seguro de errar num app que ensina a não gastar o que não tem. */
+  check('  e o pote dela já cai na hora', Dados.potes(id).gastar, 6);
+
+  /* NÃO DÁ PARA GASTAR O QUE JÁ FOI RESERVADO por um gasto pendente: senão ela
+     gastaria R$ 4 três vezes enquanto o adulto não olha. */
+  check('gastar mais do que sobrou é recusado', Dados.gastar(id, 'gastar', 7, 'Outro').ok, false);
+  check('  e o pote continua igual', Dados.potes(id).gastar, 6);
+
+  /* RECUSADO, o dinheiro volta inteiro. É o que protege o toque sem querer. */
+  Dados.remove('kid_entries', g.id);
+  check('recusado, o dinheiro volta ao pote', Dados.potes(id).gastar, 10);
+  limpar(id);
+}
+
+/* ================= Usar o que está guardado ================= */
+console.log('\n=== Tirar dinheiro do pote de guardar ===');
+{
+  /* Faltava por completo, e a falta tinha um efeito colateral silencioso: a moeda
+     mágica premia a semana em que ela NÃO tira do guardado, e sem caminho para tirar
+     a moeda caía sempre. Um prêmio que não se pode perder não é prêmio. */
+  const id = novaCrianca({ name: 'Guardado' });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 50, date: HOJE, confirmada: true });
+
+  check('dá para gastar do pote guardar', Dados.gastar(id, 'guardar', 20, 'Livro').ok, true);
+  check('  o guardado cai', Dados.potes(id).guardar, 30);
+  check('  e o pote gastar não é tocado', Dados.potes(id).gastar, 0);
+  check('  também espera o adulto',
+    Dados.all('kid_entries').find(e => e.tipo === 'gasto').confirmada, false);
+
+  check('não dá para tirar mais do que guardou', Dados.gastar(id, 'guardar', 100, '').ok, false);
+  check('  o pote fica intacto', Dados.potes(id).guardar, 30);
+
+  /* A TELA oferece o caminho, com o aviso do que ela perde. */
+  App.kid = Dados.get('kids', id);
+  check('a tela do cofrinho oferece usar o guardado',
+    telaCofrinho().includes('bt-usar-guardado'), true);
+  telaGastar('guardar');
+  check('  a tela de tirar fala do que está guardado', tela().includes('guardado'), true);
+  /* AVISA ANTES sobre a moeda mágica: é a diferença entre uma escolha e uma
+     surpresa. Ela pode decidir esperar mais três dias, e é essa decisão que o app
+     existe para provocar. */
+  check('  e avisa que perde a moeda mágica', tela().includes('moeda mágica'), true);
+  limpar(id);
+
+  /* SEM MOEDA MÁGICA configurada, não há o que avisar — o aviso seria uma ameaça
+     vazia sobre um prêmio que não existe. */
+  const idSem = novaCrianca({ name: 'Sem Moeda', rendimento_valor: 0 });
+  Dados.upsert('kid_entries', {
+    kid_id: idSem, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+  App.kid = Dados.get('kids', idSem);
+  telaGastar('guardar');
+  check('sem moeda mágica, não avisa do que não existe',
+    tela().includes('não ganha a'), false);
+  limpar(idSem);
+}
+
+/* ================= Realizar o sonho ================= */
+console.log('\n=== Comprar o sonho quando a meta enche ===');
+{
+  /* Faltava, e a falta esvaziava a lição. O pote guardar existe para virar a
+     bicicleta; se o app enche a barra, toca o confete e depois não deixa comprar, o
+     que ele ensinou foi a acumular — não a planejar. */
+  const id = novaCrianca({ name: 'Sonhador' });
+  const meta = Dados.upsert('kid_goals', {
+    kid_id: id, name: 'Patinete', icon: '🛴', target_amount: 60, done: false });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 40, date: HOJE, confirmada: true });
+
+  check('com R$ 40 de R$ 60, o sonho não está pronto', Dados.metaAlcancada(id), null);
+  check('  e realizar é recusado', Dados.realizarSonho(id), false);
+  App.kid = Dados.get('kids', id);
+  App.aba = 'sonho';
+  check('  a tela não oferece comprar', telaSonho().includes('bt-comprar-sonho'), false);
+
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+  check('com R$ 70, o sonho está pronto', !!Dados.metaAlcancada(id), true);
+  check('  a tela oferece comprar', telaSonho().includes('bt-comprar-sonho'), true);
+  check('  dizendo o nome do sonho', telaSonho().includes('Patinete'), true);
+
+  check('realizar o sonho funciona', Dados.realizarSonho(id), true);
+  check('  sai do pote guardar', Dados.potes(id).guardar, 10);
+  /* O TROCO É DELA. Se juntou R$ 70 para um brinquedo de R$ 60, os R$ 10 ficam onde
+     estão — tirar tudo seria cobrar pelo troco. */
+  check('  e o que sobrou continua guardado', Dados.potes(id).guardar > 0, true);
+  check('  a meta é encerrada', Dados.get('kid_goals', meta).done, true);
+  /* ENCERRADA, NÃO APAGADA: o histórico dela precisa poder contar que este sonho
+     existiu e foi conquistado. */
+  check('  mas não é apagada', !!Dados.get('kid_goals', meta), true);
+  check('  e sai da lista de metas ativas', Dados.meta(id), null);
+
+  /* NÃO DÁ PARA COMPRAR DUAS VEZES: a meta encerrada não volta. */
+  check('realizar de novo é recusado', Dados.realizarSonho(id), false);
+  check('  e o pote não cai de novo', Dados.potes(id).guardar, 10);
+
+  /* O HISTÓRICO conta a conquista, com o nome do que ela comprou. */
+  const compra = Dados.entradas(id).find(e => /Comprei/.test(e.description || ''));
+  check('o histórico registra a conquista', !!compra, true);
+  check('  com o nome do sonho', /Patinete/.test(compra.description), true);
+  limpar(id);
+}
 /* ================= Selos ================= */
 console.log('\n=== Prêmios da semana ===');
 {

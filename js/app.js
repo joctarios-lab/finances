@@ -6982,23 +6982,52 @@ function filaDasCriancas() {
 
 /* Conferir as tarefas marcadas, uma a uma. Aceitar ou recusar em bloco tiraria o
    sentido do passo: confirmar é olhar o que foi feito, não carimbar. */
+/* CONFIRMAR O QUE A CRIANÇA MARCOU — e a tela precisa dizer o que é cada linha.
+
+   Duas coisas OPOSTAS passam por aqui, e confundi-las custa dinheiro:
+
+     tarefa e bônus — ela GANHA. Confirmar põe dinheiro no cofrinho dela.
+     gasto e doação — ela GASTOU. Confirmar tira dinheiro da CONTA DA FAMÍLIA.
+
+   Sem separar, o adulto confirma uma compra achando que aprova uma tarefa: o rótulo
+   dizia "Tarefas de Fulano" e a linha mostrava só nome e valor. Aprovar no
+   automático é o comportamento normal de quem vê uma fila uniforme — e aqui o
+   automático debitaria a conta dele. */
 function openConfirmarTarefas(kidId) {
   const k = DB.get('kids', kidId);
   if (!k) return toast('Criança não encontrada');
   const pendentes = DB.kidTarefasAConfirmar().filter(x => x.kid.id === kidId);
+  const saiu = e => e.tipo === 'gasto' || e.tipo === 'doacao';
   const nomeDaTarefa = e => {
     const t = DB.get('kid_tasks', e.task_id);
-    return t ? `${t.icon || '⭐'} ${t.name}` : (e.description || 'Tarefa');
+    if (t) return `${t.icon || '⭐'} ${t.name}`;
+    if (e.tipo === 'doacao') return `❤️ ${e.description || 'Doação'}`;
+    if (e.tipo === 'gasto') return `🛒 ${e.description || 'Compra'}`;
+    if (e.tipo === 'bonus') return `🏅 ${e.description || 'Semana completa'}`;
+    return e.description || 'Tarefa';
   };
-  openModal(`
-    <div class="modal-title">Tarefas de ${esc(k.name)}<button class="close-x" id="ct-back"><span data-ico="back"></span></button></div>
-    <p class="muted" style="margin-bottom:12px">Ela marcou como feitas. O dinheiro entra no cofrinho quando você confirmar.</p>
-    ${pendentes.map(x => `<div class="kid-tarefa">
-      <span>${esc(nomeDaTarefa(x.entry))}</span>
-      <b>${fmt(x.entry.amount)}</b>
+  const ganhos = pendentes.filter(x => !saiu(x.entry));
+  const saidas = pendentes.filter(x => saiu(x.entry));
+  const linha = x => `<div class="kid-tarefa">
+      <span class="kid-tarefa-nome">${esc(nomeDaTarefa(x.entry))}
+        ${saiu(x.entry)
+          ? '<small>compra dela — confirmar debita a sua conta</small>'
+          : '<small>ela marcou como feita</small>'}</span>
+      <b class="${saiu(x.entry) ? 't-danger' : 't-ok'}">${saiu(x.entry) ? '−' : '+'}${fmt(x.entry.amount)}</b>
       <button class="link-btn" data-ok-tarefa="${x.entry.id}">confirmar</button>
-      <button class="link-btn t-danger" data-no-tarefa="${x.entry.id}">ainda não</button>
-    </div>`).join('') || '<div class="empty">Nada para confirmar agora.</div>'}
+      <button class="link-btn t-danger" data-no-tarefa="${x.entry.id}">${
+        saiu(x.entry) ? 'não foi' : 'ainda não'}</button>
+    </div>`;
+
+  openModal(`
+    <div class="modal-title">O que ${esc(k.name)} marcou<button class="close-x" id="ct-back"><span data-ico="back"></span></button></div>
+    ${ganhos.length ? `<div class="sec-cab"><div class="sec-tit"><b>Ela ganhou</b>
+      <small>o dinheiro entra no cofrinho quando você confirmar</small></div></div>
+      ${ganhos.map(linha).join('')}` : ''}
+    ${saidas.length ? `<div class="sec-cab" style="margin-top:14px"><div class="sec-tit"><b>Ela gastou</b>
+      <small>confirmar lança a despesa e debita a sua conta</small></div></div>
+      ${saidas.map(linha).join('')}` : ''}
+    ${!pendentes.length ? '<div class="empty">Nada para confirmar agora.</div>' : ''}
   `);
   $('#ct-back').onclick = closeModal;
   document.querySelectorAll('#modal [data-ok-tarefa]').forEach(b => b.onclick = () => {
@@ -7865,11 +7894,41 @@ function pagarSemanada(kidId) {
    registro do que ela fez; o bônus é o pagamento da semana cheia. Se o adulto
    discorda de que a semana foi cumprida, é o pagamento que ele nega, não a
    memória dos dias. */
+/* CONFIRMAR o que a criança marcou. Três coisas passam por aqui:
+
+     tarefa e bônus — ela ganhou dinheiro, e ele só cai no pote depois que o adulto
+                      vê. É o que impede o app de virar auto-serviço.
+     gasto e doação — ela gastou, e o dinheiro sai da CONTA DA FAMÍLIA. Aqui a
+                      confirmação protege o dinheiro real: um toque de curiosidade
+                      não pode debitar a conta de ninguém.
+
+   Recusar apaga a marcação, e apagar é o certo: não fica um registro de "não fez"
+   nem uma compra que não houve pendurada no histórico dela. */
 function confirmarTarefa(entryId, aceitar) {
   const e = DB.get('kid_entries', entryId);
   if (!e) return false;
-  if (aceitar) DB.upsert('kid_entries', { ...e, confirmada: true });
-  else DB.remove('kid_entries', entryId);
+  if (aceitar) {
+    DB.upsert('kid_entries', { ...e, confirmada: true });
+    /* O GASTO CONFIRMADO VIRA DESPESA e debita a conta na hora.
+
+       Sem isto o extrato ganhava a linha só na próxima ponte, e o saldo da conta
+       nunca caía — a família via a despesa listada e o dinheiro parado no banco. */
+    if (e.tipo === 'gasto' || e.tipo === 'doacao') {
+      /* O GASTO CONFIRMADO VIRA DESPESA E DEBITA A CONTA na hora.
+
+         Sem isto o extrato ganhava a linha só na próxima ponte, e o saldo da conta
+         nunca caía — a família via a despesa listada e o dinheiro parado no banco.
+
+         `espelharGastosDosFilhos` devolve o que CRIOU, e é sobre essa lista que o
+         saldo é aplicado: aplicar sobre todas as despesas da criança debitaria de
+         novo, a cada confirmação, tudo o que ela já gastou antes. */
+      try {
+        for (const tx of DB.espelharGastosDosFilhos()) applyTxEffect(tx, 1);
+      } catch (_) { }
+    }
+  } else {
+    DB.remove('kid_entries', entryId);
+  }
   Sync.autoSync();
   return true;
 }

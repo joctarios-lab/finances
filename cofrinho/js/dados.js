@@ -103,10 +103,24 @@ const Dados = {
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   },
 
+  /* O SALDO DOS TRÊS POTES.
+
+     ENTRADA pendente NÃO conta; SAÍDA pendente conta. A assimetria é de propósito:
+
+       creditar antes de o adulto ver seria pagar por ela DIZER que fez a tarefa,
+       e a criança aprenderia a dizer;
+       debitar antes de ele ver é conservador — mostra menos dinheiro do que ela
+       talvez tenha, e num app que ensina a não gastar o que não tem, errar para
+       menos é o lado seguro.
+
+     E dá o retorno imediato que a idade exige: ela toca "gastei" e o pote cai na
+     hora. Sem isso ela tocaria de novo, achando que não funcionou. */
   potes(kidId) {
     const potes = { gastar: 0, guardar: 0, doar: 0 };
     for (const e of this.all('kid_entries')) {
-      if (e.kid_id !== kidId || e.confirmada === false) continue;
+      if (e.kid_id !== kidId) continue;
+      const saida = e.tipo === 'gasto' || e.tipo === 'doacao';
+      if (e.confirmada === false && !saida) continue;
       const p = potes[e.pote] === undefined ? 'gastar' : e.pote;
       const v = Number(e.amount) || 0;
       potes[p] += (e.tipo === 'gasto' || e.tipo === 'doacao') ? -v : v;
@@ -444,12 +458,55 @@ const Dados = {
     const v = Number(valor) || 0;
     if (v <= 0) return { ok: false, motivo: 'valor' };
     if (this.potes(kidId)[pote] < v) return { ok: false, motivo: 'falta' };
+    /* NASCE PENDENTE, esperando um adulto conferir.
+
+       A criança está aprendendo, e vai tocar sem querer — é o que ela faz com
+       qualquer app. Antes o gasto era definitivo na hora, e agora ele DEBITA A
+       CONTA DA FAMÍLIA: um toque de curiosidade mexeria no dinheiro real.
+
+       Então o adulto confirma, como já faz com as tarefas. Recusar apaga o
+       lançamento e o dinheiro volta inteiro para o pote. */
     this.upsert('kid_entries', {
       kid_id: kidId, tipo: pote === 'doar' ? 'doacao' : 'gasto', pote,
       amount: v, date: this.hojeISO(), description: oque || (pote === 'doar' ? 'Doação' : 'Compra'),
-      confirmada: true,
+      confirmada: false,
     });
     return { ok: true };
+  },
+
+  /* O SONHO ALCANÇADO: a hora de comprar.
+
+     Faltava, e a falta esvaziava a lição. O pote guardar existe para virar a
+     bicicleta; se o app enche a barra, toca o confete e depois não deixa comprar, o
+     que ele ensinou foi a acumular — não a planejar. Guardar sem nunca realizar é
+     privação com gráfico bonito.
+
+     Sai do pote GUARDAR, no valor da meta, e encerra a meta. O que sobrou continua
+     guardado: se ela juntou R$ 70 para um brinquedo de R$ 60, os R$ 10 são dela e
+     ficam onde estão — tirar tudo seria cobrar pelo troco. */
+  metaAlcancada(kidId) {
+    const meta = this.meta(kidId);
+    if (!meta) return null;
+    const alvo = Number(meta.target_amount) || 0;
+    if (!(alvo > 0)) return null;
+    if (this.potes(kidId).guardar < alvo) return null;
+    return { meta, valor: alvo };
+  },
+
+  realizarSonho(kidId) {
+    const pronto = this.metaAlcancada(kidId);
+    if (!pronto) return false;
+    this.upsert('kid_entries', {
+      kid_id: kidId, tipo: 'gasto', pote: 'guardar', amount: pronto.valor,
+      date: this.hojeISO(),
+      description: `Comprei: ${pronto.meta.name}`,
+      kid_goal_id: pronto.meta.id, confirmada: true,
+    });
+    /* A META É ENCERRADA, não apagada: o histórico dela precisa poder contar que
+       este sonho existiu e foi conquistado. Apagar tiraria da criança justamente a
+       memória que dá orgulho. */
+    this.upsert('kid_goals', { ...pronto.meta, done: true, done_at: this.hojeISO() });
+    return true;
   },
 
   /* SELOS DA SEMANA: o que ela conquistou, sem prometer nada em dinheiro.
