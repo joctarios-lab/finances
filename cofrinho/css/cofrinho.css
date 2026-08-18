@@ -1308,30 +1308,6 @@ h2 .emo { font-size: 27px; }
    texto para caber sem que a moldura precise crescer. */
 .jg .balao { margin-bottom: 14px; font-size: 15px; padding: 12px 16px; }
 
-/* JOGO 1: repartir. As moedas ainda por repartir, em cima. */
-.jg-moedas {
-  display: flex; justify-content: center; flex-wrap: wrap; gap: 6px;
-  min-height: 40px; align-items: center; margin-bottom: 14px;
-}
-.jg-moedas svg { width: 34px; height: 34px; }
-.jg-vazio { font-size: 14px; font-weight: 700; color: var(--tinta-fraca); }
-.jg-potes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
-.jg-pote {
-  background: var(--carta); border: 3px solid var(--ceu-2);
-  border-radius: 18px; padding: 10px 6px 8px; cursor: pointer;
-  font-family: inherit; min-height: 76px;
-  box-shadow: 0 4px 0 #cfe2ec;
-  transition: transform .1s, box-shadow .1s;
-}
-.jg-pote:active { transform: translateY(4px); box-shadow: 0 0 0 #cfe2ec; }
-.jg-pote svg { width: 100%; height: auto; max-height: 78px; display: block; }
-.jg-pote b { display: block; font-size: 24px; font-weight: 800; color: var(--tinta); }
-.jg-pote small { display: block; font-size: 12px; color: var(--tinta-fraca); font-weight: 700; }
-.jg-pote.on-gastar { border-color: var(--gastar); }
-.jg-pote.on-guardar { border-color: var(--guardar); }
-.jg-pote.on-doar { border-color: var(--doar); }
-.jg-pote[disabled] { opacity: .65; }
-
 /* JOGO 2: esperar ou gastar. */
 .jg-cofre {
   background: var(--carta); border-radius: 16px; padding: 10px 14px;
@@ -1378,87 +1354,6 @@ h2 .emo { font-size: 27px; }
 .jg-nota { font-size: 14px; font-weight: 700; color: var(--tinta-fraca); margin-top: 8px; }
 .jg-nota b { color: var(--tinta); }
 
-/* JOGO 3: doar. */
-.jg-gente { display: flex; flex-direction: column; gap: 9px; }
-.jg-quem {
-  display: flex; align-items: center; gap: 13px; text-align: left;
-  background: var(--carta); border: 3px solid var(--ceu-2); border-radius: 18px;
-  padding: 11px 14px; cursor: pointer; font-family: inherit; min-height: 76px;
-  box-shadow: 0 4px 0 #cfe2ec; transition: transform .1s, box-shadow .1s;
-}
-.jg-quem:active { transform: translateY(4px); box-shadow: 0 0 0 #cfe2ec; }
-.jg-quem.feito { border-color: var(--doar); background: #ffeef6; }
-.jq-e {
-  font-size: 30px; width: 52px; height: 52px; flex: none;
-  display: grid; place-items: center; border-radius: 50%; background: var(--ceu-2);
-}
-.jg-quem.feito .jq-e { background: #ffd9e9; }
-.jq-t { flex: 1; min-width: 0; text-align: left; }
-.jg-quem b { display: block; font-size: 17px; font-weight: 800; color: var(--tinta); }
-.jg-quem small { display: block; font-size: 13px; color: var(--tinta-fraca); font-weight: 700; }
-
-/* JOGO 4: as missões, com o Dino andando pelo trilho. */
-.jg-trilho { position: relative; height: 46px; margin-bottom: 14px; }
-.jt-barra {
-  position: absolute; left: 0; right: 34px; top: 26px; height: 12px;
-  background: #e2edf3; border-radius: 6px; overflow: hidden;
-  box-shadow: inset 0 2px 3px rgba(43, 58, 68, .12);
-}
-.jt-barra i {
-  display: block; height: 100%; border-radius: 6px;
-  background: linear-gradient(90deg, var(--gastar), #7ef5cd);
-  transition: width .35s cubic-bezier(.3, 1.2, .5, 1);
-}
-.jt-dino {
-  position: absolute; top: 0; font-size: 28px;
-  transform: translateX(-50%); transition: left .35s cubic-bezier(.3, 1.2, .5, 1);
-}
-.jt-fim { position: absolute; right: 0; top: 8px; font-size: 26px; }
-.jg-missoes { display: flex; flex-direction: column; gap: 8px; }
-.jg-miss {
-  display: flex; align-items: center; gap: 12px; text-align: left;
-  background: var(--carta); border: 3px solid var(--ceu-2); border-radius: 16px;
-  padding: 10px 14px; cursor: pointer; font-family: inherit; min-height: 76px;
-  box-shadow: 0 4px 0 #cfe2ec; transition: transform .1s, box-shadow .1s;
-}
-.jg-miss:active { transform: translateY(4px); box-shadow: 0 0 0 #cfe2ec; }
-.jg-miss.feito { border-color: var(--gastar); background: #eafff7; }
-.jm-e { font-size: 26px; flex: none; }
-.jg-miss b { flex: 1; font-size: 16px; font-weight: 800; color: var(--tinta); }
-.jm-ok { font-size: 24px; color: var(--gastar-fundo); font-weight: 800; }
-
-/* JOGO 5: chegar no sonho. */
-.jg-alvo {
-  display: flex; align-items: center; gap: 12px; justify-content: center;
-  margin-bottom: 12px;
-}
-.ja-e { font-size: 40px; }
-.ja-t b { display: block; font-size: 18px; font-weight: 800; color: var(--tinta); }
-.ja-t small { display: block; font-size: 13px; color: var(--tinta-fraca); font-weight: 700; }
-.jg-barra {
-  height: 20px; background: #e2edf3; border-radius: 10px; overflow: hidden;
-  box-shadow: inset 0 2px 4px rgba(43, 58, 68, .14); margin-bottom: 6px;
-}
-.jg-barra i {
-  display: block; height: 100%; border-radius: 10px;
-  background: linear-gradient(90deg, var(--guardar), #5fb8ff);
-  transition: width .4s cubic-bezier(.3, 1.2, .5, 1);
-}
-.jg-tem {
-  font-size: 30px; font-weight: 800; color: var(--guardar-fundo);
-  font-variant-numeric: tabular-nums; margin-bottom: 10px;
-}
-/* A MOEDA GRANDE é o único alvo da tela: numa tela de um botão só, ele tem que ser
-   grande o bastante para ela acertar sem olhar. */
-.jg-moedao {
-  background: none; border: 0; cursor: pointer; font-family: inherit;
-  padding: 8px; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  margin: 0 auto; min-height: 96px;
-}
-.jg-moedao svg { width: 86px; height: 86px; display: block; filter: drop-shadow(0 4px 6px rgba(224, 160, 16, .4)); }
-.jg-moedao small { font-size: 15px; font-weight: 800; color: #6b4a00; }
-.jg-moedao:active svg { transform: translateY(4px) scale(.95); }
-
 @media (prefers-reduced-motion: reduce) {
   .jt-barra i, .jt-dino, .jg-barra i { transition: none; }
 }
@@ -1466,4 +1361,214 @@ h2 .emo { font-size: 27px; }
 /* Dentro do jogo o Dino é figurante: quem tem de chamar atenção é o que se toca. */
 .jg .dino-palco { margin-bottom: 2px; }
 .jg .dino-palco svg { max-height: 78px; }
+
+/* ---------- OS SEIS CENÁRIOS ----------
+
+   Cada jogo tem um lugar próprio, e não é enfeite: uma criança que reconhece a mesma
+   tela pela terceira vez para de prestar atenção. O cenário é o que diz "isto aqui é
+   outra coisa" antes de qualquer texto. */
+
+/* ===== A FEIRA: pegar e soltar ===== */
+.fe-mesa {
+  display: flex; align-items: center; gap: 12px; justify-content: center;
+  margin-bottom: 14px; min-height: 62px;
+}
+.fe-pilha {
+  flex: 1; display: flex; flex-wrap: wrap; gap: 4px; justify-content: center;
+  background: var(--carta); border: 3px dashed #d8c48a; border-radius: 16px;
+  padding: 10px 8px; min-height: 58px; cursor: pointer; font-family: inherit;
+}
+.fe-pilha[disabled] { opacity: .5; border-style: solid; }
+.fe-pilha svg { width: 30px; height: 30px; }
+/* A MÃO mostra que a moeda saiu da pilha e ainda não chegou no pote: é o intervalo entre
+   pegar e decidir, e é ele que dá peso à escolha. */
+.fe-mao {
+  flex: none; width: 66px; height: 58px; border-radius: 16px;
+  display: grid; place-items: center; background: var(--ceu-2);
+  border: 3px solid transparent;
+}
+.fe-mao.cheia { border-color: var(--ouro); background: var(--ouro-claro, #fff2cf); animation: pop .3s; }
+.fe-vaz { font-size: 26px; opacity: .4; }
+.fe-linha { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.fe-col {
+  background: var(--carta); border: 3px solid var(--ceu-2); border-radius: 18px;
+  padding: 10px 5px 8px; cursor: pointer; font-family: inherit; min-height: 76px;
+  box-shadow: 0 4px 0 #cfe2ec; transition: transform .1s, box-shadow .1s;
+}
+.fe-col:active:not([disabled]) { transform: translateY(4px); box-shadow: 0 0 0 #cfe2ec; }
+.fe-col[disabled] { opacity: .55; }
+.fe-col.on-gastar { border-color: var(--gastar); }
+.fe-col.on-guardar { border-color: var(--guardar); }
+.fe-col.on-doar { border-color: var(--doar); }
+.fe-e { display: block; font-size: 30px; }
+.fe-col b { display: block; font-size: 13px; font-weight: 800; color: var(--tinta); }
+.fe-tem { display: block; font-size: 12px; font-weight: 700; color: var(--tinta-fraca); margin-top: 3px; }
+.fe-barra {
+  display: block; height: 8px; border-radius: 4px; background: #d5e6f0;
+  margin: 5px 3px 2px; overflow: hidden;
+}
+.fe-barra i {
+  display: block; height: 100%; background: var(--guardar);
+  transition: width .3s cubic-bezier(.3, 1.2, .5, 1);
+}
+
+/* ===== A SEMENTINHA: ver crescer ===== */
+.se-vaso {
+  position: relative; height: 168px; margin-bottom: 12px;
+  background: linear-gradient(180deg, #dff2ff 60%, #eaf7e4);
+  border-radius: 18px; overflow: hidden;
+}
+.se-ceu {
+  position: absolute; top: 10px; left: 0; right: 0;
+  display: flex; justify-content: center; gap: 7px;
+}
+/* Os degraus que faltam ficam à vista: sem eles, crescer não tem destino. */
+.se-marca {
+  width: 9px; height: 9px; border-radius: 50%; background: #fff;
+  box-shadow: inset 0 0 0 2px #b9d9ec;
+}
+.se-marca.ja { background: var(--gastar); box-shadow: 0 0 0 3px rgba(0, 168, 111, .2); }
+.se-planta {
+  position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%);
+  font-size: 30px; transition: font-size .5s cubic-bezier(.3, 1.4, .5, 1);
+}
+.se-planta.fase-1 { font-size: 44px; }
+.se-planta.fase-2 { font-size: 58px; }
+.se-planta.fase-3 { font-size: 72px; }
+.se-planta.fase-4 { font-size: 84px; animation: pula 1.4s ease-in-out infinite; }
+.se-terra {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 26px;
+  background: linear-gradient(180deg, #b98a5e, #8f6742);
+}
+.se-colheita { display: flex; justify-content: center; gap: 8px; font-size: 28px; min-height: 34px; }
+.sm-nada { font-size: 14px; font-weight: 700; color: var(--tinta-fraca); }
+
+/* ===== A PRACINHA: quem ajudar ===== */
+.pr-carteira {
+  display: flex; justify-content: center; flex-wrap: wrap; gap: 4px;
+  min-height: 36px; align-items: center; margin-bottom: 12px;
+}
+.pr-carteira svg { width: 28px; height: 28px; }
+.pr-cena { display: flex; flex-direction: column; gap: 8px; }
+.pr {
+  display: flex; align-items: center; gap: 12px; text-align: left;
+  background: var(--carta); border: 3px solid var(--ceu-2); border-radius: 18px;
+  padding: 10px 13px; cursor: pointer; font-family: inherit; min-height: 76px;
+  box-shadow: 0 4px 0 #cfe2ec; transition: transform .1s, box-shadow .1s;
+}
+.pr:active:not([disabled]) { transform: translateY(4px); box-shadow: 0 0 0 #cfe2ec; }
+.pr.feito { border-color: var(--doar); background: #ffeef6; }
+/* NÃO CABE não é o mesmo que JÁ FEITO, e a diferença precisa aparecer: um está fora do
+   alcance dela, o outro ela conquistou. */
+.pr.longe { opacity: .45; }
+.pr-e {
+  font-size: 30px; width: 52px; height: 52px; flex: none;
+  display: grid; place-items: center; border-radius: 50%; background: var(--ceu-2);
+}
+.pr.feito .pr-e { background: #ffd9e9; animation: pop .4s; }
+.pr-t { flex: 1; min-width: 0; }
+.pr-t b { display: block; font-size: 16px; font-weight: 800; color: var(--tinta); }
+.pr-t small { display: block; font-size: 13px; color: var(--doar-fundo); font-weight: 700; }
+.pr-c { flex: none; display: flex; gap: 2px; align-items: center; font-size: 20px; }
+.pr-c svg { width: 16px; height: 16px; }
+
+/* ===== O MAPA: o caminho da semana ===== */
+.mp {
+  display: flex; align-items: center; justify-content: center;
+  gap: 2px; margin-bottom: 12px; flex-wrap: wrap;
+}
+.mp-casa {
+  width: 40px; height: 40px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-size: 20px;
+  background: var(--ceu-2); box-shadow: inset 0 2px 3px rgba(43, 58, 68, .1);
+}
+.mp-casa.agora { background: var(--carta); box-shadow: 0 0 0 3px var(--ouro); animation: pop 1.6s ease-in-out infinite; }
+.mp-casa.moeda { background: var(--ouro-claro, #fff2cf); box-shadow: 0 0 0 2px var(--ouro); }
+.mp-casa.coracao { background: #ffeef6; box-shadow: 0 0 0 2px var(--doar); }
+.mp-casa.fim { background: #eafff7; box-shadow: 0 0 0 2px var(--gastar); }
+.mp-liga { width: 12px; height: 4px; border-radius: 2px; background: #d5e6f0; flex: none; }
+.di-placar { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.di-p {
+  background: var(--carta); border-radius: 14px; padding: 8px 6px;
+  box-shadow: 0 3px 0 #cfe2ec;
+}
+.di-p b { display: block; font-size: 26px; font-weight: 800; color: var(--tinta); }
+.di-p small { display: block; font-size: 12px; font-weight: 700; color: var(--tinta-fraca); }
+.di-dois { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.di-bt {
+  min-height: 96px; border-radius: 18px; cursor: pointer; font-family: inherit;
+  background: var(--carta); border: 3px solid var(--ceu-2);
+  box-shadow: 0 5px 0 #cfe2ec; padding: 10px 8px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  transition: transform .1s, box-shadow .1s;
+}
+.di-bt:active { transform: translateY(5px); box-shadow: 0 0 0 #cfe2ec; }
+.di-bt.cor { border-color: var(--doar); box-shadow: 0 5px 0 var(--doar-fundo); }
+.di-bt.moe { border-color: var(--ouro); box-shadow: 0 5px 0 var(--ouro-fundo); }
+.di-e { font-size: 30px; }
+.di-bt b { font-size: 14px; font-weight: 800; color: var(--tinta); line-height: 1.2; }
+.di-bt small { font-size: 11.5px; font-weight: 700; color: var(--tinta-fraca); }
+
+/* ===== O NINHO: ovos que chocam ===== */
+.ni { position: relative; margin-bottom: 12px; }
+.ni-ovos {
+  display: flex; justify-content: center; align-items: flex-end; gap: 8px;
+  flex-wrap: wrap; min-height: 78px; padding-bottom: 6px;
+}
+.ni-ovo { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.ni-ovo i { font-size: 34px; font-style: normal; display: block; }
+.ni-ovo.quase i { animation: tremeu 1.8s ease-in-out infinite; }
+/* A IDADE DE CADA OVO em pontinhos: sem ela a criança não sabe qual está quase chocando,
+   e a decisão de tirar um vira sorte em vez de escolha. */
+.ni-ovo em { display: flex; gap: 3px; }
+.ni-ovo u {
+  width: 7px; height: 7px; border-radius: 50%; background: #e2edf3;
+  text-decoration: none; display: block;
+}
+.ni-ovo u.ja { background: var(--ouro); }
+.ni-ave { font-size: 34px; animation: pula 1.6s ease-in-out infinite; }
+.ni-vazio { font-size: 14px; font-weight: 700; color: var(--tinta-fraca); }
+.ni-galho {
+  height: 16px; border-radius: 0 0 40% 40%;
+  background: linear-gradient(180deg, #c9a227, #8f6742);
+}
+
+/* A MOEDA GRANDE, único alvo da tela nos jogos de um toque só. O estilo dela foi apagado
+   junto com o jogo antigo que a usava, e a foto mostrou o botão cru: fundo cinza do
+   navegador e o texto ao lado em vez de embaixo. */
+.jg-moedao {
+  background: none; border: 0; cursor: pointer; font-family: inherit;
+  padding: 8px; margin: 0 auto; min-height: 96px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.jg-moedao svg { display: block; filter: drop-shadow(0 4px 6px rgba(224, 160, 16, .4)); }
+.jg-moedao small { font-size: 14px; font-weight: 800; color: #6b4a00; }
+.jg-moedao:active svg { transform: translateY(4px) scale(.95); }
+
+/* ===== A TORRE: empilhar até o sonho ===== */
+.to-troca { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+.to-op {
+  background: var(--carta); border: 3px solid var(--ceu-2); border-radius: 16px;
+  padding: 8px 4px; cursor: pointer; font-family: inherit; min-height: 76px;
+  box-shadow: 0 3px 0 #cfe2ec;
+}
+.to-op.on { border-color: var(--guardar); box-shadow: 0 3px 0 var(--guardar-fundo); background: #eaf4ff; }
+.to-op span { display: block; font-size: 26px; }
+.to-op b { display: block; font-size: 13px; font-weight: 800; color: var(--tinta); }
+.to-op small { display: block; font-size: 11.5px; font-weight: 700; color: var(--tinta-fraca); }
+.to { display: flex; flex-direction: column; align-items: center; margin-bottom: 10px; }
+/* O SONHO NO TOPO desde o primeiro tijolo: é a distância que dá sentido ao esforço. */
+.to-alvo { font-size: 40px; margin-bottom: 4px; opacity: .45; transition: opacity .3s, transform .3s; }
+.to-alvo.chegou { opacity: 1; transform: scale(1.25); animation: pula 1.2s ease-in-out infinite; }
+.to-pilha { display: flex; flex-direction: column-reverse; gap: 3px; align-items: center; }
+.to-t {
+  width: 88px; height: 15px; border-radius: 4px;
+  background: #e2edf3; box-shadow: inset 0 1px 2px rgba(43, 58, 68, .1);
+}
+.to-t.posta {
+  background: linear-gradient(180deg, #f3a95c, #d8863a);
+  box-shadow: 0 1px 0 #b96f2b, inset 0 1px 0 rgba(255, 255, 255, .4);
+  animation: chega .3s;
+}
+.to-chao { width: 108px; height: 8px; border-radius: 4px; background: #8f6742; margin-top: 3px; }
 

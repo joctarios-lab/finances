@@ -134,7 +134,7 @@ eval(fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8') + `; Object.assig
   App, fmtKid, diaBonito, hashDaSenha, esc, telaQuem, telaSenha, telaCofrinho, telaTarefas,
   COISAS_GASTAR, COISAS_DOAR, emojiDe,
   telaSonho, telaSelos, telaSelo,
-  jogoDoSelo, jogoRepartir, jogoEsperar, jogoDoar, jogoMissoes, jogoMeta, telaRitual, telaGastar, telaEscolha, telaExtrato, telaSemCrianca, historico, barraDeAbas,
+  jogoDoSelo, jogoFeira, jogoSemente, jogoPracinha, jogoMapa, jogoNinho, jogoTorre, telaRitual, telaGastar, telaEscolha, telaExtrato, telaSemCrianca, historico, barraDeAbas,
   render, entrar, sair, clarear, sombrear, Som, aviso, festa,
 });`);
 
@@ -1007,130 +1007,228 @@ console.log('\n=== A porta do jogo ===');
   }
 
 console.log('\n=== Os minijogos ===');
-  /* SEIS PRÊMIOS, SEIS JOGOS, E CADA UM ABRE O SEU.
-
-     A primeira versão só conferia que ALGUM jogo abriu, e `jogoDoSelo` tem um fallback
-     para o jogo de repartir — então apagar a entrada de um prêmio da tabela passava
-     verde, e a criança tocaria em "Coração grande" para cair no jogo dos potes.
-
-     Cada jogo tem uma marca própria no HTML, e é ela que o teste procura. */
+  /* SEIS PRÊMIOS, SEIS JOGOS, e cada um com a mecânica dele. A versão anterior conferia
+     que ALGUM jogo abriu, e `jogoDoSelo` tem fallback — apagar a entrada de um prêmio
+     passava verde e a criança caía no jogo errado. Cada jogo tem uma marca própria. */
   const MARCA = {
-    dividiu: 'jg-potes', tarefas: 'jg-trilho', guardou: 'jg-dois',
-    doou: 'jg-gente', moeda: 'jg-dois', meta: 'jg-moedao',
+    dividiu: 'fe-mesa', guardou: 'se-vaso', doou: 'pr-cena',
+    tarefas: 'mp-casa', moeda: 'ni-ovo', meta: 'to-pilha',
   };
   for (const s of Object.keys(MARCA)) {
     jogoDoSelo(s);
-    check(`o prêmio ${s} abre o jogo dele`, tela().includes(MARCA[s]), true);
-
-    /* A SAÍDA PRECISA FUNCIONAR, e não só existir no HTML: um botão de voltar sem
-       handler prende a criança dentro do jogo, e ela não sabe recarregar a página. */
+    check(`o prêmio ${s} abre o cenário dele`, tela().includes(MARCA[s]), true);
     check(`  com saída ligada`, typeof (els['#jg-sair'] || {}).onclick, 'function');
   }
 
-  /* A VOLTA LEVA À PORTA DO PRÊMIO, e não a uma tela qualquer. */
-  jogoDoar('doou');
-  els['#jg-sair'].onclick();
-  check('sair do jogo volta para a porta do prêmio',
-    tela().includes('lic-jogar'), true);
+  /* CADA CENÁRIO É DIFERENTE DOS OUTROS, e a prova é nenhum conter a marca de outro.
 
-  /* O BOTÃO DA PORTA É O QUE ABRE O JOGO. Chamar `jogoDoSelo` na mão prova que o jogo
-     existe — não que a criança chega até ele. */
+     A primeira versão comparava os primeiros 400 caracteres do HTML e reprovava dizendo
+     que havia só 2 telas distintas -- porque esse trecho é o palco e o balão, que são
+     iguais em todos. O teste media o cabeçalho, não o jogo. */
+  for (const s of Object.keys(MARCA)) {
+    jogoDoSelo(s);
+    const html = tela();
+    const intrusas = Object.keys(MARCA).filter(o => o !== s && html.includes(MARCA[o]));
+    check(`o cenário de ${s} não empresta o de outro`,
+      intrusas.length ? intrusas.join(', ') : true, true);
+  }
+
+  jogoDoSelo('doou');
+  els['#jg-sair'].onclick();
+  check('sair do jogo volta para a porta do prêmio', tela().includes('lic-jogar'), true);
+
   telaSelo('doou');
   check('a porta tem o botão de jogar ligado', typeof els['#lic-jogar'].onclick, 'function');
   els['#lic-jogar'].onclick();
-  check('  e ele abre o jogo', tela().includes('jg-gente'), true);
+  check('  e ele abre o jogo', tela().includes('pr-cena'), true);
 
-  /* JOGO DE REPARTIR: toca no pote, a moeda vai. E QUALQUER divisão termina em festa —
-     premiar uma proporção ensinaria a adivinhar a resposta do adulto em vez de decidir. */
+console.log('\n=== A feira: pegar e soltar ===');
   {
-    jogoRepartir('dividiu');
-    check('o jogo começa com seis moedas', (tela().match(/Faltam <b>6<\/b>/) || []).length, 1);
-    const toca = p => {
-      const b = [...document.querySelectorAll('[data-jp]')].find(x => x.dataset.jp === p);
+    jogoFeira('dividiu');
+    const pega = () => (document.querySelectorAll('[data-pega]')[0] || {}).onclick;
+    const pote = p => {
+      const b = [...document.querySelectorAll('[data-fe]')].find(x => x.dataset.fe === p);
+      return b && b.onclick;
+    };
+
+    /* PEGAR ANTES DE DECIDIR: os potes ficam desativados enquanto a mão está vazia, e é
+       esse intervalo que dá peso à escolha. */
+    check('os potes começam bloqueados', /data-fe="gastar"[^>]*disabled/.test(tela()), true);
+    pega()();
+    check('  pegar libera os potes', /data-fe="gastar"[^>]*disabled/.test(tela()), false);
+    check('  e a mão fica cheia', tela().includes('fe-mao cheia'), true);
+
+    pote('guardar')();
+    check('soltar no pote guarda a moeda', tela().includes('1 de 18'), true);
+    check('  e a mão esvazia', tela().includes('fe-mao cheia'), false);
+
+    /* SOLTAR SEM PEGAR NÃO PODE CONTAR. O teste anterior só via os potes desativados no
+       HTML, e `disabled` é enfeite se o handler aceitar o toque assim mesmo — no
+       navegador o atributo segura, mas basta um clique programático ou um estado a mais
+       para o pote receber uma moeda que nunca saiu da pilha. */
+    {
+      const antesDoTruque = tela();
+      pote('guardar')();   // a mão está vazia agora
+      check('soltar com a mão vazia não guarda nada', tela(), antesDoTruque);
+    }
+
+    /* O GASTO SOME E O GUARDADO FICA, e é entre rodadas que isso aparece. */
+    pega()(); pote('gastar')();
+    check('gastar mostra o doce', tela().includes('🍭🍭') || tela().includes('🍭'), true);
+    check('  e não entra no guardado', tela().includes('1 de 18'), true);
+
+    /* GASTAR TUDO EM DOCE TAMBÉM TERMINA O JOGO: não há divisão errada, só resultados
+       diferentes, e o jogo não faz cara feia para nenhum. */
+    for (let n = 0; n < 4; n++) { pega()(); pote('gastar')(); }
+    check('a semanada acaba', tela().includes('Próxima semanada'), true);
+    els['#fe-proxima'].onclick();
+    check('  e a próxima começa com seis moedas de novo',
+      tela().includes('Semanada 2'), true);
+    check('  levando o guardado junto', tela().includes('1 de 18'), true);
+  }
+
+console.log('\n=== A sementinha: esperar faz crescer ===');
+  {
+    jogoSemente('guardou');
+    const esc2 = q => {
+      const b = [...document.querySelectorAll('[data-se]')].find(x => x.dataset.se === q);
       if (b) b.onclick();
     };
-    toca('gastar');
-    check('  tocar num pote gasta uma moeda', tela().includes('Faltam <b>5</b>'), true);
-    /* Tudo num pote só também vence: não há divisão errada. */
-    for (let n = 0; n < 5; n++) toca('doar');
-    check('  repartir tudo num pote só também ganha', tela().includes('jeito errado'), true);
-    check('  e oferece jogar de novo', tela().includes('jg-de-novo'), true);
+    check('a planta começa pequena', tela().includes('fase-0'), true);
+    esc2('0');
+    check('  esperar faz crescer', tela().includes('fase-1'), true);
+
+    /* GASTAR NÃO MURCHA: a planta fica parada. Punir a compra ensinaria que gastar o
+       próprio dinheiro é errado, quando é um direito dela. */
+    esc2('1');
+    check('  gastar não faz a planta encolher', tela().includes('fase-1'), true);
+
+    esc2('0'); esc2('0');
+    check('quatro semanas terminam o jogo', tela().includes('jg-de-novo'), true);
+    check('  e a planta cresceu o que ela deixou', tela().includes('fase-3'), true);
   }
 
-  /* JOGO DE ESPERAR: as duas escolhas seguem o jogo, e nenhuma é repreendida. */
+console.log('\n=== A pracinha: não dá para todos ===');
   {
-    jogoEsperar('guardou');
-    const escolhe = comprou => {
-      const b = [...document.querySelectorAll('[data-jc]')].find(x => x.dataset.jc === (comprou ? '1' : '0'));
+    jogoPracinha('doou');
+    const quem = () => [...document.querySelectorAll('[data-pr]')];
+
+    /* A ESCASSEZ É O JOGO: cinco moedas para sete de pedidos. */
+    check('há quatro pedidos', quem().length, 4);
+    quem()[2].onclick();   // a pracinha, custa 3
+    check('ajudar gasta o que custa', tela().includes('ficou mais verde'), true);
+
+    /* COM 2 MOEDAS o pedido de 3 já não cabe — e "não cabe" é diferente de "já feito". */
+    quem()[1].onclick();   // a criança, custa 2
+    const restante = tela();
+    check('o que não cabe fica marcado', restante.includes('não cabe agora')
+      || restante.includes('jg-de-novo'), true);
+  }
+
+console.log('\n=== O mapa: o tempo é escasso ===');
+  {
+    jogoMapa('tarefas');
+    const vai = q => {
+      const b = [...document.querySelectorAll('[data-mp]')].find(x => x.dataset.mp === q);
       if (b) b.onclick();
     };
-    check('o jogo começa com dez reais', tela().includes(fmtKid(10)), true);
-    escolhe(false);
-    check('  esperar aumenta o cofre', tela().includes(fmtKid(12)), true);
-    escolhe(true);
-    check('  comprar diminui', tela().includes(fmtKid(10)), true);
-    escolhe(false); escolhe(false);
-    check('  quatro semanas e o jogo acaba', tela().includes('Olha o que aconteceu'), true);
+    vai('moeda');
+    check('escolher moeda marca o mapa', tela().includes('mp-casa moeda'), true);
+    vai('coracao');
+    check('  e coração também', tela().includes('mp-casa coracao'), true);
 
-    /* SEM VEREDITO no fim: dizer "você guardou pouco" transformaria o jogo em prova, e a
-       criança passaria a jogar para agradar em vez de para entender. */
-    const fimTxt = tela();
-    check('  e nenhum veredito sobre a escolha dela',
-      /parab[ée]ns|muito bem|voc[êe] (deveria|podia|devia)|errad/i.test(fimTxt), false);
-    /* OS DOIS CAMINHOS APARECEM, e nenhum deles escondido: procurar só o texto deixava
-       passar um `hidden` na coluna: o conteúdo continua no HTML e some da tela. Mostrar
-       só o lado do cofrinho transformaria o resumo em sermão. */
-    check('  mostrando os dois caminhos', (fimTxt.match(/class="jf-col"/g) || []).length, 2);
-    check('  com nenhum lado escondido', /jf-col[^>]*hidden/.test(fimTxt), false);
-    check('  o que ficou no cofrinho', fimTxt.includes('no seu cofrinho'), true);
-    check('  e o que ela aproveitou', fimTxt.includes('você aproveitou'), true);
+    /* OS DOIS PLACARES NUNCA SE SOMAM: não são a mesma moeda, e somá-los diria que ajudar
+       em casa vale um preço. */
+    /* MOEDA E CORAÇÃO NUNCA SE SOMAM, e contar as caixas não provava isso: duas caixas
+       podem exibir o mesmo total. Somá-los diria que ajudar em casa vale um preço, que é
+       o contrário do que o app inteiro ensina.
+
+       Com 1 moeda e 1 coração, um placar somado mostraria 2 nos dois lugares. */
+    check('os dois totais aparecem separados',
+      (tela().match(/class="di-p"/g) || []).length, 2);
+    check('  e o app não soma moeda com coração',
+      /<b>2<\/b>/.test(tela()), false);
+    check('  mostrando um de cada', (tela().match(/<b>1<\/b>/g) || []).length, 2);
+    vai('moeda'); vai('moeda'); vai('coracao');
+    check('cinco dias terminam a semana', tela().includes('jg-de-novo'), true);
   }
 
-  /* JOGO DE DOAR: o cofre mal encolhe, e é essa a lição inteira. */
+console.log('\n=== O ninho: ovo precisa de tempo ===');
   {
-    jogoDoar('doou');
-    const quem = () => [...document.querySelectorAll('[data-jq]')];
-    check('há três pessoas para ajudar', quem().length, 3);
-    quem()[0].onclick();
-    check('  ajudar custa um real', tela().includes(fmtKid(9)), true);
-    quem()[1].onclick(); quem()[2].onclick();
-    check('  ajudar todos termina o jogo', tela().includes('ajudou todo mundo'), true);
-    check('  e mostra que sobrou quase tudo', tela().includes(fmtKid(7)), true);
+    const ni = q => {
+      const b = [...document.querySelectorAll('[data-ni]')].find(x => x.dataset.ni === q);
+      if (b) b.onclick();
+    };
+    const conta = () => (tela().match(/<span class="ni-ovo/g) || []).length;
+
+    jogoNinho('moeda');
+    check('o ninho começa com três ovos', conta(), 3);
+
+    /* AS IDADES SÃO DIFERENTES, e isso é o que dá sentido a escolher qual tirar. Na
+       primeira versão os três nasciam iguais e envelheciam juntos: tanto fazia qual sair,
+       e a regra que protege o ovo quase pronto protegia algo que não acontecia. */
+    check('  e com idades diferentes', (tela().match(/<u class="ja"/g) || []).length, 3);
+    check('  com um deles quase chocando', tela().includes('quase'), true);
+
+    /* UMA SEMANA DE SOSSEGO e o mais velho choca; um ovo novo chega no lugar. */
+    ni('0');
+    check('esperar faz o mais velho chocar', tela().includes('ni-ave'), true);
+    check('  e um ovo novo chega', conta(), 3);
+
+    /* TIRAR UM OVO LEVA O MAIS NOVO, nunca o que ia chocar. Perder justo o que estava
+       pronto seria armadilha, e armadilha ensina a não jogar: a criança para de
+       experimentar e passa a evitar o botão, que é o oposto de um jogo sobre decidir.
+
+       A prova é o que acontece DEPOIS: tirando o mais novo, o velho continua e choca na
+       semana seguinte. Se o jogo levasse o mais velho, não nasceria nada. */
+    jogoNinho('moeda');
+    ni('1');
+    check('tirar um ovo diminui o ninho', conta(), 2);
+    ni('0');
+    check('  e o que ia chocar continuou lá', tela().includes('ni-ave'), true);
+
+    /* GASTAR TODA SEMANA não faz nascer nada — e é o resultado honesto, não um castigo:
+       o ninho continua ali, com ovos, esperando alguém deixar quieto. */
+    jogoNinho('moeda');
+    for (let n = 0; n < 3; n++) ni('1');
+    check('tirando toda semana, nada choca', tela().includes('ni-ave'), false);
+    check('  e o ninho fica vazio', conta(), 0);
+
+    /* NINHO VAZIO NÃO É FIM DE JOGO: o botão de tirar desliga sozinho e esperar traz um
+       ovo novo. Não há tela de derrota, não há castigo -- ela pode recomeçar de dentro do
+       próprio jogo, que é o que permite experimentar sem medo. */
+    check('  com o botão de tirar desligado', /data-ni="1"[^>]*disabled/.test(tela()), true);
+    ni('0');
+    check('  e esperar traz um ovo novo', conta(), 1);
   }
-
-  /* JOGO DAS MISSÕES: usa as REAIS dela, porque a lição é sobre as tarefas dela. */
+console.log('\n=== A torre: preço é altura ===');
   {
-    Dados.upsert('kid_tasks', {
-      kid_id: id, name: 'Regar as plantas', icon: '🪴', amount: 1,
-      frequencia: 'semanal', active: true });
-    App.kid = Dados.get('kids', id);
-    jogoMissoes('tarefas');
-    check('o jogo usa a missão real dela', tela().includes('Regar as plantas'), true);
-    const ms = [...document.querySelectorAll('[data-jm]')];
-    for (const m of ms) m.onclick();
-    check('  fazer todas termina o jogo', tela().includes('cuidou de tudo'), true);
+    jogoTorre('meta');
+    const troca = i => {
+      const b = [...document.querySelectorAll('[data-to]')].find(x => x.dataset.to === String(i));
+      if (b) b.onclick();
+    };
+    const tijolo = () => (document.querySelectorAll('[data-tj]')[0] || {}).onclick;
 
-    /* MARCAR NO JOGO NÃO MARCA DE VERDADE: é ensaio. Se marcasse, uma brincadeira teria
-       consequência real e ela pararia de brincar. */
-    check('  e não marca a missão de verdade',
-      Dados.tarefas(id).some(t => t.feita), false);
-  }
+    /* PREÇO VIRA ALTURA: o doce são dois tijolos, o sonho dela são doze. É como uma
+       criança de seis anos compara grandezas — duas pilhas num relance. */
+    troca(0);
+    const baixa = (tela().match(/class="to-t/g) || []).length;
+    troca(2);
+    const alta = (tela().match(/class="to-t/g) || []).length;
+    check('o sonho caro tem torre mais alta', alta > baixa, true);
 
-  /* JOGO DO SONHO: o número de toques até encher É a lição. */
-  {
-    jogoMeta('meta');
-    check('o jogo usa o sonho real dela', tela().includes('Patinete'), true);
-    const moedao = () => document.querySelectorAll('[data-jt]')[0];
+    troca(0);
     let n = 0;
-    while (moedao() && n < 20) { moedao().onclick(); n++; }
-    check('  enche a barra com toques', tela().includes('Chegou!'), true);
-    check('  contando quantas semanadas foram', /<b>\d+ semanadas<\/b>/.test(tela()), true);
+    while (tijolo() && n < 20) { tijolo()(); n++; }
+    check('empilhar até o topo termina o jogo', tela().includes('Chegou lá'), true);
+    check('  contando as semanadas', /<b>\d+<\/b> semanadas?/.test(tela()), true);
   }
 
-  /* NENHUM JOGO MEXE NO DINHEIRO DE VERDADE. O jogo é o lugar seguro para experimentar;
+  /* NENHUM JOGO MEXE NO DINHEIRO DE VERDADE: o jogo é o lugar seguro para experimentar,
      o pote é o lugar sério. */
   check('os jogos não tocam no dinheiro real', Dados.potes(id).guardar, 30);
-
+  check('  nem marcam missão', Dados.tarefas(id).some(t => t.feita), false);
   /* DEIXA A TELA COMO ACHOU: este bloco terminava com um jogo aberto, e o teste seguinte
      reprovava por não achar a tela do cofrinho. */
   App.aba = 'cofrinho'; render();  limpar(id);

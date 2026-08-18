@@ -1107,386 +1107,584 @@ function telaSelo(id) {
 
 /* ---------- OS MINIJOGOS ----------
 
-   Seis jogos sobre três mecânicas, e a repetição é de propósito: uma criança de seis
-   anos que já sabe jogar um sabe jogar o próximo, e o esforço dela vai para a LIÇÃO em
-   vez de para descobrir o controle.
+   SEIS CENÁRIOS E SEIS MECÂNICAS, e a variedade é requisito e não enfeite: a segunda
+   versão destes jogos tinha três telas de "dois botões" seguidas, e uma criança que
+   reconhece a mesma pergunta pela terceira vez para de pensar e começa a responder.
 
-     tocar-para-encher   repartir, doar, chegar na meta
-     escolher-caminho    esperar ou gastar (formiguinha, moeda mágica)
-     tocar-para-marcar   as missões da semana
+     A FEIRA      pegar uma moeda e soltar num pote        repartir
+     A SEMENTINHA esperar faz crescer, gastar não          poupança
+     A PRACINHA   distribuir menos do que pedem            doar com escassez
+     O MAPA       um caminho com bifurcações               tempo é escasso
+     O NINHO      ovos que chocam se ninguém mexer         a moeda mágica
+     A TORRE      empilhar até a altura do sonho           preço é tempo
 
-   REGRAS QUE VALEM PARA TODOS:
+   O QUE TODOS TÊM EM COMUM, e é o que faz deles jogos e não animações:
 
-   Não se perde. Não há tempo correndo, não há erro, não há tela de derrota. O jogo é
-   sobre entender uma ideia, e uma criança que perde num jogo sobre guardar dinheiro
-   aprende que guardar dinheiro é difícil — que é o oposto do que queremos.
+   1. ESCASSEZ. O recurso é sempre menor que os desejos — é a condição para existir
+      escolha, e é a lição de finanças que mais importa nesta idade.
 
-   Nada muda o dinheiro de verdade. O jogo é o lugar seguro para experimentar; o pote é
-   o lugar sério. Misturar os dois faria uma brincadeira ter consequência real, e a
-   criança pararia de brincar. */
+   2. NENHUMA OPÇÃO OBVIAMENTE MELHOR. Um jogo em que guardar sempre vence ensina a
+      adivinhar a resposta do adulto, não a decidir.
+
+   3. CONSEQUÊNCIA QUE SE VÊ, e de preferência num objeto: a planta que cresce, o ovo que
+      choca, a torre que sobe. Aos seis anos ela raciocina manipulando coisas concretas —
+      um número que muda não é uma coisa.
+
+   4. NÃO SE PERDE, não há tempo correndo, e nada mexe no dinheiro de verdade. Uma criança
+      que perde num jogo sobre guardar aprende que guardar é difícil. */
 function jogoDoSelo(id) {
   const jogos = {
-    dividiu: jogoRepartir,
-    doou: jogoDoar,
-    guardou: jogoEsperar,
-    moeda: jogoEsperar,
-    tarefas: jogoMissoes,
-    meta: jogoMeta,
+    dividiu: jogoFeira, guardou: jogoSemente, doou: jogoPracinha,
+    tarefas: jogoMapa, moeda: jogoNinho, meta: jogoTorre,
   };
-  (jogos[id] || jogoRepartir)(id);
+  (jogos[id] || jogoFeira)(id);
 }
 
-/* O quadro do jogo: mesma moldura em todos, para ela reconhecer que entrou num jogo. */
 function quadroJogo(id, conteudo, rodape) {
   return `
-    <div class="jg">
-      ${conteudo}
-    </div>
+    <div class="jg">${conteudo}</div>
     ${rodape || ''}
     <button class="bt clara" id="jg-sair" style="margin-top:12px">
       <span class="emo">↩️</span> Voltar
     </button>`;
 }
 
-function ligarSaida(id) {
+function ligarSaida(id, reiniciar) {
   el('#jg-sair').onclick = () => { Som.toque(); telaSelo(id); };
+  if (el('#jg-de-novo') && reiniciar) {
+    el('#jg-de-novo').onclick = () => { Som.toque(); reiniciar(); };
+  }
 }
 
-/* ================= JOGO 1: REPARTIR =================
+/* A FILEIRA DE MOEDAS que restam: a criança CONTA em vez de ler um número, que é como
+   ela verifica quantidade nessa idade -- e contar objetos é a operação que ela domina
+   antes de comparar algarismos. */
+function fileiraDeMoedas(n, tam) {
+  return Array.from({ length: Math.max(0, n) }, () => Arte.moeda(tam || 30)).join('');
+}
 
-   Seis moedas em cima, três potes embaixo. Ela toca num pote e uma moeda voa para lá.
+function botaoDeNovo(txt) {
+  return `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
+    <span class="emo">🔁</span> ${txt || 'Jogar de novo'}</button>`;
+}
 
-   NÃO HÁ DIVISÃO CERTA, e o jogo não sugere nenhuma: qualquer reparto termina em festa.
-   A lição é que o mesmo dinheiro pode ir para três lugares diferentes — e escolher é
-   dela, exatamente como no ritual de verdade. Um jogo que premiasse "50% no guardar"
-   ensinaria a adivinhar a resposta do adulto, não a decidir. */
-function jogoRepartir(id) {
-  const TOTAL = 6;
-  const potes = { gastar: 0, guardar: 0, doar: 0 };
-  let restam = TOTAL;
+/* ================= A FEIRA =================
+
+   MECÂNICA: pegar e soltar. Toca numa moeda — ela sobe e fica na mão — e toca num pote.
+   Dois toques por moeda, em vez de um: o gesto de PEGAR antes de decidir é o que dá peso
+   à escolha, e é o mais perto de mexer em dinheiro de verdade que uma tela alcança.
+
+   TRÊS RODADAS, e é entre elas que a lição acontece: o doce que ela comprou some, o
+   guardado continua na tela. Numa rodada só, gastar e guardar pareceriam a mesma coisa.
+
+   As dezoito moedas do patinete são exatamente tudo o que ela recebe nas três rodadas. Só
+   chega quem não gastou nada — e o jogo não avisa: ela descobre. */
+function jogoFeira(id) {
+  const RODADAS = 3, POR_RODADA = 6, ALVO = 18;
+  let rodada, sobra, naMao, cofre, doces, ajudas;
+
+  const comecar = () => {
+    rodada = 1; sobra = POR_RODADA; naMao = false; cofre = 0; doces = 0; ajudas = 0;
+    desenhar();
+  };
 
   const desenhar = () => {
-    const fim = restam === 0;
+    const acabou = rodada > RODADAS;
+    const ganhou = cofre >= ALVO;
     raiz().innerHTML = quadroJogo(id, `
-      ${palco(fim ? 'feliz' : 'uau', 96)}
-      ${balao(fim
-        ? 'Você repartiu do seu jeito! Não existe jeito errado 🎉'
-        : `Toque num pote para mandar uma moeda. Faltam <b>${restam}</b>`)}
-      <div class="jg-moedas">
-        ${Array.from({ length: restam }, () => Arte.moeda(30)).join('')}
-        ${restam === 0 ? '<span class="jg-vazio">todas repartidas!</span>' : ''}
-      </div>
-      <div class="jg-potes">
-        ${['gastar', 'guardar', 'doar'].map(t => `
-          <button class="jg-pote on-${t}" data-jp="${t}" ${fim ? 'disabled' : ''}>
-            ${Arte.pote(t, potes[t], Math.max(1, TOTAL))}
-            <b>${potes[t]}</b>
-            <small>${t === 'gastar' ? 'Gastar' : t === 'guardar' ? 'Guardar' : 'Doar'}</small>
-          </button>`).join('')}
-      </div>
-    `, fim ? `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
-        <span class="emo">🔁</span> Jogar de novo
-      </button>` : '');
+      ${palco(acabou ? (ganhou ? 'feliz' : 'oi') : 'uau', 82)}
+      ${balao(acabou
+        ? (ganhou ? 'Você juntou tudo e levou o patinete! 🛴'
+          : `Acabou. Você chegou em <b>${cofre}</b> de ${ALVO} moedas.`)
+        : naMao ? 'Agora escolha o pote 👇'
+          : `Semanada ${rodada}. Pegue uma moeda ☝️`)}
 
-    document.querySelectorAll('[data-jp]').forEach(b => b.onclick = () => {
-      if (restam <= 0) return;
-      potes[b.dataset.jp]++; restam--;
-      Som.moeda(); vibra(12);
-      desenhar();
-      if (restam === 0) festa();
+      ${acabou ? '' : `
+        <div class="fe-mesa">
+          <button class="fe-pilha" data-pega="1" ${naMao || sobra === 0 ? 'disabled' : ''}>
+            ${fileiraDeMoedas(sobra, 30)}
+            ${sobra === 0 ? '<span class="jg-vazio">acabou a semanada</span>' : ''}
+          </button>
+          <div class="fe-mao ${naMao ? 'cheia' : ''}">
+            ${naMao ? Arte.moeda(46) : '<span class="fe-vaz">✋</span>'}
+          </div>
+        </div>`}
+
+      <div class="fe-linha">
+        <button class="fe-col on-gastar" data-fe="gastar" ${!naMao ? 'disabled' : ''}>
+          <span class="fe-e">🍭</span><b>Gastar</b>
+          <span class="fe-tem">${doces ? '🍭'.repeat(Math.min(6, doces)) : '—'}</span>
+        </button>
+        <button class="fe-col on-guardar" data-fe="guardar" ${!naMao ? 'disabled' : ''}>
+          <span class="fe-e">🛴</span><b>Guardar</b>
+          <span class="fe-barra"><i style="width:${Math.min(100, (cofre / ALVO) * 100)}%"></i></span>
+          <span class="fe-tem">${cofre} de ${ALVO}</span>
+        </button>
+        <button class="fe-col on-doar" data-fe="doar" ${!naMao ? 'disabled' : ''}>
+          <span class="fe-e">🐶</span><b>Doar</b>
+          <span class="fe-tem">${ajudas ? '💗'.repeat(Math.min(6, ajudas)) : '—'}</span>
+        </button>
+      </div>
+
+      ${!acabou && sobra === 0 && !naMao
+        ? `<button class="bt verde" id="fe-proxima" style="margin-top:12px">
+            <span class="emo">🌙</span> ${rodada < RODADAS ? 'Próxima semanada' : 'Ver o resultado'}
+          </button>` : ''}
+
+      ${acabou ? `<div class="jg-nota">${ganhou
+        ? 'Guardar um pouquinho toda vez foi o que deu certo 🎯'
+        : doces >= 3 ? `Você aproveitou ${doces} doces! O patinete fica para a próxima 🙂`
+          : 'Faltou pouco. Cada moeda guardada chega mais perto 🙂'}</div>` : ''}
+    `, acabou ? botaoDeNovo() : '');
+
+    if (el('#jg-sair')) { /* garante que a saída exista antes dos outros */ }
+    document.querySelectorAll('[data-pega]').forEach(b => b.onclick = () => {
+      if (naMao || sobra === 0) return;
+      naMao = true; sobra--; Som.toque(); vibra(10); desenhar();
     });
-    if (el('#jg-de-novo')) {
-      el('#jg-de-novo').onclick = () => {
-        restam = TOTAL; potes.gastar = potes.guardar = potes.doar = 0;
-        Som.toque(); desenhar();
+    document.querySelectorAll('[data-fe]').forEach(b => b.onclick = () => {
+      if (!naMao) return;
+      naMao = false;
+      const onde = b.dataset.fe;
+      if (onde === 'gastar') { doces++; Som.toque(); }
+      else if (onde === 'doar') { ajudas++; Som.moeda(); }
+      else { cofre++; Som.moeda(); }
+      vibra(12); desenhar();
+    });
+    if (el('#fe-proxima')) {
+      el('#fe-proxima').onclick = () => {
+        rodada++; sobra = rodada > RODADAS ? 0 : POR_RODADA;
+        Som.toque(); vibra(14); desenhar();
+        if (rodada > RODADAS && cofre >= ALVO) festa();
       };
     }
-    ligarSaida(id);
+    ligarSaida(id, comecar);
   };
-  desenhar();
+  comecar();
 }
 
-/* ================= JOGO 2: ESPERAR OU GASTAR =================
+/* ================= A SEMENTINHA =================
 
-   Quatro semanas. Em cada uma aparece uma tentação e dois botões do mesmo tamanho.
+   MECÂNICA: ver crescer. A planta tem cinco estágios e sobe um a cada semana em que ela
+   deixa o dinheiro quieto. Se gasta, a planta fica parada aquela semana — não murcha,
+   não morre, não volta atrás: gastar não é punido, só não faz crescer.
 
-   AS DUAS ESCOLHAS SEGUEM O JOGO, e nenhuma é repreendida — comprar o sorvete não é
-   errado, é uma escolha com outro resultado. O que o jogo faz é MOSTRAR o resultado na
-   hora, que é o que a vida real não faz: ali o sorvete acontece hoje e o efeito só se
-   sente daqui a um mês.
+   A METÁFORA É O JOGO. Uma criança de seis anos sabe o que é uma planta crescer devagar e
+   sabe que não adianta puxar — e é exatamente isso que precisa entender sobre poupança.
+   Um número subindo não carrega essa ideia; um broto virando flor carrega.
 
-   No fim, os dois caminhos aparecem lado a lado. Sem nota, sem estrela, sem "você
-   poderia ter". O número fala sozinho. */
-function jogoEsperar(id) {
+   As tentações crescem — 2, 3, 4, 5 — porque esperar tem de ficar mais difícil à medida
+   que ela aprende a esperar. */
+function jogoSemente(id) {
+  const FASES = ['🌱', '🌿', '🪴', '🌷', '🛴'];
   const TENTACOES = [
-    ['🍦', 'um sorvete', 3],
-    ['🍭', 'um doce', 2],
-    ['🎈', 'um balão', 2],
-    ['🃏', 'figurinhas', 3],
+    ['🍭', 'um doce', 2], ['🍦', 'um sorvete', 3],
+    ['🎈', 'um balão', 4], ['🃏', 'figurinhas', 5],
   ];
-  let semana = 0, cofre = 10, gastou = 0;
-  const GANHO = 2;
+  let semana, fase, comprou;
+
+  const comecar = () => { semana = 0; fase = 0; comprou = []; desenhar(); };
 
   const desenhar = () => {
     const fim = semana >= TENTACOES.length;
     const t = fim ? null : TENTACOES[semana];
+    const floriu = fase >= FASES.length - 1;
     raiz().innerHTML = quadroJogo(id, `
-      ${palco(fim ? 'feliz' : 'oi', 92)}
+      ${palco(fim ? (floriu ? 'feliz' : 'oi') : 'oi', 80)}
       ${balao(fim
-        ? 'Acabou! Olha o que aconteceu 👀'
-        : `Semana ${semana + 1}. Quer comprar <b>${t[1]}</b>?`)}
+        ? (floriu ? 'A sua plantinha virou um patinete! 🛴'
+          : `Ela cresceu até aqui. Faltaram <b>${FASES.length - 1 - fase}</b> semanas de sossego.`)
+        : `Semana ${semana + 1}. Quer <b>${t[1]}</b>?`)}
 
-      <div class="jg-cofre">
-        <span class="jg-cofre-r">no cofrinho</span>
-        <span class="jg-cofre-v">${fmtKid(cofre)}</span>
+      ${/* O VASO É A TELA INTEIRA. O que muda quando ela decide precisa ser a maior coisa
+           à vista, senão a decisão parece não ter feito nada. */''}
+      <div class="se-vaso">
+        <div class="se-ceu">
+          ${Array.from({ length: FASES.length }, (_, k) => `<span class="se-marca ${
+            k <= fase ? 'ja' : ''}"></span>`).join('')}
+        </div>
+        <div class="se-planta fase-${fase}">${FASES[fase]}</div>
+        <div class="se-terra"></div>
       </div>
 
       ${fim ? `
-        <div class="jg-fim">
-          <div class="jf-col">
-            <span class="jf-e">🏦</span>
-            <b>${fmtKid(cofre)}</b>
-            <small>no seu cofrinho</small>
-          </div>
-          <div class="jf-col">
-            <span class="jf-e">🛒</span>
-            <b>${fmtKid(gastou)}</b>
-            <small>você aproveitou</small>
-          </div>
+        <div class="se-colheita">
+          ${comprou.length ? comprou.map(e => `<span>${e}</span>`).join('')
+            : '<span class="sm-nada">você não comprou nada e ela cresceu toda 🌷</span>'}
         </div>
-        ${/* SEM VEREDITO. Dizer "você guardou pouco" transformaria o jogo em prova, e
-             a criança passaria a jogar para agradar em vez de para entender. */''}
-        <div class="jg-nota">Os dois são seus. Você escolheu 🙂</div>
+        <div class="jg-nota">${floriu
+          ? 'Sossego é o que faz crescer 🌱'
+          : `Você aproveitou ${comprou.length} ${comprou.length === 1 ? 'coisa' : 'coisas'}`
+            + ' e a planta cresceu menos. Os dois são seus 🙂'}</div>
       ` : `
-        <div class="jg-tenta">
-          <span class="jt-e">${t[0]}</span>
-          <span class="jt-v">${fmtKid(t[2])}</span>
-        </div>
+        <div class="jg-tenta"><span class="jt-e">${t[0]}</span>
+          <span class="jt-v">${fmtKid(t[2])}</span></div>
         <div class="jg-dois">
-          <button class="jg-bt compra" data-jc="1">
-            <span class="emo">${t[0]}</span> Compro!
-            <small>−${fmtKid(t[2])}</small>
+          <button class="jg-bt compra" data-se="1">
+            <span class="emo">${t[0]}</span> Compro
+            <small>a planta para esta semana</small>
           </button>
-          <button class="jg-bt espera" data-jc="0">
-            <span class="emo">⏳</span> Espero
-            <small>+${fmtKid(GANHO)}</small>
+          <button class="jg-bt espera" data-se="0">
+            <span class="emo">💧</span> Deixo crescer
+            <small>ela sobe um degrau</small>
           </button>
         </div>
       `}
-    `, fim ? `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
-        <span class="emo">🔁</span> Jogar de novo
-      </button>` : '');
+    `, fim ? botaoDeNovo() : '');
 
-    document.querySelectorAll('[data-jc]').forEach(b => b.onclick = () => {
-      const comprou = b.dataset.jc === '1';
-      if (comprou) {
-        const v = Math.min(cofre, TENTACOES[semana][2]);
-        cofre = +(cofre - v).toFixed(2); gastou = +(gastou + v).toFixed(2);
+    document.querySelectorAll('[data-se]').forEach(b => b.onclick = () => {
+      if (b.dataset.se === '1') { comprou.push(TENTACOES[semana][0]); Som.toque(); }
+      else { fase = Math.min(FASES.length - 1, fase + 1); Som.moeda(); }
+      vibra(12); semana++; desenhar();
+      if (semana >= TENTACOES.length && fase >= FASES.length - 1) festa();
+    });
+    ligarSaida(id, comecar);
+  };
+  comecar();
+}
+
+/* ================= A PRACINHA =================
+
+   MECÂNICA: distribuir menos do que pedem. Cinco moedas, quatro pedidos que somam sete.
+   NÃO DÁ PARA TODOS, e é isso que transforma doar numa decisão em vez de num gesto.
+
+   Os pedidos custam diferente de propósito: dá para ajudar três pequenos ou um grande, e
+   as duas coisas são boas. Não há resposta certa — há uma escolha sobre o que ela acha que
+   importa mais, que é a pergunta que doar faz na vida real.
+
+   Cada um que ela ajuda MUDA na tela: o cachorro ganha a comida, a árvore aparece na
+   pracinha. O agradecimento é o retorno que doar tem, e é invisível fora daqui. */
+function jogoPracinha(id) {
+  const PEDIDOS = [
+    ['🐶', 'o cachorrinho', 1, '🦴', 'ganhou comida!'],
+    ['🧒', 'uma criança', 2, '🧸', 'ganhou um brinquedo!'],
+    ['🌳', 'a pracinha', 3, '🌳', 'ficou mais verde!'],
+    ['👵', 'a vovó', 1, '🛒', 'ganhou ajuda nas compras!'],
+  ];
+  const TENHO = 5;
+  let moedas, ajudei;
+
+  const comecar = () => { moedas = TENHO; ajudei = []; desenhar(); };
+
+  const desenhar = () => {
+    const podeMais = PEDIDOS.some((p, i) => !ajudei.includes(i) && p[2] <= moedas);
+    const fim = !podeMais;
+    raiz().innerHTML = quadroJogo(id, `
+      ${palco(fim ? 'feliz' : 'oi', 80)}
+      ${balao(fim
+        ? `Você ajudou <b>${ajudei.length}</b> e ficou com <b>${moedas}</b> 💗`
+        : 'Todo mundo precisa e você tem 5 moedas. Não dá para todos!')}
+
+      <div class="pr-carteira">${fileiraDeMoedas(moedas, 28)}
+        ${moedas === 0 ? '<span class="jg-vazio">acabou</span>' : ''}</div>
+
+      <div class="pr-cena">
+        ${PEDIDOS.map(([e, nome, custo, premio, agradece], i) => {
+          const feito = ajudei.includes(i);
+          const cabe = custo <= moedas;
+          return `<button class="pr ${feito ? 'feito' : cabe ? '' : 'longe'}"
+                  data-pr="${i}" ${feito || !cabe ? 'disabled' : ''}>
+            <span class="pr-e">${feito ? premio : e}</span>
+            <span class="pr-t"><b>${nome}</b>
+              <small>${feito ? agradece : cabe ? '' : 'não cabe agora'}</small></span>
+            <span class="pr-c">${feito ? '💗' : fileiraDeMoedas(custo, 16)}</span>
+          </button>`;
+        }).join('')}
+      </div>
+
+      ${fim ? `<div class="jg-nota">${ajudei.length >= 3
+        ? 'Com moedas pequenas você ajudou mais gente!'
+        : ajudei.length ? 'Você escolheu quem ajudar. Não dava para todos 🙂'
+          : 'Da próxima dá para tentar de outro jeito 🙂'}</div>` : ''}
+    `, fim ? botaoDeNovo('Tentar outro jeito') : '');
+
+    document.querySelectorAll('[data-pr]').forEach(b => b.onclick = () => {
+      const i = Number(b.dataset.pr);
+      if (ajudei.includes(i) || PEDIDOS[i][2] > moedas) return;
+      moedas -= PEDIDOS[i][2]; ajudei.push(i);
+      Som.moeda(); vibra(14); desenhar();
+      if (!PEDIDOS.some((p, k) => !ajudei.includes(k) && p[2] <= moedas)) festa();
+    });
+    ligarSaida(id, comecar);
+  };
+  comecar();
+}
+/* ================= O MAPA DA SEMANA =================
+
+   MECÂNICA: um caminho com bifurcações. Cinco casas, e em cada uma a trilha se divide em
+   duas — o Dino anda por onde ela escolher e não dá para voltar.
+
+   O RECURSO ESCASSO AQUI É TEMPO, e é a primeira vez que o app trata tempo assim. Cada dia
+   comporta uma coisa só, então escolher é sempre deixar a outra para trás. É a forma mais
+   concreta de mostrar custo de oportunidade que existe: o caminho não percorrido fica
+   visível no mapa, apagado.
+
+   MOEDA E CORAÇÃO NUNCA SE SOMAM. São dois placares separados até o fim, porque não são a
+   mesma moeda — e essa é exatamente a distinção entre trabalho pago e ajudar em casa que
+   o app inteiro tenta ensinar. Somá-los diria que ajudar vale um preço. */
+function jogoMapa(id) {
+  const reais = Dados.tarefas(App.kid.id).filter(t => !t.especial);
+  const daCasa = reais.filter(t => !(Number(t.amount) > 0));
+  const CASA = daCasa.length
+    ? daCasa.map(t => [t.icon || '🏡', t.name])
+    : [['🛏️', 'Arrumar a cama'], ['🦷', 'Escovar os dentes'], ['🍽️', 'Pôr a mesa'],
+       ['🧸', 'Guardar os brinquedos'], ['🐕', 'Água do cachorro']];
+  const PAGO = [
+    ['🚗', 'Lavar o carro'], ['🧹', 'Varrer o quintal'], ['🛒', 'Ajudar nas compras'],
+    ['🧺', 'Dobrar as roupas'], ['🪴', 'Regar as plantas'],
+  ];
+  const DIAS = 5;
+  let dia, moedas, coracoes, trilha;
+
+  const comecar = () => { dia = 0; moedas = 0; coracoes = 0; trilha = []; desenhar(); };
+
+  const desenhar = () => {
+    const fim = dia >= DIAS;
+    const opC = CASA[dia % CASA.length];
+    const opM = PAGO[dia % PAGO.length];
+    raiz().innerHTML = quadroJogo(id, `
+      ${palco(fim ? 'feliz' : 'oi', 78)}
+      ${balao(fim
+        ? 'Chegou no fim da semana! Olha o seu caminho 👇'
+        : `Dia ${dia + 1}. Por onde o Dino vai hoje?`)}
+
+      ${/* O MAPA GUARDA O CAMINHO ANDADO, e é ele que ensina: no fim ela vê a semana
+           inteira de uma vez, em vez de lembrar de cinco decisões soltas. */''}
+      <div class="mp">
+        ${Array.from({ length: DIAS }, (_, k) => {
+          const p = trilha[k];
+          return `<span class="mp-casa ${p || (k === dia ? 'agora' : '')}">
+            <i>${p === 'moeda' ? '🪙' : p === 'coracao' ? '💗' : k === dia ? '🦖' : ''}</i>
+          </span>`;
+        }).join('<span class="mp-liga"></span>')}
+        <span class="mp-liga"></span><span class="mp-casa fim"><i>🏁</i></span>
+      </div>
+
+      <div class="di-placar">
+        <span class="di-p"><b>${moedas}</b><small>🪙 moedas</small></span>
+        <span class="di-p"><b>${coracoes}</b><small>💗 corações</small></span>
+      </div>
+
+      ${fim ? `<div class="jg-nota">${coracoes && moedas
+        ? 'Você ganhou dinheiro E ajudou em casa. Os dois contam 🙂'
+        : coracoes ? 'Você ajudou a semana toda. Isso não vem em moeda 💗'
+          : 'Você trabalhou a semana toda e juntou ' + moedas + ' moedas 🪙'}</div>` : `
+        <div class="di-dois">
+          <button class="di-bt cor" data-mp="coracao">
+            <span class="di-e">${esc(opC[0])}</span><b>${esc(opC[1])}</b>
+            <small>💗 porque somos família</small>
+          </button>
+          <button class="di-bt moe" data-mp="moeda">
+            <span class="di-e">${esc(opM[0])}</span><b>${esc(opM[1])}</b>
+            <small>🪙 vale uma moeda</small>
+          </button>
+        </div>
+      `}
+    `, fim ? botaoDeNovo('Andar de novo') : '');
+
+    document.querySelectorAll('[data-mp]').forEach(b => b.onclick = () => {
+      const q = b.dataset.mp;
+      trilha[dia] = q;
+      if (q === 'moeda') { moedas++; Som.moeda(); } else { coracoes++; Som.toque(); }
+      vibra(12); dia++; desenhar();
+      if (dia >= DIAS) festa();
+    });
+    ligarSaida(id, comecar);
+  };
+  comecar();
+}
+
+/* ================= O NINHO =================
+
+   MECÂNICA: incubar. Ela põe ovos no ninho e eles chocam SOZINHOS depois de três semanas
+   de sossego — cada passarinho que nasce traz uma moeda.
+
+   É A REGRA DA MOEDA MÁGICA numa forma que ela já conhece do mundo: ovo precisa de tempo e
+   ninguém pode ficar mexendo. Quando ela tira um ovo para gastar, aquele ovo não choca —
+   não morre, não vira castigo: simplesmente não chocou, e os outros continuam.
+
+   ISSO ENSINA O QUE UMA FRASE NÃO ENSINA: por que existe prêmio para quem não mexe. O
+   prêmio não é um agrado do adulto; é o tempo fazendo o trabalho dele, e o tempo só
+   trabalha se deixarem. */
+function jogoNinho(id) {
+  const CHOCAR = 3, SEMANAS = 6;
+  const TENTACOES = [
+    ['🍿', 'pipoca'], ['🎨', 'tinta'], ['🃏', 'figurinhas'],
+    ['🍫', 'chocolate'], ['🎈', 'balão'], ['🍦', 'sorvete'],
+  ];
+  let semana, ovos, passaros, moedas;
+
+  const comecar = () => {
+    semana = 0; passaros = 0; moedas = 0;
+    /* COMEÇA COM OVOS DE IDADES DIFERENTES, e a cada semana chega mais um.
+
+       A primeira versão punha três ovos iguais e um novo nunca chegava: todos envelheciam
+       juntos, e a decisão de QUAL tirar não existia -- tanto fazia. Uma sabotagem que
+       trocava 'tira o mais novo' por 'tira o mais velho' passou verde por isso, e a
+       sabotagem tinha razão: a regra protegia algo que não acontecia.
+
+       Com idades diferentes o ninho fica vivo -- ela vê um ovo quase chocando e outro
+       recém-posto, e aí tirar um é uma escolha de verdade. */
+    ovos = [2, 1, 0];
+    desenhar();
+  };
+
+  const desenhar = () => {
+    const fim = semana >= SEMANAS;
+    const t = TENTACOES[semana % TENTACOES.length];
+    raiz().innerHTML = quadroJogo(id, `
+      ${palco(fim ? 'feliz' : 'oi', 78)}
+      ${balao(fim
+        ? `Nasceram <b>${passaros}</b> ${passaros === 1 ? 'passarinho' : 'passarinhos'}!`
+        : `Semana ${semana + 1}. Quer tirar um ovo para comprar <b>${t[1]}</b>?`)}
+
+      ${/* O NINHO MOSTRA A IDADE DE CADA OVO em pontinhos: sem isso ela não teria como
+           saber que um está quase chocando, e a decisão viraria sorte. */''}
+      <div class="ni">
+        <div class="ni-ovos">
+          ${ovos.length ? ovos.map((idade, i) => `
+            <span class="ni-ovo ${idade >= CHOCAR - 1 ? 'quase' : ''}">
+              <i>🥚</i>
+              <em>${Array.from({ length: CHOCAR }, (_, k) =>
+                `<u class="${k < idade ? 'ja' : ''}"></u>`).join('')}</em>
+            </span>`).join('') : '<span class="ni-vazio">o ninho está vazio</span>'}
+          ${Array.from({ length: passaros }, () => '<span class="ni-ave">🐤</span>').join('')}
+        </div>
+        <div class="ni-galho"></div>
+      </div>
+
+      <div class="di-placar">
+        <span class="di-p"><b>${moedas}</b><small>🪙 ganhou</small></span>
+        <span class="di-p"><b>${ovos.length}</b><small>🥚 no ninho</small></span>
+      </div>
+
+      ${fim ? `<div class="jg-nota">${passaros >= 2
+        ? 'Ovo precisa de tempo e de ninguém mexendo ✨'
+        : passaros ? 'Um chocou! Os outros precisavam de mais tempo sossegado 🙂'
+          : 'Nenhum teve tempo de chocar. Da próxima dá para esperar mais 🙂'}</div>` : `
+        <div class="jg-dois">
+          <button class="jg-bt compra" data-ni="1" ${ovos.length === 0 ? 'disabled' : ''}>
+            <span class="emo">${t[0]}</span> Tiro um ovo
+            <small>${ovos.length ? 'ele não vai chocar' : 'não tem ovo'}</small>
+          </button>
+          <button class="jg-bt espera" data-ni="0">
+            <span class="emo">🪺</span> Deixo quietos
+            <small>todos ficam um pouco mais velhos</small>
+          </button>
+        </div>
+      `}
+    `, fim ? botaoDeNovo() : '');
+
+    document.querySelectorAll('[data-ni]').forEach(b => b.onclick = () => {
+      if (b.dataset.ni === '1') {
+        if (!ovos.length) return;
+        /* TIRA O MAIS NOVO, e não o mais velho: perder justo o que estava quase chocando
+           seria uma armadilha, e armadilha ensina a não jogar. */
+        let iMin = 0;
+        ovos.forEach((v, i) => { if (v < ovos[iMin]) iMin = i; });
+        ovos.splice(iMin, 1);
         Som.toque();
       } else {
-        cofre = +(cofre + GANHO).toFixed(2);
-        Som.moeda();
+        ovos = ovos.map(v => v + 1);
+        /* CHEGA UM OVO NOVO por semana de sossego: é o que mantém as idades diferentes e
+           dá à criança um ninho que muda, em vez de uma contagem regressiva. */
+        ovos.push(0);
+        const chocaram = ovos.filter(v => v >= CHOCAR).length;
+        if (chocaram) {
+          ovos = ovos.filter(v => v < CHOCAR);
+          passaros += chocaram; moedas += chocaram;
+          Som.moeda();
+        } else { Som.toque(); }
       }
       vibra(12); semana++; desenhar();
-      if (semana >= TENTACOES.length) festa();
+      if (semana >= SEMANAS && passaros) festa();
     });
-    if (el('#jg-de-novo')) {
-      el('#jg-de-novo').onclick = () => {
-        semana = 0; cofre = 10; gastou = 0; Som.toque(); desenhar();
-      };
-    }
-    ligarSaida(id);
+    ligarSaida(id, comecar);
   };
-  desenhar();
+  comecar();
 }
 
-/* ================= JOGO 3: DOAR =================
+/* ================= A TORRE =================
 
-   Três personagens precisando. Ela toca e uma moeda voa; cada um agradece.
+   MECÂNICA: empilhar. Cada semanada é um tijolo, e o sonho fica no alto — a criança vê a
+   altura que precisa alcançar antes de começar a subir.
 
-   O COFRE MAL ENCOLHE, e é essa a lição inteira: ela vê o próprio número quase não
-   mudar enquanto três pessoas ficam felizes. É a mesma conta da lição escrita, mas
-   sentida em vez de lida. */
-function jogoDoar(id) {
-  const GENTE = [
-    ['🐶', 'os bichinhos'],
-    ['🧒', 'outra criança'],
-    ['🍲', 'quem tem fome'],
+   TRÊS SONHOS COM ALTURAS DIFERENTES, e trocar entre eles muda a torre na hora: o doce são
+   dois tijolos, o patinete são doze. É a lição de preço em forma de ALTURA, que é como uma
+   criança de seis anos compara grandezas — ela ainda não compara números de dois dígitos,
+   mas compara duas pilhas num relance.
+
+   E ela vive a espera: um toque por tijolo. Escolher o patinete e ter de tocar doze vezes
+   é a lição sobre "caro" que nenhum número transmite. */
+function jogoTorre(id) {
+  const metaReal = Dados.meta(App.kid.id);
+  const SONHOS = [
+    ['🍭', 'um doce', 10],
+    ['⚽', 'uma bola', 30],
+    metaReal
+      ? [metaReal.icon || '🎁', metaReal.name, Number(metaReal.target_amount) || 60]
+      : ['🛴', 'um patinete', 60],
   ];
-  let cofre = 10;
-  const ajudados = {};
+  const POR_TIJOLO = 5;
+  let qual, tijolos;
+
+  const comecar = () => { qual = 1; tijolos = 0; desenhar(); };
 
   const desenhar = () => {
-    const n = Object.keys(ajudados).length;
-    const fim = n >= GENTE.length;
+    const [e, nome, preco] = SONHOS[qual];
+    const precisa = Math.max(1, Math.ceil(preco / POR_TIJOLO));
+    const chegou = tijolos >= precisa;
     raiz().innerHTML = quadroJogo(id, `
-      ${palco(fim ? 'feliz' : 'oi', 92)}
-      ${balao(fim
-        ? 'Você ajudou todo mundo e quase não sentiu falta! 💝'
-        : 'Toque em quem você quer ajudar. Custa <b>R$ 1</b> cada um.')}
+      ${palco(chegou ? 'feliz' : 'oi', 76)}
+      ${balao(chegou
+        ? `Chegou lá! Foram <b>${precisa}</b> ${precisa === 1 ? 'semanada' : 'semanadas'} 🎉`
+        : `Faltam <b>${precisa - tijolos}</b> tijolos para ${esc(nome)}`)}
 
-      <div class="jg-cofre">
-        <span class="jg-cofre-r">você tem</span>
-        <span class="jg-cofre-v">${fmtKid(cofre)}</span>
+      <div class="to-troca">
+        ${SONHOS.map(([se, snome, spreco], i) => {
+          const alt = Math.max(1, Math.ceil(spreco / POR_TIJOLO));
+          return `<button class="to-op ${qual === i ? 'on' : ''}" data-to="${i}">
+            <span>${se}</span><b>${fmtKid(spreco)}</b><small>${alt} 🌙</small>
+          </button>`;
+        }).join('')}
       </div>
 
-      <div class="jg-gente">
-        ${GENTE.map(([e, nome]) => `
-          <button class="jg-quem ${ajudados[nome] ? 'feito' : ''}" data-jq="${nome}"
-                  ${ajudados[nome] ? 'disabled' : ''}>
-            <span class="jq-e">${e}</span>
-            ${/* O NOME E O CONVITE PRECISAM DE UM AGRUPADOR: soltos no flex viram dois
-                 itens lado a lado, e 'quem tem fome' quebrou em duas linhas empurrando o
-                 convite para fora. A foto pegou. */''}
-            <span class="jq-t">
-              <b>${nome}</b>
-              <small>${ajudados[nome] ? 'obrigado! 💗' : 'toque para ajudar'}</small>
-            </span>
-          </button>`).join('')}
+      ${/* A TORRE CRESCE DE BAIXO PARA CIMA e o sonho fica no topo, à vista desde o
+           primeiro tijolo: é a distância que dá sentido ao esforço, e escondê-la faria
+           empilhar virar tarefa. */''}
+      <div class="to">
+        <div class="to-alvo ${chegou ? 'chegou' : ''}">${e}</div>
+        <div class="to-pilha">
+          ${Array.from({ length: precisa }, (_, k) => {
+            const posta = k < tijolos;
+            return `<span class="to-t ${posta ? 'posta' : ''}"></span>`;
+          }).reverse().join('')}
+        </div>
+        <div class="to-chao"></div>
       </div>
 
-      ${fim ? `<div class="jg-nota">
-        Você tinha ${fmtKid(10)} e ficou com <b>${fmtKid(cofre)}</b>. Quase igual!
-      </div>` : ''}
-    `, fim ? `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
-        <span class="emo">🔁</span> Jogar de novo
-      </button>` : '');
+      ${chegou ? `<div class="jg-nota">${precisa <= 2
+        ? 'Coisa pequena chega rápido. Experimente a mais cara!'
+        : 'Quanto mais caro, mais alta a torre 🧱'}</div>`
+        : `<button class="jg-moedao" data-tj="1">${Arte.moeda(66)}
+            <small>pôr um tijolo</small></button>`}
+    `, chegou ? botaoDeNovo('Escolher outro') : '');
 
-    document.querySelectorAll('[data-jq]').forEach(b => b.onclick = () => {
-      const nome = b.dataset.jq;
-      if (ajudados[nome] || cofre < 1) return;
-      ajudados[nome] = true; cofre = +(cofre - 1).toFixed(2);
-      Som.moeda(); vibra(14); desenhar();
-      if (Object.keys(ajudados).length >= GENTE.length) festa();
+    document.querySelectorAll('[data-to]').forEach(b => b.onclick = () => {
+      qual = Number(b.dataset.to); tijolos = 0; Som.toque(); vibra(10); desenhar();
     });
-    if (el('#jg-de-novo')) {
-      el('#jg-de-novo').onclick = () => {
-        cofre = 10; for (const k of Object.keys(ajudados)) delete ajudados[k];
-        Som.toque(); desenhar();
-      };
-    }
-    ligarSaida(id);
-  };
-  desenhar();
-}
-
-/* ================= JOGO 4: AS MISSÕES =================
-
-   As missões REAIS dela viram pedras num caminho, e o Dino avança a cada toque.
-
-   Usa as missões de verdade porque a lição é sobre as tarefas dela — não sobre tarefas
-   em geral. Marcar aqui não marca no app: é ensaio, e o ensaio é o que dá coragem para
-   fazer de verdade. */
-function jogoMissoes(id) {
-  const reais = Dados.tarefas(App.kid.id).filter(t => !t.especial).slice(0, 5);
-  const lista = reais.length ? reais : [
-    { id: 'a', name: 'Arrumar a cama', icon: '🛏️' },
-    { id: 'b', name: 'Escovar os dentes', icon: '🦷' },
-    { id: 'c', name: 'Guardar os brinquedos', icon: '🧸' },
-  ];
-  const feitas = {};
-
-  const desenhar = () => {
-    const n = Object.keys(feitas).length;
-    const fim = n >= lista.length;
-    const pct = (n / lista.length) * 100;
-    raiz().innerHTML = quadroJogo(id, `
-      ${palco(fim ? 'feliz' : 'oi', 92)}
-      ${balao(fim
-        ? 'Você cuidou de tudo! É assim que ganha o prêmio 🏆'
-        : `Toque na missão para o Dino avançar. Faltam <b>${lista.length - n}</b>`)}
-
-      <div class="jg-trilho">
-        <div class="jt-barra"><i style="width:${pct}%"></i></div>
-        <div class="jt-dino" style="left:${pct}%">🦖</div>
-        <div class="jt-fim">🏆</div>
-      </div>
-
-      <div class="jg-missoes">
-        ${lista.map(t => `
-          <button class="jg-miss ${feitas[t.id] ? 'feito' : ''}" data-jm="${t.id}"
-                  ${feitas[t.id] ? 'disabled' : ''}>
-            <span class="jm-e">${esc(t.icon || '⭐')}</span>
-            <b>${esc(t.name)}</b>
-            <span class="jm-ok">${feitas[t.id] ? '✓' : ''}</span>
-          </button>`).join('')}
-      </div>
-    `, fim ? `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
-        <span class="emo">🔁</span> Jogar de novo
-      </button>` : '');
-
-    document.querySelectorAll('[data-jm]').forEach(b => b.onclick = () => {
-      if (feitas[b.dataset.jm]) return;
-      feitas[b.dataset.jm] = true;
-      Som.moeda(); vibra(12); desenhar();
-      if (Object.keys(feitas).length >= lista.length) festa();
-    });
-    if (el('#jg-de-novo')) {
-      el('#jg-de-novo').onclick = () => {
-        for (const k of Object.keys(feitas)) delete feitas[k];
-        Som.toque(); desenhar();
-      };
-    }
-    ligarSaida(id);
-  };
-  desenhar();
-}
-
-/* ================= JOGO 5: CHEGAR NO SONHO =================
-
-   Uma semanada por toque, e a barra anda. O número de toques até encher É a lição:
-   ela sente a distância em vez de ouvir "faltam seis semanadas".
-
-   Usa o sonho real dela quando existe — a barra que enche aqui é a mesma que ela vê
-   todo dia na aba do sonho, e o jogo é um adiantamento do que vai acontecer. */
-function jogoMeta(id) {
-  const meta = Dados.meta(App.kid.id);
-  const alvo = meta ? (Number(meta.target_amount) || 0) : 60;
-  const nome = meta ? meta.name : 'um patinete';
-  const icone = meta ? (meta.icon || '🎁') : '🛴';
-  const porSemana = Math.max(1, Math.round(alvo / 6));
-  let tem = 0, toques = 0;
-
-  const desenhar = () => {
-    const fim = tem >= alvo;
-    const pct = Math.min(100, (tem / alvo) * 100);
-    raiz().innerHTML = quadroJogo(id, `
-      ${palco(fim ? 'feliz' : 'oi', 92)}
-      ${balao(fim
-        ? `Chegou! Foram <b>${toques} semanadas</b> 🎉`
-        : 'Toque na moeda para passar uma semanada')}
-
-      <div class="jg-alvo">
-        <span class="ja-e">${esc(icone)}</span>
-        <span class="ja-t"><b>${esc(nome)}</b><small>${fmtKid(alvo)}</small></span>
-      </div>
-
-      <div class="jg-barra"><i style="width:${pct}%"></i></div>
-      <div class="jg-tem">${fmtKid(tem)}</div>
-
-      ${fim ? '' : `<button class="jg-moedao" data-jt="1">
-        ${Arte.moeda(64)}
-        <small>+${fmtKid(porSemana)}</small>
-      </button>`}
-    `, fim ? `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
-        <span class="emo">🔁</span> Jogar de novo
-      </button>` : '');
-
-    const m = document.querySelectorAll('[data-jt]')[0];
+    const m = document.querySelectorAll('[data-tj]')[0];
     if (m) {
       m.onclick = () => {
-        tem = Math.min(alvo, +(tem + porSemana).toFixed(2)); toques++;
-        Som.moeda(); vibra(12); desenhar();
-        if (tem >= alvo) festa();
+        tijolos++; Som.moeda(); vibra(12); desenhar();
+        if (tijolos >= precisa) festa();
       };
     }
-    if (el('#jg-de-novo')) {
-      el('#jg-de-novo').onclick = () => { tem = 0; toques = 0; Som.toque(); desenhar(); };
-    }
-    ligarSaida(id);
+    ligarSaida(id, comecar);
   };
-  desenhar();
+  comecar();
 }
+
 function telaSelos() {
   const selos = Dados.selos(App.kid.id);
   const n = selos.filter(s => s.ganho).length;
