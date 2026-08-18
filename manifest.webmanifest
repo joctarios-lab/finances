@@ -1,4 +1,6 @@
 {
+  "//": "O id e a identidade do app instalado, e nao o escopo. O cofrinho mora DENTRO deste escopo, e sem id o Chrome trata /cofrinho/ como sendo este mesmo app — o segundo nunca chega a ser oferecido para instalar. NAO MUDE o id: trocar cria um app novo em vez de atualizar o que existe.",
+  "id": "/finances/?app=familia",
   "name": "Finanças da Família",
   "short_name": "Finanças",
   "description": "Gestão financeira em família — offline, rápida e sincronizada.",

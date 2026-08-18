@@ -312,6 +312,11 @@ function telaCofrinho() {
   const teto = Math.max(p.gastar, p.guardar, p.doar, 1);
   const ritual = Dados.aRepartir(kid.id);
   const aConfirmar = Dados.tarefas(kid.id).filter(t => t.feita && !t.confirmada).length;
+  const metaAqui = Dados.meta(kid.id);
+  const alvoAqui = metaAqui ? (Number(metaAqui.target_amount) || 0) : 0;
+  const pctAqui = alvoAqui > 0 ? Math.min(100, (p.guardar / alvoAqui) * 100) : 0;
+  const faltamAqui = metaAqui ? Dados.semanasParaMeta(kid.id) : null;
+  const chegouAqui = pctAqui >= 100;
 
   const fala = ritual
     ? (ritual.abertura
@@ -357,6 +362,34 @@ function telaCofrinho() {
         </div>`).join('')}
     </div>
 
+    ${/* O SONHO NA PRIMEIRA TELA, e não escondido numa aba.
+
+         O pote de guardar mostrava um número e mais nada: R$ 30 não diz se ela
+         está perto ou longe da bicicleta, e é a distância que dá sentido a guardar.
+         Sem isso o pote vira uma pilha que cresce sem destino — exatamente o
+         oposto do que ele existe para ensinar.
+
+         Fica COLADO no pote de guardar, porque é dele que o dinheiro sai, e leva a
+         barra e a conta em semanadas — a mesma da aba do sonho, para os dois
+         números nunca discordarem. */
+      metaAqui ? `
+      <button class="sonho-mini" data-ir-sonho="1">
+        <span class="sonho-mini-ico">${esc(metaAqui.icon || '🎁')}</span>
+        <span class="sonho-mini-txt">
+          <b>${esc(metaAqui.name)}</b>
+          <span class="sonho-mini-barra"><i style="width:${pctAqui.toFixed(1)}%"></i></span>
+          <small>${chegouAqui
+            ? 'Já dá para comprar! 🎉'
+            : faltamAqui === null
+              ? `${fmtKid(p.guardar)} de ${fmtKid(metaAqui.target_amount)}`
+              : faltamAqui <= 1
+                ? `Falta 1 semanada — ${fmtKid(p.guardar)} de ${fmtKid(metaAqui.target_amount)}`
+                : `Faltam ${faltamAqui} semanadas — ${fmtKid(p.guardar)} de ${fmtKid(metaAqui.target_amount)}`
+          }</small>
+        </span>
+        <span class="sonho-mini-chev">›</span>
+      </button>` : ''}
+
     <div class="linha-bt" style="margin-top:18px">
       <button class="bt verde" id="bt-gastar"><span class="emo">🛒</span> Gastei</button>
       <button class="bt rosa" id="bt-doar"><span class="emo">💝</span> Doei</button>
@@ -377,7 +410,15 @@ function telaCofrinho() {
     </div>` : ''}
 
     <h2><span class="emo">📖</span> O que aconteceu</h2>
-    ${historico(kid.id)}
+    ${/* SÓ OS ÚLTIMOS TRÊS na primeira tela. A lista inteira empurrava os potes e
+         os botões para fora da dobra: quem abre o cofrinho quer ver quanto tem e
+         decidir o que fazer, não ler doze linhas de extrato. O resto continua a um
+         toque, em tela própria — nada foi escondido, só realocado. */''}
+    ${historico(kid.id, 3)}
+    ${Dados.entradas(kid.id).length > 3 ? `
+      <button class="bt clara" id="bt-extrato" style="margin-top:6px">
+        <span class="emo">📖</span> Ver tudo o que aconteceu
+      </button>` : ''}
 
     <button class="bt clara" id="bt-sair" style="margin-top:20px">
       <span class="emo">👋</span> Sair do meu cofrinho
@@ -387,8 +428,8 @@ function telaCofrinho() {
 /* O histórico são FIGURINHAS, não linhas de lista: cada movimento é um cartão
    com o ícone num círculo colorido. Ela lê o desenho e a cor antes do texto, e
    é assim que o extrato dela vira algo de olhar em vez de algo de ler. */
-function historico(kidId) {
-  const movs = Dados.entradas(kidId).slice(0, 12);
+function historico(kidId, limite) {
+  const movs = Dados.entradas(kidId).slice(0, limite || 200);
   if (!movs.length) {
     return `<div class="carta"><div class="vazio">
       Nada ainda. Sua primeira semanada vai aparecer aqui 🪙
@@ -755,6 +796,28 @@ function telaSelos() {
     </div>`;
 }
 
+/* ---------- O extrato inteiro, em tela própria ---------- */
+
+/* A LISTA INTEIRA MERECE UMA TELA, e não o rodapé da inicial.
+
+   Na tela do cofrinho ela empurrava os potes e os botões para fora da dobra: quem
+   abre o app quer ver quanto tem e decidir o que fazer. Aqui a lista é a única
+   coisa, com espaço para rolar e um caminho claro de volta. */
+function telaExtrato() {
+  const kid = App.kid;
+  const movs = Dados.entradas(kid.id);
+  raiz().innerHTML = `
+    ${palco('oi', 110)}
+    ${balao(movs.length
+      ? `Tudo o que já aconteceu no seu cofrinho!`
+      : 'Ainda não aconteceu nada por aqui.')}
+    ${historico(kid.id)}
+    <button class="bt clara" id="ex-volta" style="margin-top:14px">
+      <span class="emo">↩️</span> Voltar
+    </button>`;
+  el('#ex-volta').onclick = () => { Som.toque(); App.aba = 'cofrinho'; render(); };
+}
+
 /* ---------- As duas estradas: o custo de oportunidade ---------- */
 
 /* Tirar do pote de guardar não é errado — é o dinheiro dela, e o app não faz cara
@@ -941,7 +1004,7 @@ function telaGastar(pote) {
 /* ---------- Cliques que valem em qualquer tela ---------- */
 
 document.addEventListener('click', ev => {
-  const alvo = ev.target.closest('[id], [data-tarefa], [data-pote]');
+  const alvo = ev.target.closest('[id], [data-tarefa], [data-pote], [data-ir-sonho]');
   if (!alvo || !App.kid) return;
 
   if (alvo.id === 'ir-ritual') return telaRitual();
@@ -961,6 +1024,10 @@ document.addEventListener('click', ev => {
     aviso(`Você pediu o seu ${pronto.meta.name}! Falta um adulto confirmar 🎉`);
     return;
   }
+  /* Tocar no resumo leva à aba do sonho: o card responde a "quero ver isso melhor",
+     que é a pergunta natural depois de ver a barra. */
+  if (alvo.dataset && alvo.dataset.irSonho) { Som.toque(); App.aba = 'sonho'; render(); return; }
+  if (alvo.id === 'bt-extrato') { Som.toque(); return telaExtrato(); }
   if (alvo.id === 'bt-sair') return sair();
 
   if (alvo.dataset && alvo.dataset.tarefa) {

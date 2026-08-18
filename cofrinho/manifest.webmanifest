@@ -1,4 +1,6 @@
 {
+  "//": "Identidade propria, para instalar ao lado do app da familia. Ver a nota no manifest da raiz: sem isto os dois viram um app so, porque este escopo esta dentro daquele.",
+  "id": "/finances/cofrinho/?app=cofrinho",
   "name": "Meu Cofrinho",
   "short_name": "Cofrinho",
   "description": "O cofrinho da criança: semanada, potes de gastar, guardar e doar, tarefas e sonhos.",

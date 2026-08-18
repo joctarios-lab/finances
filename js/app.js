@@ -7561,6 +7561,43 @@ function blocoDaSemanada(kidId) {
     </div>`;
 }
 
+/* A LINHA DO MOVIMENTO, uma só, usada na tela da criança e no extrato completo.
+
+   Duplicá-la faria as duas telas divergirem no primeiro ajuste — e a divergência
+   apareceria como "o extrato mostra diferente do resumo", que é o tipo de coisa
+   que destrói a confiança nos dois. */
+function linhaDoMovimento(e) {
+  const rotulo = { semanada: 'Semanada', tarefa: 'Tarefa', bonus: 'Semana completa',
+    presente: 'Presente', gasto: 'Gasto', doacao: 'Doação', rendimento: 'Moeda mágica',
+    inicial: 'Já tinha antes', divisao: 'Repartiu nos potes' };
+  const icone = { semanada: '🪙', tarefa: '⭐', bonus: '🏅', presente: '🎁', gasto: '🛒',
+    doacao: '❤️', rendimento: '✨', inicial: '🏁', divisao: '🫙' };
+  const potinho = { gastar: '🍭', guardar: '🎯', doar: '❤️' };
+  const saiu = e.tipo === 'gasto' || e.tipo === 'doacao';
+  return `<div class="kid-mov">
+    <span class="kid-mov-ico">${icone[e.tipo] || '🪙'}</span>
+    <span class="kid-mov-info"><b>${esc(rotulo[e.tipo] || e.tipo)}${
+      e.description && e.description !== e.tipo ? ' · ' + esc(e.description) : ''}</b>
+      <small>${fmtDay(e.date)} · ${potinho[e.pote] || ''} ${esc(e.pote)}${
+        e.confirmada === false ? ' · esperando você' : ''}</small></span>
+    <span class="kid-mov-val ${saiu ? 't-danger' : 't-ok'}">${saiu ? '−' : '+'}${fmt(e.amount)}</span>
+  </div>`;
+}
+
+/* O EXTRATO COMPLETO, em tela própria. */
+function openKidExtrato(kidId) {
+  const k = DB.get('kids', kidId);
+  if (!k) return toast('Criança não encontrada');
+  const movs = DB.kidEntries(kidId);
+  const potes = DB.kidPotes(kidId);
+  openModal(`
+    <div class="modal-title">Extrato de ${esc(k.name)}<button class="close-x" id="kx-back"><span data-ico="back"></span></button></div>
+    <p class="muted" style="margin-bottom:12px">${movs.length} movimento(s) · saldo de ${fmt(potes.total)}</p>
+    ${movs.map(linhaDoMovimento).join('') || '<div class="empty">Nada movimentado ainda.</div>'}
+  `);
+  $('#kx-back').onclick = () => openCriancaDetalhe(kidId);
+}
+
 function openCriancaDetalhe(kidId) {
   const k = DB.get('kids', kidId);
   if (!k) return toast('Criança não encontrada');
@@ -7611,13 +7648,13 @@ function openCriancaDetalhe(kidId) {
 
     <div class="sec-cab" style="margin-top:14px"><div class="sec-tit"><b>Movimento</b><small>tudo que entrou e saiu</small></div>
       <div class="sec-acoes"><button class="sec-btn" id="kdd-lanc">Lançar</button></div></div>
-    ${entradas.map(e => `<div class="kid-mov">
-      <span class="kid-mov-ico">${icone[e.tipo] || '🪙'}</span>
-      <span class="kid-mov-info"><b>${esc(rotulo[e.tipo] || e.tipo)}${e.description && e.description !== e.tipo ? ' · ' + esc(e.description) : ''}</b>
-        <small>${fmtDay(e.date)} · ${potinho[e.pote] || ''} ${esc(e.pote)}</small></span>
-      <span class="kid-mov-val ${e.tipo === 'gasto' || e.tipo === 'doacao' ? 'txt-red' : 'txt-green'}">${
-        e.tipo === 'gasto' || e.tipo === 'doacao' ? '−' : '+'}${fmt(e.amount)}</span>
-    </div>`).join('') || '<div class="empty">Nada movimentado ainda.</div>'}
+    ${/* SÓ OS ÚLTIMOS CINCO AQUI. Trinta linhas de extrato empurravam a meta, as
+         missões e os botões de configuração para fora da tela — e esta é a tela de
+         ADMINISTRAR, não de auditar. O extrato inteiro está a um toque, com espaço
+         para ser lido. */''}
+    ${entradas.slice(0, 5).map(linhaDoMovimento).join('') || '<div class="empty">Nada movimentado ainda.</div>'}
+    ${entradas.length > 5 ? `<button class="btn ghost" id="kdd-extrato" style="margin-top:8px">
+      Ver o extrato completo (${entradas.length})</button>` : ''}
 
     <div class="sec-cab" style="margin-top:14px"><div class="sec-tit"><b>Configurações</b><small>semanada, senha e bichinho</small></div>
       <div class="sec-acoes"><button class="sec-btn" id="kdd-editar">Editar</button></div></div>
@@ -7628,6 +7665,7 @@ function openCriancaDetalhe(kidId) {
   `);
   $('#kdd-back').onclick = () => openCriancas();
   $('#kdd-editar').onclick = () => openCriancaSheet(kidId);
+  if ($('#kdd-extrato')) $('#kdd-extrato').onclick = () => openKidExtrato(kidId);
   /* Acertar o contrato é uma ação de UM toque, e não um formulário: o app já sabe
      o valor, o dia e a periodicidade certos — pedir para a pessoa redigitar o que
      ele conhece só cria chance de errar. */

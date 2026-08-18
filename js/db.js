@@ -2168,9 +2168,18 @@ const DB = {
       .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   },
 
+  /* O EXTRATO DELA, visto pelo adulto: a SAÍDA pendente aparece; a ENTRADA, não.
+
+     A mesma regra do app da criança, e tem de ser a mesma: se o pote dela já caiu,
+     as duas telas precisam mostrar a linha que explica por quê. Um extrato que
+     desmente o saldo é pior que um extrato curto. */
   kidEntries(kidId) {
     return this.all('kid_entries')
-      .filter(e => e.kid_id === kidId && e.confirmada !== false)
+      .filter(e => {
+        if (e.kid_id !== kidId) return false;
+        if (e.confirmada !== false) return true;
+        return e.tipo === 'gasto' || e.tipo === 'doacao';
+      })
       .sort((a, b) => String(b.date).localeCompare(String(a.date)));
   },
 

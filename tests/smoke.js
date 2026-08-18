@@ -118,7 +118,7 @@ eval(appSrc + `; Object.assign(global, {
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openEditarContrato, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
-  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, blocoDaSemanada, openKidLancarSheet, openKidTarefaSheet, notaDosFilhos, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
+  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, openKidExtrato, blocoDaSemanada, openKidLancarSheet, openKidTarefaSheet, notaDosFilhos, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
 
 /* 'R$ 1.234,56' de volta para 1234.56.
 
@@ -6788,6 +6788,59 @@ try {
   for (const r of DB.all('recurrences').filter(r => r.kid_id === idE)) DB.remove('recurrences', r.id);
   DB.remove('kids', idE); DB.remove('accounts', contaE);
 } catch (e) { console.log(` FALHA | gasto da criança: ${e.message}`); fail++; }
+/* ---- O EXTRATO DA CRIANÇA GANHA TELA PRÓPRIA ----
+
+   Trinta linhas de extrato empurravam a meta, as missões e os botões de
+   configuração para fora da tela — e aquela é a tela de ADMINISTRAR, não de
+   auditar. */
+console.log('\n=== O extrato da criança em tela própria ===');
+try {
+  const hojeX = DB.hojeISO();
+  const idX = DB.upsert('kids', { name: 'Extrato Kid', semanada_valor: 10, active: true });
+  for (let n = 0; n < 9; n++) {
+    DB.upsert('kid_entries', {
+      kid_id: idX, tipo: 'presente', pote: 'gastar', amount: 1,
+      date: DB.somarDiasISO(hojeX, -n), description: `Mov ${n}`, confirmada: true });
+  }
+
+  openCriancaDetalhe(idX);
+  const det = els['#modal'].innerHTML;
+  const linhas = (det.match(/class="kid-mov"/g) || []).length;
+  check('a tela da criança mostra poucos movimentos', linhas, 5);
+  check('  e oferece o extrato completo', det.includes('id="kdd-extrato"'), true);
+  check('  dizendo quantos existem', /9/.test(det), true);
+
+  openKidExtrato(idX);
+  const ex = els['#modal'].innerHTML;
+  check('o extrato completo mostra todos', (ex.match(/class="kid-mov"/g) || []).length, 9);
+  check('  com o nome da criança', ex.includes('Extrato Kid'), true);
+  check('  e o saldo dela', ex.includes(fmt(9)), true);
+  check('  com caminho de volta', ex.includes('id="kx-back"'), true);
+
+  /* COM POUCOS MOVIMENTOS o botão não aparece: um caminho para uma tela que mostra
+     o mesmo que a anterior é ruído. */
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idX).slice(0, 7)) {
+    DB.remove('kid_entries', e.id);
+  }
+  openCriancaDetalhe(idX);
+  check('com poucos movimentos, o botão não aparece',
+    els['#modal'].innerHTML.includes('id="kdd-extrato"'), false);
+
+  /* O EXTRATO DO ADULTO MOSTRA A SAÍDA PENDENTE, como o da criança: se o pote dela
+     já caiu, as duas telas precisam mostrar a linha que explica por quê. */
+  DB.upsert('kid_entries', {
+    kid_id: idX, tipo: 'gasto', pote: 'gastar', amount: 1, date: hojeX,
+    description: 'Doce pendente', confirmada: false });
+  openKidExtrato(idX);
+  check('a saída pendente aparece no extrato do adulto',
+    els['#modal'].innerHTML.includes('Doce pendente'), true);
+  check('  marcada como esperando', els['#modal'].innerHTML.includes('esperando você'), true);
+
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idX)) DB.remove('kid_entries', e.id);
+  DB.remove('kids', idX);
+  closeModal();
+} catch (e) { console.log(` FALHA | extrato da criança: ${e.message}`); fail++; }
+
 /* ---- APAGAR UM COFRINHO INTEIRO ----
 
    Existia só "pausar", que esconde e guarda tudo. A falta de "excluir" apareceu

@@ -90,7 +90,7 @@ eval(fs.readFileSync(BASE + 'cofrinho/js/arte.js', 'utf8') + '; global.Arte = Ar
 eval(fs.readFileSync(BASE + 'cofrinho/js/dados.js', 'utf8') + '; global.Dados = Dados; global.Nuvem = Nuvem; global.COLUNAS_KID = COLUNAS; global.TABELAS_KID = TABELAS;');
 eval(fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8') + `; Object.assign(global, {
   App, fmtKid, diaBonito, hashDaSenha, esc, telaQuem, telaSenha, telaCofrinho, telaTarefas,
-  telaSonho, telaSelos, telaRitual, telaGastar, telaEscolha, telaSemCrianca, historico, barraDeAbas,
+  telaSonho, telaSelos, telaRitual, telaGastar, telaEscolha, telaExtrato, telaSemCrianca, historico, barraDeAbas,
   render, entrar, sair, clarear, sombrear, Som, aviso, festa,
 });`);
 
@@ -482,6 +482,108 @@ console.log('\n=== A saída aparece no extrato na hora ===');
     Dados.entradas(id).some(e => e.task_id === tar), true);
   check('  e soma no pote', Dados.potes(id).gastar, 11);
   limpar(id);
+}
+
+/* ================= O sonho na primeira tela ================= */
+console.log('\n=== A tela inicial diz o quão perto está o sonho ===');
+{
+  /* O pote de guardar mostrava um número e mais nada: R$ 30 não diz se ela está
+     perto ou longe da bicicleta, e é a DISTÂNCIA que dá sentido a guardar. Sem
+     isso o pote vira uma pilha que cresce sem destino. */
+  const id = novaCrianca({ name: 'Perto', semanada_valor: 10, rendimento_valor: 0 });
+  App.kid = Dados.get('kids', id);
+  check('sem sonho, a tela inicial não inventa um', telaCofrinho().includes('sonho-mini'), false);
+
+  Dados.upsert('kid_goals', {
+    kid_id: id, name: 'Patinete', icon: '🛴', target_amount: 60, done: false });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+  const t1 = telaCofrinho();
+  check('com sonho, o resumo aparece na inicial', t1.includes('sonho-mini'), true);
+  check('  com o nome do sonho', t1.includes('Patinete'), true);
+  check('  o desenho dele', t1.includes('🛴'), true);
+  /* EM SEMANADAS, a mesma unidade da aba do sonho: dois números diferentes para a
+     mesma pergunta fariam ela desconfiar dos dois. */
+  check('  e quantas semanadas faltam', t1.includes('Faltam 3 semanadas'), true);
+  check('  dizendo também quanto já tem', t1.includes(fmtKid(30)) && t1.includes(fmtKid(60)), true);
+
+  /* A BARRA acompanha o progresso: metade guardada, metade preenchida. */
+  check('a barra reflete o progresso', t1.includes('width:50.0%'), true);
+
+  /* CHEGOU: o texto muda para a conquista, e some a contagem. */
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 40, date: HOJE, confirmada: true });
+  const t2 = telaCofrinho();
+  check('alcançado, a inicial comemora', t2.includes('Já dá para comprar'), true);
+  check('  e não fala mais em semanadas que faltam', t2.includes('Faltam'), false);
+
+  /* O RESUMO É TOCÁVEL e leva à aba do sonho: é a pergunta natural depois de ver a
+     barra. */
+  check('o resumo leva ao sonho', t2.includes('data-ir-sonho'), true);
+  limpar(id);
+}
+
+console.log('\n=== O extrato tem tela própria ===');
+{
+  /* A lista inteira empurrava os potes e os botões para fora da dobra: quem abre o
+     cofrinho quer ver quanto tem e decidir o que fazer, não ler doze linhas. */
+  const id = novaCrianca({ name: 'Extrato Tela' });
+  for (let n = 0; n < 8; n++) {
+    Dados.upsert('kid_entries', {
+      kid_id: id, tipo: 'presente', pote: 'gastar', amount: 1,
+      date: Dados.somarDiasISO(HOJE, -n), description: `Mov ${n}`, confirmada: true });
+  }
+  App.kid = Dados.get('kids', id);
+  const ini = telaCofrinho();
+  const linhas = (ini.match(/class="figurinha"/g) || []).length;
+  check('a tela inicial mostra poucos movimentos', linhas, 3);
+  check('  e oferece ver o resto', ini.includes('id="bt-extrato"'), true);
+
+  telaExtrato();
+  const tudo = tela();
+  check('a tela do extrato mostra todos', (tudo.match(/class="figurinha"/g) || []).length, 8);
+  check('  com caminho de volta', tudo.includes('id="ex-volta"'), true);
+
+  /* COM POUCOS MOVIMENTOS o botão nem aparece: um caminho para uma tela que mostra
+     o mesmo que a anterior é ruído. */
+  limpar(id);
+  const idP = novaCrianca({ name: 'Poucos' });
+  Dados.upsert('kid_entries', {
+    kid_id: idP, tipo: 'presente', pote: 'gastar', amount: 1, date: HOJE, confirmada: true });
+  App.kid = Dados.get('kids', idP);
+  check('com poucos movimentos, o botão não aparece',
+    telaCofrinho().includes('id="bt-extrato"'), false);
+  limpar(idP);
+}
+
+console.log('\n=== Os dois apps instalam lado a lado ===');
+{
+  /* O app da família tem escopo "/finances/" e o cofrinho "/finances/cofrinho/" —
+     que está DENTRO do primeiro. Sem `id` no manifest, o Chrome identifica o app
+     instalado pelo start_url e trata qualquer URL do escopo como "já é este app":
+     abrir /cofrinho/ não oferecia instalar nada.
+
+     O campo `id` existe para isto — ele, e não o escopo, passa a ser a identidade. */
+  const mFam = JSON.parse(fs.readFileSync(BASE + 'manifest.webmanifest', 'utf8'));
+  const mCof = JSON.parse(fs.readFileSync(BASE + 'cofrinho/manifest.webmanifest', 'utf8'));
+
+  check('o app da família declara um id', !!mFam.id, true);
+  check('  e o cofrinho também', !!mCof.id, true);
+  check('  e eles são diferentes', mFam.id !== mCof.id, true);
+
+  /* NOMES E ÍCONES DISTINTOS: dois atalhos iguais na tela inicial do tablet são
+     indistinguíveis, e a criança abriria o app do adulto sem querer. */
+  check('os nomes são diferentes', mFam.name !== mCof.name, true);
+  check('  os nomes curtos também', mFam.short_name !== mCof.short_name, true);
+  check('  e os ícones não se repetem',
+    mFam.icons.every(a => mCof.icons.every(b => a.src !== b.src)), true);
+
+  /* CADA UM COM O SEU service worker e o seu cache: publicar correção no app do
+     adulto não pode reinstalar o app da criança no meio de um sábado. */
+  const swFam = fs.readFileSync(BASE + 'sw.js', 'utf8');
+  const swCof = fs.readFileSync(BASE + 'cofrinho/sw.js', 'utf8');
+  check('cada app tem o seu cache', swFam.includes("'financas-' + VERSAO")
+    && swCof.includes("'cofrinho-' + VERSAO"), true);
 }
 
 /* ================= O custo de oportunidade ================= */
@@ -1499,7 +1601,11 @@ console.log('\n=== O que a criança vê ===');
      semanada, justamente no primeiro registro que ela vai ver. */
   Dados.upsert('kid_entries', { kid_id: id, tipo: 'inicial', pote: 'guardar', amount: 60,
     date: Dados.somarDiasISO(HOJE, -1), description: 'O que eu já tinha', confirmada: true });
-  const comInicial = telaCofrinho();
+  /* NO EXTRATO, e não na tela inicial: ela mostra só os três últimos movimentos, e o
+     de abertura ficou de fora quando há semanada e presente na frente. O lugar de
+     conferir a lista inteira é a tela que existe para isso. */
+  telaExtrato();
+  const comInicial = tela();
   check('o saldo de abertura aparece no histórico', comInicial.includes('O que eu já tinha'), true);
   check('  com a bandeira de largada, não a moeda genérica', comInicial.includes('🏁'), true);
   check('  e conta no total', Dados.potes(id).guardar >= 60, true);
