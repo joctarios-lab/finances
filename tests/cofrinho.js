@@ -90,6 +90,7 @@ eval(fs.readFileSync(BASE + 'cofrinho/js/arte.js', 'utf8') + '; global.Arte = Ar
 eval(fs.readFileSync(BASE + 'cofrinho/js/dados.js', 'utf8') + '; global.Dados = Dados; global.Nuvem = Nuvem; global.COLUNAS_KID = COLUNAS; global.TABELAS_KID = TABELAS;');
 eval(fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8') + `; Object.assign(global, {
   App, fmtKid, diaBonito, hashDaSenha, esc, telaQuem, telaSenha, telaCofrinho, telaTarefas,
+  COISAS_GASTAR, COISAS_DOAR, emojiDe,
   telaSonho, telaSelos, telaRitual, telaGastar, telaEscolha, telaExtrato, telaSemCrianca, historico, barraDeAbas,
   render, entrar, sair, clarear, sombrear, Som, aviso, festa,
 });`);
@@ -650,6 +651,63 @@ function tocar(pote) {
   }
   const alvo = { id: '', dataset: { pote }, closest: () => alvo };
   for (const fn of cliques) fn({ target: alvo });
+}
+
+/* ================= Os desenhos das coisas ================= */
+console.log('\n=== O que ele comprou, e para quem doou ===');
+{
+  /* AS LISTAS SÃO FONTE ÚNICA, e este é o teste que mais importa aqui.
+
+     Antes os botões viviam dentro do template da tela e o `emojiDe` era um segundo
+     mapa escrito à mão. Acrescentar um botão sem lembrar do outro dava um carrinho
+     genérico na tela de decisão, onde devia estar o sorvete — e nada no app denunciava
+     a divergência. Duas listas que precisam concordar sempre acabam discordando. */
+  for (const [emoji, nome] of COISAS_GASTAR.concat(COISAS_DOAR)) {
+    check(`o desenho de ${nome} vem da lista`, emojiDe(nome), emoji);
+  }
+  check('coisa que não está na lista cai no genérico', emojiDe('Foguete espacial'), '🛒');
+
+  /* NENHUM DESENHO SE REPETE dentro da mesma lista: dois botões com o mesmo ícone são
+     o mesmo botão aos olhos de quem ainda lê devagar. */
+  const repetido = lista => lista.length !== new Set(lista.map(([e]) => e)).size;
+  check('nenhum desenho se repete no gastar', repetido(COISAS_GASTAR), false);
+  check('  nem no doar', repetido(COISAS_DOAR), false);
+  check('  e nenhum nome se repete',
+    new Set(COISAS_GASTAR.concat(COISAS_DOAR).map(([, n]) => n)).size,
+    COISAS_GASTAR.length + COISAS_DOAR.length);
+
+  /* A LISTA CRESCEU DE VERDADE — eram seis e cinco, que cobrem mal o que uma criança
+     compra. Gasto sem etiqueta some do extrato como "gastei" e não ensina nada. */
+  check('há bem mais opções de compra que antes', COISAS_GASTAR.length >= 12, true);
+  check('  e mais para quem doar', COISAS_DOAR.length >= 8, true);
+
+  /* NOME CURTO: o botão tem largura fixa e nome longo vira duas linhas, que empurram a
+     grade inteira. "Outra criança" é o teto, e é aceito porque não há sinônimo curto. */
+  const compridos = COISAS_GASTAR.concat(COISAS_DOAR).filter(([, n]) => n.length > 14);
+  check('nenhum nome comprido demais para o botão',
+    compridos.length ? compridos.map(([, n]) => n).join(', ') : true, true);
+
+  /* OS BOTÕES SAEM DA LISTA, e não de um literal no template — senão a fonte única
+     não é única coisa nenhuma. */
+  const idC = novaCrianca({ name: 'Chips', semanada_valor: 10 });
+  Dados.upsert('kid_entries', {
+    kid_id: idC, tipo: 'presente', pote: 'gastar', amount: 30, date: HOJE, confirmada: true });
+  Dados.upsert('kid_entries', {
+    kid_id: idC, tipo: 'presente', pote: 'doar', amount: 10, date: HOJE, confirmada: true });
+  App.kid = Dados.get('kids', idC);
+
+  telaGastar('gastar');
+  const telaG = tela();
+  check('a tela de gastar mostra todas as opções de compra',
+    COISAS_GASTAR.every(([, n]) => telaG.includes(`data-o="${n}"`)), true);
+  check('  e nenhuma opção de doação', COISAS_DOAR.some(([, n]) => telaG.includes(`data-o="${n}"`)), false);
+
+  telaGastar('doar');
+  const telaD = tela();
+  check('a tela de doar mostra todas as opções de doação',
+    COISAS_DOAR.every(([, n]) => telaD.includes(`data-o="${n}"`)), true);
+  check('  e nenhuma opção de compra', COISAS_GASTAR.some(([, n]) => telaD.includes(`data-o="${n}"`)), false);
+  limpar(idC);
 }
 
 /* ================= A leitura da tela ================= */

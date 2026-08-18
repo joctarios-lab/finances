@@ -6841,6 +6841,45 @@ try {
   closeModal();
 } catch (e) { console.log(` FALHA | extrato da criança: ${e.message}`); fail++; }
 
+/* ---- OS DESENHOS DE META E DE MISSÃO ----
+
+   Eram dez sonhos e oito missões, e isso cobre mal o que existe: faltava patins,
+   faltava instrumento, faltava lixo, faltava lição de casa. Sonho sem desenho vira
+   "🚲" por falta de opção — e aí o desenho para de significar o sonho DELA, que é o
+   que faz a barra de progresso valer alguma coisa. */
+console.log('\n=== Os desenhos de meta e de missão ===');
+try {
+  const fonte = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const lista = nome => {
+    const m = fonte.match(new RegExp(nome + '\\s*=\\s*\\[([\\s\\S]*?)\\];'));
+    if (!m) return [];
+    return [...m[1].matchAll(/'([^']+)'/g)].map(x => x[1]);
+  };
+  const metas = lista('ICONES_META');
+  const tarefas = lista('ICONES_T');
+
+  check('há bem mais desenhos de sonho que antes', metas.length >= 30, true);
+  check('  e bem mais de missão', tarefas.length >= 24, true);
+
+  /* NENHUM SE REPETE. Duas missões com o mesmo desenho são a mesma missão aos olhos de
+     quem ainda lê devagar — e é o ícone, não o nome, que a criança lê na aba dela. */
+  check('nenhum desenho de sonho se repete', new Set(metas).size, metas.length);
+  check('  nem de missão', new Set(tarefas).size, tarefas.length);
+
+  /* OS ANTIGOS CONTINUAM LÁ: quem já cadastrou uma meta com 🚲 não pode ver o desenho
+     sumir da grade no dia em que for editar. */
+  const antigosM = ['🚲', '🎮', '⚽', '🧸', '🎨', '📚', '🛴', '🦸', '🎧', '🍦'];
+  const antigosT = ['🛏️', '🧸', '🪴', '🍽️', '🦷', '📚', '🐕', '🧹'];
+  check('nenhum desenho de sonho antigo desapareceu',
+    antigosM.filter(i => !metas.includes(i)).join(', ') || true, true);
+  check('  nem de missão', antigosT.filter(i => !tarefas.includes(i)).join(', ') || true, true);
+
+  /* O PRIMEIRO DA LISTA É O PADRÃO de quem não escolhe nada, então precisa ser um
+     desenho neutro e comum — não o último que calhou de eu acrescentar. */
+  check('o sonho padrão é a bicicleta', metas[0], '🚲');
+  check('  e a missão padrão é arrumar a cama', tarefas[0], '🛏️');
+} catch (e) { console.log(` FALHA | desenhos: ${e.message}`); fail++; }
+
 /* ---- APAGAR UM COFRINHO INTEIRO ----
 
    Existia só "pausar", que esconde e guarda tudo. A falta de "excluir" apareceu

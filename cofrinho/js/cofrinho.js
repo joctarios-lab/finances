@@ -985,13 +985,43 @@ function telaEscolha(pote, valor, oque, aoSeguir) {
 
 /* O desenho do que ela escolheu comprar, para a estrada mostrar a coisa e não um
    carrinho genérico. Cai no carrinho quando o item não está na lista. */
+/* O QUE ELE PODE TER COMPRADO, e para quem pode ter doado.
+
+   ESTA LISTA É A FONTE ÚNICA dos dois usos: os botões da tela de gastar e o desenho
+   que aparece na tela de decisão. Antes eram duas listas escritas à mão, e acrescentar
+   um botão sem lembrar da outra dava um carrinho genérico onde devia haver o sorvete
+   — sem nada no app denunciando a divergência.
+
+   A ESCOLHA DOS ITENS é por FREQUÊNCIA REAL na vida de uma criança de seis anos, não
+   por completude: uma lista exaustiva rola sem fim e faz ela desistir de marcar,
+   e um gasto sem etiqueta some do extrato como "gastei" e não ensina nada.
+
+   Cada um também precisa ser reconhecível SÓ pelo desenho, porque ela ainda lê
+   devagar: por isso 🍫 chocolate e 🍿 pipoca entram, e "papelaria" não.
+   O nome fica curto pelo mesmo motivo — nome longo vira duas linhas no botão.
+
+   E NENHUM NOME SE REPETE ENTRE AS DUAS LISTAS. "Escola" estava nas duas com sentidos
+   diferentes — material escolar de um lado, doar para uma escola do outro —, e além de
+   ser ambíguo no extrato dela, é impossível para o emojiDe, que devolve um desenho
+   por nome. Viraram "Material" e "Uma escola". */
+const COISAS_GASTAR = [
+  ['🍭', 'Doce'], ['🍦', 'Sorvete'], ['🍫', 'Chocolate'], ['🍿', 'Pipoca'],
+  ['🧸', 'Brinquedo'], ['🎮', 'Jogo'], ['🃏', 'Figurinha'], ['⚽', 'Bola'],
+  ['📚', 'Livro'], ['🎨', 'Arte'], ['✏️', 'Material'], ['🎁', 'Presente'],
+];
+
+/* PARA QUEM DOAR. Aqui a lista é mais curta de propósito: doar é raro, e uma parede de
+   opções transforma um gesto em formulário. */
+const COISAS_DOAR = [
+  ['🐶', 'Bichinhos'], ['🏥', 'Hospital'], ['🧒', 'Outra criança'],
+  ['🍲', 'Quem tem fome'], ['🧓', 'Idosos'], ['⛪', 'Igreja'],
+  ['🌳', 'Natureza'], ['🏫', 'Uma escola'],
+];
+
+/* O DESENHO DE UM ITEM, tirado das listas acima — nunca de um mapa paralelo. */
 function emojiDe(nome) {
-  const mapa = {
-    'Doce': '🍭', 'Brinquedo': '🧸', 'Livro': '📚', 'Jogo': '🎮',
-    'Sorvete': '🍦', 'Escola': '✏️', 'Bichinhos': '🐶', 'Hospital': '🏥',
-    'Outra criança': '🧒', 'Igreja': '⛪', 'Natureza': '🌳',
-  };
-  return mapa[nome] || '🛒';
+  const achou = COISAS_GASTAR.concat(COISAS_DOAR).find(([, n]) => n === nome);
+  return achou ? achou[0] : '🛒';
 }
 
 /* ---------- Gastar e doar ---------- */
@@ -1041,10 +1071,8 @@ function telaGastar(pote) {
           ${doando ? 'para quem você doou?' : 'o que você comprou?'}
         </div>
         <div class="chips" style="justify-content:flex-start;margin-bottom:0">
-          ${(doando
-            ? [['🐶', 'Bichinhos'], ['🏥', 'Hospital'], ['🧒', 'Outra criança'], ['⛪', 'Igreja'], ['🌳', 'Natureza']]
-            : [['🍭', 'Doce'], ['🧸', 'Brinquedo'], ['📚', 'Livro'], ['🎮', 'Jogo'], ['🍦', 'Sorvete'], ['✏️', 'Escola']]
-          ).map(([e, n]) => `<button class="chip ${oque === n ? 'on' : ''}" data-o="${n}">${e} ${n}</button>`).join('')}
+          ${(doando ? COISAS_DOAR : COISAS_GASTAR)
+            .map(([e, n]) => `<button class="chip ${oque === n ? 'on' : ''}" data-o="${n}">${e} ${n}</button>`).join('')}
         </div>
       </div>
       <button class="bt ${doando ? 'rosa' : doGuardado ? '' : 'verde'}" id="conf" ${valor <= 0 || demais ? 'disabled' : ''}>

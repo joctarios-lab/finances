@@ -7724,7 +7724,29 @@ function openCriancaDetalhe(kidId) {
 function openKidMetaSheet(kidId) {
   const k = DB.get('kids', kidId);
   const atual = DB.kidMeta(kidId);
-  const ICONES_META = ['🚲', '🎮', '⚽', '🧸', '🎨', '📚', '🛴', '🦸', '🎧', '🍦'];
+  /* OS DESENHOS DE SONHO, em ordem agrupada por tipo de desejo: rodar, brincar, criar,
+     ler/ouvir, vestir e viver. A grade não desenha separador entre os grupos — a ordem
+     só mantém os parecidos vizinhos, que já evita a sopa de trinta ícones soltos, mas
+     não é uma navegação por seções e não vale prometer que seja.
+
+     Eram dez, e dez cobrem mal o que uma criança quer: faltava patins, faltava
+     instrumento, faltava viagem, faltava bichinho. Sonho que não tem desenho vira
+     "🚲" por falta de opção — e aí o desenho para de significar o sonho DELA, que é
+     justamente o que faz a barra de progresso valer alguma coisa. */
+  const ICONES_META = [
+    // rodar
+    '🚲', '🛴', '🛹', '🛼', '🏊', '🪁',
+    // brincar
+    '🧸', '🎮', '🧱', '🧩', '⚽', '🏀', '🚗', '🦖', '🎲',
+    // criar
+    '🎨', '🎸', '🎹', '🎤', '📷',
+    // ler e ouvir
+    '📚', '🎧', '⌚', '📱',
+    // vestir
+    '👟', '🎒', '🧢', '🦸',
+    // viver
+    '🍦', '🍕', '🎂', '🎪', '🎬', '🏕️', '🐶', '🐠',
+  ];
   openSheet(`
     <div class="sheet-title">Meta de ${esc(k.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <div class="field"><label>O que ela quer?</label>
@@ -7775,7 +7797,25 @@ function openKidMetaSheet(kidId) {
    unidade. O bônus premia a constância; faltar um dia não custa R$ 1, quebra a
    sequência. */
 function openKidTarefaSheet(kidId) {
-  const ICONES_T = ['🛏️', '🧸', '🪴', '🍽️', '🦷', '📚', '🐕', '🧹'];
+  /* OS DESENHOS DE MISSÃO, agrupados por onde a missão acontece: quarto, casa, corpo,
+     escola e cuidar de alguém. Eram oito, e oito não cobrem a rotina de uma casa —
+     faltava lixo, faltava roupa, faltava lição, faltava banho.
+
+     O DESENHO IMPORTA MAIS AQUI DO QUE NA META, porque é ele que a criança lê na aba
+     de missões: aos seis anos ela reconhece o ícone antes de decifrar o nome, e duas
+     missões com o mesmo desenho viram a mesma missão aos olhos dela. */
+  const ICONES_T = [
+    // quarto
+    '🛏️', '🧸', '👕', '🧦', '👟',
+    // casa
+    '🍽️', '🧹', '🧽', '🗑️', '🧺', '🍳', '🛒', '🚗', '💡',
+    // corpo
+    '🦷', '🚿', '🧼', '😴', '⏰',
+    // escola
+    '📚', '✏️', '🎒', '🎹',
+    // cuidar
+    '🪴', '🐕', '🐈', '🐠', '🤝',
+  ];
   openSheet(`
     <div class="sheet-title">Nova missão<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <div class="field"><label>Qual missão?</label>
