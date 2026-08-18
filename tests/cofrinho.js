@@ -430,6 +430,175 @@ console.log('\n=== A criança reparte o que já tinha ===');
   limpar(idP);
 }
 
+/* ================= Missão especial, com prazo ================= */
+console.log('\n=== A missão especial e o prazo em noites ===');
+{
+  /* Um combinado pontual — "lavar o carro neste fim de semana" —, diferente da
+     rotina semanal. Tem prazo, acontece uma vez, e não volta na semana seguinte. */
+  const id = novaCrianca({ name: 'Especial' });
+  const daqui = n => Dados.somarDiasISO(HOJE, n);
+  const tE = Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Lavar o carro', icon: '🚗', amount: 5,
+    frequencia: 'especial', expira_em: daqui(2), active: true });
+
+  const dela = () => Dados.tarefas(id).find(x => x.id === tE);
+  check('a especial se identifica como especial', dela().especial, true);
+  check('  e não é diária', dela().diaria, false);
+
+  /* O PRAZO EM NOITES DE SONO. Uma criança de seis anos não manipula "faltam 34
+     horas", mas sabe exatamente quantas vezes ainda vai dormir. */
+  check('conta as noites que faltam', dela().noites, 2);
+  check('  e diz em palavra', dela().prazo, 'faltam 2 noites');
+  check('uma noite fala no singular', Dados.prazoEmNoites(daqui(1)), 'falta 1 noite');
+  /* "faltam 0 noites" não quer dizer nada para ninguém. */
+  check('o último dia não diz zero', Dados.prazoEmNoites(HOJE), 'só até hoje');
+  check('  e o que passou diz que acabou', Dados.prazoEmNoites(daqui(-1)), 'acabou');
+
+  /* SEM RELÓGIO. O prazo dá contorno à missão; não existe para apressar uma criança
+     que não tem como administrar pressa. */
+  check('a contagem é em dias inteiros, nunca em horas', Number.isInteger(dela().noites), true);
+
+  /* MARCAR e o adulto confirmar — igual à semanal. */
+  check('dá para marcar', Dados.marcarTarefa(id, tE), true);
+  check('  fica marcada', dela().feita, true);
+  check('  esperando o adulto', dela().confirmada, false);
+  check('  e o dinheiro ainda não caiu', Dados.potes(id).total, 0);
+
+  /* NÃO VOLTA NA SEMANA SEGUINTE. A semanal reinicia — é rotina. A especial é um
+     combinado pontual, e reiniciá-la faria o app cobrar para sempre uma coisa que já
+     aconteceu. */
+  const marcada = Dados.all('kid_entries').find(e => e.task_id === tE);
+  Dados.upsert('kid_entries', { ...marcada, date: Dados.somarDiasISO(HOJE, -10) });
+  check('feita há dez dias continua feita', dela().feita, true);
+  limpar(id);
+}
+
+console.log('\n=== A ordem e o limite das luas ===');
+{
+  /* A QUE VENCE PRIMEIRO VEM PRIMEIRO. Ordenar por outra coisa faria a criança ver
+     no topo uma missão que ainda tem cinco noites, enquanto a que acaba amanhã fica
+     embaixo — e ela lê de cima para baixo. */
+  const id = novaCrianca({ name: 'Ordem Prazo' });
+  const daqui = n => Dados.somarDiasISO(HOJE, n);
+  Dados.upsert('kid_tasks', { kid_id: id, name: 'Daqui a cinco', icon: '📦', amount: 2,
+    frequencia: 'especial', expira_em: daqui(5), active: true });
+  Dados.upsert('kid_tasks', { kid_id: id, name: 'Amanhã', icon: '⏳', amount: 3,
+    frequencia: 'especial', expira_em: daqui(1), active: true });
+  Dados.upsert('kid_tasks', { kid_id: id, name: 'Daqui a tres', icon: '🚗', amount: 4,
+    frequencia: 'especial', expira_em: daqui(3), active: true });
+
+  const ordem = Dados.missoesEspeciais(id).map(x => x.name);
+  check('a que vence primeiro vem primeiro', ordem[0], 'Amanhã');
+  check('  e a mais distante por último', ordem[ordem.length - 1], 'Daqui a cinco');
+  check('  na ordem do calendário', ordem, ['Amanhã', 'Daqui a tres', 'Daqui a cinco']);
+  limpar(id);
+
+  /* O LIMITE DE CINCO LUAS. Acima disso a contagem exata deixa de significar algo
+     para uma criança de seis anos, e a fileira só polui o card — vinte luas numa
+     linha viram mancha, não informação. */
+  const conta = n => (Arte.luas(n).match(/class="lua /g) || []).length;
+  check('duas noites, duas luas', conta(2), 2);
+  check('  cinco noites, cinco luas', conta(5), 5);
+  check('  vinte noites param em cinco', conta(20), 5);
+  check('  com um + dizendo que há mais', Arte.luas(20).includes('lua-mais'), true);
+  check('  e cinco exatas não ganham o +', Arte.luas(5).includes('lua-mais'), false);
+  check('o último dia mostra uma lua', conta(0), 1);
+  check('  e o prazo vencido não mostra nenhuma', Arte.luas(-1), '');
+}
+
+console.log('\n=== A especial que expirou sai de cena, sem punir ===');
+{
+  const id = novaCrianca({ name: 'Expirou' });
+  const daqui = n => Dados.somarDiasISO(HOJE, n);
+  const tOk = Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Lavar o carro', icon: '🚗', amount: 5,
+    frequencia: 'especial', expira_em: daqui(2), active: true });
+  const tVelha = Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Missão antiga', icon: '📦', amount: 3,
+    frequencia: 'especial', expira_em: daqui(-3), active: true });
+
+  const velha = () => Dados.tarefas(id).find(x => x.id === tVelha);
+  check('a que passou do prazo é marcada como expirada', velha().expirada, true);
+
+  /* SOME SEM ALARDE. A alternativa é um card vermelho dizendo "você perdeu" para uma
+     criança de seis anos — e vergonha não ensina compromisso. O plano do projeto já
+     recusa "sequência que quebra e pune"; isto é a mesma regra aplicada ao prazo. */
+  const vivas = Dados.missoesEspeciais(id);
+  check('e sai da lista da criança', vivas.some(x => x.id === tVelha), false);
+  check('  enquanto a que vale continua', vivas.some(x => x.id === tOk), true);
+
+  /* NÃO ACEITA MARCAÇÃO DEPOIS DO PRAZO: aceitar esvaziaria o prazo, e o app estaria
+     dizendo que o "até domingo" era decoração. */
+  check('não dá para marcar o que expirou', Dados.marcarTarefa(id, tVelha), false);
+
+  /* MAS FEITA E NÃO CONFIRMADA CONTINUA VIVA depois do prazo: ela cumpriu, e perder
+     o combinado por demora do adulto seria injusto de um jeito que a criança sente. */
+  const tFeita = Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Feita a tempo', icon: '✅', amount: 4,
+    frequencia: 'especial', expira_em: daqui(1), active: true });
+  Dados.marcarTarefa(id, tFeita);
+  Dados.upsert('kid_tasks', { ...Dados.get('kid_tasks', tFeita), expira_em: daqui(-1) });
+  const f = () => Dados.tarefas(id).find(x => x.id === tFeita);
+  check('feita antes do prazo não expira depois', f().expirada, false);
+  check('  e continua na lista, esperando o adulto',
+    Dados.missoesEspeciais(id).some(x => x.id === tFeita), true);
+  limpar(id);
+}
+
+console.log('\n=== O pergaminho na tela da criança ===');
+{
+  const id = novaCrianca({ name: 'Tela Especial' });
+  const daqui = n => Dados.somarDiasISO(HOJE, n);
+  Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Lavar o carro', icon: '🚗', amount: 5,
+    frequencia: 'especial', expira_em: daqui(2), active: true });
+  Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Regar', icon: '🪴', amount: 1, frequencia: 'semanal', active: true });
+  App.kid = Dados.get('kids', id);
+  App.aba = 'tarefas';
+  const tela = telaTarefas();
+
+  check('a missão especial aparece', tela.includes('Lavar o carro'), true);
+  /* O PERGAMINHO diz "isto é diferente" antes de qualquer texto — que é como uma
+     criança de seis anos lê uma tela. */
+  check('  desenhada como pergaminho', tela.includes('pergaminho-fundo'), true);
+  check('  com o selo de cera', tela.includes('selo-cera'), true);
+  check('  e uma seção que a separa da rotina', tela.includes('Missão especial'), true);
+
+  /* O PRAZO EM LUAS: uma por noite de sono, com a palavra ao lado. */
+  check('mostra as luas do prazo', (tela.match(/class="lua /g) || []).length, 2);
+  check('  e a palavra junto', tela.includes('faltam 2 noites'), true);
+  /* SEM RELÓGIO na tela: nada de hora, minuto ou segundo. */
+  check('  sem relógio correndo', /\d+:\d\d|hora|minuto|segundo/i.test(tela), false);
+
+  /* NÃO ENTRA NA CONTA DO DIA A DIA: somá-la ao "1 de 1 de hoje" faria o contador
+     dizer que ela está devendo algo que só precisa acontecer até domingo. */
+  /* MEDE O COMPORTAMENTO, não a marcação exata. O primeiro teste procurava o HTML
+     literal do contador e reprovava por um detalhe de formatação — sem que nada
+     estivesse errado. O que importa é o NÚMERO: com uma semanal e uma especial, o
+     contador da semana precisa dizer 1, e não 2. */
+  const cab = (tela.match(/desta semana/) || []).length;
+  check('a tela tem o contador da semana', cab, 1);
+  const antesDoCab = tela.slice(0, tela.indexOf('desta semana'));
+  const nums = antesDoCab.split('<span class="n">').slice(1)
+    .map(p => p.slice(0, p.indexOf('<')));
+  check('  contando só a rotina, sem a especial', nums[nums.length - 1], '1');
+  /* LIMPA ANTES do próximo cenário. Deixar para o fim do bloco fez esta criança
+     sobreviver ao caso seguinte, e três testes de OUTRAS seções reprovaram por
+     encontrar uma criança a mais na lista. */
+  limpar(id);
+
+  /* NO ÚLTIMO DIA a lua fica laranja e pulsa — é um aviso, não um alarme. */
+  const idH = novaCrianca({ name: 'Hoje' });
+  Dados.upsert('kid_tasks', {
+    kid_id: idH, name: 'Hoje é o dia', icon: '⏳', amount: 2,
+    frequencia: 'especial', expira_em: HOJE, active: true });
+  App.kid = Dados.get('kids', idH);
+  const telaH = telaTarefas();
+  check('no último dia, a lua se destaca', telaH.includes('lua hoje'), true);
+  check('  e o texto diz só até hoje', telaH.includes('só até hoje'), true);
+  limpar(idH);
+}
 /* ================= Missão de todo dia ================= */
 console.log('\n=== A missão que precisa acontecer todo dia ===');
 {

@@ -2224,6 +2224,16 @@ const DB = {
 
      Todo o app da criança pensa em semanas, não em meses — é o maior ciclo que
      ela administra. Devolve o ISO do último dia de semanada que já passou. */
+  /* QUANTAS NOITES DE SONO faltam até uma data — a unidade que a criança
+     manipula. Espelha `noitesAte` do app dela. */
+  noitesAte(dataISO, refISO) {
+    if (!dataISO) return null;
+    const a = new Date((refISO || this.hojeISO()) + 'T12:00:00');
+    const b = new Date(String(dataISO) + 'T12:00:00');
+    if (isNaN(b)) return null;
+    return Math.round((b - a) / 86400000);
+  },
+
   kidInicioDaSemana(kid, refISO) {
     const hoje = refISO || this.hojeISO();
     const d = new Date(hoje + 'T12:00:00');
@@ -2300,6 +2310,21 @@ const DB = {
       .filter(t => t.kid_id === kidId && t.active !== false)
       .map(t => {
         const daTarefa = marcadas.filter(e => e.task_id === t.id);
+        /* MISSÃO ESPECIAL: uma vez só, com prazo. Espelha o app da criança, e tem
+           de espelhar — o adulto e ela precisam ver o MESMO estado. */
+        if (t.frequencia === 'especial') {
+          const feita = this.all('kid_entries').find(e =>
+            e.kid_id === kidId && e.tipo === 'tarefa' && e.task_id === t.id);
+          const noites = this.noitesAte(t.expira_em);
+          return {
+            ...t, especial: true, diaria: false,
+            feita: !!feita,
+            confirmada: feita ? feita.confirmada !== false : false,
+            entryId: feita ? feita.id : null,
+            noites,
+            expirada: noites !== null && noites < 0 && !feita,
+          };
+        }
         if (t.frequencia !== 'diaria') {
           const feita = daTarefa[0];
           return {

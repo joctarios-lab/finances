@@ -547,7 +547,11 @@ function telaTarefas() {
      Semanal: feita é feita. Diária: feita HOJE — porque amanhã o cachorro tem
      sede de novo. Somar os dois no mesmo contador daria "3 de 3" numa segunda em
      que ela ainda tem seis dias de compromisso pela frente. */
-  const semanais = ts.filter(x => !x.diaria);
+  /* AS ESPECIAIS SAEM DA CONTA DO DIA A DIA. Elas não são rotina: somá-las ao
+     "3 de 3 de hoje" faria o contador dizer que ela está devendo algo que só
+     precisa acontecer até domingo. */
+  const especiais = Dados.missoesEspeciais(kid.id);
+  const semanais = ts.filter(x => !x.diaria && !x.especial);
   const diarias = ts.filter(x => x.diaria);
   const semanaisFeitas = semanais.filter(x => x.feita).length;
   const diariasHoje = diarias.filter(x => x.feita).length;
@@ -582,6 +586,35 @@ function telaTarefas() {
       </span>
     </button>`;
 
+  /* O PERGAMINHO: a missão especial precisa PARECER especial.
+
+     Um card igual aos outros diria "mais uma tarefa". As bordas rasgadas, o papel
+     amarelado e o selo de cera dizem "isto é diferente" antes de qualquer texto —
+     que é como uma criança de seis anos lê uma tela.
+
+     E o prazo aparece em LUAS, uma por noite de sono, com a palavra ao lado. Sem
+     relógio e sem número correndo: a criança precisa saber quanto tempo tem, não
+     sentir que está atrasada. */
+  const cardEspecial = t => `
+    <button class="missao especial ${t.feita ? (t.confirmada ? 'feita' : 'esperando') : ''}"
+            data-tarefa="${t.id}">
+      ${Arte.pergaminho()}
+      <span class="missao-ico">${esc(t.icon || '⭐')}</span>
+      <span class="missao-txt">
+        <b>${esc(t.name)}</b>
+        ${Number(t.amount) > 0
+          ? `<span class="missao-vale">${Arte.moeda(19)} ${fmtKid(t.amount)}</span>`
+          : '<small>sem moeda, mas conta ponto!</small>'}
+        ${t.feita
+          ? (t.confirmada ? '<small>conquistada! 🎉</small>' : '<small>esperando um adulto conferir</small>')
+          : `<span class="prazo"><span class="luas">${Arte.luas(t.noites)}</span>
+             <small>${esc(t.prazo || '')}</small></span>`}
+      </span>
+      <span class="missao-mar">
+        ${t.feita ? (t.confirmada ? Arte.checkOuro() : Arte.ampulheta()) : Arte.selo()}
+      </span>
+    </button>`;
+
   const cardSemanal = t => `
     <button class="missao ${t.feita ? (t.confirmada ? 'feita' : 'esperando') : ''}" data-tarefa="${t.id}">
       <span class="missao-ico">${esc(t.icon || '⭐')}</span>
@@ -600,6 +633,10 @@ function telaTarefas() {
   return `
     ${palco(faltamHoje === 0 ? 'feliz' : 'oi', 128)}
     ${balao(fala)}
+    ${especiais.length ? `<div class="missao-conta especial-cab">
+      <span class="emo">🗺️</span> Missão especial
+    </div>` : ''}
+    ${especiais.map(cardEspecial).join('')}
     ${diarias.length ? `<div class="missao-conta">
       <span class="n">${diariasHoje}</span> de <span class="n">${diarias.length}</span> de hoje
     </div>` : ''}

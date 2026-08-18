@@ -6518,6 +6518,64 @@ try {
   const semanalCriada = DB.all('kid_tasks').find(x => x.kid_id === idD && x.name === 'Varrer a área');
   check('  e a semanal grava como semanal', semanalCriada && semanalCriada.frequencia, 'semanal');
 
+  /* MISSÃO ESPECIAL: um combinado pontual, com prazo. */
+  openKidTarefaSheet(idD);
+  const folhaE = els['#sheet'].innerHTML;
+  check('o cadastro oferece a missão especial', folhaE.includes('value="especial"'), true);
+  check('  com o campo de prazo', folhaE.includes('id="kt-prazo"'), true);
+
+  /* O CAMPO DE PRAZO só aparece na especial: pedir "até quando" para uma rotina
+     semanal seria uma pergunta sem resposta possível. */
+  el('#kt-freq').value = 'semanal';
+  if (els['#kt-freq'].onchange) els['#kt-freq'].onchange();
+  check('  escondido quando a missão é semanal', els['#kt-campo-prazo'].hidden, true);
+  el('#kt-freq').value = 'especial';
+  if (els['#kt-freq'].onchange) els['#kt-freq'].onchange();
+  check('  e visível quando é especial', els['#kt-campo-prazo'].hidden, false);
+  check('  explicando que não volta toda semana',
+    /não volta/.test((els['#kt-nota'] || {}).innerHTML || ''), true);
+
+  /* SEM PRAZO NÃO É ESPECIAL: é uma semanal com outro nome, e ficaria na tela para
+     sempre esperando um "até quando" que nunca chega. */
+  el('#kt-nome').value = 'Sem prazo';
+  el('#kt-prazo').value = '';
+  el('#kt-valor').dataset.cents = 500;
+  el('#sh-save').click();
+  check('especial sem prazo é recusada',
+    DB.all('kid_tasks').some(x => x.name === 'Sem prazo'), false);
+
+  /* COM PRAZO, grava tudo. */
+  openKidTarefaSheet(idD);
+  el('#kt-nome').value = 'Lavar o carro';
+  el('#kt-freq').value = 'especial';
+  el('#kt-prazo').value = DB.somarDiasISO(hojeD, 2);
+  el('#kt-valor').dataset.cents = 500;
+  el('#sh-save').click();
+  const esp = DB.all('kid_tasks').find(x => x.kid_id === idD && x.name === 'Lavar o carro');
+  check('com prazo, a especial é criada', !!esp, true);
+  check('  com a frequência certa', esp && esp.frequencia, 'especial');
+  check('  e o prazo gravado', esp && esp.expira_em, DB.somarDiasISO(hojeD, 2));
+  check('  no valor combinado', esp && esp.amount, 5);
+
+  /* O ADULTO VÊ AS NOITES QUE FALTAM, e é o que ele usa para saber se ainda dá
+     tempo de cobrar o combinado. */
+  check('o app da família conta as mesmas noites', DB.noitesAte(esp.expira_em), 2);
+  const daFamilia = DB.kidTarefas(idD).find(x => x.id === esp.id);
+  check('  e reconhece a especial', daFamilia.especial, true);
+  check('  com o mesmo prazo do app dela', daFamilia.noites, 2);
+
+  /* PRAZO SÓ NA ESPECIAL: guardar em outra frequência deixaria um campo morto que
+     uma versão futura poderia começar a ler sem querer. */
+  openKidTarefaSheet(idD);
+  el('#kt-nome').value = 'Semanal sem prazo';
+  el('#kt-freq').value = 'semanal';
+  el('#kt-prazo').value = DB.somarDiasISO(hojeD, 5);
+  el('#kt-valor').dataset.cents = 100;
+  el('#sh-save').click();
+  const sem = DB.all('kid_tasks').find(x => x.name === 'Semanal sem prazo');
+  check('a semanal não guarda prazo', sem && sem.expira_em, null);
+
+
   // Limpeza
   for (const e of DB.all('kid_entries').filter(e => e.kid_id === idD)) DB.remove('kid_entries', e.id);
   for (const x of DB.all('kid_tasks').filter(x => x.kid_id === idD)) DB.remove('kid_tasks', x.id);

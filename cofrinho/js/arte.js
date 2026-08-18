@@ -251,6 +251,67 @@ const Arte = {
         stroke-linecap="round" stroke-linejoin="round"/>
 </svg>`;
   },
+  /* AS NOITES QUE FALTAM, em luas.
+
+     Uma lua por noite de sono. É a contagem que uma criança de seis anos consegue
+     fazer sozinha, olhando — e é por isso que não há relógio nem número grande
+     correndo: pressa que ela não tem como administrar vira ansiedade, não
+     compromisso.
+
+     Acima de cinco noites vira "5+", porque a partir dali a contagem exata deixa de
+     significar algo para ela e a fileira só polui o card. */
+  luas(n) {
+    if (n === null || n === undefined) return '';
+    if (n < 0) return '';
+    const quantas = Math.min(5, Math.max(1, n === 0 ? 1 : n));
+    let out = '';
+    for (let k = 0; k < quantas; k++) {
+      const hoje = n === 0 && k === 0;
+      out += `<svg class="lua ${hoje ? 'hoje' : ''}" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="${hoje ? '#ff8a3d' : '#ffc93c'}"
+                stroke="${hoje ? '#e06517' : '#e0a010'}" stroke-width="2"/>
+        ${hoje ? '' : '<circle cx="15.5" cy="9.5" r="7" fill="#fff8e0"/>'}
+      </svg>`;
+    }
+    if (n > 5) out += '<span class="lua-mais">+</span>';
+    return out;
+  },
+
+  /* O PERGAMINHO da missão especial.
+
+     Um card comum diria "mais uma tarefa". O pergaminho diz "isto é diferente" antes
+     de qualquer texto — que é como uma criança de seis anos lê uma tela. As bordas
+     rasgadas e o selo de cera vêm de mapa do tesouro de propósito: a missão especial
+     é um combinado pontual, e ela precisa parecer um. */
+  pergaminho() {
+    return `
+<svg class="pergaminho-fundo" viewBox="0 0 340 120" preserveAspectRatio="none" aria-hidden="true">
+  <defs>
+    <linearGradient id="pg-papel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff8e4"/>
+      <stop offset="100%" stop-color="#ffedc4"/>
+    </linearGradient>
+  </defs>
+  <path d="M6 10 q10 -6 20 0 q12 6 24 0 q12 -6 24 0 q12 6 24 0 q12 -6 24 0 q12 6 24 0
+           q12 -6 24 0 q12 6 24 0 q12 -6 24 0 q12 6 24 0 q12 -6 24 0 q12 6 22 0
+           v100 q-10 6 -22 0 q-12 -6 -24 0 q-12 6 -24 0 q-12 -6 -24 0 q-12 6 -24 0
+           q-12 -6 -24 0 q-12 6 -24 0 q-12 -6 -24 0 q-12 6 -24 0 q-12 -6 -24 0
+           q-12 6 -20 0 z"
+        fill="url(#pg-papel)" stroke="#e0b978" stroke-width="2.5"/>
+</svg>`;
+  },
+
+  // O selo de cera: fecha o pergaminho e diz "isto foi combinado"
+  selo() {
+    return `
+<svg viewBox="0 0 48 48" class="selo-cera" aria-hidden="true">
+  <circle cx="24" cy="24" r="18" fill="#d81b74"/>
+  <circle cx="24" cy="22" r="18" fill="#ff3d94" stroke="#d81b74" stroke-width="2"/>
+  <circle cx="24" cy="22" r="12" fill="none" stroke="#ffd0e6" stroke-width="2.5"/>
+  <text x="24" y="28" font-size="14" text-anchor="middle">⭐</text>
+</svg>`;
+  },
+
   // Esperando o adulto conferir: ampulheta, que gira no CSS
   ampulheta() {
     return `

@@ -29,7 +29,7 @@ create index if not exists idx_rec_kid on recurrences(kid_id);
 
 -- E o LANCAMENTO da semanada tambem se identifica: dar a semanada nao e gastar.
 -- O dinheiro fica na conta da familia e passa a ter outro dono, entao o lancamento
--- e NEUTRO no saldo.
+-- e NEUTRO no saldo. Ja o GASTO dela sai da casa de verdade e vira despesa.
 alter table transactions add column if not exists kid_id uuid;
 create index if not exists idx_tx_kid on transactions(kid_id);
 
@@ -90,7 +90,10 @@ create table if not exists kid_tasks (
   -- semanal (faz uma vez) | diaria (todo dia, e o valor sai UMA VEZ ao completar
   -- a semana). Pagar a diária por dia faria 70% da renda da criança vir de uma
   -- tarefa e ensinaria que cuidar de quem depende dela tem preço por unidade.
-  frequencia text not null default 'semanal',
+  frequencia text not null default 'semanal',   -- semanal | diaria | especial
+  -- Só na especial: a data em que o combinado deixa de valer. O app conta em
+  -- NOITES de sono, que é a unidade que uma criança de seis anos manipula.
+  expira_em date,
   active boolean not null default true,
   updated_at timestamptz not null default now(),
   deleted boolean not null default false

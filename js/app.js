@@ -7749,8 +7749,11 @@ function openKidTarefaSheet(kidId) {
       <select id="kt-freq">
         <option value="semanal">Uma vez na semana</option>
         <option value="diaria">Todo dia</option>
+        <option value="especial">Missão especial, com prazo</option>
       </select>
       <p class="muted" id="kt-nota" style="margin-top:4px"></p></div>
+    <div class="field" id="kt-campo-prazo" hidden><label>Até quando?</label>
+      <input type="date" id="kt-prazo"></div>
     <div class="field"><label>Quanto vale?</label>
       <input class="amount-input" id="kt-valor" type="text" inputmode="numeric" autocomplete="off"></div>
     <button class="btn" id="sh-save">Criar</button>
@@ -7764,10 +7767,14 @@ function openKidTarefaSheet(kidId) {
   /* A NOTA MUDA COM A ESCOLHA. Sem ela, "quanto vale" numa missão diária seria
      lido como valor por dia — que é exatamente o que o desenho evita. */
   const nota = () => {
-    const diaria = $('#kt-freq').value === 'diaria';
-    $('#kt-nota').innerHTML = diaria
+    const f = $('#kt-freq').value;
+    const campo = $('#kt-campo-prazo');
+    if (campo) campo.hidden = f !== 'especial';
+    $('#kt-nota').innerHTML = f === 'diaria'
       ? 'Ela marca todo dia. O valor sai <b>uma vez</b>, ao completar os sete dias — premia ter cuidado a semana toda, não cada dia.'
-      : 'Ela marca uma vez e o valor sai quando você confirmar.';
+      : f === 'especial'
+        ? 'Um combinado pontual, que <b>não volta</b> toda semana. O app mostra quantas noites faltam; se o prazo passar, a missão sai da lista sem alarde.'
+        : 'Ela marca uma vez e o valor sai quando você confirmar.';
   };
   nota();
   $('#kt-freq').onchange = nota;
@@ -7775,10 +7782,19 @@ function openKidTarefaSheet(kidId) {
   $('#sh-save').onclick = () => {
     const nome = ($('#kt-nome').value || '').trim();
     if (!nome) return toast('Diga qual é a missão');
+    if ($('#kt-freq').value === 'especial' && !($('#kt-prazo') || {}).value) {
+      /* SEM PRAZO NÃO É ESPECIAL, é uma semanal com outro nome — e ela ficaria na
+         tela para sempre esperando um "até quando" que nunca chega. */
+      return toast('Diga até quando vale a missão especial');
+    }
     DB.upsert('kid_tasks', {
       kid_id: kidId, name: nome, icon: ic,
       amount: moneyVal('#kt-valor') || 0,
-      frequencia: $('#kt-freq').value === 'diaria' ? 'diaria' : 'semanal',
+      frequencia: ['diaria', 'especial'].includes($('#kt-freq').value)
+        ? $('#kt-freq').value : 'semanal',
+      /* O PRAZO só existe na especial. Guardar em qualquer outra deixaria um campo
+         morto que uma versão futura poderia começar a ler sem querer. */
+      expira_em: $('#kt-freq').value === 'especial' ? (($('#kt-prazo') || {}).value || null) : null,
       active: true,
     });
     closeSheet(); Sync.autoSync(); openCriancaDetalhe(kidId);

@@ -31,7 +31,7 @@ const COLUNAS = {
   kids: ['name', 'avatar', 'cor', 'nascimento_ano', 'semanada_valor', 'semanada_dia',
     'rendimento_tipo', 'rendimento_valor', 'pin_hash', 'pin_salt', 'active'],
   kid_goals: ['kid_id', 'name', 'icon', 'target_amount', 'done'],
-  kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active', 'frequencia'],
+  kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active', 'frequencia', 'expira_em'],
   kid_entries: ['kid_id', 'tipo', 'pote', 'amount', 'date', 'description', 'task_id', 'kid_goal_id', 'confirmada', 'repartido'],
 };
 
@@ -143,6 +143,38 @@ const Dados = {
     return Math.ceil(falta / porSemana);
   },
 
+  /* QUANTAS NOITES DE SONO FALTAM até uma data.
+
+     A unidade é NOITE, não hora nem minuto, e a escolha é o centro do desenho.
+     Uma criança de seis anos não manipula "faltam 34 horas" — mas sabe
+     exatamente quantas vezes ainda vai dormir. É a mesma razão de a meta ser
+     contada em semanadas e não em reais.
+
+     E um relógio correndo faria outra coisa: criaria urgência: pressa que ela não
+     tem como administrar. O prazo aqui existe para dar contorno à missão, não
+     para apressar ninguém.
+
+     Negativo quer dizer que já passou. */
+  noitesAte(dataISO, refISO) {
+    if (!dataISO) return null;
+    const a = new Date((refISO || this.hojeISO()) + 'T12:00:00');
+    const b = new Date(String(dataISO) + 'T12:00:00');
+    if (isNaN(b)) return null;
+    return Math.round((b - a) / 86400000);
+  },
+
+  /* O PRAZO EM PALAVRA, do jeito que ela lê.
+
+     "Só até hoje" no último dia, porque "faltam 0 noites" não quer dizer nada. */
+  prazoEmNoites(dataISO, refISO) {
+    const n = this.noitesAte(dataISO, refISO);
+    if (n === null) return null;
+    if (n < 0) return 'acabou';
+    if (n === 0) return 'só até hoje';
+    if (n === 1) return 'falta 1 noite';
+    return `faltam ${n} noites`;
+  },
+
   inicioDaSemana(kid, refISO) {
     const hoje = refISO || this.hojeISO();
     const d = new Date(hoje + 'T12:00:00');
@@ -156,6 +188,19 @@ const Dados = {
     return this.all('kid_entries')
       .filter(e => e.kid_id === kidId && e.confirmada !== false)
       .sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.updated_at).localeCompare(String(a.updated_at)));
+  },
+
+  /* AS ESPECIAIS QUE AINDA VALEM, da que vence primeiro para a que vence depois.
+
+     A EXPIRADA SOME, sem tela de derrota e sem marca de falha. Não fez, acabou o
+     prazo, o app segue — porque a alternativa é um card vermelho dizendo "você
+     perdeu" para uma criança de seis anos, e vergonha não ensina compromisso.
+     O plano do projeto já recusa "sequência que quebra e pune"; isto é a mesma
+     regra aplicada ao prazo. */
+  missoesEspeciais(kidId) {
+    return this.tarefas(kidId)
+      .filter(t => t.especial && !t.expirada)
+      .sort((a, b) => String(a.expira_em || '').localeCompare(String(b.expira_em || '')));
   },
 
   /* AS MISSÕES DA SEMANA, com o progresso de cada uma.
@@ -187,6 +232,32 @@ const Dados = {
       .filter(t => t.kid_id === kidId && t.active !== false)
       .map(t => {
         const daTarefa = marcadas.filter(e => e.task_id === t.id);
+        /* MISSÃO ESPECIAL: uma vez só, com prazo, e não volta na semana seguinte.
+
+           A semanal reinicia a cada semana — é rotina. A especial é um combinado
+           pontual ("lavar o carro neste fim de semana"), e reiniciá-la faria o app
+           cobrar para sempre uma coisa que já aconteceu.
+
+           Por isso a busca é em TODOS os lançamentos dela, sem janela: uma vez
+           feita, feita está. */
+        if (t.frequencia === 'especial') {
+          const feita = this.all('kid_entries').find(e =>
+            e.kid_id === kidId && e.tipo === 'tarefa' && e.task_id === t.id);
+          const noites = this.noitesAte(t.expira_em);
+          return {
+            ...t, especial: true, diaria: false,
+            feita: !!feita,
+            confirmada: feita ? feita.confirmada !== false : false,
+            entryId: feita ? feita.id : null,
+            noites,
+            prazo: this.prazoEmNoites(t.expira_em),
+            /* EXPIRADA só se o prazo passou E ela não fez. Feita e ainda não
+               confirmada continua viva: o adulto precisa poder pagar depois do
+               prazo — ela cumpriu, e perder o combinado por demora dele seria
+               injusto de um jeito que a criança sente. */
+            expirada: noites !== null && noites < 0 && !feita,
+          };
+        }
         if (t.frequencia !== 'diaria') {
           const feita = daTarefa[0];
           return {
@@ -387,6 +458,11 @@ const Dados = {
     const ja = this.tarefas(kidId).find(x => x.id === taskId);
     if (!ja) return false;
 
+    /* A ESPECIAL EXPIRADA NÃO ACEITA MARCAÇÃO. O prazo é o contorno do combinado:
+       aceitar depois esvaziaria o prazo, e o app estaria dizendo que o "até
+       domingo" era decoração. */
+    if (ja.especial && ja.expirada) return false;
+
     if (ja.diaria) {
       if (ja.feita) return false;                 // hoje já foi marcado
       this.upsert('kid_entries', {
@@ -408,7 +484,7 @@ const Dados = {
   desmarcarTarefa(kidId, taskId) {
     const t = this.tarefas(kidId).find(x => x.id === taskId);
     if (!t || !t.feita) return false;
-    if (!t.diaria && t.confirmada) return false;  // semanal confirmada não se desfaz
+    if (!t.diaria && t.confirmada) return false;  // semanal e especial confirmadas não se desfazem
     /* NA DIÁRIA, desmarcar hoje é permitido mesmo estando "confirmada": a marcação
        do dia vale zero e nasce confirmada por construção, então tratá-la como
        intocável trancaria a criança num toque errado. O que não se desfaz é o
