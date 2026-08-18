@@ -1193,48 +1193,6 @@ h2 .emo { font-size: 27px; }
 }
 .vont-x:active { transform: translateY(2px); }
 
-/* ---------- A LIÇÃO DE UM PRÊMIO ----------
-
-   O CONVITE ESCRITO no card, porque descobrir que um desenho é tocável não é tarefa de
-   uma criança de seis anos — foi o mesmo motivo da faixa no pergaminho e da linha nos
-   potes. Sem ele, o cadeado continua sendo uma porta sem maçaneta. */
-.premio-toque {
-  display: block; margin-top: 7px; padding: 4px 8px; border-radius: 9px;
-  font-size: 11.5px; font-weight: 800;
-  background: var(--ceu-2); color: var(--tinta-fraca);
-}
-.premio.ganho .premio-toque { background: var(--ouro-claro, #fff2cf); color: #6b4a00; }
-.premio:active { transform: translateY(4px); }
-
-/* O QUE O PRÊMIO SIGNIFICA: uma frase, ao lado do desenho grande dele. O desenho vem
-   junto para ela saber de qual prêmio a tela está falando — aos seis anos, o título não
-   basta para fazer essa ligação. */
-.licao {
-  display: flex; align-items: center; gap: 14px;
-  background: var(--carta); border-radius: var(--raio); padding: 16px 18px;
-  box-shadow: 0 5px 0 #cfe2ec, 0 8px 14px rgba(43, 58, 68, .1);
-  margin-bottom: 14px;
-}
-.licao-ico { flex: none; }
-.licao-ico svg { width: 72px; height: 72px; display: block; }
-.licao-oque { margin: 0; font-size: 16.5px; line-height: 1.5; font-weight: 600; color: var(--tinta); }
-
-/* OS TRÊS PONTOS: emoji, nome, explicação. Três é o limite — o quarto item já não é
-   lido, e a lista deixa de ser leitura e vira parede. */
-.licao-pontos { display: flex; flex-direction: column; gap: 9px; margin-bottom: 14px; }
-.lp {
-  display: flex; align-items: center; gap: 13px;
-  background: var(--carta); border-radius: 16px; padding: 11px 15px;
-  box-shadow: 0 3px 0 #cfe2ec;
-}
-.lp-e {
-  font-size: 25px; width: 46px; height: 46px; flex: none;
-  display: grid; place-items: center; border-radius: 50%; background: var(--ceu-2);
-}
-.lp-t { flex: 1; min-width: 0; }
-.lp-t b { display: block; font-size: 16px; font-weight: 800; color: var(--tinta); }
-.lp-t small { display: block; font-size: 13.5px; color: var(--tinta-fraca); font-weight: 600; line-height: 1.35; }
-
 /* ---------- O SIMULADOR DA FORMIGUINHA ----------
 
    Azul do pote de guardar, porque é dele que a lição fala. O número grande é o
@@ -1304,4 +1262,208 @@ h2 .emo { font-size: 27px; }
   display: block; font-size: 11px; letter-spacing: .1em; text-transform: uppercase;
   color: var(--gastar-fundo); font-weight: 800; margin-bottom: 5px;
 }
+
+/* ---------- A PORTA DO JOGO ----------
+
+   A tela do prêmio era um texto explicativo e virou uma porta: desenho, nome, botão.
+   Uma criança de seis anos lê a primeira linha e procura o que apertar — o resto do
+   texto não era lido, era pulado, e o hábito de pular contamina o que vem depois. */
+.premio-toque {
+  display: block; margin-top: 7px; padding: 4px 8px; border-radius: 9px;
+  font-size: 11.5px; font-weight: 800;
+  background: var(--ceu-2); color: var(--tinta-fraca);
+}
+.premio.ganho .premio-toque { background: var(--ouro-claro, #fff2cf); color: #6b4a00; }
+.premio:active { transform: translateY(4px); }
+
+.selo-porta {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  background: var(--carta); border-radius: var(--raio-g); padding: 20px 18px 16px;
+  box-shadow: 0 6px 0 #cfe2ec, 0 10px 18px rgba(43, 58, 68, .1);
+}
+.selo-porta-ico svg { width: 108px; height: 108px; display: block; }
+.selo-porta-n { font-size: 20px; font-weight: 800; color: var(--tinta); }
+
+/* ---------- O QUADRO DO JOGO ----------
+
+   Fundo próprio e borda arredondada em todos os seis: é o sinal de que ela entrou noutro
+   lugar. Sem a moldura, um jogo dentro do app parece mais uma tela do app. */
+/* O JOGO NÃO ENCOLHE JUNTO COM O RESTO.
+
+   O app inteiro roda a 75%, e isso é certo para as telas de consulta — mas num jogo o
+   objeto tocável é o conteúdo, não a moldura dele. Nas primeiras fotos os potes saíram
+   com 46px reais e as moedas com 22px: alvos que um dedo de seis anos erra, num lugar
+   onde errar não tem desfazer visível.
+
+   `zoom` maior aqui devolve o tamanho sem mexer no resto do app: 0.75 x 1.3 dá 0.975,
+   praticamente o tamanho natural, e só dentro do quadro do jogo. */
+.jg { zoom: 1.3; }
+.jg {
+  background: linear-gradient(170deg, #fffdf5, #fff4d9);
+  border: 4px solid var(--ouro); border-radius: var(--raio-g);
+  box-shadow: 0 8px 0 var(--ouro-fundo), 0 14px 24px rgba(224, 160, 16, .25);
+  padding: 14px 16px 20px; text-align: center;
+}
+/* O balão dentro do quadro herda o zoom e ficaria maior que a moldura: encolhe o
+   texto para caber sem que a moldura precise crescer. */
+.jg .balao { margin-bottom: 14px; font-size: 15px; padding: 12px 16px; }
+
+/* JOGO 1: repartir. As moedas ainda por repartir, em cima. */
+.jg-moedas {
+  display: flex; justify-content: center; flex-wrap: wrap; gap: 6px;
+  min-height: 40px; align-items: center; margin-bottom: 14px;
+}
+.jg-moedas svg { width: 34px; height: 34px; }
+.jg-vazio { font-size: 14px; font-weight: 700; color: var(--tinta-fraca); }
+.jg-potes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+.jg-pote {
+  background: var(--carta); border: 3px solid var(--ceu-2);
+  border-radius: 18px; padding: 10px 6px 8px; cursor: pointer;
+  font-family: inherit; min-height: 76px;
+  box-shadow: 0 4px 0 #cfe2ec;
+  transition: transform .1s, box-shadow .1s;
+}
+.jg-pote:active { transform: translateY(4px); box-shadow: 0 0 0 #cfe2ec; }
+.jg-pote svg { width: 100%; height: auto; max-height: 78px; display: block; }
+.jg-pote b { display: block; font-size: 24px; font-weight: 800; color: var(--tinta); }
+.jg-pote small { display: block; font-size: 12px; color: var(--tinta-fraca); font-weight: 700; }
+.jg-pote.on-gastar { border-color: var(--gastar); }
+.jg-pote.on-guardar { border-color: var(--guardar); }
+.jg-pote.on-doar { border-color: var(--doar); }
+.jg-pote[disabled] { opacity: .65; }
+
+/* JOGO 2: esperar ou gastar. */
+.jg-cofre {
+  background: var(--carta); border-radius: 16px; padding: 10px 14px;
+  margin-bottom: 12px; box-shadow: 0 3px 0 #cfe2ec;
+}
+.jg-cofre-r { display: block; font-size: 12px; font-weight: 700; color: var(--tinta-fraca); }
+.jg-cofre-v {
+  display: block; font-size: 34px; font-weight: 800; color: var(--guardar-fundo);
+  font-variant-numeric: tabular-nums; letter-spacing: -1px;
+}
+.jg-tenta {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  margin-bottom: 12px;
+}
+.jt-e { font-size: 58px; }
+.jt-v { font-size: 22px; font-weight: 800; color: var(--laranja-fundo); }
+
+/* OS DOIS BOTÕES TÊM O MESMO TAMANHO, e isto é decisão e não descuido: comprar não é
+   errado, é uma escolha com outro resultado. Fazer o "espero" maior ou verde contra
+   vermelho diria qual é a resposta certa — e aí não é escolha, é obediência. */
+.jg-dois { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.jg-bt {
+  min-height: 84px; border-radius: 18px; cursor: pointer; font-family: inherit;
+  font-size: 17px; font-weight: 800; background: var(--carta); color: var(--tinta);
+  border: 3px solid var(--ceu-2); box-shadow: 0 5px 0 #cfe2ec;
+  transition: transform .1s, box-shadow .1s;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+}
+.jg-bt:active { transform: translateY(5px); box-shadow: 0 0 0 #cfe2ec; }
+.jg-bt small { font-size: 13px; font-weight: 700; color: var(--tinta-fraca); }
+.jg-bt .emo { font-size: 26px; }
+.jg-bt.compra { border-color: var(--laranja); box-shadow: 0 5px 0 var(--laranja-fundo); }
+.jg-bt.espera { border-color: var(--guardar); box-shadow: 0 5px 0 var(--guardar-fundo); }
+
+/* O FIM DO JOGO 2: os dois caminhos lado a lado, sem veredito. */
+.jg-fim { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.jf-col {
+  background: var(--carta); border-radius: 16px; padding: 14px 8px;
+  box-shadow: 0 3px 0 #cfe2ec;
+}
+.jf-e { display: block; font-size: 34px; }
+.jf-col b { display: block; font-size: 22px; font-weight: 800; color: var(--tinta); }
+.jf-col small { display: block; font-size: 12.5px; color: var(--tinta-fraca); font-weight: 700; }
+.jg-nota { font-size: 14px; font-weight: 700; color: var(--tinta-fraca); margin-top: 8px; }
+.jg-nota b { color: var(--tinta); }
+
+/* JOGO 3: doar. */
+.jg-gente { display: flex; flex-direction: column; gap: 9px; }
+.jg-quem {
+  display: flex; align-items: center; gap: 13px; text-align: left;
+  background: var(--carta); border: 3px solid var(--ceu-2); border-radius: 18px;
+  padding: 11px 14px; cursor: pointer; font-family: inherit; min-height: 76px;
+  box-shadow: 0 4px 0 #cfe2ec; transition: transform .1s, box-shadow .1s;
+}
+.jg-quem:active { transform: translateY(4px); box-shadow: 0 0 0 #cfe2ec; }
+.jg-quem.feito { border-color: var(--doar); background: #ffeef6; }
+.jq-e {
+  font-size: 30px; width: 52px; height: 52px; flex: none;
+  display: grid; place-items: center; border-radius: 50%; background: var(--ceu-2);
+}
+.jg-quem.feito .jq-e { background: #ffd9e9; }
+.jq-t { flex: 1; min-width: 0; text-align: left; }
+.jg-quem b { display: block; font-size: 17px; font-weight: 800; color: var(--tinta); }
+.jg-quem small { display: block; font-size: 13px; color: var(--tinta-fraca); font-weight: 700; }
+
+/* JOGO 4: as missões, com o Dino andando pelo trilho. */
+.jg-trilho { position: relative; height: 46px; margin-bottom: 14px; }
+.jt-barra {
+  position: absolute; left: 0; right: 34px; top: 26px; height: 12px;
+  background: #e2edf3; border-radius: 6px; overflow: hidden;
+  box-shadow: inset 0 2px 3px rgba(43, 58, 68, .12);
+}
+.jt-barra i {
+  display: block; height: 100%; border-radius: 6px;
+  background: linear-gradient(90deg, var(--gastar), #7ef5cd);
+  transition: width .35s cubic-bezier(.3, 1.2, .5, 1);
+}
+.jt-dino {
+  position: absolute; top: 0; font-size: 28px;
+  transform: translateX(-50%); transition: left .35s cubic-bezier(.3, 1.2, .5, 1);
+}
+.jt-fim { position: absolute; right: 0; top: 8px; font-size: 26px; }
+.jg-missoes { display: flex; flex-direction: column; gap: 8px; }
+.jg-miss {
+  display: flex; align-items: center; gap: 12px; text-align: left;
+  background: var(--carta); border: 3px solid var(--ceu-2); border-radius: 16px;
+  padding: 10px 14px; cursor: pointer; font-family: inherit; min-height: 76px;
+  box-shadow: 0 4px 0 #cfe2ec; transition: transform .1s, box-shadow .1s;
+}
+.jg-miss:active { transform: translateY(4px); box-shadow: 0 0 0 #cfe2ec; }
+.jg-miss.feito { border-color: var(--gastar); background: #eafff7; }
+.jm-e { font-size: 26px; flex: none; }
+.jg-miss b { flex: 1; font-size: 16px; font-weight: 800; color: var(--tinta); }
+.jm-ok { font-size: 24px; color: var(--gastar-fundo); font-weight: 800; }
+
+/* JOGO 5: chegar no sonho. */
+.jg-alvo {
+  display: flex; align-items: center; gap: 12px; justify-content: center;
+  margin-bottom: 12px;
+}
+.ja-e { font-size: 40px; }
+.ja-t b { display: block; font-size: 18px; font-weight: 800; color: var(--tinta); }
+.ja-t small { display: block; font-size: 13px; color: var(--tinta-fraca); font-weight: 700; }
+.jg-barra {
+  height: 20px; background: #e2edf3; border-radius: 10px; overflow: hidden;
+  box-shadow: inset 0 2px 4px rgba(43, 58, 68, .14); margin-bottom: 6px;
+}
+.jg-barra i {
+  display: block; height: 100%; border-radius: 10px;
+  background: linear-gradient(90deg, var(--guardar), #5fb8ff);
+  transition: width .4s cubic-bezier(.3, 1.2, .5, 1);
+}
+.jg-tem {
+  font-size: 30px; font-weight: 800; color: var(--guardar-fundo);
+  font-variant-numeric: tabular-nums; margin-bottom: 10px;
+}
+/* A MOEDA GRANDE é o único alvo da tela: numa tela de um botão só, ele tem que ser
+   grande o bastante para ela acertar sem olhar. */
+.jg-moedao {
+  background: none; border: 0; cursor: pointer; font-family: inherit;
+  padding: 8px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  margin: 0 auto; min-height: 96px;
+}
+.jg-moedao svg { width: 86px; height: 86px; display: block; filter: drop-shadow(0 4px 6px rgba(224, 160, 16, .4)); }
+.jg-moedao small { font-size: 15px; font-weight: 800; color: #6b4a00; }
+.jg-moedao:active svg { transform: translateY(4px) scale(.95); }
+
+@media (prefers-reduced-motion: reduce) {
+  .jt-barra i, .jt-dino, .jg-barra i { transition: none; }
+}
+
+/* Dentro do jogo o Dino é figurante: quem tem de chamar atenção é o que se toca. */
+.jg .dino-palco { margin-bottom: 2px; }
+.jg .dino-palco svg { max-height: 78px; }
 

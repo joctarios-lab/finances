@@ -63,9 +63,51 @@ function makeEl(sel) {
 }
 const elx = sel => els[sel] || (els[sel] = makeEl(sel));
 const cliques = [];
+/* QUERYSELECTORALL QUE ENXERGA O HTML JÁ RENDERIZADO.
+
+   Antes devolvia sempre lista vazia, e isso obrigava cada teste de interação a inventar o
+   seu contorno: chamar a função da tela na mão, ou fabricar um alvo falso. O contorno
+   funciona para provar que a função existe e nunca prova que o BOTÃO chega até ela — que
+   é justamente onde os defeitos moram.
+
+   Este stub varre o innerHTML da raiz procurando o atributo do seletor e devolve um
+   objeto por ocorrência. Os objetos são CACHEADOS pela chave (seletor + valor): o app
+   busca a lista e depois atribui `onclick` em cada item, então a segunda busca precisa
+   devolver os mesmos objetos, ou o handler se perde no caminho.
+
+   O cache é limpo a cada render, porque uma tela nova tem botões novos — sem isso, um
+   handler de uma tela anterior sobreviveria e o teste dispararia código que já saiu do ar.
+
+   Só entende `[data-algo]`, que é a forma que o app usa. Qualquer outro seletor continua
+   devolvendo lista vazia, como antes. */
+const achados = {};
+function limparAchados() { for (const k of Object.keys(achados)) delete achados[k]; }
+function buscarTudo(sel) {
+  const m = String(sel).match(/^\[data-([\w-]+)\]$/);
+  if (!m) return [];
+  const attr = m[1];
+  /* data-ir-sonho no HTML vira irSonho no dataset, como no DOM de verdade. */
+  const chave = attr.replace(/-([a-z])/g, (_, x) => x.toUpperCase());
+  const html = (els['#app'] && els['#app'].innerHTML) || '';
+  const re = new RegExp('data-' + attr + '="([^"]*)"', 'g');
+  const out = [];
+  let g;
+  while ((g = re.exec(html)) !== null) {
+    const id = sel + '|' + g[1];
+    if (!achados[id]) {
+      const e = makeEl(id);
+      e.dataset[chave] = g[1];
+      e.closest = () => e;
+      achados[id] = e;
+    }
+    out.push(achados[id]);
+  }
+  return out;
+}
+
 global.document = {
   querySelector: sel => elx(sel),
-  querySelectorAll: () => [],
+  querySelectorAll: sel => buscarTudo(sel),
   getElementById: id => elx('#' + id),
   createElement: () => makeEl('novo'),
   body: makeEl('body'),
@@ -91,7 +133,8 @@ eval(fs.readFileSync(BASE + 'cofrinho/js/dados.js', 'utf8') + '; global.Dados = 
 eval(fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8') + `; Object.assign(global, {
   App, fmtKid, diaBonito, hashDaSenha, esc, telaQuem, telaSenha, telaCofrinho, telaTarefas,
   COISAS_GASTAR, COISAS_DOAR, emojiDe,
-  telaSonho, telaSelos, telaSelo, telaRitual, telaGastar, telaEscolha, telaExtrato, telaSemCrianca, historico, barraDeAbas,
+  telaSonho, telaSelos, telaSelo,
+  jogoDoSelo, jogoRepartir, jogoEsperar, jogoDoar, jogoMissoes, jogoMeta, telaRitual, telaGastar, telaEscolha, telaExtrato, telaSemCrianca, historico, barraDeAbas,
   render, entrar, sair, clarear, sombrear, Som, aviso, festa,
 });`);
 
@@ -929,89 +972,168 @@ console.log('\n=== O simulador da formiguinha ===');
     Dados.crescimentoDoGuardado(idSemMoeda, 4).ganho, 0);
   limpar(idSemMoeda);
 
-console.log('\n=== A tela da lição ===');
-  /* O PRÊMIO É TOCÁVEL, e diz que é: descobrir que um desenho abre algo não é tarefa de
-     uma criança de seis anos — foi o mesmo motivo da faixa no pergaminho. */
+console.log('\n=== A porta do jogo ===');
+  /* A tela do prêmio explicava por escrito — título, parágrafo, três pontos e uma nota.
+     Estava correta e era texto demais: uma criança de seis anos lê a primeira linha, olha
+     os desenhos e procura o botão. Virou uma porta. */
   const grade = telaSelos();
   check('todo prêmio é tocável', (grade.match(/data-selo=/g) || []).length, 6);
   check('  e convida ao toque', grade.includes('como ganhar'), true);
-
-  /* O CONQUISTADO TAMBÉM ABRE: ela quer saber por que ganhou, e a lição lida depois de
-     conquistar é a que fica, porque o exemplo já aconteceu com ela. */
-  check('o prêmio já ganho fala em como você ganhou',
-    grade.includes('como você ganhou'), true);
+  check('  o já ganho fala em como você ganhou', grade.includes('como você ganhou'), true);
 
   telaSelo('guardou');
-  const t = tela();
-  check('a tela da lição mostra o título', t.includes('vira dinheiro grande'), true);
-  check('  e o simulador', t.includes('sim-range'), true);
-  check('  com o total projetado', t.includes(fmtKid(42)), true);
-  check('  e diz que a proporção é suposição, não conselho',
-    t.includes('quem escolhe quanto é você'), true);
-  check('  com caminho de volta', t.includes('lic-volta'), true);
+  const porta = tela();
+  check('a porta mostra o nome do prêmio', porta.includes('Formiguinha'), true);
+  check('  e o botão de jogar', porta.includes('lic-jogar'), true);
+  /* POUCO TEXTO é o requisito, e por isso é medido: a tela antiga passava de 600
+     caracteres de texto corrido. */
+  const soTexto = porta.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  check('  com pouco texto para ler', soTexto.length < 220, true);
 
-  /* O TOQUE NO PRÊMIO É O QUE ABRE A LIÇÃO, e isto precisa ser disparado pelo listener
-     real. Chamar `telaSelo()` na mão prova que a tela existe — não que o prêmio leva até
-     ela. A sabotagem que arrancou o handler do clique passou verde por isso, e a criança
-     tocaria no cadeado sem nada acontecer, exatamente como antes.
-
-     Também exercita o `closest`: sem `[data-selo]` na lista de seletores que ele aceita, o
-     toque morre antes de chegar ao handler. */
+  /* O TOQUE NO PRÊMIO abre a porta, disparado pelo listener real. */
   {
     App.aba = 'selos'; render();
-    const alvo = { id: '', dataset: { selo: 'guardou' }, closest: () => alvo };
+    const alvo = { id: '', dataset: { selo: 'doou' }, closest: () => alvo };
     for (const fn of cliques) fn({ target: alvo });
-    check('tocar no prêmio abre a lição dele', tela().includes('vira dinheiro grande'), true);
+    check('tocar no prêmio abre a porta dele', tela().includes('Coração grande'), true);
 
-    /* O SELETOR DO LISTENER precisa aceitar o atributo, e isto é medido no código porque o
-       alvo falso acima traz o seu próprio `closest` -- ele prova que o handler age, não que
-       o clique real chega até ele. No navegador, um atributo fora dessa lista faz o toque
-       morrer antes do handler, sem erro nenhum na tela. */
+    /* O SELETOR DO LISTENER precisa aceitar o atributo: o alvo falso traz o seu próprio
+       `closest`, então ele prova que o handler age, não que o clique real chega até lá. */
     const fonteC = fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8');
-    const sel = (fonteC.match(/closest\((['"])(.+?)\1\)/) || [])[2] || '';
+    const sel = (fonteC.match(/closest\((["'])(.+?)\1\)/) || [])[2] || '';
     check('  e o listener aceita o atributo do prêmio', sel.includes('[data-selo]'), true);
     check('  sem perder os outros caminhos',
       ['[data-tarefa]', '[data-pote]', '[data-ir-sonho]'].every(a => sel.includes(a)), true);
-
-    /* CADA PRÊMIO ABRE A SUA, e não uma tela genérica: se todas mostrassem a mesma coisa,
-       o toque seria decoração. */
-    const outro = { id: '', dataset: { selo: 'doou' }, closest: () => outro };
-    for (const fn of cliques) fn({ target: outro });
-    check('  e cada prêmio abre a sua', tela().includes('Ajudar não deixa'), true);
-    check('  sem misturar com a anterior', tela().includes('vira dinheiro grande'), false);
   }
 
-  /* ARRASTAR O CONTROLE MUDA O NÚMERO. É o gesto que ensina — a criança vê a consequência
-     de esperar acontecer na mão dela —, e um controle que não reage é enfeite que parece
-     interativo, o que é pior que enfeite nenhum.
+console.log('\n=== Os minijogos ===');
+  /* SEIS PRÊMIOS, SEIS JOGOS, E CADA UM ABRE O SEU.
 
-     Mede pelo HTML antes e depois, e não pela função de dados: `crescimentoDoGuardado` já
-     tem teste próprio, e o que faltava era o elo entre o gesto e a tela. */
-  {
-    telaSelo('guardou');
-    const antes = tela();
-    const r = els['#sim-r'];
-    check('o simulador tem controle', !!r, true);
-    check('  que responde ao arrastar', typeof r.oninput, 'function');
-    r.value = 6;
-    r.oninput();
-    const depois = tela();
-    check('arrastar muda o que a tela mostra', antes !== depois, true);
-    check('  e o número cresce', depois.includes(fmtKid(66)), true);
-    check('  com as luas acompanhando', depois.includes('6 semanadas'), true);
+     A primeira versão só conferia que ALGUM jogo abriu, e `jogoDoSelo` tem um fallback
+     para o jogo de repartir — então apagar a entrada de um prêmio da tabela passava
+     verde, e a criança tocaria em "Coração grande" para cair no jogo dos potes.
+
+     Cada jogo tem uma marca própria no HTML, e é ela que o teste procura. */
+  const MARCA = {
+    dividiu: 'jg-potes', tarefas: 'jg-trilho', guardou: 'jg-dois',
+    doou: 'jg-gente', moeda: 'jg-dois', meta: 'jg-moedao',
+  };
+  for (const s of Object.keys(MARCA)) {
+    jogoDoSelo(s);
+    check(`o prêmio ${s} abre o jogo dele`, tela().includes(MARCA[s]), true);
+
+    /* A SAÍDA PRECISA FUNCIONAR, e não só existir no HTML: um botão de voltar sem
+       handler prende a criança dentro do jogo, e ela não sabe recarregar a página. */
+    check(`  com saída ligada`, typeof (els['#jg-sair'] || {}).onclick, 'function');
   }
 
-  /* AS OUTRAS LIÇÕES NÃO TÊM SIMULADOR: um controle numa tela que não fala de crescimento
-     seria enfeite, e enfeite que parece interativo frustra. */
+  /* A VOLTA LEVA À PORTA DO PRÊMIO, e não a uma tela qualquer. */
+  jogoDoar('doou');
+  els['#jg-sair'].onclick();
+  check('sair do jogo volta para a porta do prêmio',
+    tela().includes('lic-jogar'), true);
+
+  /* O BOTÃO DA PORTA É O QUE ABRE O JOGO. Chamar `jogoDoSelo` na mão prova que o jogo
+     existe — não que a criança chega até ele. */
   telaSelo('doou');
-  check('a lição de doar não tem simulador', tela().includes('sim-range'), false);
-  check('  mas mostra o que sobra depois de doar', tela().includes(fmtKid(40)), true);
+  check('a porta tem o botão de jogar ligado', typeof els['#lic-jogar'].onclick, 'function');
+  els['#lic-jogar'].onclick();
+  check('  e ele abre o jogo', tela().includes('jg-gente'), true);
 
-  /* DEIXA A TELA COMO ACHOU. Este bloco terminava com a lição aberta, e o teste seguinte
-     — que toca num pote — reprovava por não encontrar a tela do cofrinho. Um teste que
-     quebra o próximo mede a ordem em que rodaram, não o código. */
-  App.aba = 'cofrinho'; render();
-  limpar(id);
+  /* JOGO DE REPARTIR: toca no pote, a moeda vai. E QUALQUER divisão termina em festa —
+     premiar uma proporção ensinaria a adivinhar a resposta do adulto em vez de decidir. */
+  {
+    jogoRepartir('dividiu');
+    check('o jogo começa com seis moedas', (tela().match(/Faltam <b>6<\/b>/) || []).length, 1);
+    const toca = p => {
+      const b = [...document.querySelectorAll('[data-jp]')].find(x => x.dataset.jp === p);
+      if (b) b.onclick();
+    };
+    toca('gastar');
+    check('  tocar num pote gasta uma moeda', tela().includes('Faltam <b>5</b>'), true);
+    /* Tudo num pote só também vence: não há divisão errada. */
+    for (let n = 0; n < 5; n++) toca('doar');
+    check('  repartir tudo num pote só também ganha', tela().includes('jeito errado'), true);
+    check('  e oferece jogar de novo', tela().includes('jg-de-novo'), true);
+  }
+
+  /* JOGO DE ESPERAR: as duas escolhas seguem o jogo, e nenhuma é repreendida. */
+  {
+    jogoEsperar('guardou');
+    const escolhe = comprou => {
+      const b = [...document.querySelectorAll('[data-jc]')].find(x => x.dataset.jc === (comprou ? '1' : '0'));
+      if (b) b.onclick();
+    };
+    check('o jogo começa com dez reais', tela().includes(fmtKid(10)), true);
+    escolhe(false);
+    check('  esperar aumenta o cofre', tela().includes(fmtKid(12)), true);
+    escolhe(true);
+    check('  comprar diminui', tela().includes(fmtKid(10)), true);
+    escolhe(false); escolhe(false);
+    check('  quatro semanas e o jogo acaba', tela().includes('Olha o que aconteceu'), true);
+
+    /* SEM VEREDITO no fim: dizer "você guardou pouco" transformaria o jogo em prova, e a
+       criança passaria a jogar para agradar em vez de para entender. */
+    const fimTxt = tela();
+    check('  e nenhum veredito sobre a escolha dela',
+      /parab[ée]ns|muito bem|voc[êe] (deveria|podia|devia)|errad/i.test(fimTxt), false);
+    /* OS DOIS CAMINHOS APARECEM, e nenhum deles escondido: procurar só o texto deixava
+       passar um `hidden` na coluna: o conteúdo continua no HTML e some da tela. Mostrar
+       só o lado do cofrinho transformaria o resumo em sermão. */
+    check('  mostrando os dois caminhos', (fimTxt.match(/class="jf-col"/g) || []).length, 2);
+    check('  com nenhum lado escondido', /jf-col[^>]*hidden/.test(fimTxt), false);
+    check('  o que ficou no cofrinho', fimTxt.includes('no seu cofrinho'), true);
+    check('  e o que ela aproveitou', fimTxt.includes('você aproveitou'), true);
+  }
+
+  /* JOGO DE DOAR: o cofre mal encolhe, e é essa a lição inteira. */
+  {
+    jogoDoar('doou');
+    const quem = () => [...document.querySelectorAll('[data-jq]')];
+    check('há três pessoas para ajudar', quem().length, 3);
+    quem()[0].onclick();
+    check('  ajudar custa um real', tela().includes(fmtKid(9)), true);
+    quem()[1].onclick(); quem()[2].onclick();
+    check('  ajudar todos termina o jogo', tela().includes('ajudou todo mundo'), true);
+    check('  e mostra que sobrou quase tudo', tela().includes(fmtKid(7)), true);
+  }
+
+  /* JOGO DAS MISSÕES: usa as REAIS dela, porque a lição é sobre as tarefas dela. */
+  {
+    Dados.upsert('kid_tasks', {
+      kid_id: id, name: 'Regar as plantas', icon: '🪴', amount: 1,
+      frequencia: 'semanal', active: true });
+    App.kid = Dados.get('kids', id);
+    jogoMissoes('tarefas');
+    check('o jogo usa a missão real dela', tela().includes('Regar as plantas'), true);
+    const ms = [...document.querySelectorAll('[data-jm]')];
+    for (const m of ms) m.onclick();
+    check('  fazer todas termina o jogo', tela().includes('cuidou de tudo'), true);
+
+    /* MARCAR NO JOGO NÃO MARCA DE VERDADE: é ensaio. Se marcasse, uma brincadeira teria
+       consequência real e ela pararia de brincar. */
+    check('  e não marca a missão de verdade',
+      Dados.tarefas(id).some(t => t.feita), false);
+  }
+
+  /* JOGO DO SONHO: o número de toques até encher É a lição. */
+  {
+    jogoMeta('meta');
+    check('o jogo usa o sonho real dela', tela().includes('Patinete'), true);
+    const moedao = () => document.querySelectorAll('[data-jt]')[0];
+    let n = 0;
+    while (moedao() && n < 20) { moedao().onclick(); n++; }
+    check('  enche a barra com toques', tela().includes('Chegou!'), true);
+    check('  contando quantas semanadas foram', /<b>\d+ semanadas<\/b>/.test(tela()), true);
+  }
+
+  /* NENHUM JOGO MEXE NO DINHEIRO DE VERDADE. O jogo é o lugar seguro para experimentar;
+     o pote é o lugar sério. */
+  check('os jogos não tocam no dinheiro real', Dados.potes(id).guardar, 30);
+
+  /* DEIXA A TELA COMO ACHOU: este bloco terminava com um jogo aberto, e o teste seguinte
+     reprovava por não achar a tela do cofrinho. */
+  App.aba = 'cofrinho'; render();  limpar(id);
 }
 
 /* ================= A memória do que já aconteceu ================= */

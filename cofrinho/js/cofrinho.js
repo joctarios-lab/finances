@@ -1060,87 +1060,433 @@ function telaNovaVontade() {
    um joguinho com dinheiro de brincadeira seria mais fácil de fazer e ensinaria sobre
    dinheiro de brincadeira — o que se aprende jogando não atravessa sozinho para a vida.
    Aqui ela sai da lição direto para o pote de verdade. */
+/* ---------- O PRÊMIO ABRE UM JOGO ----------
+
+   A primeira versão desta tela explicava por escrito: título, parágrafo, três pontos e
+   uma nota. Estava correta e era texto demais — uma criança de seis anos lê a primeira
+   linha, olha os desenhos e procura o botão. O resto não é lido; é pulado, e o hábito de
+   pular contamina o que vem depois.
+
+   Agora a tela é uma porta: o desenho do prêmio, uma frase e um botão grande. A LIÇÃO
+   ACONTECE DENTRO DO JOGO, por ação — que é como se aprende nessa idade e é o que ela
+   pediu ao querer "mais coisas para fazer". */
 function telaSelo(id) {
   const kid = App.kid;
   const l = Dados.licaoDoSelo(kid.id, id);
   if (!l) { App.aba = 'selos'; render(); return; }
 
-  /* O SIMULADOR começa em duas semanas: zero não mostra nada e o máximo já entrega tudo
-     de graça. Duas dá o primeiro degrau e convida a arrastar. */
-  let semanas = 2;
+  raiz().innerHTML = `
+    ${palco(l.ganho ? 'feliz' : 'oi', 120)}
+    ${balao(`<b>${esc(l.titulo)}</b>`)}
+    <div class="selo-porta">
+      <div class="selo-porta-ico">${Arte.premio(l.id, l.ganho)}</div>
+      <div class="selo-porta-n">${esc(l.nome)}</div>
+    </div>
+    <button class="bt ouro chama" id="lic-jogar" style="margin-top:16px">
+      <span class="emo">🎮</span> Jogar!
+    </button>
+    ${l.botao ? `<button class="bt verde" id="lic-vai" style="margin-top:12px">
+      <span class="emo">👉</span> ${esc(l.botao.texto)}
+    </button>` : ''}
+    <button class="bt clara" id="lic-volta" style="margin-top:12px">
+      <span class="emo">↩️</span> Voltar
+    </button>`;
+
+  el('#lic-jogar').onclick = () => { Som.toque(); vibra(12); jogoDoSelo(id); };
+  if (el('#lic-vai')) {
+    el('#lic-vai').onclick = () => {
+      Som.toque(); vibra(12);
+      const vai = l.botao.vai;
+      if (vai === 'ritual') return telaRitual();
+      if (vai === 'doar') return telaGastar('doar');
+      App.aba = vai; render();
+    };
+  }
+  el('#lic-volta').onclick = () => { Som.toque(); App.aba = 'selos'; render(); };
+}
+
+/* ---------- OS MINIJOGOS ----------
+
+   Seis jogos sobre três mecânicas, e a repetição é de propósito: uma criança de seis
+   anos que já sabe jogar um sabe jogar o próximo, e o esforço dela vai para a LIÇÃO em
+   vez de para descobrir o controle.
+
+     tocar-para-encher   repartir, doar, chegar na meta
+     escolher-caminho    esperar ou gastar (formiguinha, moeda mágica)
+     tocar-para-marcar   as missões da semana
+
+   REGRAS QUE VALEM PARA TODOS:
+
+   Não se perde. Não há tempo correndo, não há erro, não há tela de derrota. O jogo é
+   sobre entender uma ideia, e uma criança que perde num jogo sobre guardar dinheiro
+   aprende que guardar dinheiro é difícil — que é o oposto do que queremos.
+
+   Nada muda o dinheiro de verdade. O jogo é o lugar seguro para experimentar; o pote é
+   o lugar sério. Misturar os dois faria uma brincadeira ter consequência real, e a
+   criança pararia de brincar. */
+function jogoDoSelo(id) {
+  const jogos = {
+    dividiu: jogoRepartir,
+    doou: jogoDoar,
+    guardou: jogoEsperar,
+    moeda: jogoEsperar,
+    tarefas: jogoMissoes,
+    meta: jogoMeta,
+  };
+  (jogos[id] || jogoRepartir)(id);
+}
+
+/* O quadro do jogo: mesma moldura em todos, para ela reconhecer que entrou num jogo. */
+function quadroJogo(id, conteudo, rodape) {
+  return `
+    <div class="jg">
+      ${conteudo}
+    </div>
+    ${rodape || ''}
+    <button class="bt clara" id="jg-sair" style="margin-top:12px">
+      <span class="emo">↩️</span> Voltar
+    </button>`;
+}
+
+function ligarSaida(id) {
+  el('#jg-sair').onclick = () => { Som.toque(); telaSelo(id); };
+}
+
+/* ================= JOGO 1: REPARTIR =================
+
+   Seis moedas em cima, três potes embaixo. Ela toca num pote e uma moeda voa para lá.
+
+   NÃO HÁ DIVISÃO CERTA, e o jogo não sugere nenhuma: qualquer reparto termina em festa.
+   A lição é que o mesmo dinheiro pode ir para três lugares diferentes — e escolher é
+   dela, exatamente como no ritual de verdade. Um jogo que premiasse "50% no guardar"
+   ensinaria a adivinhar a resposta do adulto, não a decidir. */
+function jogoRepartir(id) {
+  const TOTAL = 6;
+  const potes = { gastar: 0, guardar: 0, doar: 0 };
+  let restam = TOTAL;
 
   const desenhar = () => {
-    const sim = l.simulador ? Dados.crescimentoDoGuardado(kid.id, semanas) : null;
-    raiz().innerHTML = `
-      ${palco(l.ganho ? 'feliz' : 'oi', 112)}
-      ${balao(`<b>${esc(l.titulo)}</b>`)}
-
-      <div class="licao">
-        <div class="licao-ico">${Arte.premio(l.id, l.ganho)}</div>
-        <p class="licao-oque">${l.oque}</p>
+    const fim = restam === 0;
+    raiz().innerHTML = quadroJogo(id, `
+      ${palco(fim ? 'feliz' : 'uau', 96)}
+      ${balao(fim
+        ? 'Você repartiu do seu jeito! Não existe jeito errado 🎉'
+        : `Toque num pote para mandar uma moeda. Faltam <b>${restam}</b>`)}
+      <div class="jg-moedas">
+        ${Array.from({ length: restam }, () => Arte.moeda(30)).join('')}
+        ${restam === 0 ? '<span class="jg-vazio">todas repartidas!</span>' : ''}
       </div>
-
-      ${(l.pontos || []).length ? `<div class="licao-pontos">
-        ${l.pontos.map(([e, t, d]) => `
-          <div class="lp">
-            <span class="lp-e">${esc(e)}</span>
-            <span class="lp-t"><b>${esc(t)}</b><small>${esc(d)}</small></span>
-          </div>`).join('')}
-      </div>` : ''}
-
-      ${sim ? `
-        ${/* O SIMULADOR. Ela arrasta e vê o próprio dinheiro crescer — a manipulação é o
-             que liga esperar a ter mais, e nenhuma frase constrói essa ligação sozinha.
-             Aos seis anos, "daqui a quatro semanas" não é imaginável; quatro degraus na
-             tela, com o número dela em cada um, são. */''}
-        <div class="sim">
-          <div class="sim-cab">E se você deixar quietinho...</div>
-          <div class="sim-luas">${Arte.luas(semanas, 8)}</div>
-          <input type="range" class="sim-range" id="sim-r" min="1" max="8" value="${semanas}">
-          <div class="sim-quantas">${semanas} ${semanas === 1 ? 'semanada' : 'semanadas'}</div>
-          <div class="sim-total">${fmtKid(sim.total)}</div>
-          ${sim.moeda > 0 && sim.ganho > 0 ? `<div class="sim-ganho">
-            <b>+${fmtKid(sim.ganho)}</b> só de moeda mágica, por ter esperado ✨
-          </div>` : ''}
-          ${sim.porSemana > 0
-            ? `<div class="sim-nota">contando que você guarde ${fmtKid(sim.porSemana)} por
-                semanada — quem escolhe quanto é você</div>`
-            : `<div class="sim-nota">quando a sua semanada começar, este número cresce</div>`}
-        </div>` : ''}
-
-      <div class="licao-como">
-        <span class="lc-cab">Como conseguir</span>
-        ${esc(l.comoFaz)}
+      <div class="jg-potes">
+        ${['gastar', 'guardar', 'doar'].map(t => `
+          <button class="jg-pote on-${t}" data-jp="${t}" ${fim ? 'disabled' : ''}>
+            ${Arte.pote(t, potes[t], Math.max(1, TOTAL))}
+            <b>${potes[t]}</b>
+            <small>${t === 'gastar' ? 'Gastar' : t === 'guardar' ? 'Guardar' : 'Doar'}</small>
+          </button>`).join('')}
       </div>
+    `, fim ? `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
+        <span class="emo">🔁</span> Jogar de novo
+      </button>` : '');
 
-      ${l.botao ? `<button class="bt verde" id="lic-vai" style="margin-top:14px">
-        <span class="emo">👉</span> ${esc(l.botao.texto)}
-      </button>` : ''}
-      <button class="bt clara" id="lic-volta" style="margin-top:12px">
-        <span class="emo">↩️</span> Voltar aos prêmios
-      </button>`;
-
-    const r = el('#sim-r');
-    if (r) {
-      /* `input` e não `change`: a criança precisa ver o número mudar ENQUANTO arrasta.
-         Com change, o efeito só aparece quando ela solta — e aí a ligação entre o gesto
-         e a consequência se perde no meio. */
-      r.oninput = () => { semanas = Number(r.value) || 1; Som.toque(); desenhar(); };
-    }
-    if (el('#lic-vai')) {
-      el('#lic-vai').onclick = () => {
-        Som.toque(); vibra(12);
-        const vai = l.botao.vai;
-        if (vai === 'ritual') return telaRitual();
-        if (vai === 'doar') return telaGastar('doar');
-        App.aba = vai; render();
+    document.querySelectorAll('[data-jp]').forEach(b => b.onclick = () => {
+      if (restam <= 0) return;
+      potes[b.dataset.jp]++; restam--;
+      Som.moeda(); vibra(12);
+      desenhar();
+      if (restam === 0) festa();
+    });
+    if (el('#jg-de-novo')) {
+      el('#jg-de-novo').onclick = () => {
+        restam = TOTAL; potes.gastar = potes.guardar = potes.doar = 0;
+        Som.toque(); desenhar();
       };
     }
-    el('#lic-volta').onclick = () => { Som.toque(); App.aba = 'selos'; render(); };
+    ligarSaida(id);
   };
   desenhar();
 }
 
+/* ================= JOGO 2: ESPERAR OU GASTAR =================
+
+   Quatro semanas. Em cada uma aparece uma tentação e dois botões do mesmo tamanho.
+
+   AS DUAS ESCOLHAS SEGUEM O JOGO, e nenhuma é repreendida — comprar o sorvete não é
+   errado, é uma escolha com outro resultado. O que o jogo faz é MOSTRAR o resultado na
+   hora, que é o que a vida real não faz: ali o sorvete acontece hoje e o efeito só se
+   sente daqui a um mês.
+
+   No fim, os dois caminhos aparecem lado a lado. Sem nota, sem estrela, sem "você
+   poderia ter". O número fala sozinho. */
+function jogoEsperar(id) {
+  const TENTACOES = [
+    ['🍦', 'um sorvete', 3],
+    ['🍭', 'um doce', 2],
+    ['🎈', 'um balão', 2],
+    ['🃏', 'figurinhas', 3],
+  ];
+  let semana = 0, cofre = 10, gastou = 0;
+  const GANHO = 2;
+
+  const desenhar = () => {
+    const fim = semana >= TENTACOES.length;
+    const t = fim ? null : TENTACOES[semana];
+    raiz().innerHTML = quadroJogo(id, `
+      ${palco(fim ? 'feliz' : 'oi', 92)}
+      ${balao(fim
+        ? 'Acabou! Olha o que aconteceu 👀'
+        : `Semana ${semana + 1}. Quer comprar <b>${t[1]}</b>?`)}
+
+      <div class="jg-cofre">
+        <span class="jg-cofre-r">no cofrinho</span>
+        <span class="jg-cofre-v">${fmtKid(cofre)}</span>
+      </div>
+
+      ${fim ? `
+        <div class="jg-fim">
+          <div class="jf-col">
+            <span class="jf-e">🏦</span>
+            <b>${fmtKid(cofre)}</b>
+            <small>no seu cofrinho</small>
+          </div>
+          <div class="jf-col">
+            <span class="jf-e">🛒</span>
+            <b>${fmtKid(gastou)}</b>
+            <small>você aproveitou</small>
+          </div>
+        </div>
+        ${/* SEM VEREDITO. Dizer "você guardou pouco" transformaria o jogo em prova, e
+             a criança passaria a jogar para agradar em vez de para entender. */''}
+        <div class="jg-nota">Os dois são seus. Você escolheu 🙂</div>
+      ` : `
+        <div class="jg-tenta">
+          <span class="jt-e">${t[0]}</span>
+          <span class="jt-v">${fmtKid(t[2])}</span>
+        </div>
+        <div class="jg-dois">
+          <button class="jg-bt compra" data-jc="1">
+            <span class="emo">${t[0]}</span> Compro!
+            <small>−${fmtKid(t[2])}</small>
+          </button>
+          <button class="jg-bt espera" data-jc="0">
+            <span class="emo">⏳</span> Espero
+            <small>+${fmtKid(GANHO)}</small>
+          </button>
+        </div>
+      `}
+    `, fim ? `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
+        <span class="emo">🔁</span> Jogar de novo
+      </button>` : '');
+
+    document.querySelectorAll('[data-jc]').forEach(b => b.onclick = () => {
+      const comprou = b.dataset.jc === '1';
+      if (comprou) {
+        const v = Math.min(cofre, TENTACOES[semana][2]);
+        cofre = +(cofre - v).toFixed(2); gastou = +(gastou + v).toFixed(2);
+        Som.toque();
+      } else {
+        cofre = +(cofre + GANHO).toFixed(2);
+        Som.moeda();
+      }
+      vibra(12); semana++; desenhar();
+      if (semana >= TENTACOES.length) festa();
+    });
+    if (el('#jg-de-novo')) {
+      el('#jg-de-novo').onclick = () => {
+        semana = 0; cofre = 10; gastou = 0; Som.toque(); desenhar();
+      };
+    }
+    ligarSaida(id);
+  };
+  desenhar();
+}
+
+/* ================= JOGO 3: DOAR =================
+
+   Três personagens precisando. Ela toca e uma moeda voa; cada um agradece.
+
+   O COFRE MAL ENCOLHE, e é essa a lição inteira: ela vê o próprio número quase não
+   mudar enquanto três pessoas ficam felizes. É a mesma conta da lição escrita, mas
+   sentida em vez de lida. */
+function jogoDoar(id) {
+  const GENTE = [
+    ['🐶', 'os bichinhos'],
+    ['🧒', 'outra criança'],
+    ['🍲', 'quem tem fome'],
+  ];
+  let cofre = 10;
+  const ajudados = {};
+
+  const desenhar = () => {
+    const n = Object.keys(ajudados).length;
+    const fim = n >= GENTE.length;
+    raiz().innerHTML = quadroJogo(id, `
+      ${palco(fim ? 'feliz' : 'oi', 92)}
+      ${balao(fim
+        ? 'Você ajudou todo mundo e quase não sentiu falta! 💝'
+        : 'Toque em quem você quer ajudar. Custa <b>R$ 1</b> cada um.')}
+
+      <div class="jg-cofre">
+        <span class="jg-cofre-r">você tem</span>
+        <span class="jg-cofre-v">${fmtKid(cofre)}</span>
+      </div>
+
+      <div class="jg-gente">
+        ${GENTE.map(([e, nome]) => `
+          <button class="jg-quem ${ajudados[nome] ? 'feito' : ''}" data-jq="${nome}"
+                  ${ajudados[nome] ? 'disabled' : ''}>
+            <span class="jq-e">${e}</span>
+            ${/* O NOME E O CONVITE PRECISAM DE UM AGRUPADOR: soltos no flex viram dois
+                 itens lado a lado, e 'quem tem fome' quebrou em duas linhas empurrando o
+                 convite para fora. A foto pegou. */''}
+            <span class="jq-t">
+              <b>${nome}</b>
+              <small>${ajudados[nome] ? 'obrigado! 💗' : 'toque para ajudar'}</small>
+            </span>
+          </button>`).join('')}
+      </div>
+
+      ${fim ? `<div class="jg-nota">
+        Você tinha ${fmtKid(10)} e ficou com <b>${fmtKid(cofre)}</b>. Quase igual!
+      </div>` : ''}
+    `, fim ? `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
+        <span class="emo">🔁</span> Jogar de novo
+      </button>` : '');
+
+    document.querySelectorAll('[data-jq]').forEach(b => b.onclick = () => {
+      const nome = b.dataset.jq;
+      if (ajudados[nome] || cofre < 1) return;
+      ajudados[nome] = true; cofre = +(cofre - 1).toFixed(2);
+      Som.moeda(); vibra(14); desenhar();
+      if (Object.keys(ajudados).length >= GENTE.length) festa();
+    });
+    if (el('#jg-de-novo')) {
+      el('#jg-de-novo').onclick = () => {
+        cofre = 10; for (const k of Object.keys(ajudados)) delete ajudados[k];
+        Som.toque(); desenhar();
+      };
+    }
+    ligarSaida(id);
+  };
+  desenhar();
+}
+
+/* ================= JOGO 4: AS MISSÕES =================
+
+   As missões REAIS dela viram pedras num caminho, e o Dino avança a cada toque.
+
+   Usa as missões de verdade porque a lição é sobre as tarefas dela — não sobre tarefas
+   em geral. Marcar aqui não marca no app: é ensaio, e o ensaio é o que dá coragem para
+   fazer de verdade. */
+function jogoMissoes(id) {
+  const reais = Dados.tarefas(App.kid.id).filter(t => !t.especial).slice(0, 5);
+  const lista = reais.length ? reais : [
+    { id: 'a', name: 'Arrumar a cama', icon: '🛏️' },
+    { id: 'b', name: 'Escovar os dentes', icon: '🦷' },
+    { id: 'c', name: 'Guardar os brinquedos', icon: '🧸' },
+  ];
+  const feitas = {};
+
+  const desenhar = () => {
+    const n = Object.keys(feitas).length;
+    const fim = n >= lista.length;
+    const pct = (n / lista.length) * 100;
+    raiz().innerHTML = quadroJogo(id, `
+      ${palco(fim ? 'feliz' : 'oi', 92)}
+      ${balao(fim
+        ? 'Você cuidou de tudo! É assim que ganha o prêmio 🏆'
+        : `Toque na missão para o Dino avançar. Faltam <b>${lista.length - n}</b>`)}
+
+      <div class="jg-trilho">
+        <div class="jt-barra"><i style="width:${pct}%"></i></div>
+        <div class="jt-dino" style="left:${pct}%">🦖</div>
+        <div class="jt-fim">🏆</div>
+      </div>
+
+      <div class="jg-missoes">
+        ${lista.map(t => `
+          <button class="jg-miss ${feitas[t.id] ? 'feito' : ''}" data-jm="${t.id}"
+                  ${feitas[t.id] ? 'disabled' : ''}>
+            <span class="jm-e">${esc(t.icon || '⭐')}</span>
+            <b>${esc(t.name)}</b>
+            <span class="jm-ok">${feitas[t.id] ? '✓' : ''}</span>
+          </button>`).join('')}
+      </div>
+    `, fim ? `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
+        <span class="emo">🔁</span> Jogar de novo
+      </button>` : '');
+
+    document.querySelectorAll('[data-jm]').forEach(b => b.onclick = () => {
+      if (feitas[b.dataset.jm]) return;
+      feitas[b.dataset.jm] = true;
+      Som.moeda(); vibra(12); desenhar();
+      if (Object.keys(feitas).length >= lista.length) festa();
+    });
+    if (el('#jg-de-novo')) {
+      el('#jg-de-novo').onclick = () => {
+        for (const k of Object.keys(feitas)) delete feitas[k];
+        Som.toque(); desenhar();
+      };
+    }
+    ligarSaida(id);
+  };
+  desenhar();
+}
+
+/* ================= JOGO 5: CHEGAR NO SONHO =================
+
+   Uma semanada por toque, e a barra anda. O número de toques até encher É a lição:
+   ela sente a distância em vez de ouvir "faltam seis semanadas".
+
+   Usa o sonho real dela quando existe — a barra que enche aqui é a mesma que ela vê
+   todo dia na aba do sonho, e o jogo é um adiantamento do que vai acontecer. */
+function jogoMeta(id) {
+  const meta = Dados.meta(App.kid.id);
+  const alvo = meta ? (Number(meta.target_amount) || 0) : 60;
+  const nome = meta ? meta.name : 'um patinete';
+  const icone = meta ? (meta.icon || '🎁') : '🛴';
+  const porSemana = Math.max(1, Math.round(alvo / 6));
+  let tem = 0, toques = 0;
+
+  const desenhar = () => {
+    const fim = tem >= alvo;
+    const pct = Math.min(100, (tem / alvo) * 100);
+    raiz().innerHTML = quadroJogo(id, `
+      ${palco(fim ? 'feliz' : 'oi', 92)}
+      ${balao(fim
+        ? `Chegou! Foram <b>${toques} semanadas</b> 🎉`
+        : 'Toque na moeda para passar uma semanada')}
+
+      <div class="jg-alvo">
+        <span class="ja-e">${esc(icone)}</span>
+        <span class="ja-t"><b>${esc(nome)}</b><small>${fmtKid(alvo)}</small></span>
+      </div>
+
+      <div class="jg-barra"><i style="width:${pct}%"></i></div>
+      <div class="jg-tem">${fmtKid(tem)}</div>
+
+      ${fim ? '' : `<button class="jg-moedao" data-jt="1">
+        ${Arte.moeda(64)}
+        <small>+${fmtKid(porSemana)}</small>
+      </button>`}
+    `, fim ? `<button class="bt verde" id="jg-de-novo" style="margin-top:14px">
+        <span class="emo">🔁</span> Jogar de novo
+      </button>` : '');
+
+    const m = document.querySelectorAll('[data-jt]')[0];
+    if (m) {
+      m.onclick = () => {
+        tem = Math.min(alvo, +(tem + porSemana).toFixed(2)); toques++;
+        Som.moeda(); vibra(12); desenhar();
+        if (tem >= alvo) festa();
+      };
+    }
+    if (el('#jg-de-novo')) {
+      el('#jg-de-novo').onclick = () => { tem = 0; toques = 0; Som.toque(); desenhar(); };
+    }
+    ligarSaida(id);
+  };
+  desenhar();
+}
 function telaSelos() {
   const selos = Dados.selos(App.kid.id);
   const n = selos.filter(s => s.ganho).length;
