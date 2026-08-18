@@ -6788,6 +6788,141 @@ try {
   for (const r of DB.all('recurrences').filter(r => r.kid_id === idE)) DB.remove('recurrences', r.id);
   DB.remove('kids', idE); DB.remove('accounts', contaE);
 } catch (e) { console.log(` FALHA | gasto da criança: ${e.message}`); fail++; }
+/* ---- APAGAR O COFRINHO LEVA AS VONTADES JUNTO ----
+
+   Uma tabela nova precisa entrar em TODOS os lugares que varrem o cofrinho, e apagar é o
+   mais fácil de esquecer: nada quebra na hora. A vontade órfã sobrevive à criança e
+   ressuscita colada na próxima que receber o mesmo id — e aí uma criança vê, na própria
+   lista, um desejo que nunca foi dela. */
+console.log('\n=== Apagar o cofrinho apaga as vontades ===');
+try {
+  const idW = DB.upsert('kids', { name: 'Vontade orfa', semanada_valor: 10, active: true });
+  DB.upsert('kid_wishes', {
+    kid_id: idW, name: 'Jogo', icon: '🎮', criada_em: DB.hojeISO() });
+  DB.upsert('kid_wishes', {
+    kid_id: idW, name: 'Bola', icon: '⚽', criada_em: DB.hojeISO() });
+  check('as vontades existem antes',
+    DB.all('kid_wishes').filter(w => w.kid_id === idW).length, 2);
+
+  const r = DB.apagarCofrinho(idW);
+  check('apagar o cofrinho conta as vontades', r.vontades, 2);
+  check('  e não sobra nenhuma',
+    DB.all('kid_wishes').filter(w => w.kid_id === idW).length, 0);
+
+  /* A VONTADE DE OUTRA CRIANÇA fica: apagar um cofrinho apaga UM cofrinho. */
+  const idOk = DB.upsert('kids', { name: 'Fica', semanada_valor: 10, active: true });
+  DB.upsert('kid_wishes', { kid_id: idOk, name: 'Livro', icon: '📚', criada_em: DB.hojeISO() });
+  const idVai = DB.upsert('kids', { name: 'Vai', semanada_valor: 10, active: true });
+  DB.upsert('kid_wishes', { kid_id: idVai, name: 'Doce', icon: '🍭', criada_em: DB.hojeISO() });
+  DB.apagarCofrinho(idVai);
+  check('a vontade de outra criança continua',
+    DB.all('kid_wishes').filter(w => w.kid_id === idOk).length, 1);
+  DB.apagarCofrinho(idOk);
+  for (const id of [idW, idOk, idVai]) DB.remove('kids', id);
+} catch (e) { console.log(` FALHA | apagar vontades: ${e.message}`); fail++; }
+
+/* ---- A PERGUNTA DA SEMANA ----
+
+   O app mostra números e nenhum deles diz o que CONVERSAR. É o ponto de maior consenso
+   entre educadores da área e o mais ignorado pelos apps: dinheiro se aprende conversando,
+   não usando aplicativo. O cofrinho é o pretexto para a aula, não a aula. */
+console.log('\n=== A pergunta da semana ===');
+try {
+  const hojeQ = DB.hojeISO();
+  const diasQ = n => DB.somarDiasISO(hojeQ, -n);
+  const idQ = DB.upsert('kids', {
+    name: 'Pergunta', semanada_valor: 10, semanada_dia: new Date(hojeQ + 'T12:00:00').getDay(),
+    rendimento_tipo: 'moeda', rendimento_valor: 1, active: true });
+
+  /* SEM NADA no cofrinho não há o que perguntar, e uma sugestão genérica toda semana
+     ensina a ignorar o bloco — aí ele deixa de servir na semana em que tem algo real. */
+  check('cofrinho vazio não gera pergunta', DB.perguntaDaSemana(idQ), null);
+
+  /* REPARTIU: o momento em que ela decidiu, e o único em que escolheu proporção. */
+  DB.upsert('kid_entries', {
+    kid_id: idQ, tipo: 'divisao', pote: 'guardar', amount: 20, date: hojeQ, confirmada: true });
+  check('repartir gera conversa', DB.perguntaDaSemana(idQ).assunto, 'repartiu');
+
+  /* A MOEDA MÁGICA ganha da divisão: é abstrata, e a criança precisa que alguém nomeie o
+     que aconteceu para ligar a espera ao prêmio. */
+  DB.upsert('kid_entries', {
+    kid_id: idQ, tipo: 'rendimento', pote: 'guardar', amount: 1, date: hojeQ, confirmada: true });
+  check('a moeda mágica tem prioridade sobre repartir',
+    DB.perguntaDaSemana(idQ).assunto, 'moeda');
+
+  /* TIRAR DO GUARDADO ganha das duas: é a decisão mais cara que ela toma sozinha, e a que
+     ela consegue explicar melhor logo depois de tomar. */
+  DB.upsert('kid_entries', {
+    kid_id: idQ, tipo: 'gasto', pote: 'guardar', amount: 5, date: hojeQ,
+    description: 'Doce', confirmada: true });
+  const qs = DB.perguntaDaSemana(idQ);
+  check('tirar do guardado tem prioridade', qs.assunto, 'saque');
+  check('  e o fato traz o valor real', qs.fato.includes('5,00'), true);
+  check('  com o nome da criança', qs.fato.includes('Pergunta'), true);
+
+  /* A PERGUNTA É ABERTA. "Por que você gastou isso?" é uma acusação com ponto de
+     interrogação: a criança responde o que o adulto quer ouvir, e isso encerra a conversa
+     em vez de começá-la. Nenhuma pergunta do conjunto pode começar por "por que você". */
+  const assuntos = [];
+  for (const t of ['divisao', 'rendimento', 'doacao']) {
+    DB.upsert('kid_entries', {
+      kid_id: idQ, tipo: t, pote: 'doar', amount: 1, date: hojeQ, confirmada: true });
+  }
+  const todasQ = [];
+  for (const kidNome of ['A', 'B']) {
+    const kid2 = DB.upsert('kids', { name: kidNome, semanada_valor: 10, active: true });
+    DB.upsert('kid_entries', {
+      kid_id: kid2, tipo: 'divisao', pote: 'guardar', amount: 5, date: hojeQ, confirmada: true });
+    const p = DB.perguntaDaSemana(kid2);
+    if (p) todasQ.push(p.pergunta);
+    for (const e of DB.all('kid_entries').filter(e => e.kid_id === kid2)) DB.remove('kid_entries', e.id);
+    DB.remove('kids', kid2);
+  }
+  todasQ.push(qs.pergunta);
+  check('nenhuma pergunta acusa a criança',
+    todasQ.some(p => /por que voc[êe]/i.test(p)), false);
+
+  /* O SONHO ALCANÇADO ganha de tudo: é a maior conversa disponível e dura pouco — some
+     assim que ela compra. */
+  DB.upsert('kid_goals', {
+    kid_id: idQ, name: 'Patinete', icon: '🛴', target_amount: 10, done: false });
+  DB.upsert('kid_entries', {
+    kid_id: idQ, tipo: 'presente', pote: 'guardar', amount: 50, date: hojeQ, confirmada: true });
+  check('o sonho alcançado ganha de tudo', DB.perguntaDaSemana(idQ).assunto, 'chegou');
+
+  /* O POTE DE DOAR PARADO. Exige histórico: cobrar doação de quem acabou de começar
+     transformaria o terceiro pote numa dívida antes de ela entender para que serve. */
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idQ)) DB.remove('kid_entries', e.id);
+  for (const g of DB.all('kid_goals').filter(g => g.kid_id === idQ)) DB.remove('kid_goals', g.id);
+  DB.upsert('kid_entries', {
+    kid_id: idQ, tipo: 'presente', pote: 'doar', amount: 8, date: diasQ(200), confirmada: true });
+  check('com pouco histórico, não cobra doação',
+    (DB.perguntaDaSemana(idQ) || {}).assunto === 'doar', false);
+
+  for (let n = 0; n < 9; n++) {
+    DB.upsert('kid_entries', {
+      kid_id: idQ, tipo: 'presente', pote: 'gastar', amount: 1, date: diasQ(150 + n), confirmada: true });
+  }
+  check('com histórico e o pote parado, sugere doar',
+    DB.perguntaDaSemana(idQ).assunto, 'doar');
+
+  /* SEMANA PARADA não é problema — é a deixa para a conversa que não parte de um número. */
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idQ && e.pote === 'doar')) {
+    DB.remove('kid_entries', e.id);
+  }
+  check('semana sem movimento vira conversa', DB.perguntaDaSemana(idQ).assunto, 'parado');
+
+  /* NA TELA. */
+  openCriancaDetalhe(idQ);
+  check('a conversa aparece na tela da criança',
+    els['#modal'].innerHTML.includes('Para conversar esta semana'), true);
+
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idQ)) DB.remove('kid_entries', e.id);
+  DB.remove('kids', idQ);
+  closeModal();
+  check('sem criança, nenhuma pergunta', DB.perguntaDaSemana(idQ), null);
+} catch (e) { console.log(` FALHA | pergunta da semana: ${e.message}`); fail++; }
+
 /* ---- O EXTRATO DA CRIANÇA GANHA TELA PRÓPRIA ----
 
    Trinta linhas de extrato empurravam a meta, as missões e os botões de

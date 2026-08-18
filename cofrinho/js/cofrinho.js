@@ -368,6 +368,29 @@ function telaCofrinho() {
         </div>`).join('')}
     </div>
 
+    ${/* QUANTAS NOITES ATÉ A SEMANADA.
+
+         As missões especiais já contavam em noites, e foi para dar a ela um motivo de
+         abrir o app. O evento mais importante da semana dela não contava nada até o
+         dinheiro cair — e a antecipação é metade do valor de uma recompensa: é ela que
+         treina a espera, não o recebimento.
+
+         NO DIA, a frase é outra: "hoje é dia" não é uma contagem, é uma notícia. E some
+         de vez quando não há semanada configurada, porque contar noites até um dia que
+         não existe é uma promessa que o app não pode cumprir. */
+      (() => {
+        const noites = Dados.noitesAteSemanada(kid.id);
+        if (noites === null) return '';
+        return `<div class="semanada-conta ${noites === 0 ? 'hoje' : ''}">
+          <span class="sc-ico">${noites === 0 ? '🪙' : Arte.luas(noites)}</span>
+          <span class="sc-txt">${noites === 0
+            ? '<b>Hoje é dia de semanada!</b>'
+            : noites === 1
+              ? 'Sua semanada chega <b>amanhã</b>'
+              : `Sua semanada chega em <b>${noites} noites</b>`}</span>
+        </div>`;
+      })()}
+
     ${/* O SONHO NA PRIMEIRA TELA, e não escondido numa aba.
 
          O pote de guardar mostrava um número e mais nada: R$ 30 não diz se ela
@@ -597,6 +620,38 @@ function telaTarefas() {
   const especiais = Dados.missoesEspeciais(kid.id);
   const semanais = ts.filter(x => !x.diaria && !x.especial);
   const diarias = ts.filter(x => x.diaria);
+
+  /* O CORTE É PELO VALOR, e não pela frequência: uma missão vale moeda ou não vale, e
+     essa é a distinção que ela precisa aprender. Dentro de cada seção as de todo dia vêm
+     antes, porque a trilha de sete bolinhas pede mais atenção que uma linha simples.
+
+     Zero é o SINAL, e não uma coluna nova: uma missão que não vale moeda tem valor zero,
+     que já é exatamente o que ela é. Uma coluna "é_da_familia" seria um segundo lugar
+     para a mesma verdade, e os dois divergiriam no primeiro erro de digitação. */
+  const rotina = ts.filter(x => !x.especial);
+  const ordem = (a, b) => (b.diaria ? 1 : 0) - (a.diaria ? 1 : 0);
+  const familia = rotina.filter(x => !(Number(x.amount) > 0)).sort(ordem);
+
+  /* O CONTADOR DE CADA SEÇÃO, e o prazo que ele nomeia depende do que há dentro.
+
+     "De hoje" e "desta semana" não são sinônimos e a distinção foi pensada: a diária
+     recomeça amanhã, porque o cachorro tem sede de novo; a semanal, não. Somar as duas num
+     rótulo só daria "3 de 3" numa segunda em que ela ainda tem seis dias de compromisso.
+
+     Quando a seção mistura as duas, o rótulo não mente escolhendo uma: diz "feitas", e o
+     detalhe de prazo fica na trilha de sete bolinhas que cada diária já carrega.
+
+     A ESPECIAL FICA FORA de todo contador — ela não é rotina, e somá-la faria o número
+     dizer que a criança está devendo algo que só precisa acontecer até domingo. */
+  const contador = lista => {
+    if (!lista.length) return '';
+    const feitasN = lista.filter(x => x.feita).length;
+    const soDiaria = lista.every(x => x.diaria);
+    const soSemanal = lista.every(x => !x.diaria);
+    const quando = soDiaria ? ' de hoje' : soSemanal ? ' desta semana' : ' feitas';
+    return `<span class="n">${feitasN}</span> de <span class="n">${lista.length}</span>${quando}`;
+  };
+  const pagas = rotina.filter(x => Number(x.amount) > 0).sort(ordem);
   const semanaisFeitas = semanais.filter(x => x.feita).length;
   const diariasHoje = diarias.filter(x => x.feita).length;
   const faltamHoje = (semanais.length - semanaisFeitas) + (diarias.length - diariasHoje);
@@ -650,7 +705,10 @@ function telaTarefas() {
           <b>${esc(t.name)}</b>
           ${Number(t.amount) > 0
             ? `<span class="missao-vale">${Arte.moeda(19)} ${fmtKid(t.amount)}</span>`
-            : '<small>sem moeda, mas conta ponto!</small>'}
+            /* NÃO REPETE que não vale moeda: a seção inteira se chama "porque somos uma
+             família" e traz a nota embaixo. Dizer a mesma coisa três vezes na mesma tela
+             transforma a explicação em desculpa. */
+          : ''}
         </span>
       </span>
       ${t.feita
@@ -671,7 +729,10 @@ function telaTarefas() {
         <b>${esc(t.name)}</b>
         ${Number(t.amount) > 0
           ? `<span class="missao-vale">${Arte.moeda(19)} ${fmtKid(t.amount)}</span>`
-          : '<small>sem moeda, mas conta ponto!</small>'}
+          /* NÃO REPETE que não vale moeda: a seção inteira se chama "porque somos uma
+             família" e já traz a nota embaixo. Dizer a mesma coisa três vezes na mesma
+             tela transforma a explicação em desculpa. */
+          : ''}
         ${t.feita && !t.confirmada ? '<small>esperando um adulto conferir</small>' : ''}
       </span>
       <span class="missao-mar">
@@ -686,18 +747,41 @@ function telaTarefas() {
       <span class="emo">🗺️</span> ${especiais.length > 1 ? 'Missões especiais' : 'Missão especial'}
     </div>` : ''}
     ${especiais.map(cardEspecial).join('')}
-    ${diarias.length ? `<div class="missao-conta">
-      <span class="n">${diariasHoje}</span> de <span class="n">${diarias.length}</span> de hoje
+    ${/* DUAS SEÇÕES, E A DE CIMA NÃO TEM MOEDA NENHUMA.
+
+         O app já aceitava missão de valor zero, mas a tela misturava tudo: arrumar a cama
+         e lavar o carro apareciam lado a lado, cada um com o seu preço. A criança lia uma
+         lista de serviços, e não a diferença entre ajudar em casa e fazer um trabalho.
+
+         É o efeito de superjustificação, o achado mais bem documentado desta área: quando
+         se paga por algo que a criança já fazia de graça, ela para de fazer pelo próprio
+         motivo e passa a fazer pelo preço — e some no dia em que o preço some. Arrumar a
+         própria cama não é serviço prestado à família; é o que se faz por morar junto.
+
+         A ORDEM IMPORTA: as de família vêm PRIMEIRO, e sem número em dinheiro em lugar
+         nenhum. Ler o preço antes molda a expectativa — quem abre a lista vendo moedas
+         entende o resto como moeda que faltou. */''}
+
+    ${familia.length ? `<div class="missao-conta familia-cab">
+      <span class="emo">🏡</span> Porque somos uma família
+      <span class="mc-n">${contador(familia)}</span>
     </div>` : ''}
-    ${diarias.map(cardDiaria).join('')}
-    ${semanais.length ? `<div class="missao-conta">
-      <span class="n">${semanaisFeitas}</span> de <span class="n">${semanais.length}</span> desta semana
+    ${familia.map(t => (t.diaria ? cardDiaria : cardSemanal)(t)).join('')}
+    ${familia.length ? `<div class="familia-nota">
+      Estas não valem moeda — valem prêmio 🏆
     </div>` : ''}
-    ${semanais.map(cardSemanal).join('')}
+
+    ${pagas.length ? `<div class="missao-conta">
+      <span class="emo">🪙</span> ${pagas.length > 1 ? 'Trabalhos que valem moeda' : 'Trabalho que vale moeda'}
+      <span class="mc-n">${contador(pagas)}</span>
+    </div>` : ''}
+    ${pagas.map(t => (t.diaria ? cardDiaria : cardSemanal)(t)).join('')}
     <div class="vazio" style="font-size:15px">
-      ${diarias.length
+      ${pagas.some(t => t.diaria)
         ? 'As de todo dia pagam quando você cuidar a semana toda 🗓️'
-        : 'Um adulto confere o que você marcou. Aí a moeda cai no pote 🪙'}
+        : pagas.length
+          ? 'Um adulto confere o que você marcou. Aí a moeda cai no pote 🪙'
+          : 'Um adulto confere o que você marcou 🏆'}
     </div>`;
 }
 
@@ -714,7 +798,10 @@ function telaSonho() {
       <div class="carta"><div class="vazio">
         Um sonho é uma coisa que você quer muito e que dá para comprar
         guardando um pouquinho toda semana 🌟
-      </div></div>`;
+      </div></div>
+      ${/* A LISTA APARECE MESMO SEM SONHO, e é aqui que ela mais serve: sem meta
+           cadastrada, esta aba não tinha nada além de um aviso para chamar um adulto. */''}
+      ${blocoDasVontades()}`;
   }
 
   const alvo = Number(meta.target_amount) || 0;
@@ -741,6 +828,23 @@ function telaSonho() {
           <div class="sonho-quanto">${fmtKid(p.guardar)} <small>de ${fmtKid(alvo)}</small></div>
         </span>
       </div>
+      ${/* O PREÇO EM COISAS QUE ELE CONHECE.
+
+           A barra responde "quando", em semanadas. Isto responde "quanto", que é outra
+           pergunta e continuava sem resposta: aos seis anos, R$ 5 e R$ 60 são os dois
+           "um dinheiro", e a diferença é abstrata até virar coisa.
+
+           A régua sai do que ELE comprou, com o preço que ELE pagou — uma tabela de
+           fábrica erraria justamente onde a comparação precisa acertar. Sem histórico
+           não aparece nada, que é melhor que um número chutado. */
+        (() => {
+          const r = Dados.reguaDe(kid.id, alvo);
+          if (!r) return '';
+          return `<div class="regua">
+            <span class="regua-ico">${esc(emojiDe(r.nome))}</span>
+            isso é <b>${r.quantos} ${esc(r.nome.toLowerCase())}${r.quantos > 1 ? 's' : ''}</b>
+          </div>`;
+        })()}
       <div class="trilha">${Arte.trilha(pct, meta.icon || '🎁')}</div>
       ${/* CHEGOU: a hora de comprar. É o fim da história que a barra vinha contando.
            Sem este botão o app enchia a barra, tocava o confete e não deixava
@@ -769,10 +873,179 @@ function telaSonho() {
         <b style="color:var(--guardar-fundo)">Guardar</b>.
         E se você não tirar nada dele durante a semana, ganha a <b>moeda mágica</b> ✨
       </div>
-    </div>`;
+    </div>
+
+    ${/* A LISTA DE VONTADES fica logo abaixo do sonho, e não numa aba nova.
+
+         A meta é a vontade que virou compromisso: as duas juntas contam a história inteira
+         — o que ele quer agora, e o que ele decidiu querer o bastante para esperar. Separá-las
+         em abas faria a lista parecer outro assunto, quando é o mesmo assunto num estágio
+         anterior. */''}
+    ${blocoDasVontades()}`;
 }
 
 /* ---------- Aba 4: os prêmios ---------- */
+
+/* ---------- A PRATELEIRA DOS SONHOS JÁ CONQUISTADOS ----------
+
+   Os prêmios da semana recomeçam toda semana, de propósito: são um convite, não um
+   acervo. Faltava o acervo — a coisa que NÃO recomeça, e que só cresce.
+
+   Aos seis anos a criança vive no presente absoluto. Sem ver o que já conquistou, cada
+   meta nova começa do zero emocional, e esperar continua sendo uma coisa difícil que um
+   adulto pede em vez de uma coisa que ela já provou saber fazer. É a diferença entre um
+   comportamento e uma identidade — e a identidade é o que sobra quando o app sai de cena.
+
+   FICA JUNTO DOS PRÊMIOS e não em aba nova: a aba tem quatro lugares, todos ocupados, e
+   um quinto encolheria os outros abaixo do alvo de toque. E o lugar é o certo — prêmio da
+   semana e conquista de sempre respondem à mesma pergunta, em prazos diferentes. */
+function prateleira() {
+  const feitos = Dados.conquistas(App.kid.id);
+  if (!feitos.length) return '';
+  return `
+    <h2 style="margin-top:26px"><span class="emo">🏆</span> O que você já conquistou</h2>
+    <div class="conquistas">
+      ${feitos.map(c => `
+        <div class="conq">
+          <span class="conq-ico">${esc(c.meta.icon || '🎁')}</span>
+          <span class="conq-txt">
+            <b>${esc(c.meta.name)}</b>
+            ${/* A ESPERA é a medida, e não a data: é a mesma unidade da barra do sonho,
+                 então a conquista fala a língua do esforço que a produziu. Sem a conta,
+                 mostra só o valor — some a medida, nunca a conquista. */
+              c.semanadas
+                ? `<small>você esperou <b>${c.semanadas} ${c.semanadas === 1 ? 'semanada' : 'semanadas'}</b></small>`
+                : '<small>conquistado</small>'}
+          </span>
+          <span class="conq-val">${fmtKid(c.valor)}</span>
+        </div>`).join('')}
+    </div>`;
+}
+
+/* ---------- O QUE O POTE DE DOAR JÁ FEZ ----------
+
+   Gastar devolve um brinquedo; guardar devolve um patinete. Doar devolve uma coisa que a
+   criança não vê acontecer — e o que não se vê, aos seis anos, não existe. Sem memória,
+   doar é só subtrair, e nenhuma criança aprende a gostar de subtrair.
+
+   O texto conta VEZES antes de valor: "quatro vezes" é uma quantidade que ela manipula, e
+   R$ 23 é um número que ela ainda está aprendendo a sentir. E nomeia quem recebeu, porque
+   é o mais perto de um destinatário que o app consegue mostrar. */
+function memoriaDoDoar() {
+  const d = Dados.doacoes(App.kid.id);
+  if (!d.vezes) return '';
+  return `
+    <div class="doou">
+      <span class="doou-ico">💝</span>
+      <span>
+        <b>Você já ajudou ${d.vezes} ${d.vezes === 1 ? 'vez' : 'vezes'}</b>
+        <small>${fmtKid(d.total)} no total${d.quem.length
+          ? ' · ' + esc(d.quem.slice(0, 2).join(', ').toLowerCase()) : ''}</small>
+      </span>
+    </div>`;
+}
+/* ---------- A LISTA DE VONTADES ----------
+
+   Fica na aba do sonho, e não numa aba nova: a meta é a vontade que virou compromisso, e
+   as duas juntas contam a história inteira — o que ela quer agora, e o que ela decidiu
+   querer o bastante para esperar.
+
+   A PERGUNTA VEM PRIMEIRO quando há uma vontade madura, porque é a única coisa da tela
+   que pede resposta. Abaixo dela, a lista. */
+function blocoDasVontades() {
+  const kid = App.kid;
+  const lista = Dados.vontades(kid.id);
+  const perguntar = Dados.vontadeAPerguntar(kid.id);
+
+  const linha = w => `
+    <div class="vont ${w.resposta || ''}">
+      <span class="vont-ico">${esc(w.icon || '⭐')}</span>
+      <span class="vont-txt">
+        <b>${esc(w.name)}</b>
+        <small>${w.resposta === 'quero'
+          ? 'você esperou e ainda quer 💪'
+          : w.resposta === 'passou'
+            ? 'você mudou de ideia'
+            : w.noites === 0 ? 'anotado hoje'
+              : `há ${w.noites} ${w.noites === 1 ? 'noite' : 'noites'}`}</small>
+      </span>
+      ${w.resposta ? '' : `<button class="vont-x" data-esquecer="${w.id}">×</button>`}
+    </div>`;
+
+  return `
+    ${perguntar ? `
+      ${/* A PERGUNTA. As duas respostas são boas e têm o mesmo peso visual: "ainda quero"
+           é uma vontade que sobreviveu ao tempo, e "mudei de ideia" é a descoberta. Fazer
+           uma das duas maior seria dizer qual é a resposta certa — e aí não é reflexão,
+           é obediência. */''}
+      <div class="vont-pergunta">
+        <div class="vp-ico">${esc(perguntar.icon || '⭐')}</div>
+        <div class="vp-txt">
+          Há <b>${perguntar.noites} noites</b> você queria muito
+          <b>${esc(perguntar.name)}</b>.<br>Ainda quer?
+        </div>
+        <div class="vp-bts">
+          <button class="vp-bt sim" data-resp="quero" data-w="${perguntar.id}">Ainda quero!</button>
+          <button class="vp-bt nao" data-resp="passou" data-w="${perguntar.id}">Mudei de ideia</button>
+        </div>
+      </div>` : ''}
+
+    <h2 style="margin-top:22px"><span class="emo">📝</span> O que eu quero</h2>
+    ${lista.length
+      ? `<div class="vontades">${lista.map(linha).join('')}</div>`
+      : `<div class="carta"><div class="vazio">
+          Anote aqui as coisas que você quer. Depois de umas noites,
+          eu pergunto se você ainda quer 🌙
+        </div></div>`}
+    <button class="bt clara" id="vont-nova" style="margin-top:10px">
+      <span class="emo">➕</span> Quero anotar uma coisa
+    </button>`;
+}
+
+/* A TELA DE ANOTAR, com os mesmos desenhos que ela já conhece das compras: um desenho
+   que ela reconhece vale mais que um nome que ela ainda soletra. */
+function telaNovaVontade() {
+  let nome = '', icone = '⭐';
+  const desenhar = () => {
+    raiz().innerHTML = `
+      ${palco('uau', 118)}
+      ${balao('O que você quer? Eu anoto para você não esquecer 📝')}
+      <div class="carta">
+        <div class="pote-nome" style="text-align:left;margin-bottom:10px">o que é?</div>
+        <div class="chips" style="justify-content:flex-start;margin-bottom:0">
+          ${COISAS_GASTAR.map(([e, n]) => `
+            <button class="chip ${nome === n ? 'on' : ''}" data-vn="${n}" data-vi="${e}">
+              ${e} ${n}</button>`).join('')}
+        </div>
+      </div>
+      <button class="bt verde" id="vn-ok" ${nome ? '' : 'disabled'} style="margin-top:14px">
+        <span class="emo">📝</span> ${nome ? 'Anotar ' + esc(nome) : 'Escolha uma coisa'}
+      </button>
+      <button class="bt clara" id="vn-volta" style="margin-top:12px">
+        <span class="emo">↩️</span> Voltar
+      </button>`;
+
+    document.querySelectorAll('[data-vn]').forEach(b => b.onclick = () => {
+      Som.toque(); vibra(10);
+      nome = b.dataset.vn; icone = b.dataset.vi; desenhar();
+    });
+    el('#vn-ok').onclick = () => {
+      const r = Dados.anotarVontade(App.kid.id, nome, icone);
+      if (!r.ok) {
+        Som.nao();
+        return aviso(r.motivo === 'repetida'
+          ? 'Isso já está na sua lista 📝'
+          : 'Escolha uma coisa primeiro', '😕');
+      }
+      Som.moeda(); vibra(20);
+      Nuvem.sincronizar();
+      App.aba = 'sonho'; render();
+      aviso('Anotado! Daqui a umas noites eu pergunto se você ainda quer 🌙');
+    };
+    el('#vn-volta').onclick = () => { Som.toque(); App.aba = 'sonho'; render(); };
+  };
+  desenhar();
+}
 
 function telaSelos() {
   const selos = Dados.selos(App.kid.id);
@@ -795,7 +1068,10 @@ function telaSelos() {
     </div>
     <div class="vazio" style="font-size:15px">
       Os prêmios recomeçam toda semana, no dia da sua semanada 🗓️
-    </div>`;
+    </div>
+
+    ${prateleira()}
+    ${memoriaDoDoar()}`;
 }
 
 /* ---------- O extrato inteiro, em tela própria ---------- */
@@ -1149,6 +1425,23 @@ document.addEventListener('click', ev => {
      que é a pergunta natural depois de ver a barra. */
   if (alvo.dataset && alvo.dataset.irSonho) { Som.toque(); App.aba = 'sonho'; render(); return; }
   if (alvo.id === 'bt-extrato') { Som.toque(); return telaExtrato(); }
+  if (alvo.id === 'vont-nova') { Som.toque(); return telaNovaVontade(); }
+  if (alvo.dataset && alvo.dataset.resp) {
+    Som.toque(); vibra(12);
+    Dados.responderVontade(App.kid.id, alvo.dataset.w, alvo.dataset.resp);
+    Nuvem.sincronizar();
+    render();
+    /* AS DUAS RESPOSTAS SÃO CELEBRADAS. Aplaudir só quem manteve a vontade ensinaria
+       que mudar de ideia é errado — quando é exatamente a descoberta que a lista existe
+       para provocar. */
+    return aviso(Dados.elogioDaResposta(alvo.dataset.resp));
+  }
+  if (alvo.dataset && alvo.dataset.esquecer) {
+    Som.toque();
+    Dados.esquecerVontade(App.kid.id, alvo.dataset.esquecer);
+    Nuvem.sincronizar();
+    return render();
+  }
   if (alvo.id === 'bt-sair') return sair();
 
   if (alvo.dataset && alvo.dataset.tarefa) {

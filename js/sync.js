@@ -62,6 +62,7 @@ const SYNC_TABLES = {
   kids: ['name', 'avatar', 'cor', 'nascimento_ano', 'semanada_valor', 'semanada_dia',
     'rendimento_tipo', 'rendimento_valor', 'pin_hash', 'pin_salt', 'active'],
   kid_goals: ['kid_id', 'name', 'icon', 'target_amount', 'done', 'done_at'],
+  kid_wishes: ['kid_id', 'name', 'icon', 'criada_em', 'resposta', 'respondida_em'],
   kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active', 'frequencia', 'expira_em'],
   kid_entries: ['kid_id', 'tipo', 'amount', 'date', 'description', 'pote', 'task_id', 'kid_goal_id', 'confirmada', 'repartido'],
 };
@@ -102,7 +103,7 @@ const COLUNAS = {
   'recurrences.kid_id': 'uuid',
   'transactions.kid_id': 'uuid',
   semanada_valor: 'num#', rendimento_valor: 'num#', semanada_dia: 'int#', nascimento_ano: 'int',
-  done_at: 'date', expira_em: 'date', confirmada: 'bool', repartido: 'bool',
+  done_at: 'date', expira_em: 'date', criada_em: 'date', respondida_em: 'date', confirmada: 'bool', repartido: 'bool',
   deleted: 'bool', active: 'bool', is_reserve: 'bool', recurring: 'bool',
   adjustment: 'bool', paid: 'bool', done: 'bool', pontual: 'bool',
   members: 'json', tags: 'json',

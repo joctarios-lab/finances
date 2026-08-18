@@ -226,3 +226,50 @@ end $$;
 --   select event_object_table from information_schema.triggers
 --    where trigger_name = 'trg_server_at' order by event_object_table;
 -- ---------------------------------------------------------------------------
+
+-- ============================================================
+-- A LISTA DE VONTADES (kid_wishes)
+--
+-- O que a criança quer HOJE, anotado para ser reavaliado depois de algumas noites.
+-- Separada de kid_goals de propósito: a meta tem valor e barra de progresso, a
+-- vontade tem só um nome e uma data — misturar as duas transformaria toda vontade
+-- passageira num compromisso.
+--
+-- Idempotente: rodar duas vezes não faz mal.
+-- ============================================================
+create table if not exists kid_wishes (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  kid_id uuid not null,
+  name text not null,
+  icon text default '⭐',
+  criada_em date,
+  resposta text,
+  respondida_em date,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+
+create index if not exists idx_kid_wishes_kid on kid_wishes(family_id, kid_id);
+alter table kid_wishes enable row level security;
+
+do $$
+begin
+  execute 'drop policy if exists kid_wishes_rw on kid_wishes';
+  execute
+    'create policy kid_wishes_rw on kid_wishes for all to authenticated'
+    || ' using (is_member(family_id)) with check (is_member(family_id))';
+end $$;
+
+-- O carimbo de server_at, igual ao das outras tabelas do cofrinho.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_name = 'kid_entries' and column_name = 'server_at') then
+    execute 'alter table kid_wishes add column if not exists server_at timestamptz default now()';
+    execute 'drop trigger if exists trg_kid_wishes_server_at on kid_wishes';
+    execute 'create trigger trg_kid_wishes_server_at before insert or update on kid_wishes'
+      || ' for each row execute function stamp_server_at()';
+  end if;
+end $$;
+

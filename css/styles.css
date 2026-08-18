@@ -1991,3 +1991,19 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .kid-tarefa-nome { flex: 1; min-width: 0; }
 .kid-tarefa-nome small { display: block; color: var(--paper-dim); font-size: 11.5px; }
 .kid-tarefa b small { color: var(--paper-dim); font-weight: 400; font-size: 11px; }
+
+/* ---------- A PERGUNTA DA SEMANA ----------
+
+   Discreta: é uma sugestão de conversa, não um alerta. Se tivesse a cor de pendência
+   viraria mais uma coisa a resolver — e conversar com um filho não é tarefa vencida. */
+.conversa {
+  margin-bottom: 12px;
+  border-left: 3px solid var(--gold);
+}
+.conversa-cab {
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted); margin-bottom: 6px;
+}
+.conversa-fato { font-weight: 600; margin-bottom: 3px; }
+.conversa-q { color: var(--muted); font-size: 14px; line-height: 1.45; }
+

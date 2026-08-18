@@ -33,6 +33,7 @@ select json_build_object(
   'kid_goals', (select coalesce(json_agg(t), '[]'::json) from (select * from kid_goals where deleted = false) t),
   'kid_tasks', (select coalesce(json_agg(t), '[]'::json) from (select * from kid_tasks where deleted = false) t),
   'kid_entries', (select coalesce(json_agg(t), '[]'::json) from (select * from kid_entries where deleted = false) t),
+  'kid_wishes', (select coalesce(json_agg(t), '[]'::json) from (select * from kid_wishes where deleted = false) t),
   'recurrences',    (select coalesce(json_agg(t), '[]'::json) from (select * from recurrences     where deleted = false) t),
   'family_settings',(select coalesce(json_agg(t), '[]'::json) from (select * from family_settings where deleted = false) t),
   -- Apagados entram à parte: às vezes o erro está justamente no que sumiu
@@ -94,6 +95,7 @@ select json_build_object(
   'kid_goals', (select coalesce(json_agg(t), '[]'::json) from (select * from kid_goals where deleted = false) t),
   'kid_tasks', (select coalesce(json_agg(t), '[]'::json) from (select * from kid_tasks where deleted = false) t),
   'kid_entries', (select coalesce(json_agg(t), '[]'::json) from (select * from kid_entries where deleted = false) t),
+  'kid_wishes', (select coalesce(json_agg(t), '[]'::json) from (select * from kid_wishes where deleted = false) t),
   'recurrences',    (select coalesce(json_agg(t), '[]'::json) from (select * from recurrences    where deleted = false) t),
   'family_settings', (select coalesce(json_agg(json_build_object(
       'month_start_day', s.month_start_day, 'monthly_income', s.monthly_income,

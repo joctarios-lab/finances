@@ -23,7 +23,7 @@
 
 const CHAVE = 'financas.cofrinho.v1';
 const CHAVE_SYNC = 'financas.sync.v1';
-const TABELAS = ['kids', 'kid_goals', 'kid_tasks', 'kid_entries'];
+const TABELAS = ['kids', 'kid_goals', 'kid_tasks', 'kid_entries', 'kid_wishes'];
 
 // As colunas que vão para a nuvem, espelhando js/sync.js. Uma coluna a mais aqui
 // do que lá seria um 400 do PostgREST a cada envio — e o cofrinho pararia calado.
@@ -33,6 +33,7 @@ const COLUNAS = {
   kid_goals: ['kid_id', 'name', 'icon', 'target_amount', 'done'],
   kid_tasks: ['kid_id', 'name', 'icon', 'amount', 'active', 'frequencia', 'expira_em'],
   kid_entries: ['kid_id', 'tipo', 'pote', 'amount', 'date', 'description', 'task_id', 'kid_goal_id', 'confirmada', 'repartido'],
+  kid_wishes: ['kid_id', 'name', 'icon', 'criada_em', 'resposta', 'respondida_em'],
 };
 
 const Dados = {
@@ -725,6 +726,250 @@ const Dados = {
     const pedido = this.all('kid_entries').find(e =>
       e.kid_id === kidId && e.kid_goal_id === meta.id && e.confirmada === false);
     return pedido ? { meta, entry: pedido } : null;
+  },
+
+  /* ---------- A LISTA DE VONTADES ----------
+
+     Existia UM sonho, cadastrado pelo adulto. Quando ela queria alguma coisa numa
+     terça-feira, não havia onde botar: ou virava meta nova (e a anterior morria), ou
+     sumia. Agora ela mesma anota, e o app pergunta depois.
+
+     DORMIR SOBRE A VONTADE antes de comprar é a ferramenta mais citada contra a compra
+     por impulso, e funciona em qualquer idade. Mas o ganho maior aqui é outro: ela vê os
+     PRÓPRIOS desejos mudarem de ideia. Descobrir sozinha que "eu queria muito e agora
+     não quero mais" ensina sobre impulso mais do que qualquer explicação de adulto — e é
+     uma lição que não dá para dar de outro jeito.
+
+     AS DUAS RESPOSTAS SÃO BOAS, e o app não pode preferir uma. "Ainda quero" não é
+     teimosia: é uma vontade que sobreviveu ao tempo, que é exatamente o sinal de que
+     vale virar meta. E "mudei de ideia" não é derrota — é a descoberta. */
+  NOITES_DE_SONO: 3,
+
+  vontades(kidId) {
+    return this.all('kid_wishes')
+      .filter(w => w.kid_id === kidId)
+      .map(w => ({
+        ...w,
+        noites: w.criada_em ? Math.max(0, this.noitesAte(this.hojeISO(), w.criada_em)) : 0,
+        /* MADURA = já dormiu as noites e ainda não foi perguntada. Só as maduras geram
+           a pergunta; as recentes ficam quietas, porque perguntar no mesmo dia não
+           testa nada. */
+        madura: !w.resposta && !!w.criada_em
+          && this.noitesAte(this.hojeISO(), w.criada_em) >= this.NOITES_DE_SONO,
+      }))
+      .sort((a, b) => String(b.criada_em || '').localeCompare(String(a.criada_em || '')));
+  },
+
+  /* A PRÓXIMA VONTADE A PERGUNTAR, uma de cada vez.
+
+     Perguntar sobre quatro coisas de uma vez transforma a reflexão em formulário, e uma
+     criança de seis anos responde qualquer coisa para o formulário acabar. A mais antiga
+     primeiro: é a que teve mais tempo de mudar. */
+  vontadeAPerguntar(kidId) {
+    const maduras = this.vontades(kidId).filter(w => w.madura);
+    return maduras.length ? maduras[maduras.length - 1] : null;
+  },
+
+  anotarVontade(kidId, nome, icone) {
+    const n = String(nome || '').trim();
+    if (!n) return { ok: false, motivo: 'vazio' };
+    /* SEM REPETIR: anotar a mesma coisa duas vezes faria o app perguntar duas vezes, e a
+       segunda pergunta desmente a primeira resposta. */
+    const ja = this.vontades(kidId).find(w =>
+      !w.resposta && w.name.toLowerCase() === n.toLowerCase());
+    if (ja) return { ok: false, motivo: 'repetida' };
+    const id = this.upsert('kid_wishes', {
+      kid_id: kidId, name: n, icon: icone || '⭐',
+      criada_em: this.hojeISO(), resposta: null, respondida_em: null,
+    });
+    return { ok: true, id };
+  },
+
+  /* A RESPOSTA FICA GUARDADA, e não apaga a vontade.
+
+     Apagar o que ela deixou de querer apagaria justamente a lição: a lista das vontades
+     que passaram é a prova, na letra dela, de que vontade passa. */
+  responderVontade(kidId, id, resposta) {
+    const w = this.get('kid_wishes', id);
+    if (!w || w.kid_id !== kidId) return false;
+    if (resposta !== 'quero' && resposta !== 'passou') return false;
+    this.upsert('kid_wishes', { ...w, resposta, respondida_em: this.hojeISO() });
+    return true;
+  },
+
+  /* O ELOGIO DE CADA RESPOSTA, aqui e não solto no handler da tela.
+
+     AS DUAS SÃO CELEBRADAS, e isso é a regra: aplaudir só quem manteve a vontade
+     ensinaria que mudar de ideia é errado -- quando é exatamente a descoberta que a lista
+     existe para provocar. Ficou aqui porque uma regra que só existe dentro de um handler
+     de clique não pode ser medida, e uma sabotagem que calou um dos dois elogios passou
+     verde justamente por isso. */
+  elogioDaResposta(resposta) {
+    return resposta === 'quero'
+      ? 'Você esperou e ainda quer! Isso é uma vontade de verdade 💪'
+      : resposta === 'passou'
+        ? 'Mudou de ideia! Que bom que você esperou para descobrir 🌟'
+        : null;
+  },
+
+  esquecerVontade(kidId, id) {
+    const w = this.get('kid_wishes', id);
+    if (!w || w.kid_id !== kidId) return false;
+    this.remove('kid_wishes', id);
+    return true;
+  },
+
+  /* ---------- OS SONHOS JÁ CONQUISTADOS ----------
+
+     O dado estava guardado e nunca aparecia. Toda meta comprada vira `done: true` com a
+     data — o próprio comentário do app do adulto diz "encerrada, não apagada: o histórico
+     dela precisa poder contar que este sonho existiu" — e o app da criança nunca contou.
+
+     Aos seis anos a criança vive no presente absoluto. Sem ver o que já conquistou, cada
+     meta nova começa do zero emocional, e esperar continua sendo uma coisa difícil que um
+     adulto pede — em vez de uma coisa que ela já provou saber fazer.
+
+     QUANTAS SEMANADAS ELA ESPEROU é a medida certa, e não a data: é a mesma unidade da
+     barra do sonho e do custo de oportunidade, então a conquista fala a mesma língua da
+     espera que a produziu. Sem `done_at` não dá para contar, e aí o sonho aparece sem o
+     número — some a medida, não a conquista. */
+  conquistas(kidId) {
+    /* A ESPERA DE CADA SONHO COMEÇA ONDE O ANTERIOR TERMINOU, e a primeira versão errava
+       isto: contava desde o primeiro dinheiro guardado na vida, então o segundo sonho
+       herdava a espera do primeiro e o terceiro herdava as duas. Numa foto, um sonho de
+       seis semanadas apareceu como onze.
+
+       Errar aqui é pior que não mostrar. O número existe para dizer "você foi capaz de
+       esperar tudo isso"; inflado, ele elogia uma espera que não houve — e a criança que
+       sabe quanto tempo demorou aprende que o app exagera.
+
+       Do sonho MAIS ANTIGO para o mais novo, cada um começando no fim do anterior. */
+    const feitos = this.all('kid_goals')
+      .filter(g => g.kid_id === kidId && g.done)
+      .map(g => {
+        const compra = this.all('kid_entries').find(e =>
+          e.kid_id === kidId && e.kid_goal_id === g.id);
+        return { meta: g, quando: g.done_at || (compra ? compra.date : null) };
+      })
+      .sort((a, b) => String(a.quando || '').localeCompare(String(b.quando || '')));
+
+    /* O PRIMEIRO DINHEIRO GUARDADO na vida, marco zero do primeiro sonho. */
+    const primeiro = this.all('kid_entries')
+      .filter(e => e.kid_id === kidId && e.pote === 'guardar'
+        && e.tipo !== 'gasto' && e.tipo !== 'doacao')
+      .map(e => String(e.date)).sort()[0] || null;
+
+    let desde = primeiro;
+    const saida = feitos.map(f => {
+      const dias = (desde && f.quando) ? this.noitesAte(f.quando, desde) : null;
+      if (f.quando) desde = f.quando;
+      return {
+        meta: f.meta,
+        quando: f.quando,
+        /* Arredonda para cima e nunca abaixo de 1: um sonho conquistado em quatro dias
+           ainda foi uma espera, e "esperou 0 semanadas" apagaria o esforço com um zero. */
+        semanadas: (dias !== null && dias >= 0) ? Math.max(1, Math.ceil(dias / 7)) : null,
+        valor: Number(f.meta.target_amount) || 0,
+      };
+    });
+
+    /* Do mais novo para o mais velho na tela: a conquista recente é a que ela lembra, e a
+       prateleira precisa abrir pelo que ela reconhece. */
+    return saida.reverse();  },
+
+  /* ---------- QUANTAS NOITES ATÉ A SEMANADA ----------
+
+     As missões especiais já contam em noites, e foi para dar a ela um motivo de abrir o
+     app. O evento mais importante da semana dela não contava nada até o dinheiro cair.
+
+     A antecipação é metade do valor de uma recompensa, e é ela que treina a espera — não
+     o recebimento. Uma criança contando as noites até a semanada está praticando de graça
+     exatamente a habilidade que o cofrinho existe para ensinar.
+
+     Devolve 0 no próprio dia (é hoje, não "faltam sete") e null sem semanada configurada,
+     porque prometer um dia que não existe é pior que não prometer nada. */
+  noitesAteSemanada(kidId, refISO) {
+    const kid = this.get('kids', kidId);
+    if (!kid || !(Number(kid.semanada_valor) > 0)) return null;
+    const hoje = refISO || this.hojeISO();
+    const d = new Date(hoje + 'T12:00:00');
+    const alvo = Math.min(6, Math.max(0, Number(kid.semanada_dia) || 0));
+    return (alvo - d.getDay() + 7) % 7;
+  },
+
+  /* ---------- O PREÇO EM COISAS QUE ELA CONHECE ----------
+
+     Ela não sabe se R$ 60 é muito. Aos seis anos, R$ 5 e R$ 50 são os dois "um dinheiro",
+     e a diferença é abstrata até virar coisa. O app já traduz preço em SEMANADAS, que
+     responde "quando"; isto responde "quanto", que é outra pergunta.
+
+     USA O PREÇO REAL DO QUE ELA COMPROU, e não uma tabela inventada: o sorvete da praça
+     dela custa o que custa, e um valor de fábrica erraria justamente onde a comparação
+     precisa acertar. Sem histórico não há tradução — e aí o app cala, em vez de chutar.
+
+     A MEDIANA e não a média: uma vez que ela gastou R$ 30 num presente de aniversário
+     puxaria a média do "brinquedo" para cima e faria o patinete parecer barato. */
+  precoTipico(kidId, oque) {
+    const vals = this.all('kid_entries')
+      .filter(e => e.kid_id === kidId && e.tipo === 'gasto'
+        && e.description === oque && Number(e.amount) > 0)
+      .map(e => Number(e.amount))
+      .sort((a, b) => a - b);
+    if (!vals.length) return null;
+    return vals[Math.floor(vals.length / 2)];
+  },
+
+  /* A COISA MAIS COMPRADA que sirva de régua para um valor.
+
+     Precisa de pelo menos duas compras: uma só pode ter sido um dia atípico, e uma régua
+     construída sobre um acaso mede errado com a mesma confiança de uma régua boa.
+
+     E a conta precisa dar um número que ela consiga imaginar. Acima de trinta, "45
+     sorvetes" deixa de ser uma quantidade e vira "muitos" — que é o que ela já achava
+     antes da tradução. Abaixo de dois, não há comparação nenhuma a fazer. */
+  reguaDe(kidId, valor) {
+    const v = Number(valor) || 0;
+    if (!(v > 0)) return null;
+    const conta = {};
+    for (const e of this.all('kid_entries')) {
+      if (e.kid_id !== kidId || e.tipo !== 'gasto' || !e.description) continue;
+      if (!(Number(e.amount) > 0)) continue;
+      conta[e.description] = (conta[e.description] || 0) + 1;
+    }
+    const candidatos = Object.keys(conta)
+      .filter(nome => conta[nome] >= 2)
+      .sort((a, b) => conta[b] - conta[a]);
+    for (const nome of candidatos) {
+      const preco = this.precoTipico(kidId, nome);
+      if (!(preco > 0)) continue;
+      const quantos = Math.round(v / preco);
+      if (quantos >= 2 && quantos <= 30) return { nome, preco, quantos };
+    }
+    return null;
+  },
+
+  /* ---------- A MEMÓRIA DO POTE DE DOAR ----------
+
+     Gastar devolve um brinquedo; guardar devolve um patinete. Doar devolve uma coisa que a
+     criança não vê acontecer — e o que não se vê, aos seis anos, não existe. Sem memória,
+     doar é apenas subtrair, e nenhuma criança aprende a gostar de subtrair.
+
+     Conta apenas o CONFIRMADO: uma doação que o adulto ainda não aprovou pode não ter
+     acontecido, e um total que encolhe depois de ter crescido desmente o próprio histórico. */
+  doacoes(kidId) {
+    const feitas = this.all('kid_entries').filter(e =>
+      e.kid_id === kidId && e.tipo === 'doacao' && e.confirmada !== false && Number(e.amount) > 0);
+    const porQuem = {};
+    for (const e of feitas) {
+      const q = e.description || 'quem precisa';
+      porQuem[q] = (porQuem[q] || 0) + Number(e.amount);
+    }
+    return {
+      vezes: feitas.length,
+      total: +feitas.reduce((s, e) => s + Number(e.amount), 0).toFixed(2),
+      quem: Object.keys(porQuem).sort((a, b) => porQuem[b] - porQuem[a]),
+      ultima: feitas.map(e => String(e.date)).sort().pop() || null,
+    };
   },
 
   /* SELOS DA SEMANA: o que ela conquistou, sem prometer nada em dinheiro.

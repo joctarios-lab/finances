@@ -520,19 +520,42 @@ create table if not exists kid_entries (
   deleted boolean not null default false
 );
 
+-- A LISTA DE VONTADES. Não é meta: é o que a criança quer HOJE, anotado para ser
+-- reavaliado depois de algumas noites. Separada de kid_goals de propósito — a meta
+-- tem valor, prazo e barra de progresso; a vontade tem só um nome e uma data, e
+-- misturar as duas transformaria toda vontade passageira num compromisso.
+create table if not exists kid_wishes (
+  id uuid primary key,
+  family_id uuid not null references families(id) on delete cascade,
+  kid_id uuid not null,
+  name text not null,
+  icon text default '⭐',
+  -- Quando ela anotou. A pergunta "ainda quer?" nasce desta data, e sem ela a lista
+  -- vira só uma lista de compras.
+  criada_em date,
+  -- Como ela respondeu quando o app perguntou: null = ainda não perguntou,
+  -- 'quero' = confirmou, 'passou' = mudou de ideia. O que ela responde é a lição.
+  resposta text,
+  respondida_em date,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false
+);
+
 create index if not exists idx_kid_entries_kid on kid_entries(family_id, kid_id, date);
 create index if not exists idx_kid_goals_kid on kid_goals(family_id, kid_id);
 create index if not exists idx_kid_tasks_kid on kid_tasks(family_id, kid_id);
+create index if not exists idx_kid_wishes_kid on kid_wishes(family_id, kid_id);
 
 alter table kids enable row level security;
 alter table kid_goals enable row level security;
 alter table kid_tasks enable row level security;
 alter table kid_entries enable row level security;
+alter table kid_wishes enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['kids','kid_goals','kid_tasks','kid_entries']
+  foreach t in array array['kids','kid_goals','kid_tasks','kid_entries','kid_wishes']
   loop
     execute format('drop policy if exists %I_rw on %I', t, t);
     execute format(
@@ -601,7 +624,7 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- Conferência: rode isto depois e verifique se aparecem 18 tabelas, todas com
+-- Conferência: rode isto depois e verifique se aparecem 19 tabelas, todas com
 -- RLS ligado, e a função create_family.
 --
 --   select tablename, rowsecurity as rls

@@ -653,6 +653,389 @@ function tocar(pote) {
   for (const fn of cliques) fn({ target: alvo });
 }
 
+console.log('\n=== A lista de vontades ===');
+{
+  /* Existia UM sonho, cadastrado pelo adulto. Quando ela queria alguma coisa numa
+     terça-feira, não havia onde botar: ou virava meta nova (e a anterior morria), ou
+     sumia. Dormir sobre a vontade é a ferramenta mais citada contra a compra por impulso
+     — mas o ganho maior é ela ver os PRÓPRIOS desejos mudarem de ideia. */
+  const id = novaCrianca({ name: 'Vontades', semanada_valor: 10 });
+  const dias = n => Dados.somarDiasISO(HOJE, -n);
+
+  const r = Dados.anotarVontade(id, 'Jogo', '🎮');
+  check('ela anota o que quer', r.ok, true);
+  check('  com a data de hoje', Dados.vontades(id)[0].criada_em, HOJE);
+
+  /* NÃO REPETE: anotar duas vezes faria o app perguntar duas vezes, e a segunda pergunta
+     desmente a primeira resposta. */
+  check('a mesma coisa não entra duas vezes', Dados.anotarVontade(id, 'Jogo', '🎮').ok, false);
+  check('  nem escrita diferente', Dados.anotarVontade(id, 'jogo', '🎮').ok, false);
+  check('  e nome vazio não vira vontade', Dados.anotarVontade(id, '   ', '🎮').ok, false);
+  check('a lista tem só uma', Dados.vontades(id).length, 1);
+
+  /* PERGUNTAR NO MESMO DIA NÃO TESTA NADA: a espera é o instrumento, e sem ela a
+     pergunta vira só mais um toque na tela. */
+  check('recém-anotada, o app não pergunta', Dados.vontadeAPerguntar(id), null);
+
+  /* DEPOIS DAS NOITES DE SONO a pergunta aparece. */
+  const w = Dados.all('kid_wishes').find(x => x.kid_id === id);
+  Dados.upsert('kid_wishes', { ...w, criada_em: dias(9) });
+  const p = Dados.vontadeAPerguntar(id);
+  check('depois de dormir, o app pergunta', !!p, true);
+  check('  dizendo há quantas noites ela quer', p.noites, 9);
+
+  /* AS DUAS RESPOSTAS SÃO BOAS, e ficam guardadas. Apagar o que ela deixou de querer
+     apagaria justamente a lição: a lista das vontades que passaram é a prova, na escolha
+     dela mesma, de que vontade passa. */
+  check('ela responde que ainda quer', Dados.responderVontade(id, p.id, 'quero'), true);
+  check('  a vontade continua na lista', Dados.vontades(id).length, 1);
+  check('  com a resposta guardada', Dados.vontades(id)[0].resposta, 'quero');
+  check('  e não é perguntada de novo', Dados.vontadeAPerguntar(id), null);
+
+  check('resposta inventada é recusada', Dados.responderVontade(id, p.id, 'talvez'), false);
+
+  /* UMA PERGUNTA DE CADA VEZ: perguntar sobre quatro coisas transforma a reflexão em
+     formulário, e uma criança de seis anos responde qualquer coisa para o formulário
+     acabar. A mais antiga primeiro — é a que teve mais tempo de mudar. */
+  Dados.anotarVontade(id, 'Bola', '⚽');
+  Dados.anotarVontade(id, 'Livro', '📚');
+  for (const x of Dados.all('kid_wishes').filter(y => y.kid_id === id && !y.resposta)) {
+    Dados.upsert('kid_wishes', { ...x, criada_em: x.name === 'Bola' ? dias(20) : dias(5) });
+  }
+  check('pergunta uma de cada vez', !!Dados.vontadeAPerguntar(id), true);
+  check('  e começa pela mais antiga', Dados.vontadeAPerguntar(id).name, 'Bola');
+
+  /* ESQUECER apaga de vez: é dela a lista, e uma coisa anotada por engano não pode virar
+     uma pergunta que ela não pediu. */
+  const bola = Dados.vontades(id).find(x => x.name === 'Bola');
+  check('ela pode esquecer o que anotou', Dados.esquecerVontade(id, bola.id), true);
+  check('  e sai da lista', Dados.vontades(id).some(x => x.name === 'Bola'), false);
+
+  /* A VONTADE DE OUTRA CRIANÇA não é dela. */
+  const idOutro = novaCrianca({ name: 'Outro' });
+  const meu = Dados.vontades(id)[0];
+  check('não dá para responder a vontade de outra criança',
+    Dados.responderVontade(idOutro, meu.id, 'quero'), false);
+  check('  nem apagar', Dados.esquecerVontade(idOutro, meu.id), false);
+  limpar(idOutro);
+
+  /* NA TELA. */
+  App.kid = Dados.get('kids', id);
+  const t = telaSonho();
+  check('a lista aparece na aba do sonho', t.includes('O que eu quero'), true);
+  check('  com a pergunta de quem já dormiu', t.includes('Ainda quer'), true);
+  check('  e as duas respostas', t.includes('Ainda quero') && t.includes('Mudei de ideia'), true);
+
+  /* A RESPONDIDA CONTINUA VISÍVEL: apagá-la apagaria a lição junto. */
+  check('a vontade que passou continua na tela', t.includes('Jogo'), true);
+  limpar(id);
+
+  /* AS DUAS RESPOSTAS SÃO CELEBRADAS, e isto precisa ser medido: aplaudir só quem manteve
+     a vontade ensinaria que mudar de ideia é errado -- quando é exatamente a descoberta que
+     a lista existe para provocar.
+
+     O elogio saiu do handler e virou dado por causa deste teste: inline no clique, nenhuma
+     asserção o alcançava, e a sabotagem que calou o elogio do "mudei de ideia" passou
+     verde. Regra de produto que não dá para medir não é regra, é intenção. */
+  check('quem manteve a vontade é elogiado',
+    (Dados.elogioDaResposta('quero') || '').length > 10, true);
+  check('  e quem mudou de ideia também',
+    (Dados.elogioDaResposta('passou') || '').length > 10, true);
+  check('  com palavras diferentes',
+    Dados.elogioDaResposta('quero') !== Dados.elogioDaResposta('passou'), true);
+
+  /* NENHUM DOS DOIS REPREENDE. "Devia ter esperado mais" seria transformar a descoberta
+     em erro, e a criança que se sente corrigida para de responder de verdade. */
+  check('  e nenhum deles repreende',
+    ['quero', 'passou'].some(r =>
+      /devia|deveria|errad|não deve/i.test(Dados.elogioDaResposta(r))), false);
+  check('resposta inventada não tem elogio', Dados.elogioDaResposta('talvez'), null);
+
+  /* SEM SONHO CADASTRADO a lista ainda aparece — e é aí que ela mais serve: sem meta,
+     esta aba não tinha nada além de um aviso para chamar um adulto. */
+  const idSemMeta = novaCrianca({ name: 'Sem meta vontade' });
+  App.kid = Dados.get('kids', idSemMeta);
+  /* COM SONHO CADASTRADO a lista também aparece, e este caso faltava: telaSonho tem DOIS
+     caminhos — com meta e sem meta — e o teste só exercitava um. A sabotagem que arrancou
+     o bloco do caminho COM meta passou verde, que é o caminho que a criança vê todo dia. */
+  const idComMeta = novaCrianca({ name: 'Com meta vontade', semanada_valor: 10 });
+  Dados.upsert('kid_goals', {
+    kid_id: idComMeta, name: 'Patinete', icon: '🛴', target_amount: 60, done: false });
+  Dados.anotarVontade(idComMeta, 'Jogo', '🎮');
+  App.kid = Dados.get('kids', idComMeta);
+  const comMeta = telaSonho();
+  check('com sonho, a lista aparece junto', comMeta.includes('O que eu quero'), true);
+  check('  e o botão de anotar também', comMeta.includes('vont-nova'), true);
+  check('  sem esconder o sonho', comMeta.includes('Patinete'), true);
+  limpar(idComMeta);
+
+  check('sem sonho, a lista aparece do mesmo jeito',
+    telaSonho().includes('O que eu quero'), true);
+  limpar(idSemMeta);
+}
+
+console.log('\n=== O que é da família e o que é trabalho ===');
+{
+  /* O app já aceitava missão de valor zero, mas a tela misturava tudo: arrumar a cama e
+     lavar o carro apareciam lado a lado, cada um com o seu preço. A criança lia uma lista
+     de serviços, e não a diferença entre ajudar em casa e fazer um trabalho.
+
+     É o efeito de superjustificação: quando se paga por algo que a criança já fazia de
+     graça, ela para de fazer pelo próprio motivo e passa a fazer pelo preço — e some no
+     dia em que o preço some. */
+  const id = novaCrianca({ name: 'Duas secoes', semanada_valor: 10 });
+  Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Arrumar a cama', icon: '🛏️', amount: 0,
+    frequencia: 'diaria', active: true });
+  Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Pôr a mesa', icon: '🍽️', amount: 0,
+    frequencia: 'semanal', active: true });
+  Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Lavar o carro', icon: '🚗', amount: 5,
+    frequencia: 'semanal', active: true });
+  App.kid = Dados.get('kids', id);
+  const t = telaTarefas();
+
+  check('a tela separa em duas seções', t.includes('Porque somos uma família')
+    && t.includes('vale moeda'), true);
+
+  /* A ORDEM IMPORTA: ler o preço antes molda a expectativa — quem abre a lista vendo
+     moedas entende o resto como moeda que faltou. */
+  check('  e a da família vem primeiro',
+    t.indexOf('Porque somos uma família') < t.indexOf('vale moeda'), true);
+
+  /* NENHUM VALOR EM DINHEIRO na seção da família. Não é um preço baixo — é outra coisa,
+     e um "R$ 0" ali ensinaria que ajudar em casa vale zero real em vez de valer outra
+     moeda. */
+  const secaoFam = t.slice(t.indexOf('Porque somos uma família'), t.indexOf('vale moeda'));
+  check('a seção da família não mostra dinheiro nenhum',
+    /R\$\s*\d/.test(secaoFam), false);
+  check('  e explica o que ela ganha', t.includes('valem prêmio'), true);
+
+  /* CADA MISSÃO NA SUA SEÇÃO. */
+  const secaoPaga = t.slice(t.indexOf('vale moeda'));
+  check('a cama fica na seção da família', secaoFam.includes('Arrumar a cama'), true);
+  check('  e a mesa também', secaoFam.includes('Pôr a mesa'), true);
+  check('o carro fica na seção paga', secaoPaga.includes('Lavar o carro'), true);
+  check('  com o valor dele', secaoPaga.includes(fmtKid(5)), true);
+
+  /* O CONTADOR DE CADA SEÇÃO nomeia o prazo certo. "De hoje" e "desta semana" não são
+     sinônimos: a diária recomeça amanhã, a semanal não. Quando a seção mistura as duas, o
+     rótulo não mente escolhendo uma — diz "feitas". */
+  check('a seção mista conta sem prometer prazo', secaoFam.includes('feitas'), true);
+  check('  e a só-semanal fala da semana', secaoPaga.includes('desta semana'), true);
+
+  /* SÓ MISSÕES DE FAMÍLIA: a seção paga nem aparece, e o rodapé não fala de moeda que
+     não existe. */
+  for (const k of Dados.all('kid_tasks').filter(x => x.kid_id === id && Number(x.amount) > 0)) {
+    Dados.remove('kid_tasks', k.id);
+  }
+  const soFam = telaTarefas();
+  check('sem trabalho pago, a seção paga não aparece', soFam.includes('vale moeda'), false);
+  check('  e o rodapé não promete moeda', soFam.includes('moeda cai no pote'), false);
+  limpar(id);
+
+  /* SÓ MISSÕES PAGAS: a seção da família não aparece, e nada muda para quem já usava
+     o app do jeito antigo. */
+  const idP = novaCrianca({ name: 'So pagas', semanada_valor: 10 });
+  Dados.upsert('kid_tasks', {
+    kid_id: idP, name: 'Lavar o carro', icon: '🚗', amount: 5,
+    frequencia: 'semanal', active: true });
+  App.kid = Dados.get('kids', idP);
+  check('sem missão de família, a seção dela não aparece',
+    telaTarefas().includes('Porque somos uma família'), false);
+  check('  e a missão paga continua na tela', telaTarefas().includes('Lavar o carro'), true);
+  limpar(idP);
+}
+
+/* ================= A memória do que já aconteceu ================= */
+console.log('\n=== A prateleira dos sonhos conquistados ===');
+{
+  /* O dado estava guardado e nunca aparecia: toda meta comprada vira `done: true` com a
+     data, e o app da criança nunca contou. Aos seis anos ela vive no presente absoluto —
+     sem ver o que já conquistou, cada meta nova começa do zero emocional. */
+  const id = novaCrianca({ name: 'Prateleira', semanada_valor: 10, rendimento_valor: 0 });
+  const dias = n => Dados.somarDiasISO(HOJE, -n);
+
+  /* Começou a guardar há 110 noites. */
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 40, date: dias(110), confirmada: true });
+
+  /* PRIMEIRO SONHO: comprado há 75 noites, 35 noites depois do primeiro depósito = 5 semanadas. */
+  const g1 = Dados.upsert('kid_goals', {
+    kid_id: id, name: 'Bola', icon: '⚽', target_amount: 40, done: true, done_at: dias(75) });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'gasto', pote: 'guardar', amount: 40, date: dias(75),
+    description: 'Comprei: Bola', kid_goal_id: g1, confirmada: true });
+
+  /* SEGUNDO SONHO: comprado há 30 noites. A espera dele são as 45 noites DESDE A BOLA,
+     e não as 80 desde o primeiro depósito — foi exatamente esse o erro da primeira
+     versão, e uma foto mostrou 11 semanadas onde havia 7. */
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'semanada', pote: 'guardar', amount: 25, date: dias(45), confirmada: true });
+  const g2 = Dados.upsert('kid_goals', {
+    kid_id: id, name: 'Livro', icon: '📚', target_amount: 25, done: true, done_at: dias(30) });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'gasto', pote: 'guardar', amount: 25, date: dias(30),
+    description: 'Comprei: Livro', kid_goal_id: g2, confirmada: true });
+
+  const feitos = Dados.conquistas(id);
+  check('os dois sonhos conquistados aparecem', feitos.length, 2);
+  check('  o mais recente primeiro', feitos[0].meta.name, 'Livro');
+
+  /* CADA ESPERA COMEÇA ONDE A ANTERIOR TERMINOU. Inflado, o número elogia uma espera que
+     não houve — e a criança que sabe quanto tempo demorou aprende que o app exagera. */
+  check('a espera do primeiro conta desde o primeiro dinheiro guardado',
+    feitos.find(f => f.meta.name === 'Bola').semanadas, 5);
+  check('  e a do segundo conta desde o primeiro sonho, não desde o começo de tudo',
+    feitos.find(f => f.meta.name === 'Livro').semanadas, 7);
+
+  check('  com o valor de cada um', feitos[0].valor, 25);
+
+  /* A META EM ANDAMENTO NÃO ENTRA: a prateleira é do que já aconteceu, e um sonho a
+     caminho ali leria como cobrança dentro da tela do orgulho. */
+  Dados.upsert('kid_goals', {
+    kid_id: id, name: 'Patinete', icon: '🛴', target_amount: 60, done: false });
+  check('o sonho em andamento fica fora da prateleira', Dados.conquistas(id).length, 2);
+
+  /* NA TELA, junto dos prêmios. */
+  App.kid = Dados.get('kids', id);
+  const t = telaSelos();
+  check('a prateleira aparece na aba de prêmios', t.includes('já conquistou'), true);
+  check('  com o nome do sonho', t.includes('Livro'), true);
+  check('  e a espera em semanadas', t.includes('7 semanadas'), true);
+  limpar(id);
+
+  /* SEM CONQUISTA NENHUMA a prateleira nem aparece: um lugar vazio com "nada ainda" é uma
+     cobrança na tela que existe para orgulhar. */
+  const idV = novaCrianca({ name: 'Sem conquista' });
+  App.kid = Dados.get('kids', idV);
+  check('sem conquistas, a prateleira não aparece', telaSelos().includes('já conquistou'), false);
+  limpar(idV);
+}
+
+console.log('\n=== A contagem até a semanada ===');
+{
+  /* As missões especiais já contavam em noites, e foi para dar a ela um motivo de abrir o
+     app. O evento mais importante da semana dela não contava nada até o dinheiro cair — e
+     a antecipação é metade do valor de uma recompensa: é ela que treina a espera. */
+  const diaDeHoje = new Date(HOJE + 'T12:00:00').getDay();
+
+  const idH = novaCrianca({ name: 'Hoje', semanada_valor: 10, semanada_dia: diaDeHoje });
+  check('no dia da semanada, faltam zero noites', Dados.noitesAteSemanada(idH), 0);
+  App.kid = Dados.get('kids', idH);
+  check('  e a tela anuncia em vez de contar', telaCofrinho().includes('Hoje é dia'), true);
+  limpar(idH);
+
+  const id3 = novaCrianca({ name: 'Tres', semanada_valor: 10, semanada_dia: (diaDeHoje + 3) % 7 });
+  check('três dias antes, faltam três noites', Dados.noitesAteSemanada(id3), 3);
+  App.kid = Dados.get('kids', id3);
+  check('  e a tela conta as noites', telaCofrinho().includes('3 noites'), true);
+  limpar(id3);
+
+  /* AMANHÃ tem palavra própria: "1 noites" está errado, e "amanhã" é a palavra que uma
+     criança de seis anos usa. */
+  const id1 = novaCrianca({ name: 'Um', semanada_valor: 10, semanada_dia: (diaDeHoje + 1) % 7 });
+  App.kid = Dados.get('kids', id1);
+  check('véspera, a tela diz amanhã', telaCofrinho().includes('amanhã'), true);
+  check('  e não conta uma noite', telaCofrinho().includes('1 noites'), false);
+  limpar(id1);
+
+  /* SEM SEMANADA CONFIGURADA não há dia para contar, e prometer um que não existe é uma
+     promessa que o app não pode cumprir. */
+  const idS = novaCrianca({ name: 'Sem semanada', semanada_valor: 0 });
+  check('sem semanada, não há contagem', Dados.noitesAteSemanada(idS), null);
+  App.kid = Dados.get('kids', idS);
+  check('  e a tela não promete nada', telaCofrinho().includes('semanada chega'), false);
+  limpar(idS);
+}
+
+console.log('\n=== O preço em coisas que ele conhece ===');
+{
+  /* Ela não sabe se R$ 60 é muito: aos seis anos, R$ 5 e R$ 50 são os dois "um dinheiro".
+     A barra responde "quando"; isto responde "quanto", que é outra pergunta. */
+  const id = novaCrianca({ name: 'Regua', semanada_valor: 10, rendimento_valor: 0 });
+  Dados.upsert('kid_goals', {
+    kid_id: id, name: 'Patinete', icon: '🛴', target_amount: 60, done: false });
+
+  /* UMA COMPRA SÓ NÃO É RÉGUA: pode ter sido um dia atípico, e uma régua construída sobre
+     um acaso mede errado com a mesma confiança de uma régua boa. */
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'gasto', pote: 'gastar', amount: 5, date: HOJE,
+    description: 'Sorvete', confirmada: true });
+  check('com uma compra só, não há régua', Dados.reguaDe(id, 60), null);
+
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'gasto', pote: 'gastar', amount: 5, date: HOJE,
+    description: 'Sorvete', confirmada: true });
+  const r = Dados.reguaDe(id, 60);
+  check('com duas, a régua existe', !!r, true);
+  check('  usando o preço real que ele pagou', r.preco, 5);
+  check('  e o patinete vira doze sorvetes', r.quantos, 12);
+
+  /* A MEDIANA e não a média: um presente caro de aniversário puxaria a média para cima e
+     faria o patinete parecer barato. */
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'gasto', pote: 'gastar', amount: 35, date: HOJE,
+    description: 'Sorvete', confirmada: true });
+  check('um gasto atípico não distorce a régua', Dados.reguaDe(id, 60).preco, 5);
+
+  /* ACIMA DE TRINTA deixa de ser quantidade e vira "muitos" — que é o que ela já achava
+     antes da tradução. */
+  check('número grande demais não vira régua', Dados.reguaDe(id, 500), null);
+  check('  nem número pequeno demais', Dados.reguaDe(id, 5), null);
+
+  /* SEM HISTÓRICO o app cala, em vez de chutar uma tabela de fábrica: o sorvete da praça
+     dela custa o que custa. */
+  const idN = novaCrianca({ name: 'Sem historico', semanada_valor: 10 });
+  Dados.upsert('kid_goals', {
+    kid_id: idN, name: 'Bola', icon: '⚽', target_amount: 60, done: false });
+  check('sem histórico, não há régua', Dados.reguaDe(idN, 60), null);
+  App.kid = Dados.get('kids', idN);
+  check('  e a tela do sonho não inventa uma', telaSonho().includes('isso é'), false);
+  limpar(idN);
+
+  App.kid = Dados.get('kids', id);
+  check('a tela do sonho mostra a régua', telaSonho().includes('12 sorvete'), true);
+  limpar(id);
+}
+
+console.log('\n=== A memória do pote de doar ===');
+{
+  /* Gastar devolve um brinquedo, guardar devolve um patinete. Doar devolve uma coisa que a
+     criança não vê acontecer — e o que não se vê, aos seis anos, não existe. */
+  const id = novaCrianca({ name: 'Doou', semanada_valor: 10 });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'divisao', pote: 'doar', amount: 20, date: HOJE, confirmada: true });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'doacao', pote: 'doar', amount: 3, date: HOJE,
+    description: 'Bichinhos', confirmada: true });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'doacao', pote: 'doar', amount: 5, date: HOJE,
+    description: 'Hospital', confirmada: true });
+
+  const d = Dados.doacoes(id);
+  check('conta quantas vezes ela ajudou', d.vezes, 2);
+  check('  e quanto no total', d.total, 8);
+  check('  nomeando quem recebeu', d.quem.length, 2);
+
+  /* A DOAÇÃO PENDENTE NÃO ENTRA: pode não ter acontecido, e um total que encolhe depois de
+     ter crescido desmente o próprio histórico. */
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'doacao', pote: 'doar', amount: 7, date: HOJE,
+    description: 'Igreja', confirmada: false });
+  check('a doação esperando aprovação não conta ainda', Dados.doacoes(id).total, 8);
+
+  App.kid = Dados.get('kids', id);
+  check('a memória aparece na aba de prêmios', telaSelos().includes('já ajudou 2 vezes'), true);
+  limpar(id);
+
+  const idN = novaCrianca({ name: 'Nunca doou' });
+  App.kid = Dados.get('kids', idN);
+  check('quem nunca doou não vê a memória', telaSelos().includes('já ajudou'), false);
+  limpar(idN);
+}
+
 /* ================= Os desenhos das coisas ================= */
 console.log('\n=== O que ele comprou, e para quem doou ===');
 {

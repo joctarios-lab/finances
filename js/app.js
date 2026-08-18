@@ -7598,6 +7598,26 @@ function openKidExtrato(kidId) {
   $('#kx-back').onclick = () => openCriancaDetalhe(kidId);
 }
 
+/* A PERGUNTA DA SEMANA.
+
+   Esta tela mostra números — quanto ela tem, o que gastou, quanto falta — e nenhum deles
+   diz o que CONVERSAR. É o ponto de maior consenso entre educadores da área e o mais
+   ignorado pelos apps: dinheiro se aprende conversando, não usando aplicativo. O
+   cofrinho é o pretexto para a aula, não a aula.
+
+   FICA LOGO ABAIXO DA SEMANADA, que é o outro bloco que pede ação sua. E some quando não
+   há o que perguntar: uma sugestão genérica toda semana ensina a ignorar o bloco, e aí
+   ele deixa de servir também na semana em que tem algo real a dizer. */
+function blocoDaConversa(kidId) {
+  const q = DB.perguntaDaSemana(kidId);
+  if (!q) return '';
+  return `
+    <div class="card conversa">
+      <div class="conversa-cab">Para conversar esta semana</div>
+      <div class="conversa-fato">${esc(q.fato)}</div>
+      <div class="conversa-q">${esc(q.pergunta)}</div>
+    </div>`;
+}
 function openCriancaDetalhe(kidId) {
   const k = DB.get('kids', kidId);
   if (!k) return toast('Criança não encontrada');
@@ -7620,6 +7640,8 @@ function openCriancaDetalhe(kidId) {
     </div>
 
     ${blocoDaSemanada(kidId)}
+
+    ${blocoDaConversa(kidId)}
 
     <div class="sec-cab"><div class="sec-tit"><b>Meta</b><small>${meta
       ? `${esc(meta.name)} · ${fmt(meta.target_amount)}` : 'nenhuma agora'}</small></div>
@@ -7833,10 +7855,33 @@ function openKidTarefaSheet(kidId) {
     <div class="field" id="kt-campo-prazo" hidden><label>Até quando?</label>
       <input type="date" id="kt-prazo"></div>
     <div class="field"><label>Quanto vale?</label>
-      <input class="amount-input" id="kt-valor" type="text" inputmode="numeric" autocomplete="off"></div>
+      <input class="amount-input" id="kt-valor" type="text" inputmode="numeric" autocomplete="off">
+      <p class="muted" id="kt-nota-valor" style="margin-top:4px"></p></div>
     <button class="btn" id="sh-save">Criar</button>
   `);
   initMoney('#kt-valor', 1);
+
+  /* VALOR ZERO É UMA ESCOLHA, e a nota existe para deixar isso explícito.
+
+     Pagar por tudo é o erro mais comum e o mais caro: quando se paga por algo que a
+     criança já fazia de graça, ela para de fazer pelo próprio motivo e passa a fazer pelo
+     preço — e some no dia em que o preço some. É o efeito de superjustificação, e vale
+     avisar aqui, na hora de escolher, e não num texto de ajuda que ninguém abre.
+
+     A nota NÃO impede nada. Quem decide o que se paga nesta casa é você. */
+  const notaDoValor = () => {
+    const el = $('#kt-nota-valor');
+    if (!el) return;
+    const v = Number(String($('#kt-valor').value || '').replace(/\D/g, '')) / 100;
+    el.innerHTML = v > 0
+      ? 'Trabalho extra: ela recebe quando você confirmar.'
+      : '<b>Sem moeda.</b> Vai para "porque somos uma família" no app dela — '
+        + 'ganha prêmio, não dinheiro. É o lugar de arrumar a cama e pôr a mesa: '
+        + 'pagar o que ela já faz por morar aqui costuma fazer ela parar de fazer '
+        + 'quando o pagamento para.';
+  };
+  $('#kt-valor').addEventListener('input', notaDoValor);
+  notaDoValor();
   let ic = ICONES_T[0];
   document.querySelectorAll('[data-ic]').forEach(b => b.onclick = () => {
     ic = b.dataset.ic;

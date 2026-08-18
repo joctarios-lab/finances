@@ -5,7 +5,7 @@
 const DB_KEY = 'financas.v1';
 const STORES = ['accounts', 'cards', 'categories', 'transactions', 'goals', 'goal_entries', 'invoice_status', 'recurrences', 'family_settings', 'budget_overrides',
   // Cofrinho das crianças — o app delas lê daqui pelo mesmo DB.
-  'kids', 'kid_goals', 'kid_tasks', 'kid_entries'];
+  'kids', 'kid_goals', 'kid_tasks', 'kid_entries', 'kid_wishes'];
 
 /* Criptografia local: AES-256-GCM com chave derivada do PIN (PBKDF2, 150 mil iterações). */
 const KCrypto = {
@@ -2424,7 +2424,7 @@ const DB = {
   apagarCofrinho(kidId) {
     const kid = this.get('kids', kidId);
     if (!kid) return null;
-    const conta = { entries: 0, metas: 0, tarefas: 0, contratos: 0, lancamentos: 0 };
+    const conta = { entries: 0, metas: 0, tarefas: 0, vontades: 0, contratos: 0, lancamentos: 0 };
 
     return this.emLote(() => {
       for (const e of this.all('kid_entries')) {
@@ -2435,6 +2435,12 @@ const DB = {
       }
       for (const t of this.all('kid_tasks')) {
         if (t.kid_id === kidId) { this.remove('kid_tasks', t.id); conta.tarefas++; }
+      }
+      /* AS VONTADES TAMBÉM. Esquecer a tabela nova aqui deixaria a lista de desejos de
+         uma criança apagada ressuscitar junto com a próxima criança de mesmo id — e
+         apagar o cofrinho tem de apagar o cofrinho inteiro. */
+      for (const w of this.all('kid_wishes')) {
+        if (w.kid_id === kidId) { this.remove('kid_wishes', w.id); conta.vontades++; }
       }
       /* O CONTRATO E AS SEMANADAS: pelo vínculo E pelo nome.
 
@@ -2729,7 +2735,111 @@ const DB = {
      O que trafega aqui são mesadas de dez reais — nada da vida financeira da
      casa passa por este armazém, e é por isso que ele pode ficar em claro. */
   PONTE_COFRINHO: 'financas.cofrinho.v1',
-  TABELAS_COFRINHO: ['kids', 'kid_goals', 'kid_tasks', 'kid_entries'],
+  /* ---------- A PERGUNTA DA SEMANA ----------
+
+     O app mostra números: quanto ela tem, o que gastou, quanto falta. Nenhum deles diz
+     o que CONVERSAR — e é o ponto de maior consenso entre educadores da área, além do
+     mais ignorado pelos apps: dinheiro se aprende conversando, não usando aplicativo.
+     O cofrinho não é a aula; é o pretexto para a aula.
+
+     UMA POR VEZ, e a mais recente ganha. Uma lista de cinco sugestões vira uma tarefa a
+     cumprir, e tarefa não se conversa. A ordem abaixo é de prioridade: o que acabou de
+     acontecer rende mais conversa do que um padrão de três semanas atrás.
+
+     TODAS AS PERGUNTAS SÃO ABERTAS, e nenhuma delas tem resposta certa embutida. "Valeu
+     a pena?" convida a pensar; "por que você gastou isso?" é uma acusação com ponto de
+     interrogação, e a criança responde o que o adulto quer ouvir — o que encerra a
+     conversa em vez de começá-la. */
+  perguntaDaSemana(kidId, refISO) {
+    const kid = this.get('kids', kidId);
+    if (!kid) return null;
+    const hoje = refISO || this.hojeISO();
+    const inicio = this.kidInicioDaSemana(kid, hoje);
+    const todas = this.all('kid_entries').filter(e => e.kid_id === kidId);
+    const semana = todas.filter(e => String(e.date) >= inicio);
+    const potes = this.kidPotes(kidId);
+
+    /* O SONHO ALCANÇADO é a maior conversa disponível, e dura pouco: some assim que ela
+       compra. Vem primeiro por isso. */
+    const meta = this.all('kid_goals').find(g => g.kid_id === kidId && !g.done);
+    if (meta && potes.guardar >= (Number(meta.target_amount) || 0) && Number(meta.target_amount) > 0) {
+      return {
+        assunto: 'chegou',
+        fato: `${kid.name} juntou o suficiente para ${meta.name}.`,
+        pergunta: 'Pergunte como foi esperar — e o que ela quer guardar depois.',
+      };
+    }
+
+    /* TIROU DO GUARDADO: a decisão mais cara que ela toma sozinha, e a que ela consegue
+       explicar melhor logo depois de tomar. */
+    const saque = semana.filter(e => e.pote === 'guardar'
+      && (e.tipo === 'gasto' || e.tipo === 'doacao') && !e.kid_goal_id)
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+    if (saque) {
+      return {
+        assunto: 'saque',
+        fato: `${kid.name} tirou ${this.fmtBR(saque.amount)} do pote de guardar.`,
+        pergunta: 'Pergunte se valeu a pena — e ouça sem corrigir.',
+      };
+    }
+
+    /* A MOEDA MÁGICA CAIU: é abstrata, e a criança precisa que alguém nomeie o que
+       aconteceu para entender que foi a espera que produziu aquilo. */
+    if (semana.some(e => e.tipo === 'rendimento')) {
+      return {
+        assunto: 'moeda',
+        fato: `${kid.name} ganhou a moeda mágica esta semana.`,
+        pergunta: 'Pergunte por que ela acha que ganhou. A resposta dela diz se a regra ficou clara.',
+      };
+    }
+
+    /* REPARTIU: o momento em que ela decidiu, e o único em que ela escolheu proporção. */
+    if (semana.some(e => e.tipo === 'divisao')) {
+      return {
+        assunto: 'repartiu',
+        fato: `${kid.name} repartiu a semanada nos potes.`,
+        pergunta: 'Pergunte por que ela escolheu esses valores. Não sugira outros.',
+      };
+    }
+
+    /* NUNCA DOOU, ou faz muito tempo. É o pote de retorno invisível, e o único que
+       precisa de um adulto para significar alguma coisa.
+
+       Exige histórico: cobrar doação de quem acabou de começar seria transformar o
+       terceiro pote numa dívida antes de ela entender para que ele serve. */
+    const doacoes = todas.filter(e => e.tipo === 'doacao');
+    const temHistorico = todas.length >= 8;
+    if (temHistorico && potes.doar > 0) {
+      const ultima = doacoes.map(e => String(e.date)).sort().pop();
+      if (!ultima || this.noitesAte(hoje, ultima) >= 30) {
+        return {
+          assunto: 'doar',
+          fato: `O pote de doar tem ${this.fmtBR(potes.doar)} parado${
+            ultima ? ' há um tempo' : ' e nunca foi usado'}.`,
+          pergunta: 'Pergunte quem ela gostaria de ajudar. Deixe a escolha ser dela.',
+        };
+      }
+    }
+
+    /* SEMANA PARADA. Não é problema — mas é a deixa para a conversa mais útil de todas,
+       que é a que não parte de um número. */
+    if (!semana.length && todas.length) {
+      return {
+        assunto: 'parado',
+        fato: `Semana sem movimento no cofrinho de ${kid.name}.`,
+        pergunta: 'Pergunte o que ela está querendo comprar. É a conversa que não precisa de motivo.',
+      };
+    }
+
+    return null;
+  },
+
+  /* Formata em real sem depender da tela: a regra vive aqui para poder ser medida. */
+  fmtBR(v) {
+    return 'R$ ' + (Number(v) || 0).toFixed(2).replace('.', ',');
+  },
+
+  TABELAS_COFRINHO: ['kids', 'kid_goals', 'kid_tasks', 'kid_entries', 'kid_wishes'],
 
   /* A ponte é AUTOMÁTICA, e não uma chamada em cada função que mexe com criança.
 
