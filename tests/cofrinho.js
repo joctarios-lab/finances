@@ -586,6 +586,156 @@ console.log('\n=== Os dois apps instalam lado a lado ===');
     && swCof.includes("'cofrinho-' + VERSAO"), true);
 }
 
+/* TOCAR NUM POTE como o dedo toca: dispara o mesmo listener global que o app registra,
+   com um alvo que carrega o `data-pote`. Chamar telaGastar direto provaria que a
+   função existe — não que o pote leva até ela, que é a mudança em teste. */
+function tocar(pote) {
+  if (!tela().includes(`data-pote="${pote}"`)) {
+    throw new Error(`o pote ${pote} nem está na tela`);
+  }
+  const alvo = { id: '', dataset: { pote }, closest: () => alvo };
+  for (const fn of cliques) fn({ target: alvo });
+}
+
+/* ================= A leitura da tela ================= */
+console.log('\n=== O pote é o botão ===');
+{
+  /* Havia três botões embaixo dos potes repetindo o que os potes já são. Duplicar a
+     ação custava meia tela de rolagem e ensinava que o pote é enfeite — quando ele é
+     o objeto central do app, a coisa que a criança aponta ao contar como funciona. */
+  const id = novaCrianca({ name: 'Toque', semanada_valor: 10, rendimento_valor: 0 });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'gastar', amount: 10, date: HOJE, confirmada: true });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 20, date: HOJE, confirmada: true });
+  App.kid = Dados.get('kids', id);
+  const t = telaCofrinho();
+
+  check('os três botões saíram da tela', /id="bt-(gastar|doar|usar-guardado)"/.test(t), false);
+  check('  e os três potes continuam tocáveis',
+    ['gastar', 'guardar', 'doar'].every(p => t.includes(`data-pote="${p}"`)), true);
+
+  /* CADA POTE DIZ O QUE O TOQUE FAZ. Sem isto o pote é só um número, e descobrir que
+     ele é tocável não é tarefa de uma criança de seis anos. */
+  check('o pote cheio diz a ação', t.includes('🛒 gastei') && t.includes('🏦 usar'), true);
+
+  /* POTE VAZIO NÃO PROMETE AÇÃO: mandar a criança para uma tela onde tudo é recusado
+     é frustração sem lição. */
+  check('o pote vazio aparece apagado', t.includes('pote-acao vazio'), true);
+  check('  e não convida a doar', t.includes('💝 doei'), false);
+
+  /* O TOQUE LEVA À AÇÃO DAQUELE POTE — cada um à sua, sem trocar de pote no caminho.
+     A prova é a frase que ele lê na tela seguinte, não um atributo inventado para o
+     teste: se a frase mudar de pote, o teste cai. */
+  const fala = { gastar: 'para gastar', guardar: 'Quanto quer usar' };
+  for (const p of Object.keys(fala)) {
+    render();
+    tocar(p);
+    check(`tocar no pote ${p} abre a tela dele`, tela().includes(fala[p]), true);
+    check(`  e não a de outro pote`,
+      Object.keys(fala).filter(o => o !== p).every(o => !tela().includes(fala[o])), true);
+  }
+
+  /* O POTE VAZIO NÃO ABRE TELA: fica na inicial e avisa o que falta acontecer. Mandar
+     a criança para uma tela onde todo valor é recusado é frustração sem lição. */
+  render();
+  tocar('doar');
+  check('tocar no pote vazio não abre a tela de doar',
+    tela().includes('Que legal doar'), false);
+  limpar(id);
+}
+
+console.log('\n=== A barra do sonho tem marcos por semanada ===');
+{
+  /* A barra lisa diz "mais ou menos na metade", e "mais ou menos" não é uma leitura
+     que uma criança de seis anos consiga fazer: ela ainda não converte comprimento em
+     quantidade. Com os traços a pergunta vira contar blocos, que ela sabe fazer. */
+  const id = novaCrianca({ name: 'Marcos', semanada_valor: 10, rendimento_valor: 0 });
+  Dados.upsert('kid_goals', {
+    kid_id: id, name: 'Patinete', icon: '🛴', target_amount: 60, done: false });
+  Dados.upsert('kid_entries', {
+    kid_id: id, tipo: 'presente', pote: 'guardar', amount: 30, date: HOJE, confirmada: true });
+  App.kid = Dados.get('kids', id);
+
+  /* SEIS SEMANADAS até o alvo, logo CINCO traços dividindo a barra em seis blocos. */
+  check('a barra é dividida por semanada',
+    (telaCofrinho().match(/<u style="left:/g) || []).length, 5);
+
+  /* A DIVISÃO BATE COM O TEXTO: se os blocos dissessem um número e o texto outro, ela
+     desconfiaria dos dois. Metade guardada = três blocos cheios de seis. */
+  check('  e o texto concorda com ela', telaCofrinho().includes('Faltam 3 semanadas'), true);
+
+  /* ACIMA DE DEZ a divisão vira listra e para de informar — o texto continua exato. */
+  Dados.upsert('kid_goals', { ...Dados.meta(id), target_amount: 300 });
+  check('meta muito longe, os marcos somem',
+    telaCofrinho().includes('<u style="left:'), false);
+  check('  mas o texto continua contando', telaCofrinho().includes('Faltam 27 semanadas'), true);
+
+  /* A MOEDA MÁGICA ENTRA NA CONTA dos marcos, como entra na do texto: ela é dinheiro
+     que chega toda semana igual à semanada, e ignorá-la faria os blocos prometerem
+     mais semanas de espera do que a criança realmente vai esperar -- uma promessa de
+     demora que o app quebraria para melhor, mas quebraria.
+
+     Semanada 10 + moeda 5 = 15 por semana, e 60 vira 4 semanadas: 3 traços, não 5. */
+  const idM = novaCrianca({ name: 'Moeda', semanada_valor: 10,
+    rendimento_tipo: 'moeda', rendimento_valor: 5 });
+  Dados.upsert('kid_goals', {
+    kid_id: idM, name: 'Bola', icon: '⚽', target_amount: 60, done: false });
+  App.kid = Dados.get('kids', idM);
+  check('a moeda mágica encurta os blocos',
+    (telaCofrinho().match(/<u style="left:/g) || []).length, 3);
+  check('  e o texto conta as mesmas semanadas',
+    telaCofrinho().includes('Faltam 4 semanadas'), true);
+  limpar(idM);
+  App.kid = Dados.get('kids', id);
+
+  /* SEM SEMANADA não há como dividir em semanadas: dividir por zero daria infinitos
+     traços, e uma barra toda rabiscada não informa nada. */
+  Dados.upsert('kid_goals', { ...Dados.meta(id), target_amount: 60 });
+  Dados.upsert('kids', { ...Dados.get('kids', id), semanada_valor: 0 });
+  App.kid = Dados.get('kids', id);
+  check('sem semanada, a barra fica lisa',
+    telaCofrinho().includes('<u style="left:'), false);
+  limpar(id);
+}
+
+console.log('\n=== A tela é legível para quem está aprendendo a ler ===');
+{
+  const css = fs.readFileSync(BASE + 'cofrinho/css/cofrinho.css', 'utf8');
+
+  /* CAIXA ALTA: quem está alfabetizando lê por letra bastão — a maiúscula tem altura
+     constante, enquanto a minúscula sobe e desce e ainda pede distinguir b de d e p
+     de q. Um app que ele não lê sozinho vira um app que precisa de adulto, e aí a
+     autonomia que o cofrinho existe para ensinar some. */
+  check('o app inteiro é pintado em caixa alta',
+    /(^|,)\s*body\b[^{]*\{[^}]*text-transform:\s*uppercase/m.test(css), true);
+
+  /* BOTÃO NÃO HERDA text-transform: os navegadores dão estilo próprio aos controles
+     de formulário. A primeira tentativa saiu pela metade por isso, e a metade que
+     sobrou em minúscula era a dos BOTÕES — o texto que ele mais precisa ler antes de
+     tocar, e o único que some se ninguém nomear. */
+  check('  e os botões entram na regra',
+    /(^|,)\s*button\b[^{]*\{[^}]*text-transform:\s*uppercase/m.test(css), true);
+
+  /* É PINTURA, e não texto maiúsculo escrito no código: o conteúdo real continua com
+     acento e caixa certos, então leitor de tela, busca e teste continuam vendo a frase
+     inteira. Esta suíte inteira depende disso — todo `includes` acima lê o texto real,
+     e escrever as telas em CAIXA ALTA no código quebraria todos de uma vez. */
+  check('  e o conteúdo real preserva a caixa', telaCofrinho().includes('Gastar'), true);
+
+  /* A ESCALA num número só: espalhá-la por cinquenta regras faria a próxima mudança
+     de densidade virar caçada. */
+  const m = css.match(/--zoom-app:\s*([\d.]+)/);
+  check('a escala do app é uma variável só', !!m, true);
+  check('  e o #app a usa', /zoom:\s*var\(--zoom-app\)/.test(css), true);
+
+  /* O PISO DE ACESSIBILIDADE: o menor alvo de toque tem 76px de base, e a escala não
+     pode empurrá-lo abaixo de 48px. Abaixo disso o dedo erra — e errar num app de
+     dinheiro significa gastar sem querer. */
+  check('  e não derruba o alvo de toque abaixo do piso',
+    76 * Number(m ? m[1] : 1) >= 48, true);
+}
+
 /* ================= O custo de oportunidade ================= */
 console.log('\n=== Tirar do guardado adia o sonho, e ela vê antes ===');
 {
@@ -1422,8 +1572,12 @@ console.log('\n=== Tirar dinheiro do pote de guardar ===');
 
   /* A TELA oferece o caminho, com o aviso do que ela perde. */
   App.kid = Dados.get('kids', id);
-  check('a tela do cofrinho oferece usar o guardado',
-    telaCofrinho().includes('bt-usar-guardado'), true);
+  /* O CAMINHO É O POTE, e não mais um botão embaixo dele: o pote de guardar carrega
+     o `data-pote` que o toque lê, e diz por escrito o que o toque faz. */
+  const telaG = telaCofrinho();
+  check('o pote de guardar é o caminho para usar o guardado',
+    telaG.includes('data-pote="guardar"'), true);
+  check('  e ele diz que dá para usar', telaG.includes('🏦 usar'), true);
   telaGastar('guardar');
   check('  a tela de tirar fala do que está guardado', tela().includes('guardado'), true);
   /* AVISA ANTES sobre a moeda mágica: é a diferença entre uma escolha e uma

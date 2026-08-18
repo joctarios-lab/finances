@@ -103,7 +103,52 @@ body {
 /* A FOLGA DE BAIXO cobre a pílula flutuante inteira: 12 de topo + 76 do alvo + 8 de
    padding + a área segura. Com 132px a última linha do conteúdo ficava por baixo da
    barra — e a última linha costuma ser justamente a que explica a tela. */
-#app { position: relative; z-index: 1; max-width: 580px; margin: 0 auto; padding: 12px 16px 156px; }
+/* ---------- A ESCALA E A CAIXA ALTA ----------
+
+   Dois ajustes de leitura, num lugar só, porque os dois valem para o app inteiro e
+   espalhá-los por cinquenta regras faria a próxima mudança virar caçada.
+
+   A ESCALA. `zoom` e não `transform: scale`: zoom refaz o layout no tamanho novo,
+   então o texto continua quebrando certo e a rolagem continua batendo onde deve.
+   Scale só estica o desenho pronto e deixaria faixa vazia na lateral.
+
+   O QUE 0.75 CUSTA, dito por escrito: o menor alvo de toque tem 76px de base e passa
+   a valer 57px na tela. Isso fica ABAIXO do que eu havia escolhido como confortável
+   para seis anos, e ACIMA do piso universal de acessibilidade (48px). É uma troca
+   legítima — quem tem o aparelho na mão percebe densidade melhor que qualquer regra
+   —, mas ela existe e fica registrada. Subir para 0.85 devolve 65px. */
+:root { --zoom-app: 0.75; }
+#app {
+  position: relative; z-index: 1; max-width: 580px; margin: 0 auto;
+  padding: 12px 16px 156px;
+  zoom: var(--zoom-app);
+}
+/* O céu NÃO encolhe: ele é o fundo da tela inteira, e reduzi-lo deixaria uma borda de
+   nada em volta. */
+
+/* A CAIXA ALTA. Quem está alfabetizando lê por letra bastão: a maiúscula tem forma
+   fechada e altura constante, enquanto a minúscula sobe e desce a cada letra e ainda
+   pede distinguir b de d e p de q — três pares que a criança está justamente
+   aprendendo a separar. Um app que ela não consegue ler sozinha vira um app que
+   precisa de adulto, e aí a autonomia que o cofrinho existe para ensinar some.
+
+   É `text-transform`, e não texto maiúsculo escrito no código, de propósito: o
+   conteúdo real continua com acento e caixa certos, então leitor de tela, busca e
+   teste continuam vendo "Faltam 3 semanadas" — só a pintura muda. E no dia em que ele
+   já ler minúscula, apagar uma linha desfaz tudo.
+
+   O espaçamento sobe junto: maiúscula é mais larga e mais uniforme, e sem folga entre
+   as letras a palavra vira um bloco — justamente o que atrapalha quem soletra.
+
+   BOTÃO PRECISA SER NOMEADO À PARTE, e foi assim que a primeira tentativa saiu pela
+   metade: os navegadores dão estilo próprio aos controles de formulário, e eles não
+   herdam do body. Metade do app ficou em bastão e a outra metade não — e a metade que
+   sobrou em minúscula era justamente a dos BOTÕES, que é o texto que ele mais precisa
+   ler antes de tocar. Quem pegou foi a foto; teste de string nenhum pegaria. */
+body, button, input, select, textarea {
+  text-transform: uppercase;
+  letter-spacing: .02em;
+}
 
 /* ---------- Tipografia: grande, pesada, redonda ---------- */
 h1 { font-size: 34px; margin: 4px 0 2px; font-weight: 700; letter-spacing: -.5px; }
@@ -935,14 +980,36 @@ h2 .emo { font-size: 27px; }
 /* A barra é fininha aqui: o tubo de vidro grande vive na aba do sonho, e repetir o
    mesmo desenho em dois tamanhos faria a tela parecer que tem duas metas. */
 .sonho-mini-barra {
-  display: block; height: 10px; border-radius: 5px; margin-top: 5px;
-  background: #d5e6f0; overflow: hidden;
+  display: block; position: relative; height: 14px; border-radius: 7px; margin-top: 5px;
+  background: #c3d9e8; overflow: hidden;
   box-shadow: inset 0 2px 3px rgba(43, 58, 68, .12);
 }
+/* OS MARCOS: um traço por semanada, por cima do preenchimento. A barra lisa diz
+   "mais ou menos na metade", e aos seis anos isso não é leitura — ela ainda não
+   converte comprimento em quantidade. Com os traços a pergunta vira contar blocos. */
+.sonho-mini-barra u {
+  position: absolute; top: 0; bottom: 0; width: 3px;
+  background: #fff; transform: translateX(-1.5px);
+}
+/* O TRAÇO É BRANCO NOS DOIS LADOS, e por isso a pista precisou escurecer: com a pista
+   quase branca o traço sumia justamente na parte VAZIA da barra -- que é a metade que
+   ele precisa contar para saber quanto falta. */
 .sonho-mini-barra i {
-  display: block; height: 100%; border-radius: 5px;
+  display: block; height: 100%; border-radius: 7px;
   background: linear-gradient(90deg, var(--guardar), #5fb8ff);
   transition: width 1s cubic-bezier(.3, 1.2, .5, 1);
 }
 .sonho-mini-chev { font-size: 26px; color: var(--guardar); flex: none; font-weight: 700; }
 
+/* O QUE O TOQUE FAZ, escrito no próprio pote: sem isto o pote é só um número, e
+   descobrir que ele é tocável não é tarefa de uma criança de seis anos. */
+.pote-acao {
+  font-size: 13px; font-weight: 800; margin-top: 6px;
+  padding: 5px 4px; border-radius: 10px;
+  background: var(--ceu-2); color: var(--tinta-fraca);
+}
+.pote-bloco.on-gastar .pote-acao { background: #eafff7; color: var(--gastar-fundo); }
+.pote-bloco.on-guardar .pote-acao { background: #eaf4ff; color: var(--guardar-fundo); }
+.pote-bloco.on-doar .pote-acao { background: #ffeef6; color: var(--doar-fundo); }
+/* Pote vazio fica apagado: nada a fazer ali, e prometer ação é frustração. */
+.pote-acao.vazio { background: var(--ceu-2); color: var(--tinta-fraca); opacity: .55; }

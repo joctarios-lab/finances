@@ -359,6 +359,12 @@ function telaCofrinho() {
           ${Arte.pote(t, p[t], teto)}
           <div class="pote-val">${fmtKid(p[t])}</div>
           <div class="pote-nome">${t === 'gastar' ? 'Gastar' : t === 'guardar' ? 'Guardar' : 'Doar'}</div>
+          ${/* O QUE O TOQUE FAZ, escrito no próprio pote. Sem isto o pote é só um
+               número, e descobrir que ele é tocável não é tarefa de uma criança de
+               seis anos — foi o mesmo motivo da faixa no pergaminho. */''}
+          <div class="pote-acao${p[t] > 0 ? '' : ' vazio'}">${p[t] > 0
+            ? (t === 'gastar' ? '🛒 gastei' : t === 'guardar' ? '🏦 usar' : '💝 doei')
+            : 'vazio'}</div>
         </div>`).join('')}
     </div>
 
@@ -377,7 +383,10 @@ function telaCofrinho() {
         <span class="sonho-mini-ico">${esc(metaAqui.icon || '🎁')}</span>
         <span class="sonho-mini-txt">
           <b>${esc(metaAqui.name)}</b>
-          <span class="sonho-mini-barra"><i style="width:${pctAqui.toFixed(1)}%"></i></span>
+          <span class="sonho-mini-barra">
+            <i style="width:${pctAqui.toFixed(1)}%"></i>
+            ${marcosDaMeta(metaAqui, kid)}
+          </span>
           <small>${chegouAqui
             ? 'Já dá para comprar! 🎉'
             : faltamAqui === null
@@ -390,19 +399,12 @@ function telaCofrinho() {
         <span class="sonho-mini-chev">›</span>
       </button>` : ''}
 
-    <div class="linha-bt" style="margin-top:18px">
-      <button class="bt verde" id="bt-gastar"><span class="emo">🛒</span> Gastei</button>
-      <button class="bt rosa" id="bt-doar"><span class="emo">💝</span> Doei</button>
-    </div>
+    ${/* OS TRÊS BOTÕES SAÍRAM: eram alvos repetindo o que os potes já são.
 
-    ${/* USAR O QUE ESTÁ GUARDADO. Faltava por completo, e a falta tinha um efeito
-         colateral silencioso: a moeda mágica premia a semana em que ela NÃO tira do
-         guardado, e sem caminho para tirar a moeda caía sempre. Um prêmio que não se
-         pode perder não é prêmio, é mensalidade. */
-      p.guardar > 0 ? `
-      <button class="bt clara" id="bt-usar-guardado" style="margin-top:14px">
-        <span class="emo">🏦</span> Usar o que guardei
-      </button>` : ''}
+         Duplicar a ação em dois lugares custava meia tela de rolagem e ainda ensinava
+         que o pote é enfeite — quando ele é o objeto central do app, a coisa que a
+         criança aponta quando conta como funciona. Agora o pote É o botão. */''}
+
 
     ${aConfirmar ? `<div class="recado" style="margin-top:18px">
       <b>Quase lá!</b> ${aConfirmar === 1 ? 'Uma missão está' : `${aConfirmar} missões estão`}
@@ -797,6 +799,37 @@ function telaSelos() {
 }
 
 /* ---------- O extrato inteiro, em tela própria ---------- */
+/* OS MARCOS DA META: um traço por semanada, dividindo a barra.
+
+   A barra lisa diz "mais ou menos na metade", e "mais ou menos" não é uma leitura que
+   uma criança de seis anos consiga fazer — ela ainda não converte comprimento em
+   quantidade. Com os traços a pergunta vira contar: três blocos cheios, três vazios.
+   Contar ela sabe, e cada bloco cheio é uma semanada que já passou.
+
+   A divisão é por SEMANADA, a mesma unidade do texto ao lado, para os dois dizerem a
+   mesma coisa de dois jeitos. Acima de dez a divisão vira listra e para de informar,
+   então some — e o texto continua dando o número exato. */
+function marcosDaMeta(meta, kid) {
+  const alvo = Number(meta.target_amount) || 0;
+  const porSemana = (Number(kid.semanada_valor) || 0)
+    + (kid.rendimento_tipo === 'moeda' ? (Number(kid.rendimento_valor) || 0) : 0);
+  const total = Math.ceil(alvo / porSemana);
+  /* UM PORTÃO SÓ, a faixa, e ele já cobre os casos degenerados: sem semanada a divisão
+     dá Infinity, alvo zero dá zero, e nenhum dos dois cabe entre 2 e 10.
+
+     NaN (zero dividido por zero) escapa da faixa, porque toda comparação com NaN é
+     falsa -- quem segura é o laço logo abaixo: `n < NaN` nunca é verdade, então não sai
+     traço nenhum. Guardas extras aqui só dariam a impressão de proteção: nenhum teste
+     consegue matá-las, porque nenhuma delas muda a saída.
+
+     Acima de dez a divisão vira listra e para de informar, então some -- e o texto ao
+     lado continua dando o número exato. */
+  if (total < 2 || total > 10) return '';
+  let out = '';
+  for (let n = 1; n < total; n++) out += `<u style="left:${(n / total * 100).toFixed(2)}%"></u>`;
+  return out;
+}
+
 
 /* A LISTA INTEIRA MERECE UMA TELA, e não o rodapé da inicial.
 
@@ -1008,9 +1041,6 @@ document.addEventListener('click', ev => {
   if (!alvo || !App.kid) return;
 
   if (alvo.id === 'ir-ritual') return telaRitual();
-  if (alvo.id === 'bt-gastar') { Som.toque(); return telaGastar('gastar'); }
-  if (alvo.id === 'bt-doar') { Som.toque(); return telaGastar('doar'); }
-  if (alvo.id === 'bt-usar-guardado') { Som.toque(); return telaGastar('guardar'); }
   if (alvo.id === 'bt-comprar-sonho') {
     const pronto = Dados.metaAlcancada(App.kid.id);
     if (!pronto) { render(); return; }
@@ -1051,15 +1081,29 @@ document.addEventListener('click', ev => {
     return;
   }
 
-  // Tocar num pote conta o que ele significa: o app explica sozinho
+  /* TOCAR NO POTE FAZ A AÇÃO DELE, e não abre um aviso explicando o que ele é.
+
+     Antes o toque só contava a função do pote: bonito na primeira semana, inútil na
+     segunda — ela já sabe para que serve o pote de doar, e o toque virava uma porta
+     que não leva a lugar nenhum.
+
+     A EXPLICAÇÃO NÃO SE PERDEU: cada tela de ação abre dizendo de qual pote o dinheiro
+     sai e quanto há nele, que é a mesma informação no momento em que ela importa.
+
+     POTE VAZIO NÃO ABRE NADA: mandar a criança para uma tela onde tudo é recusado é
+     frustração sem lição. O aviso diz o que falta acontecer para o pote encher. */
   if (alvo.dataset && alvo.dataset.pote) {
-    const falas = {
-      gastar: 'Este é o dinheiro que você pode usar agora 🛒',
-      guardar: 'Este cresce devagar e vira o seu sonho ⭐',
-      doar: 'Este é para ajudar quem precisa 💝',
-    };
+    const pote = alvo.dataset.pote;
     Som.toque();
-    aviso(falas[alvo.dataset.pote]);
+    if (!(Dados.potes(App.kid.id)[pote] > 0)) {
+      return aviso({
+        gastar: 'Este pote está vazio. A semanada logo chega 🪙',
+        guardar: 'Você ainda não guardou nada aqui ⭐',
+        doar: 'Este pote está vazio. Reparta um pouquinho para doar 💝',
+      }[pote]);
+    }
+    vibra(12);
+    return telaGastar(pote);
   }
 });
 
@@ -1107,3 +1151,6 @@ if (typeof document !== 'undefined') document.addEventListener('DOMContentLoaded
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { App, fmtKid, diaBonito, hashDaSenha, telaQuem, render, telaGastar, telaRitual };
 }
+  /* Os handlers de bt-gastar, bt-doar e bt-usar-guardado saíram junto com os botões:
+     nenhum elemento carrega mais esses ids, e handler sem dono é armadilha para quem
+     for procurar de onde vem a tela de gastar. Ela vem do pote. */
