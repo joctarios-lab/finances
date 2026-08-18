@@ -22,7 +22,7 @@ const CASCA = [
   './js/cofrinho.js?v=3',
   './manifest.webmanifest',
   './icons/cofrinho.svg',
-  '../js/config.js?v=139',
+  '../js/config.js?v=140',
 ];
 
 self.addEventListener('install', ev => {

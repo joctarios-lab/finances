@@ -6951,13 +6951,25 @@ function filaDasCriancas() {
         <div><b>As crianças esperam você</b><small>semanada e tarefas para confirmar</small></div>
         <span class="pend-selo">🦖</span>
       </div>
-      ${semanadas.map(s => `<div class="pend-item">
+      ${semanadas.map(s => {
+        /* O VALOR MOSTRADO É O QUE VAI SAIR NESTE TOQUE, moeda mágica incluída
+           quando ela é devida.
+
+           Antes a linha dizia R$ 10 e o compromisso no extrato dizia R$ 11 — a
+           diferença é a moeda mágica, que é condicional. Dois números com o mesmo
+           nome e valores diferentes fazem duvidar dos dois, e foi assim que o
+           painel passou a parecer que lançaria a semanada duas vezes. */
+        const magica = DB.kidMoedaMagicaDevida(s.kid);
+        const total = s.valor + (magica ? magica.valor : 0);
+        return `<div class="pend-item">
         <span class="pend-ico">${esc(s.kid.avatar || '🦖')}</span>
         <span class="pend-info"><b>Semanada de ${esc(s.kid.name)}</b>
-          <small>${DIAS_SEMANA[Number(s.kid.semanada_dia) || 0]} · ainda não saiu</small></span>
-        <span class="pend-val">${fmt(s.valor)}</span>
+          <small>${DIAS_SEMANA[Number(s.kid.semanada_dia) || 0]} · ainda não saiu${
+            magica ? ` · com a moeda mágica de ${fmtShort(magica.valor)}` : ''}</small></span>
+        <span class="pend-val">${fmt(total)}</span>
         <span class="pend-acoes"><button class="sec-btn" data-semanada="${s.kid.id}">Dar agora</button></span>
-      </div>`).join('')}
+      </div>`;
+      }).join('')}
       ${Object.values(porKid).map(g => `<div class="pend-item">
         <span class="pend-ico">${esc(g.kid.avatar || '🦖')}</span>
         <span class="pend-info"><b>${g.itens.length} tarefa(s) de ${esc(g.kid.name)}</b>
@@ -7776,6 +7788,27 @@ function pagarSemanada(kidId) {
       kid_id: kidId, tipo: 'rendimento', pote: 'guardar', amount: magica.valor,
       date: todayISO(), description: 'Moeda mágica', confirmada: true,
     });
+  }
+  /* DÁ BAIXA NO LANÇAMENTO DO EXTRATO, no mesmo ato.
+
+     O contrato materializa a semanada como lançamento em aberto, e antes ele
+     esperava um segundo toque — em outra fila, com outro rótulo e outro valor. Um
+     ato virando duas tarefas é o que fez alguém ler o painel e concluir que ia
+     lançar duas vezes.
+
+     Marcar como Pago aqui não move saldo (a semanada é neutra, ver txEffect): só
+     registra que a entrega aconteceu. O que credita o cofrinho é o lançamento
+     acima; este fecha o compromisso do lado de quem paga.
+
+     Só a ocorrência da SEMANA CORRENTE, e não tudo que estiver em aberto: dar a
+     semanada de hoje não pode quitar a que ficou pendente há três semanas —
+     aquela não foi entregue, e apagá-la da fila esconderia o esquecimento. */
+  const inicio = DB.kidInicioDaSemana(k);
+  const fim = DB.somarDiasISO(inicio, 7);
+  for (const t of DB.all('transactions')) {
+    if (t.kid_id !== kidId || t.status !== 'A Pagar') continue;
+    if (String(t.date) < inicio || String(t.date) >= fim) continue;
+    DB.upsert('transactions', { ...t, status: 'Pago' });
   }
   Sync.autoSync();
   return true;

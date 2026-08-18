@@ -5957,12 +5957,81 @@ try {
   check('não entra nas despesas do mês',
     DB.expensesOf(periodoF).some(t => t.id === sem[0].id), false);
 
-  /* MAS CONTINUA NA FILA, porque o que ela espera não é uma decisão de dinheiro —
-     é um ato: alguém precisa entregar, e a criança precisa dividir nos potes. */
+  /* UM ATO, UM LUGAR: a semanada NÃO entra na fila de contas do mês.
+
+     Ela esteve nas duas por um pedido legítimo — servir de lembrete do ritual — e
+     o resultado na tela foi um ato virando duas linhas, com valores diferentes:
+     R$ 11 nas contas do mês (o compromisso, com a moeda mágica) e R$ 10 na fila
+     das crianças (o que sai hoje). Quem olhou concluiu que ia lançar duas vezes, e
+     não tinha como saber que uma linha só registra e a outra credita o cofrinho.
+
+     O lembrete continua, na fila das crianças, com o bichinho e o nome. */
   DB.upsert('transactions', { ...sem[0], status: 'A Pagar', date: hojeF });
-  const naFila = DB.pendencias(hojeF).find(p => p.id === sem[0].id);
-  check('a semanada aparece na fila de pendências', !!naFila, true);
-  check('  identificada como semanada, não como despesa', naFila.tipo, 'semanada');
+  check('a semanada NÃO entra na fila de contas do mês',
+    DB.pendencias(hojeF).some(p => p.id === sem[0].id), false);
+  check('  e nenhuma pendência da fila é semanada',
+    DB.pendencias(hojeF).some(p => p.tx && DB.isSemanada(p.tx)), false);
+  check('  mas ela aparece na fila das crianças',
+    filaDasCriancas().includes(`data-semanada="${idF}"`), true);
+
+  /* O VALOR DAS DUAS PONTAS BATE. A fila mostra o que vai sair NESTE toque, com a
+     moeda mágica quando devida — não um número e o compromisso mostrando outro. */
+  const kidF = DB.get('kids', idF);
+  const magicaF = DB.kidMoedaMagicaDevida(kidF);
+  const totalF = DB.kidSemanadaDevida(kidF).valor + (magicaF ? magicaF.valor : 0);
+  check('  pelo valor que vai sair de fato', filaDasCriancas().includes(fmt(totalF)), true);
+
+  /* COM A MOEDA MÁGICA DEVIDA, e é este o caso que importa: é a diferença entre os
+     R$ 10 e os R$ 11 que fez o painel parecer que lançaria duas vezes.
+
+     Sem montar a condição da moeda, o teste acima compara o valor com ele mesmo —
+     e esconder a moeda do total passava verde. A moeda exige uma semana anterior
+     com dinheiro guardado e sem saída dele. */
+  const idM = DB.upsert('kids', {
+    name: 'Filho Moeda', semanada_valor: 10, semanada_dia: diaF,
+    rendimento_tipo: 'moeda', rendimento_valor: 1, active: true,
+  });
+  DB.upsert('kid_entries', {
+    kid_id: idM, tipo: 'presente', pote: 'guardar', amount: 20,
+    date: DB.somarDiasISO(DB.kidInicioDaSemana(DB.get('kids', idM)), -3), confirmada: true,
+  });
+  const magicaM = DB.kidMoedaMagicaDevida(DB.get('kids', idM));
+  check('a moeda mágica é devida no cenário montado', !!magicaM, true);
+  const filaM = filaDasCriancas();
+  check('  a fila mostra semanada + moeda mágica juntas', filaM.includes(fmt(11)), true);
+  check('  e diz que a moeda vem junto', /moeda mágica/.test(filaM), true);
+  check('  sem mostrar só a semanada',
+    filaM.includes(`<span class="pend-val">${fmt(10)}</span>`), false);
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idM)) DB.remove('kid_entries', e.id);
+  DB.remove('kids', idM);
+
+  /* DAR A SEMANADA FECHA O COMPROMISSO no extrato, no mesmo ato: sem isso o
+     lançamento ficaria em aberto para sempre, pesando como semanada por dar. */
+  const antesPagar = DB.all('transactions').filter(t => t.kid_id === idF && t.status === 'A Pagar').length;
+  check('há lançamento em aberto antes de dar', antesPagar >= 1, true);
+  pagarSemanada(idF);
+  check('dar a semanada dá baixa no lançamento da semana',
+    DB.all('transactions').filter(t => t.kid_id === idF && t.status === 'A Pagar'
+      && String(t.date) >= DB.kidInicioDaSemana(kidF)
+      && String(t.date) < DB.somarDiasISO(DB.kidInicioDaSemana(kidF), 7)).length, 0);
+  check('  e o dinheiro chegou no cofrinho', DB.kidPotes(idF).total > 0, true);
+  check('  e ela sai da fila das crianças',
+    filaDasCriancas().includes(`data-semanada="${idF}"`), false);
+
+  /* NÃO QUITA O PASSADO. Dar a semanada de hoje não pode apagar a que ficou
+     pendente há três semanas: aquela não foi entregue, e limpá-la esconderia o
+     esquecimento em vez de mostrá-lo. */
+  const atrasada = DB.upsert('transactions', {
+    description: `Semanada de ${kidF.name}`, amount: 11,
+    date: DB.somarDiasISO(hojeF, -21), type: 'Despesa', status: 'A Pagar',
+    kid_id: idF, account_id: contaF,
+  });
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idF)) DB.remove('kid_entries', e.id);
+  pagarSemanada(idF);
+  check('a semanada atrasada de semanas atrás continua em aberto',
+    DB.get('transactions', atrasada).status, 'A Pagar');
+  DB.remove('transactions', atrasada);
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idF)) DB.remove('kid_entries', e.id);
 
   /* ---- O ACUMULADO SAI DO LIVRE ---- */
   DB.upsert('kid_entries', { kid_id: idF, tipo: 'semanada', pote: 'gastar', amount: 8, date: hojeF, confirmada: true });

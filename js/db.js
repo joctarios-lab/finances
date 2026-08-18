@@ -2634,20 +2634,26 @@ const DB = {
 
     for (const t of this.all('transactions')) {
       if (t.status !== 'A Pagar' || t.card_id) continue;   // compra no cartão vence junto da fatura
-      /* A SEMANADA É NEUTRA E MESMO ASSIM ENTRA NA FILA.
+      /* A SEMANADA NÃO ENTRA AQUI — ela tem fila própria, e ter as duas era pior
+         que não ter nenhuma.
 
-         Neutro não move dinheiro, e por isso normalmente não é pendência: não há
-         nada a decidir sobre uma conciliação ou o pagamento de uma fatura já
-         registrado. A semanada é a exceção, porque o que ela espera não é uma
-         decisão de dinheiro — é um ATO: alguém precisa entregar, e a criança
-         precisa dividir nos potes. Sem a linha, o ritual da semana depende de
-         alguém lembrar.
+         Ela esteve nesta fila por um pedido legítimo: servir de lembrete do
+         ritual. O resultado na tela foi UM ato virando DUAS linhas, com valores
+         diferentes: "Semanada de Thomaz · R$ 11,00 · [Paguei]" nas contas do mês e
+         "Semanada de Thomaz · R$ 10,00 · [Dar agora]" na fila das crianças. Os
+         R$ 11 são o compromisso (semanada + moeda mágica); os R$ 10, o que sai
+         hoje. Quem olha conclui que vai lançar duas vezes — e não tem como saber
+         que uma linha só registra e a outra é a que credita o cofrinho.
 
-         Marcar como feita não move saldo nenhum; só registra que foi entregue. */
-      if (this.isNeutral(t) && !this.isSemanada(t)) continue;
+         O lembrete continua existindo, na fila DAS CRIANÇAS: mesmo dia, mesmo
+         aviso, com o bichinho e o nome, e um botão que faz o ato inteiro (ver
+         `pagarSemanada`, que credita o cofrinho E dá baixa neste lançamento).
+
+         Um ato, um botão, um lugar. */
+      if (this.isNeutral(t)) continue;
       if (String(t.date) > hoje) continue;                  // ainda não chegou a hora
       itens.push({
-        tipo: this.isSemanada(t) ? 'semanada' : this.isExpense(t) ? 'despesa' : 'receita',
+        tipo: this.isExpense(t) ? 'despesa' : 'receita',
         id: t.id, tx: t, data: String(t.date),
         valor: Number(t.amount) || 0,
         titulo: t.description,
