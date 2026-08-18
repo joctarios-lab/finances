@@ -6060,8 +6060,29 @@ try {
   check('a semanada não entra nas contas do mês',
     previstoF.itens.some(i => /Filho Saldo/.test(i.titulo)), false);
 
+  /* O QUE FALTA NO MÊS SAI DO CALENDÁRIO, não de um "maior que zero".
+
+     A asserção era `aVir > 0`, e ela reprovava nos ÚLTIMOS DIAS do mês — 30 e 31
+     de agosto, 27 de fevereiro, a virada de ano — porque ali não sobra semanada
+     nenhuma: a próxima cai no mês seguinte, e zero é a resposta certa. Cinco datas
+     do `tempo.js` caíram, todas por causa do teste, nenhuma por defeito do app.
+
+     Agora o esperado vem do calendário: conta os dias da semanada que ainda
+     acontecem neste mês e multiplica. Vale em qualquer data, inclusive nas que
+     legitimamente dão zero. */
+  const contrato = DB.contratoDaSemanada(idF);
+  let esperadoAVir = 0;
+  if (contrato) {
+    for (let d = hojeF; d < fimF; d = DB.somarDiasISO(d, 1)) {
+      if (new Date(d + 'T12:00:00').getDay() !== Number(DB.get('kids', idF).semanada_dia)) continue;
+      // Só o que ainda não foi entregue: o já pago saiu do compromisso
+      const paga = DB.all('transactions').some(t => t.kid_id === idF && String(t.date) === d && t.status === 'Pago');
+      if (!paga) esperadoAVir += Number(contrato.amount) || 0;
+    }
+  }
   const aVir = DB.dosFilhosAVir(fimF);
-  check('as semanadas ainda por dar entram em "dos filhos"', aVir > 0, true);
+  check('as semanadas que faltam no mês batem com o calendário',
+    Math.round(aVir * 100) / 100, Math.round(esperadoAVir * 100) / 100);
 
   /* CONTRATO AINDA NÃO MATERIALIZADO também conta.
 
