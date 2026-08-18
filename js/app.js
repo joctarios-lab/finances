@@ -7665,6 +7665,7 @@ function openCriancaDetalhe(kidId) {
               t.completou ? (t.bonusPago ? ' · semana paga ✓' : ' · semana completa, confira') : ''}</small>`
           : ''}</span>
       <b>${fmt(t.amount)}${t.diaria ? '<small>/semana</small>' : ''}</b>
+      <button class="link-btn" data-edit-tarefa="${t.id}">editar</button>
       <button class="link-btn t-danger" data-del-tarefa="${t.id}">tirar</button>
     </div>`).join('') || '<div class="empty">Nenhuma missão cadastrada.</div>'}
 
@@ -7706,6 +7707,8 @@ function openCriancaDetalhe(kidId) {
   };
   $('#kdd-meta').onclick = () => openKidMetaSheet(kidId);
   $('#kdd-tarefa').onclick = () => openKidTarefaSheet(kidId);
+  document.querySelectorAll('[data-edit-tarefa]').forEach(b =>
+    b.onclick = () => openKidTarefaSheet(kidId, b.dataset.editTarefa));
   $('#kdd-lanc').onclick = () => openKidLancarSheet(kidId);
   $('#kdd-pausar').onclick = () => {
     DB.upsert('kids', { ...k, active: k.active === false });
@@ -7818,7 +7821,16 @@ function openKidMetaSheet(kidId) {
    cachorro, e ensinariam que cuidar de quem depende de você tem preço por
    unidade. O bônus premia a constância; faltar um dia não custa R$ 1, quebra a
    sequência. */
-function openKidTarefaSheet(kidId) {
+/* CRIAR E EDITAR pela mesma tela.
+
+   Não havia edição: uma missão cadastrada com a frequência errada só saía do jeito
+   difícil — apagar e recriar —, e apagar leva junto o histórico de marcações da
+   criança. Na prática isso significava que um erro de cadastro custava a semana dela.
+
+   A falta virou problema real quando a migração trocou a frequência das missões no
+   servidor: as diárias viraram semanais, e não havia caminho no app para desfazer. */
+function openKidTarefaSheet(kidId, tarefaId) {
+  const atual = tarefaId ? DB.get('kid_tasks', tarefaId) : null;
   /* OS DESENHOS DE MISSÃO, agrupados por onde a missão acontece: quarto, casa, corpo,
      escola e cuidar de alguém. Eram oito, e oito não cobrem a rotina de uma casa —
      faltava lixo, faltava roupa, faltava lição, faltava banho.
@@ -7839,27 +7851,31 @@ function openKidTarefaSheet(kidId) {
     '🪴', '🐕', '🐈', '🐠', '🤝',
   ];
   openSheet(`
-    <div class="sheet-title">Nova missão<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
+    <div class="sheet-title">${atual ? 'Editar missão' : 'Nova missão'}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
     <div class="field"><label>Qual missão?</label>
-      <input type="text" id="kt-nome" autocomplete="off" placeholder="regar as plantas…"></div>
+      <input type="text" id="kt-nome" autocomplete="off" placeholder="regar as plantas…"
+        value="${atual ? esc(atual.name) : ''}"></div>
     <div class="field"><label>Desenho</label>
       <div class="kd-escolha" id="kt-icones">${ICONES_T.map((i, n) =>
-        `<button class="kd-op${n === 0 ? ' on' : ''}" data-ic="${i}">${i}</button>`).join('')}</div></div>
+        `<button class="kd-op${(atual ? atual.icon === i : n === 0) ? ' on' : ''}" data-ic="${i}">${i}</button>`).join('')}</div></div>
     <div class="field"><label>Com que frequência?</label>
+      ${/* A FREQUÊNCIA ATUAL VEM MARCADA. Sem isto, abrir para editar e salvar sem
+           tocar no campo silenciosamente rebaixaria toda diária para semanal — o mesmo
+           estrago que a migração fez, agora com um clique. */''}
       <select id="kt-freq">
-        <option value="semanal">Uma vez na semana</option>
-        <option value="diaria">Todo dia</option>
-        <option value="especial">Missão especial, com prazo</option>
+        <option value="semanal"${!atual || !['diaria', 'especial'].includes(atual.frequencia) ? ' selected' : ''}>Uma vez na semana</option>
+        <option value="diaria"${atual && atual.frequencia === 'diaria' ? ' selected' : ''}>Todo dia</option>
+        <option value="especial"${atual && atual.frequencia === 'especial' ? ' selected' : ''}>Missão especial, com prazo</option>
       </select>
       <p class="muted" id="kt-nota" style="margin-top:4px"></p></div>
     <div class="field" id="kt-campo-prazo" hidden><label>Até quando?</label>
-      <input type="date" id="kt-prazo"></div>
+      <input type="date" id="kt-prazo" value="${atual && atual.expira_em ? esc(atual.expira_em) : ''}"></div>
     <div class="field"><label>Quanto vale?</label>
       <input class="amount-input" id="kt-valor" type="text" inputmode="numeric" autocomplete="off">
       <p class="muted" id="kt-nota-valor" style="margin-top:4px"></p></div>
-    <button class="btn" id="sh-save">Criar</button>
+    <button class="btn" id="sh-save">${atual ? 'Salvar' : 'Criar'}</button>
   `);
-  initMoney('#kt-valor', 1);
+  initMoney('#kt-valor', atual ? Number(atual.amount) || 0 : 1);
 
   /* VALOR ZERO É UMA ESCOLHA, e a nota existe para deixar isso explícito.
 
@@ -7882,7 +7898,7 @@ function openKidTarefaSheet(kidId) {
   };
   $('#kt-valor').addEventListener('input', notaDoValor);
   notaDoValor();
-  let ic = ICONES_T[0];
+  let ic = atual ? (atual.icon || ICONES_T[0]) : ICONES_T[0];
   document.querySelectorAll('[data-ic]').forEach(b => b.onclick = () => {
     ic = b.dataset.ic;
     document.querySelectorAll('[data-ic]').forEach(o => o.classList.toggle('on', o.dataset.ic === ic));
@@ -7910,18 +7926,32 @@ function openKidTarefaSheet(kidId) {
          tela para sempre esperando um "até quando" que nunca chega. */
       return toast('Diga até quando vale a missão especial');
     }
+    /* O ID PRESERVADO é o que separa editar de recriar: as marcações da criança
+       apontam para ele, e um id novo deixaria o histórico dela órfão. */
+    const freqEscolhida = $('#kt-freq').value;
     DB.upsert('kid_tasks', {
+      ...(atual || {}),
       kid_id: kidId, name: nome, icon: ic,
       amount: moneyVal('#kt-valor') || 0,
-      frequencia: ['diaria', 'especial'].includes($('#kt-freq').value)
-        ? $('#kt-freq').value : 'semanal',
+      /* NA DÚVIDA, PRESERVA o que a missão já era -- nunca rebaixa para semanal.
+
+         A versão anterior caía em 'semanal' sempre que o campo não devolvesse um valor
+         reconhecido, e 'semanal' é um palpite: numa edição, ele apagaria silenciosamente
+         a diária que o adulto nem tocou. É o mesmo estrago que o default da migração fez
+         no servidor, e o teste pegou aqui antes de chegar na tela.
+
+         Semanal só quando é a escolha explícita, ou quando não há nada anterior a
+         preservar -- que é o caso de uma missão nova. */
+      frequencia: ['diaria', 'especial', 'semanal'].includes(freqEscolhida)
+        ? freqEscolhida
+        : (atual && atual.frequencia) || 'semanal',
       /* O PRAZO só existe na especial. Guardar em qualquer outra deixaria um campo
          morto que uma versão futura poderia começar a ler sem querer. */
       expira_em: $('#kt-freq').value === 'especial' ? (($('#kt-prazo') || {}).value || null) : null,
       active: true,
     });
     closeSheet(); Sync.autoSync(); openCriancaDetalhe(kidId);
-    toast('Missão criada ✓');
+    toast(atual ? 'Missão salva ✓' : 'Missão criada ✓');
   };
 }
 

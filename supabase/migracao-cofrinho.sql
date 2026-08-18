@@ -157,23 +157,42 @@ alter table kids add column if not exists cor text;
 alter table kids add column if not exists nascimento_ano int;
 alter table kids add column if not exists semanada_valor numeric not null default 0;
 alter table kids add column if not exists semanada_dia int not null default 1;
-alter table kids add column if not exists rendimento_tipo text not null default 'nenhum';
+-- MESMO CUIDADO: 'nenhum' apagaria a moeda mágica de quem já a tinha configurada,
+-- porque o valor verdadeiro só existia no cliente. NULL diz "não sei" e o app trata
+-- ausência como nenhum rendimento -- mesmo comportamento, sem afirmar mentira.
+alter table kids add column if not exists rendimento_tipo text;
 alter table kids add column if not exists rendimento_valor numeric not null default 0;
 alter table kids add column if not exists pin_hash text;
 alter table kids add column if not exists pin_salt text;
 alter table kids add column if not exists active boolean not null default true;
 
--- kid_goals
-alter table kid_goals add column if not exists icon text default '🎁';
+-- kid_goals. Sem default no ícone: o desenho escolhido é do usuário, e um padrão
+-- carimbado por cima apagaria a escolha dele em toda linha que já existia.
+alter table kid_goals add column if not exists icon text;
 alter table kid_goals add column if not exists target_amount numeric not null default 0;
 alter table kid_goals add column if not exists done boolean not null default false;
 alter table kid_goals add column if not exists done_at date;
 
 -- kid_tasks: `frequencia` e `expira_em` são as que faltavam, e são as que fazem a
 -- missão especial ser especial. Sem elas o app recebe a missão como semanal.
-alter table kid_tasks add column if not exists icon text default '⭐';
+alter table kid_tasks add column if not exists icon text;
 alter table kid_tasks add column if not exists amount numeric not null default 0;
-alter table kid_tasks add column if not exists frequencia text not null default 'semanal';
+-- SEM `not null default`, E ISSO É UMA CICATRIZ.
+--
+-- A primeira versão criava a coluna como `not null default 'semanal'`. Num banco novo
+-- isso é inofensivo. Num banco QUE JÁ TEM LINHAS, o Postgres preenche todas elas com o
+-- default — e o default é um palpite. As missões que eram diárias viraram semanais no
+-- servidor, e como a verdade só existia no localStorage do computador, o próximo pull
+-- levou o palpite de volta para o cliente e apagou o dado bom.
+--
+-- Aconteceu de verdade: "água dos cachorros", "escovar os dentes" e "comida dos
+-- cachorros" eram diárias e viraram semanais, perdendo a trilha dos sete dias.
+--
+-- NULL é honesto: quer dizer "esta linha é anterior à coluna, não sei o que ela era".
+-- O app já trata ausência como semanal na hora de exibir, então o comportamento é o
+-- mesmo — a diferença é que NULL não AFIRMA nada, e por isso pode ser detectado e
+-- corrigido depois. Um default mentiroso é indistinguível de um dado verdadeiro.
+alter table kid_tasks add column if not exists frequencia text;
 alter table kid_tasks add column if not exists expira_em date;
 alter table kid_tasks add column if not exists active boolean not null default true;
 
@@ -187,10 +206,13 @@ alter table kid_entries add column if not exists description text;
 alter table kid_entries add column if not exists task_id uuid;
 alter table kid_entries add column if not exists kid_goal_id uuid;
 alter table kid_entries add column if not exists confirmada boolean not null default true;
+-- `repartido` PODE ter default: false quer dizer "ainda não repartiu", que é verdade
+-- para toda linha antiga — nenhuma delas passou pelo ritual, que nem existia. O default
+-- aqui não inventa nada; só afirma o que de fato era o caso.
 alter table kid_entries add column if not exists repartido boolean not null default false;
 
 -- kid_wishes
-alter table kid_wishes add column if not exists icon text default '⭐';
+alter table kid_wishes add column if not exists icon text;
 alter table kid_wishes add column if not exists criada_em date;
 alter table kid_wishes add column if not exists resposta text;
 alter table kid_wishes add column if not exists respondida_em date;

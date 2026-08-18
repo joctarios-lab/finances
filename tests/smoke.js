@@ -6788,6 +6788,94 @@ try {
   for (const r of DB.all('recurrences').filter(r => r.kid_id === idE)) DB.remove('recurrences', r.id);
   DB.remove('kids', idE); DB.remove('accounts', contaE);
 } catch (e) { console.log(` FALHA | gasto da criança: ${e.message}`); fail++; }
+/* ---- EDITAR UMA MISSÃO ----
+
+   Não havia edição: uma missão cadastrada com a frequência errada só saía pelo caminho
+   difícil — apagar e recriar —, e apagar leva junto o histórico de marcações da criança.
+   Um erro de cadastro custava a semana dela.
+
+   A falta virou problema real quando a migração trocou a frequência no servidor: as
+   diárias viraram semanais, e não havia caminho no app para desfazer. */
+console.log('\n=== Editar uma missão ===');
+try {
+  const idE = DB.upsert('kids', { name: 'Editar', semanada_valor: 10, active: true });
+  const tid = DB.upsert('kid_tasks', {
+    kid_id: idE, name: 'Água do Duque', icon: '🐕', amount: 0,
+    frequencia: 'diaria', active: true });
+
+  /* A CRIANÇA JÁ MARCOU DIAS: é este histórico que apagar-e-recriar destruía. */
+  for (let n = 0; n < 3; n++) {
+    DB.upsert('kid_entries', {
+      kid_id: idE, tipo: 'tarefa', pote: 'gastar', amount: 0, task_id: tid,
+      date: DB.somarDiasISO(DB.hojeISO(), -n), confirmada: true });
+  }
+
+  openCriancaDetalhe(idE);
+  check('a lista oferece editar', els['#modal'].innerHTML.includes('data-edit-tarefa'), true);
+
+  openKidTarefaSheet(idE, tid);
+  const sh = els['#sheet'] ? els['#sheet'].innerHTML : els['#modal'].innerHTML;
+  check('o formulário abre em modo editar', sh.includes('Editar missão'), true);
+  check('  com o nome preenchido', sh.includes('Água do Duque'), true);
+
+  /* A FREQUÊNCIA ATUAL VEM MARCADA, e este é o teste que mais importa: sem ela, abrir
+     para editar e salvar sem tocar no campo rebaixaria a diária para semanal — o mesmo
+     estrago que a migração fez, agora com um clique do adulto. */
+  check('  e a frequência atual selecionada',
+    /<option value="diaria" selected>/.test(sh), true);
+  check('  sem marcar a errada',
+    /<option value="semanal" selected>/.test(sh), false);
+
+  /* CAMPO SEM RESPOSTA NÃO PODE REBAIXAR A MISSÃO.
+
+     No navegador quem responde é o <option selected> conferido acima. Aqui o campo é
+     esvaziado de propósito para exercitar o caminho de exceção: se por qualquer motivo o
+     select não devolver um valor reconhecido, o código tem de PRESERVAR o que a missão já
+     era -- nunca cair em 'semanal', que é um palpite. Cair no palpite foi exatamente o
+     que a migração fez no servidor, e apagou as diárias.
+
+     O cache de elementos da suíte é global, então o campo pode chegar aqui com sobra de
+     outro teste: zerar antes é o que torna esta asserção sobre o código, e não sobre a
+     ordem em que os testes rodaram. */
+  els['#kt-freq'].value = '';
+
+  /* SALVAR PRESERVA O ID, que é o que separa editar de recriar: as marcações apontam
+     para ele, e um id novo deixaria o histórico da criança órfão. */
+  els['#kt-nome'].value = 'Água dos cachorros';
+  els['#sh-save'].onclick();
+  const depois = DB.get('kid_tasks', tid);
+  check('salvar mantém a mesma missão', !!depois, true);
+  check('  com o nome novo', depois.name, 'Água dos cachorros');
+  check('  e a frequência intacta', depois.frequencia, 'diaria');
+  check('  sem criar uma segunda',
+    DB.all('kid_tasks').filter(t => t.kid_id === idE).length, 1);
+
+  /* O HISTÓRICO SOBREVIVE: é a razão de existir da edição. */
+  check('as marcações da criança continuam ligadas à missão',
+    DB.all('kid_entries').filter(e => e.task_id === tid).length, 3);
+
+  /* TROCAR A FREQUÊNCIA de fato funciona — é o conserto que o adulto precisa fazer. */
+  openKidTarefaSheet(idE, tid);
+  els['#kt-freq'].value = 'semanal';
+  els['#sh-save'].onclick();
+  check('dá para trocar a frequência', DB.get('kid_tasks', tid).frequencia, 'semanal');
+
+  /* CRIAR CONTINUA CRIANDO: a mesma tela sem id abre vazia e faz uma missão nova. */
+  openKidTarefaSheet(idE);
+  const nova = els['#sheet'] ? els['#sheet'].innerHTML : els['#modal'].innerHTML;
+  check('sem id, o formulário abre para criar', nova.includes('Nova missão'), true);
+  check('  e vazio', nova.includes('Água dos cachorros'), false);
+  els['#kt-nome'].value = 'Regar as plantas';
+  els['#sh-save'].onclick();
+  check('  criando uma segunda missão',
+    DB.all('kid_tasks').filter(t => t.kid_id === idE).length, 2);
+
+  for (const e of DB.all('kid_entries').filter(e => e.kid_id === idE)) DB.remove('kid_entries', e.id);
+  for (const t of DB.all('kid_tasks').filter(t => t.kid_id === idE)) DB.remove('kid_tasks', t.id);
+  DB.remove('kids', idE);
+  closeSheet(); closeModal();
+} catch (e) { console.log(` FALHA | editar missão: ${e.message}`); fail++; }
+
 /* ---- A MIGRAÇÃO PRECISA MIGRAR ----
 
    `create table if not exists` NÃO ADICIONA COLUNA. Num banco que já tem a tabela, o
@@ -6848,6 +6936,25 @@ try {
     !new RegExp('create (or replace )?function ' + f + '\\b').test(sch));
   check('a migração só chama função que o schema cria',
     inventadas.length ? [...new Set(inventadas)].join(', ') : true, true);
+
+  /* COLUNA QUE CHEGA DEPOIS NÃO PODE TER DEFAULT QUE INVENTA DADO.
+
+     Num banco que já tem linhas, `add column ... not null default X` preenche TODAS as
+     linhas existentes com X — e se X é um palpite sobre o que aquela linha era, o palpite
+     apaga a verdade. Pior: como o valor fica indistinguível de um dado real, o próximo
+     pull leva o palpite de volta ao cliente e apaga o dado bom lá também.
+
+     Aconteceu com `frequencia`: as missões diárias viraram semanais no servidor, e a
+     trilha dos sete dias sumiu da tela da criança.
+
+     BOOLEANO É EXCEÇÃO quando o false diz a verdade sobre o passado — `repartido false`
+     em linha antiga está certo, porque nenhuma delas passou por um ritual que não existia.
+     O que não se admite é default de TEXTO num campo que classifica a linha. */
+  const defaultDeTexto = [...mig.matchAll(
+    /add column if not exists (\w+)\s+text[^;]*default\s+'([^']+)'/g)]
+    .map(m => `${m[1]}='${m[2]}'`);
+  check('nenhuma coluna de texto chega com default que inventa dado',
+    defaultDeTexto.length ? defaultDeTexto.join(', ') : true, true);
 
   /* IDEMPOTENTE: rodar duas vezes não pode quebrar. Todo comando que cria coisa precisa
      do "if not exists" ou do "or replace" — e este arquivo é feito para ser colado no
