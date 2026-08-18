@@ -23,3 +23,7 @@ desktop.ini
 
 # Backups exportados pelo app
 financas-backup-*.json
+
+# fotos e sondas temporarias do cofrinho
+cofrinho/_sonda.html
+cofrinho/_f-*.html
