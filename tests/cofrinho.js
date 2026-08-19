@@ -129,7 +129,7 @@ global.clearTimeout = () => { };
 
 // ---- carrega os módulos reais do app da criança ----
 eval(fs.readFileSync(BASE + 'cofrinho/js/arte.js', 'utf8') + '; global.Arte = Arte;');
-eval(fs.readFileSync(BASE + 'cofrinho/js/dados.js', 'utf8') + '; global.Dados = Dados; global.Nuvem = Nuvem; global.COLUNAS_KID = COLUNAS; global.TABELAS_KID = TABELAS;');
+eval(fs.readFileSync(BASE + 'cofrinho/js/dados.js', 'utf8') + '; global.Dados = Dados; global.Nuvem = Nuvem; global.COLUNAS_KID = COLUNAS; global.TABELAS_KID = TABELAS; global.CHAVE_SYNC = CHAVE_SYNC;');
 eval(fs.readFileSync(BASE + 'cofrinho/js/cofrinho.js', 'utf8') + `; Object.assign(global, {
   App, fmtKid, diaBonito, hashDaSenha, esc, telaQuem, telaSenha, telaCofrinho, telaTarefas,
   COISAS_GASTAR, COISAS_DOAR, emojiDe,
@@ -1450,6 +1450,118 @@ console.log('\n=== A memória do pote de doar ===');
   App.kid = Dados.get('kids', idN);
   check('quem nunca doou não vê a memória', telaSelos().includes('já ajudou'), false);
   limpar(idN);
+}
+
+console.log('\n=== A sessão dividida entre os dois apps ===');
+{
+  /* OS DOIS APPS DIVIDEM O MESMO REFRESH TOKEN, na mesma chave do localStorage — quem
+     entra num entra nos dois, e a criança não tem e-mail para digitar.
+
+     Só que o Supabase ROTACIONA o token: cada uso invalida o anterior. Se os dois apps
+     renovarem por perto, o segundo apresenta um token gasto e leva "Invalid Refresh
+     Token: Already Used" — e insistindo, "Request rate limit reached". Aconteceu de
+     verdade na casa do usuário, e o app não tinha nenhuma defesa.
+
+     ASSÍNCRONO EM CADEIA, como o outro teste de nuvem deste arquivo: a suíte roda
+     síncrona e fecha num setImmediate, então `await` solto no meio não funcionaria. */
+  const cfgAntes = localStorage.getItem(CHAVE_SYNC);
+  const fetchReal = global.fetch;
+  let chamadas = 0;
+
+  const montar = extra => {
+    localStorage.setItem(CHAVE_SYNC, JSON.stringify({
+      url: 'https://x.supabase.co', anonKey: 'anon', family_id: 'fam',
+      refresh_token: 'rt-velho', access_token: 'at-velho', token_exp: Date.now() - 1000,
+      ...(extra || {}),
+    }));
+    Nuvem.cfg = null;
+    /* LIMPA A RENOVAÇÃO EM ANDAMENTO entre cenários. O outro teste de nuvem deste arquivo
+       também é assíncrono e pode deixar uma promessa pendente -- e aí o `renovar` daqui
+       reaproveita a dela, que é o comportamento CERTO do código e uma contaminação entre
+       testes. Sem isto o cenário mede a ordem em que os blocos rodaram. */
+    Nuvem._renovando = null;
+    Nuvem.carregar();
+    chamadas = 0;
+  };
+  const responder = fn => {
+    Object.defineProperty(global, 'fetch', {
+      /* CONTA SÓ AS CHAMADAS DE TOKEN. A suíte tem outro bloco assíncrono de nuvem que
+         roda intercalado com este e cai no mesmo fetch falso -- contando tudo, o número
+         media a ordem em que os dois blocos se cruzaram, não o código. */
+      value: async (u) => {
+        if (/grant_type=refresh_token/.test(String(u))) chamadas++;
+        return fn();
+      },
+      configurable: true, writable: true,
+    });
+  };
+  const gravarNoDisco = campos => {
+    localStorage.setItem(CHAVE_SYNC, JSON.stringify({
+      ...JSON.parse(localStorage.getItem(CHAVE_SYNC)), ...campos,
+    }));
+  };
+  const restaurar = () => {
+    Object.defineProperty(global, 'fetch', { value: fetchReal, configurable: true, writable: true });
+    if (cfgAntes === null) localStorage.removeItem(CHAVE_SYNC);
+    else localStorage.setItem(CHAVE_SYNC, cfgAntes);
+    Nuvem.cfg = null;
+  };
+
+  Promise.resolve().then(async () => {
+    /* 1. O OUTRO APP JÁ RENOVOU: o token bom está no disco e este app tinha uma cópia
+          velha em memória. Reler é grátis e evita a maior parte das colisões. */
+    montar();
+    responder(() => { throw new Error('não devia ir à rede'); });
+    gravarNoDisco({ access_token: 'at-novo', token_exp: Date.now() + 3600000 });
+    await Nuvem.renovar();
+    check('quando o outro app já renovou, não vai à rede', chamadas, 0);
+    check('  e adota o token que está no disco', Nuvem.cfg.access_token, 'at-novo');
+
+    /* 2. UMA RENOVAÇÃO POR VEZ. Três telas pedindo dados juntas disparavam três
+          renovações, e duas nasciam condenadas — é assim que a cota estoura. */
+    montar();
+    responder(async () => ({ ok: true,
+      json: async () => ({ access_token: 'at-1', refresh_token: 'rt-1', expires_in: 3600 }) }));
+    await Promise.all([Nuvem.renovar(), Nuvem.renovar(), Nuvem.renovar()]);
+    check('três pedidos ao mesmo tempo fazem uma renovação só', chamadas, 1);
+
+    /* 3. NÃO INSISTIR NO TOKEN MORTO: repetir com o mesmo token só queima a cota, e foi
+          o que produziu o erro duplo da tela — "Already Used · rate limit". */
+    montar();
+    responder(async () => ({ ok: false,
+      json: async () => ({ error_description: 'Invalid Refresh Token: Already Used' }) }));
+    let recusou = false;
+    try { await Nuvem.renovar(); } catch (_) { recusou = true; }
+    check('token já usado falha em vez de insistir', recusou, true);
+    check('  com uma chamada só', chamadas, 1);
+
+    /* 4. MAS SE O OUTRO RENOVOU no meio do caminho, a falha não é falha. */
+    montar();
+    responder(async () => {
+      gravarNoDisco({ access_token: 'at-do-outro', token_exp: Date.now() + 3600000 });
+      return { ok: false,
+        json: async () => ({ error_description: 'Invalid Refresh Token: Already Used' }) };
+    });
+    let ok4 = true;
+    try { await Nuvem.renovar(); } catch (_) { ok4 = false; }
+    check('se o outro renovou durante o pedido, não é erro', ok4, true);
+    check('  e o token dele é adotado', Nuvem.cfg.access_token, 'at-do-outro');
+
+    /* 5. A MARGEM DE UM MINUTO: um token que vence durante a viagem volta 401 e dispara
+          uma renovação a mais, que é justamente a que estoura a cota. */
+    montar({ access_token: 'at-quase', token_exp: Date.now() + 20000 });
+    responder(async () => ({ ok: true,
+      json: async () => ({ access_token: 'at-2', refresh_token: 'rt-2', expires_in: 3600 }) }));
+    await Nuvem.garantirToken();
+    check('token vencendo em 20s é renovado antes da hora', chamadas, 1);
+
+    montar({ access_token: 'at-bom', token_exp: Date.now() + 600000 });
+    responder(() => { throw new Error('não devia renovar'); });
+    await Nuvem.garantirToken();
+    check('  e token com folga não é renovado à toa', chamadas, 0);
+  }).catch(e => {
+    console.log(` FALHA | sessão dividida: ${e.message}`); fail++;
+  }).finally(restaurar);
 }
 
 /* ================= Os desenhos das coisas ================= */

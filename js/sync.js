@@ -329,11 +329,46 @@ const Sync = {
     this.saveCfg();
   },
 
+  /* ---------- A RENOVAÇÃO DA SESSÃO ----------
+
+     O APP DA CRIANÇA DIVIDE ESTE MESMO REFRESH TOKEN, e o Supabase rotaciona: cada uso
+     invalida o anterior. Se os dois renovarem por perto, um leva "Invalid Refresh Token:
+     Already Used" e, insistindo, "Request rate limit reached".
+
+     A defesa é a mesma dos dois lados: reler o disco antes de pedir (o outro app pode já
+     ter renovado), uma renovação por vez, e não insistir com um token que o servidor já
+     recusou. */
+  _renewing: null,
+
   async ensureToken() {
     if (!this.loggedIn()) throw new Error('Não autenticado');
-    if (Date.now() < (this.cfg.token_exp || 0)) return;
-    const d = await this.authRequest('token?grant_type=refresh_token', { refresh_token: this.cfg.refresh_token });
-    this.setSession(d);
+    /* MARGEM DE 60s: um token que vence no meio da viagem volta 401 e dispara uma
+       renovação a mais, que é o que estoura a cota. */
+    if (Date.now() < ((this.cfg.token_exp || 0) - 60000)) return;
+    if (this._renewing) return this._renewing;
+    this._renewing = this._renewNow().finally(() => { this._renewing = null; });
+    return this._renewing;
+  },
+
+  async _renewNow() {
+    const antes = this.cfg.access_token;
+    this.load();
+    if (this.cfg.access_token && this.cfg.access_token !== antes
+        && Date.now() < ((this.cfg.token_exp || 0) - 60000)) return;
+
+    try {
+      const d = await this.authRequest('token?grant_type=refresh_token',
+        { refresh_token: this.cfg.refresh_token });
+      this.setSession(d);
+    } catch (e) {
+      /* Última olhada no disco: o app da criança pode ter renovado no meio do caminho. */
+      this.load();
+      if (this.cfg.access_token && Date.now() < (this.cfg.token_exp || 0)) return;
+      if (/already used|rate limit/i.test(String(e.message || ''))) {
+        throw new Error('o outro app renovou a sessão agora — tente de novo em instantes');
+      }
+      throw e;
+    }
   },
 
   async rest(path, opts = {}) {

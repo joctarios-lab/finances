@@ -7819,6 +7819,98 @@ check('função is_member definida antes das policies', schema.indexOf('function
 (async () => {
   /* ---- O botão ⇅ para de girar quando termina? ----
      Roda o sync.js de verdade com fetch simulado e anota cada estado avisado. */
+  /* ---- A SESSÃO DIVIDIDA COM O APP DA CRIANÇA ----
+
+     OS DOIS APPS USAM O MESMO REFRESH TOKEN, na mesma chave do localStorage: quem entra
+     num entra nos dois, e a criança não tem e-mail para digitar.
+
+     Só que o Supabase ROTACIONA o token — cada uso invalida o anterior. Se os dois
+     renovarem por perto, o segundo apresenta um token gasto e leva "Invalid Refresh
+     Token: Already Used"; insistindo, chega no "Request rate limit reached". Aconteceu de
+     verdade, e nenhum dos dois lados tinha defesa.
+
+     AQUI DENTRO, e não num bloco próprio: este `async` já carrega o sync.js de verdade e
+     já troca o `fetch` global. Um segundo bloco assíncrono mexendo no mesmo fetch se
+     intercalaria com este — e foi o que aconteceu na primeira tentativa: o teste do botão
+     de sincronizar passou a tentar rede de verdade e quebrou. */
+  console.log('\n=== A sessão dividida entre os dois apps ===');
+  {
+    const S2 = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');
+    S2.saveCfg = function () {
+      localStorage.setItem(this.cfgKey, JSON.stringify(this.cfg));
+    };
+    let chamadas = 0;
+    const guardado = global.fetch;
+
+    const montar = extra => {
+      localStorage.setItem(S2.cfgKey, JSON.stringify({
+        url: 'https://x.supabase.co', anonKey: 'anon', family_id: 'fam',
+        refresh_token: 'rt-velho', access_token: 'at-velho', token_exp: Date.now() - 1000,
+        ...(extra || {}),
+      }));
+      S2.cfg = null;
+      S2.load();
+      /* Limpa a renovação em andamento entre cenários: sem isto o teste mede a ordem em
+         que os blocos rodaram, e não o código. */
+      S2._renewing = null;
+      chamadas = 0;
+    };
+    const responder = fn => {
+      global.fetch = async (u, o) => {
+        /* Conta só as chamadas de token. */
+        if (/grant_type=refresh_token/.test(String(u))) chamadas++;
+        return fn(u, o);
+      };
+    };
+    const gravar = campos => {
+      localStorage.setItem(S2.cfgKey, JSON.stringify({
+        ...JSON.parse(localStorage.getItem(S2.cfgKey)), ...campos,
+      }));
+    };
+
+    try {
+      /* 1. A CRIANÇA JÁ RENOVOU: o token bom está no disco e este app tinha uma cópia
+            velha em memória. Reler é grátis e evita a maior parte das colisões. */
+      montar();
+      responder(() => { throw new Error('não devia ir à rede'); });
+      gravar({ access_token: 'at-novo', token_exp: Date.now() + 3600000 });
+      await S2.ensureToken();
+      check('o app da família adota o token que a criança renovou', chamadas, 0);
+      check('  sem ir à rede', S2.cfg.access_token, 'at-novo');
+
+      /* 2. UMA RENOVAÇÃO POR VEZ: três pedidos simultâneos disparavam três renovações, e
+            duas nasciam condenadas — é assim que a cota estoura. */
+      montar();
+      responder(async () => ({
+        ok: true, status: 200,
+        json: async () => ({ access_token: 'at-1', refresh_token: 'rt-1', expires_in: 3600 }),
+        text: async () => '',
+      }));
+      await Promise.all([S2.ensureToken(), S2.ensureToken(), S2.ensureToken()]);
+      check('três pedidos simultâneos fazem uma renovação só', chamadas, 1);
+
+      /* 3. A MARGEM DE UM MINUTO: um token que vence durante a viagem volta 401 e dispara
+            uma renovação a mais, que é justamente a que estoura a cota. */
+      montar({ access_token: 'at-bom', token_exp: Date.now() + 600000 });
+      responder(() => { throw new Error('não devia renovar'); });
+      await S2.ensureToken();
+      check('token com folga não é renovado à toa', chamadas, 0);
+
+      montar({ access_token: 'at-quase', token_exp: Date.now() + 20000 });
+      responder(async () => ({
+        ok: true, status: 200,
+        json: async () => ({ access_token: 'at-2', refresh_token: 'rt-2', expires_in: 3600 }),
+        text: async () => '',
+      }));
+      await S2.ensureToken();
+      check('  mas token vencendo em 20s é renovado antes', chamadas, 1);
+    } catch (e) { console.log(` FALHA | sessão dividida: ${e.message}`); fail++; }
+    finally {
+      global.fetch = guardado;
+      localStorage.removeItem(S2.cfgKey);
+    }
+  }
+
   console.log('\n=== Estado do botão de sincronizar ===');
   {
     const S = eval(fs.readFileSync(BASE + 'js/sync.js', 'utf8') + '; Sync');

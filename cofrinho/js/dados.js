@@ -1219,19 +1219,77 @@ const Nuvem = {
     return h;
   },
 
+  /* ---------- A RENOVAÇÃO DA SESSÃO, e por que ela precisa de tanto cuidado ----------
+
+     OS DOIS APPS DIVIDEM O MESMO REFRESH TOKEN, na mesma chave do localStorage. Isso é
+     de propósito: quem entra num app entra nos dois, e a criança não tem senha de
+     e-mail para digitar.
+
+     Só que o Supabase ROTACIONA o refresh token — cada uso invalida o anterior e devolve
+     um novo. Se os dois apps renovarem por perto, o segundo apresenta um token que já
+     foi gasto e leva "Invalid Refresh Token: Already Used". Pior: ele tenta de novo, com
+     o mesmo token morto, e em poucos segundos chega no "Request rate limit reached" do
+     servidor de autenticação.
+
+     TRÊS BARREIRAS, e cada uma resolve um pedaço:
+
+     1. RELER O DISCO ANTES DE RENOVAR. Se o outro app já renovou há dois segundos, o
+        token bom está no localStorage e este app estava com uma cópia velha em memória.
+        Reler resolve o caso mais comum sem nenhuma chamada de rede.
+
+     2. UMA RENOVAÇÃO POR VEZ dentro do mesmo app. Sem isto, três telas pedindo dados ao
+        mesmo tempo disparam três renovações — e duas delas nascem já condenadas.
+
+     3. NÃO INSISTIR NO TOKEN MORTO. Quando o servidor diz que o token já foi usado,
+        tentar de novo com o mesmo token só gasta a cota. O app relê o disco uma última
+        vez, e se ainda estiver velho, para e pede login. */
+  _renovando: null,
+
   async renovar() {
+    /* Se já há uma renovação em andamento, espera a dela em vez de abrir outra. */
+    if (this._renovando) return this._renovando;
+    this._renovando = this._renovarDeVerdade().finally(() => { this._renovando = null; });
+    return this._renovando;
+  },
+
+  async _renovarDeVerdade() {
+    /* O OUTRO APP PODE TER RENOVADO. A cópia em memória fica velha no instante em que o
+       app da família (ou outra aba) grava um token novo — reler é grátis e evita a
+       maior parte das colisões. */
+    const antes = this.cfg.access_token;
+    this.carregar();
+    if (this.cfg.access_token && this.cfg.access_token !== antes
+        && this.cfg.token_exp && Date.now() < this.cfg.token_exp) {
+      return;   // o outro app já renovou por nós
+    }
+
     const res = await fetch(`${this.cfg.url}/auth/v1/token?grant_type=refresh_token`, {
       method: 'POST',
       headers: { apikey: this.cfg.anonKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: this.cfg.refresh_token }),
     });
     const d = await res.json().catch(() => ({}));
-    if (!res.ok || !d.access_token) throw new Error('sessão expirada');
+
+    if (!res.ok || !d.access_token) {
+      /* TOKEN JÁ USADO OU COTA ESTOURADA: o outro app pode ter acabado de renovar entre
+         a leitura acima e esta resposta. Uma última olhada no disco antes de desistir —
+         insistir com o mesmo token morto só queima a cota de autenticação. */
+      const msg = String((d && (d.error_description || d.msg || d.error)) || '');
+      this.carregar();
+      if (this.cfg.access_token && this.cfg.token_exp && Date.now() < this.cfg.token_exp) return;
+      throw new Error(/already used|rate limit/i.test(msg)
+        ? 'o outro app renovou a sessão agora — tente de novo em instantes'
+        : 'sessão expirada');
+    }
     this.salvarSessao(d);
   },
 
   async garantirToken() {
-    if (!this.cfg.access_token || !this.cfg.token_exp || Date.now() > this.cfg.token_exp) await this.renovar();
+    /* MARGEM DE 60 SEGUNDOS: um token que vence durante a viagem do pedido volta 401 e
+       dispara uma renovação a mais — que é justamente o que estoura a cota. */
+    const folga = 60000;
+    if (!this.cfg.access_token || !this.cfg.token_exp
+        || Date.now() > (this.cfg.token_exp - folga)) await this.renovar();
   },
 
   async rest(caminho, opcoes = {}) {
