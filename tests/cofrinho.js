@@ -1452,6 +1452,120 @@ console.log('\n=== A memória do pote de doar ===');
   limpar(idN);
 }
 
+console.log('\n=== Marcar a mesma tarefa duas vezes ===');
+{
+  /* PAGAMENTO EM DOBRO ACONTECEU DE VERDADE. A criança marcou a mesma missão em dois
+     aparelhos antes de eles sincronizarem: a guarda `if (ja.feita) return false` olha o
+     estado LOCAL, e o aparelho que ainda não tinha recebido a primeira marcação achou que
+     era a primeira. Dois lançamentos, dois ids, o adulto aprovou os dois — R$ 2,00 por uma
+     missão de R$ 1,00.
+
+     A defesa é o id DERIVADO de (criança, tarefa, dia): a segunda marcação escreve por
+     cima da primeira, não importa em qual aparelho nasceu. */
+  const id = novaCrianca({ name: 'Dobro', semanada_valor: 10 });
+  const tid = Dados.upsert('kid_tasks', {
+    kid_id: id, name: 'Lavar o carro', icon: '🚗', amount: 1,
+    frequencia: 'especial', expira_em: Dados.somarDiasISO(HOJE, 2), active: true });
+
+  /* O ID É PREVISÍVEL a partir dos dados, e é isso que faz os dois aparelhos chegarem no
+     mesmo lugar sem se falarem. */
+  const idA = Dados.idDaMarcacao(id, tid, HOJE, 'tarefa');
+  const idB = Dados.idDaMarcacao(id, tid, HOJE, 'tarefa');
+  check('o id da marcação é sempre o mesmo', idA, idB);
+  check('  e muda por dia',
+    Dados.idDaMarcacao(id, tid, Dados.somarDiasISO(HOJE, 1), 'tarefa') !== idA, true);
+  check('  e por tarefa',
+    Dados.idDaMarcacao(id, 'outra-tarefa', HOJE, 'tarefa') !== idA, true);
+  check('  e por criança',
+    Dados.idDaMarcacao('outra-crianca', tid, HOJE, 'tarefa') !== idA, true);
+  check('  com formato de uuid', /^[0-9a-f-]{36}$/.test(idA), true);
+
+  /* A MARCAÇÃO NORMAL usa esse id. */
+  Dados.marcarTarefa(id, tid);
+  const lancamentos = () => Dados.all('kid_entries')
+    .filter(e => e.task_id === tid && !e.deleted);
+  check('marcar cria um lançamento', lancamentos().length, 1);
+  check('  com o id derivado', lancamentos()[0].id, idA);
+
+  /* O CENÁRIO REAL: o segundo aparelho não sabe da primeira marcação — simulado
+     escrevendo direto, como faria o `marcarTarefa` de um app sem o dado sincronizado. */
+  Dados.upsert('kid_entries', {
+    id: Dados.idDaMarcacao(id, tid, HOJE, 'tarefa'),
+    kid_id: id, tipo: 'tarefa', pote: 'gastar', amount: 1,
+    date: HOJE, description: 'Lavar o carro', task_id: tid, confirmada: false,
+  });
+  check('o outro aparelho não cria um segundo lançamento', lancamentos().length, 1);
+
+  /* E O DINHEIRO NÃO DOBRA quando o adulto confirma. */
+  Dados.upsert('kid_entries', { ...lancamentos()[0], confirmada: true });
+  check('o pote recebe o valor uma vez só', Dados.potes(id).gastar, 1);
+
+  /* DESMARCAR E MARCAR DE NOVO no mesmo dia reusa o id, e o registro precisa voltar
+     VIVO. `remove` apaga logicamente (deleted: true) porque a exclusão precisa viajar
+     até os outros aparelhos — sem cuidado, o upsert seguinte herdava o `deleted` e a
+     marcação nova nascia invisível: a criança tocava, via o check e o dinheiro não vinha. */
+  {
+    const idD = novaCrianca({ name: 'Remarca', semanada_valor: 10 });
+    const tD = Dados.upsert('kid_tasks', {
+      kid_id: idD, name: 'Regar', icon: '🪴', amount: 2, frequencia: 'semanal', active: true });
+    Dados.marcarTarefa(idD, tD);
+    Dados.desmarcarTarefa(idD, tD);
+    check('desmarcar tira da lista',
+      Dados.all('kid_entries').filter(e => e.task_id === tD && !e.deleted).length, 0);
+    Dados.marcarTarefa(idD, tD);
+    const vivos = Dados.all('kid_entries').filter(e => e.task_id === tD && !e.deleted);
+    check('marcar de novo revive a marcação', vivos.length, 1);
+    check('  e a tarefa aparece como feita', Dados.tarefas(idD).find(t => t.id === tD).feita, true);
+    Dados.upsert('kid_entries', { ...vivos[0], confirmada: true });
+    check('  e o dinheiro entra', Dados.potes(idD).gastar, 2);
+    limpar(idD);
+  }
+
+  /* APAGAR DE PROPÓSITO CONTINUA APAGANDO: o revive só age quando o chamador não falou
+     de `deleted`. Senão nenhuma exclusão pegaria. */
+  {
+    const idX = novaCrianca({ name: 'Apagar' });
+    const eX = Dados.upsert('kid_entries', {
+      kid_id: idX, tipo: 'presente', pote: 'gastar', amount: 5, date: HOJE, confirmada: true });
+    Dados.upsert('kid_entries', { ...Dados.get('kid_entries', eX), deleted: true });
+    check('upsert com deleted apaga mesmo', Dados.potes(idX).gastar, 0);
+
+    /* E CONTINUA APAGADO quando a sincronização traz a mesma linha apagada de volta.
+
+       É o caminho normal do pull: o outro aparelho apagou, o servidor devolve a linha com
+       `deleted: true`, e o app grava por cima da sua cópia -- que também já está apagada.
+       Se o revive olhasse só o estado local e ignorasse o que o chamador pediu, o registro
+       ressuscitaria a cada sincronização e a exclusão nunca pegaria. */
+    /* PELO ID, e não por `Dados.get`: o get filtra apagados e devolveria null, e o spread
+       de null criaria um registro NOVO em vez de reescrever o apagado -- o teste passaria
+       sem exercitar nada. */
+    Dados.upsert('kid_entries', {
+      id: eX, kid_id: idX, tipo: 'presente', pote: 'gastar', amount: 5,
+      date: HOJE, confirmada: true, deleted: true,
+    });
+    check('  e o pull de um apagado não o ressuscita', Dados.potes(idX).gastar, 0);
+    limpar(idX);
+  }
+
+  /* A DIÁRIA TAMBÉM: ela é marcada muitas vezes ao longo da semana, uma por dia, e cada
+     dia precisa do seu próprio lançamento — mas dois toques no mesmo dia, não. */
+  {
+    const idDia = novaCrianca({ name: 'Diaria dobro', semanada_valor: 10 });
+    const tDia = Dados.upsert('kid_tasks', {
+      kid_id: idDia, name: 'Dentes', icon: '🦷', amount: 3, frequencia: 'diaria', active: true });
+    Dados.marcarTarefa(idDia, tDia);
+    Dados.upsert('kid_entries', {
+      id: Dados.idDaMarcacao(idDia, tDia, HOJE, 'tarefa'),
+      kid_id: idDia, tipo: 'tarefa', pote: 'gastar', amount: 0,
+      date: HOJE, description: 'Dentes', task_id: tDia, confirmada: true,
+    });
+    check('a diária não duplica no mesmo dia',
+      Dados.all('kid_entries').filter(e => e.task_id === tDia && e.tipo === 'tarefa' && !e.deleted).length, 1);
+    limpar(idDia);
+  }
+  limpar(id);
+}
+
 console.log('\n=== A sessão dividida entre os dois apps ===');
 {
   /* OS DOIS APPS DIVIDEM O MESMO REFRESH TOKEN, na mesma chave do localStorage — quem

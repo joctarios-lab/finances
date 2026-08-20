@@ -83,7 +83,19 @@ const Dados = {
   upsert(t, obj) {
     const lista = this.d[t];
     const i = obj.id ? lista.findIndex(r => r.id === obj.id) : -1;
-    const reg = { ...(i >= 0 ? lista[i] : {}), ...obj, updated_at: this.agora(), dirty: true };
+    /* REESCREVER POR CIMA DE UM APAGADO O RESSUSCITA LIMPO, e não com o estado antigo.
+
+       Isto passou a importar quando as marcações de tarefa ganharam id derivado de
+       (criança, tarefa, dia): desmarcar apaga logicamente -- `deleted: true`, porque o
+       registro precisa viajar até os outros aparelhos para sumir lá também -- e marcar de
+       novo no mesmo dia reencontra a linha apagada. Sem esta linha o merge preservava o
+       `deleted: true` e a marcação nova nascia invisível: a criança tocava, via o check e
+       o dinheiro não vinha.
+
+       Só zera quando o chamador NÃO falou de `deleted`: um upsert que apaga de propósito
+       continua apagando. */
+    const revive = i >= 0 && lista[i].deleted && obj.deleted === undefined ? { deleted: false } : {};
+    const reg = { ...(i >= 0 ? lista[i] : {}), ...obj, ...revive, updated_at: this.agora(), dirty: true };
     if (!reg.id) reg.id = this.uuid();
     if (i >= 0) lista[i] = reg; else lista.push(reg);
     this.salvar();
@@ -573,6 +585,44 @@ const Dados = {
      em jogo, então não há o que conferir, e pedir sete confirmações por semana por
      tarefa faria o adulto parar de conferir qualquer coisa. O que ele confirma é o
      BÔNUS, uma vez, quando a semana fecha. */
+  /* O ID DE UMA MARCAÇÃO DE TAREFA, derivado de quem/qual/quando.
+
+     ISTO EXISTE PORQUE DEU PAGAMENTO EM DOBRO. A criança marcou a mesma missão em dois
+     aparelhos antes de eles se sincronizarem: a guarda `if (ja.feita) return false` olha
+     o estado LOCAL, e o aparelho que ainda não tinha recebido a primeira marcação achou
+     que era a primeira. Dois lançamentos, dois ids, e o adulto aprovou os dois — R$ 2,00
+     por uma missão de R$ 1,00.
+
+     Com o id derivado dos dados, a segunda marcação escreve POR CIMA da primeira em vez
+     de criar outra. Não importa em qual aparelho aconteceu, nem se estavam offline: o
+     mesmo (criança, tarefa, dia) sempre produz o mesmo id, e o upsert do servidor resolve
+     o encontro como atualização.
+
+     É UUID v5-like feito à mão sobre um hash simples — não precisa de força
+     criptográfica, precisa ser determinístico e não colidir entre as chaves reais do app,
+     que são poucas dezenas por criança por dia. O prefixo fixo mantém o formato uuid que
+     a coluna do banco exige. */
+  idDaMarcacao(kidId, taskId, dataISO, tipo) {
+    const semente = [tipo || 'tarefa', kidId, taskId, dataISO].join('|');
+    /* FNV-1a de 32 bits, duas vezes com sementes diferentes: 64 bits de espaço são de
+       sobra aqui, e o algoritmo cabe em cinco linhas sem dependência. */
+    const fnv = (txt, semeInicial) => {
+      let h = semeInicial >>> 0;
+      for (let i = 0; i < txt.length; i++) {
+        h ^= txt.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+      }
+      return h.toString(16).padStart(8, '0');
+    };
+    const a = fnv(semente, 0x811c9dc5);
+    const b = fnv(semente + '#2', 0x9e3779b9);
+    const cc = fnv(semente + '#3', 0x85ebca6b);
+    const d = fnv(semente + '#4', 0xc2b2ae35);
+    /* Formato uuid v4-ish: a versão e a variante ficam nos lugares certos para o banco
+       aceitar a coluna uuid, mesmo o valor não sendo aleatório. */
+    return `${a}-${b.slice(0, 4)}-4${b.slice(5, 8)}-8${cc.slice(1, 4)}-${cc.slice(4)}${d}`;
+  },
+
   marcarTarefa(kidId, taskId) {
     const t = this.get('kid_tasks', taskId);
     if (!t) return false;
@@ -586,18 +636,25 @@ const Dados = {
 
     if (ja.diaria) {
       if (ja.feita) return false;                 // hoje já foi marcado
+      const hoje = this.hojeISO();
       this.upsert('kid_entries', {
+        id: this.idDaMarcacao(kidId, taskId, hoje, 'tarefa'),
         kid_id: kidId, tipo: 'tarefa', pote: 'gastar', amount: 0,
-        date: this.hojeISO(), description: t.name, task_id: taskId, confirmada: true,
+        date: hoje, description: t.name, task_id: taskId, confirmada: true,
       });
       this.acertarBonus(kidId, taskId);
       return true;
     }
 
     if (ja.feita) return false;
+    /* A ESPECIAL E A SEMANAL usam a data de HOJE na chave, como a diária. Duas
+       marcações no mesmo dia viram uma; em dias diferentes, a guarda `ja.feita` já
+       barra — a especial não volta e a semanal só reinicia na semana seguinte. */
+    const hojeM = this.hojeISO();
     this.upsert('kid_entries', {
+      id: this.idDaMarcacao(kidId, taskId, hojeM, 'tarefa'),
       kid_id: kidId, tipo: 'tarefa', pote: 'gastar', amount: Number(t.amount) || 0,
-      date: this.hojeISO(), description: t.name, task_id: taskId, confirmada: false,
+      date: hojeM, description: t.name, task_id: taskId, confirmada: false,
     });
     return true;
   },
