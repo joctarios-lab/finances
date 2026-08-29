@@ -25,7 +25,7 @@ Leia primeiro, nesta ordem:
 
 ## Estado atual
 - Versão 157 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 3114 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- 3128 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - a prova de cifra do assistente: `node tests/cofre.js` (roda o WebCrypto de verdade)
 - a conversa completa nos dois provedores: `node tests/provedores.js`
@@ -69,6 +69,23 @@ Leia primeiro, nesta ordem:
   sobre o fundo) e `--x-borda` (contorno). Nunca escreva rgba() na regra: há
   teste exigindo que todo token de cor do escuro exista também no claro, porque
   um rgba solto não acompanha a troca de tema e vaza a cor do tema anterior.
+
+## O ASSISTENTE (v164) — como está montado
+
+- **NÃO HÁ TETO DE RESPOSTA.** `IA.SEM_TETO` é `null`, e cada provedor traduz:
+  na DeepSeek o `max_tokens` SAI do corpo (lá é opcional); na Anthropic, onde é
+  obrigatório, vai o `maxSaida` do modelo — 128K no Opus/Sonnet 5, 64K no Haiku
+  4.5, números publicados na documentação. Pedir alto não custa: a documentação
+  da Anthropic diz que `max_tokens` NÃO entra no cálculo do limite por minuto,
+  que conta o que saiu.
+- **Cada modelo declara se aceita pensamento adaptativo** (`pensa`). O Haiku 4.5
+  é da geração 4.5 e RECUSA `thinking:{type:adaptive}` com 400 — mandar o campo
+  para ele deixava o modelo mais barato da lista impossível de usar. Quem não
+  aceita simplesmente não recebe o campo.
+- **`testar()` também roda sem teto.** Com 512 e pensamento adaptativo, o
+  orçamento acabava antes da chamada de ferramenta e o app REPROVAVA UMA CHAVE
+  BOA dizendo "este modelo não chama ferramenta". Agora distingue "cortada" de
+  "não chamou".
 
 ## O ASSISTENTE (v163) — como está montado
 

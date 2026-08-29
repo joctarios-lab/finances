@@ -150,9 +150,17 @@ const IA = {
       /* Preço por milhão de tokens, em dólar. Fica no rótulo porque quem paga é
          quem escolhe — e para escolher precisa do número, não de adjetivos. */
       modelos: [
-        { id: 'claude-opus-5', nome: 'Opus 5', sub: 'o mais capaz — raciocina melhor sobre cenários', entrada: 5, saida: 25 },
-        { id: 'claude-sonnet-5', nome: 'Sonnet 5', sub: 'equilibrado — bem mais barato que o Opus', entrada: 2, saida: 10 },
-        { id: 'claude-haiku-4-5', nome: 'Haiku 4.5', sub: 'o mais barato e rápido — para perguntas diretas', entrada: 1, saida: 5 },
+        /* `maxSaida` é o máximo de tokens de saída que CADA modelo aceita, e vai
+           como `max_tokens` — que aqui é obrigatório, não dá para omitir. Não há
+           desvantagem em pedir o máximo: a Anthropic cobra pelo que sai e o
+           limite por minuto conta o que saiu, não o teto pedido.
+
+           `pensa` existe porque o Haiku 4.5 é da geração 4.5, e essa geração
+           RECUSA `thinking: {type:'adaptive'}` com erro 400. Mandar adaptativo
+           para ele deixaria o modelo mais barato da lista impossível de usar. */
+        { id: 'claude-opus-5', nome: 'Opus 5', sub: 'o mais capaz — raciocina melhor sobre cenários', entrada: 5, saida: 25, maxSaida: 128000, pensa: 'adaptativo' },
+        { id: 'claude-sonnet-5', nome: 'Sonnet 5', sub: 'equilibrado — bem mais barato que o Opus', entrada: 2, saida: 10, maxSaida: 128000, pensa: 'adaptativo' },
+        { id: 'claude-haiku-4-5', nome: 'Haiku 4.5', sub: 'o mais barato e rápido — para perguntas diretas', entrada: 1, saida: 5, maxSaida: 64000, pensa: 'nenhum' },
       ],
 
       cabecalhos(chave) {
@@ -168,13 +176,19 @@ const IA = {
         };
       },
 
+      /* maxTokens null significa SEM TETO: aqui vira o máximo do modelo, porque
+         a Anthropic exige o campo. Um número explícito só vem do teste de chave,
+         que quer a menor resposta possível. */
       corpo(modelo, instrucao, mensagens, ferramentas, maxTokens) {
+        const m = this.modelos.find(x => x.id === modelo) || this.modelos[0];
         return {
           model: modelo,
-          max_tokens: maxTokens,
+          max_tokens: maxTokens || m.maxSaida,
           /* As perguntas aqui vão de "qual meu saldo" a "o que muda se eu cortar
-             300 por mês durante um ano". O modelo decide quanto pensar em cada. */
-          thinking: { type: 'adaptive' },
+             300 por mês durante um ano". Onde há adaptativo, o modelo decide
+             quanto pensar em cada uma; onde não há, o campo nem vai — mandá-lo
+             a um modelo que não o aceita devolve 400. */
+          ...(m.pensa === 'adaptativo' ? { thinking: { type: 'adaptive' } } : {}),
           system: instrucao,
           messages: mensagens,
           tools: ferramentas.length
@@ -219,6 +233,8 @@ const IA = {
          para cima. Só os modelos de texto entram — o `vision-exp` é
          experimental e o assistente não manda imagem nenhuma. */
       modelos: [
+        /* Sem `maxSaida`: aqui o max_tokens é opcional e simplesmente não é
+           enviado — o modelo responde até acabar de responder. */
         { id: 'deepseek-v4-pro', nome: 'V4 Pro', sub: 'o mais capaz da DeepSeek — o indicado para cenários', entrada: 1.32, saida: 3.96 },
         { id: 'deepseek-v4-flash', nome: 'V4 Flash', sub: 'bem mais barato e rápido — para perguntas diretas', entrada: 0.44, saida: 1.32 },
       ],
@@ -227,10 +243,12 @@ const IA = {
         return { 'Content-Type': 'application/json', Authorization: `Bearer ${chave}` };
       },
 
+      /* maxTokens null significa SEM TETO — e aqui isso é literal: o campo sai
+         do corpo, porque na API da DeepSeek ele é opcional. */
       corpo(modelo, instrucao, mensagens, ferramentas, maxTokens) {
         return {
           model: modelo,
-          max_tokens: maxTokens,
+          ...(maxTokens ? { max_tokens: maxTokens } : {}),
           // Aqui a instrução é a primeira mensagem, não um campo à parte.
           messages: [{ role: 'system', content: instrucao }].concat(mensagens),
           tools: ferramentas.length
@@ -1095,11 +1113,14 @@ const IA = {
      círculo.
      ========================================================================== */
   MAX_VOLTAS: 6,
-  /* Teto ALTO de propósito. Só limita o caso extremo — a saída é cobrada pelo
-     que realmente sai, não pelo teto. Em 2000, com pensamento adaptativo (que na
-     Anthropic conta DENTRO deste número), uma pergunta de cenário gastava o
-     orçamento pensando e devolvia a resposta pela metade. */
-  MAX_TOKENS: 8000,
+  /* SEM TETO DE RESPOSTA. `null` diz a cada provedor para não limitar: na
+     DeepSeek o campo max_tokens sai do corpo, porque lá é opcional; na
+     Anthropic, onde é obrigatório, vai o máximo do modelo.
+
+     Cortar a resposta de um app de dinheiro pela metade é pior que demorar
+     mais — e não há desvantagem em pedir alto: cobra-se pelo que sai, e o
+     limite por minuto conta o que saiu, não o teto pedido. */
+  SEM_TETO: null,
 
   /* O laço não sabe com quem está falando. Ele pede ao adaptador do provedor
      para montar o corpo e para ler a resposta, e trabalha na forma neutra
@@ -1117,7 +1138,7 @@ const IA = {
     const consultou = [];
 
     for (let volta = 0; volta < this.MAX_VOLTAS; volta++) {
-      const bruto = await this.chamar(p.corpo(this.modeloAtual(), this.instrucao(), msgs, tools, this.MAX_TOKENS));
+      const bruto = await this.chamar(p.corpo(this.modeloAtual(), this.instrucao(), msgs, tools, this.SEM_TETO));
       const r = p.ler(bruto);
 
       if (!r.pedidos.length) {
@@ -1179,10 +1200,16 @@ const IA = {
       input_schema: { type: 'object', properties: {}, required: [] },
     }];
     const corpo = p.corpo(this.modeloAtual(), 'Você responde sobre finanças. Consulte as ferramentas quando precisar de um número.',
-      [{ role: 'user', content: 'Qual é o meu saldo?' }], brinquedo, 512);
+      [{ role: 'user', content: 'Qual é o meu saldo?' }], brinquedo, this.SEM_TETO);
 
     const bruto = await this.chamar(corpo);
     const r = p.ler(bruto);
+    /* Cortada é outra coisa: a chave funciona e o modelo pode até chamar
+       ferramenta — só não coube. Dizer "não chamou" aqui seria acusar o modelo
+       de um defeito que não é dele. */
+    if (r.cortada && !r.pedidos.length) {
+      throw new Error('A chave funciona, mas a resposta do teste veio cortada. Tente de novo, ou escolha outro modelo.');
+    }
     if (!r.pedidos.length) {
       throw new Error(`A chave funciona, mas o modelo ${this.nomeDoModelo()} não chamou a ferramenta que ofereci. Sem isso o assistente responderia sem consultar os seus números. Escolha outro modelo.`);
     }

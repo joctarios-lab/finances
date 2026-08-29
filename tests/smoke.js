@@ -4592,6 +4592,63 @@ console.log('\n=== Apagar uma conversa ===');
   IA.cfg = guardaCfg;
 }
 
+console.log('\n=== Sem teto de resposta ===');
+{
+  const guarda = IA.cfg;
+  IA.cfg = IA.padrao();
+  IA.cfg.ligado = true;
+  IA.cfg.ver.situacao = true;
+  const tools = IA.ferramentasAutorizadas();
+  const msgs = [{ role: 'user', content: 'e aí?' }];
+  const anth = IA.PROVEDORES.anthropic;
+  const deep = IA.PROVEDORES.deepseek;
+
+  /* SEM_TETO é null, e cada provedor o traduz para o que a API dele aceita. */
+  check('SEM_TETO é a ausência de teto', IA.SEM_TETO, null);
+
+  /* Na DeepSeek o campo é OPCIONAL: some do corpo. É o "remover" literal. */
+  const cD = deep.corpo('deepseek-v4-pro', 'I', msgs, tools, IA.SEM_TETO);
+  check('DeepSeek: max_tokens sai do corpo', 'max_tokens' in cD, false);
+  check('  mas um número explícito ainda é respeitado',
+    deep.corpo('deepseek-v4-pro', 'I', msgs, tools, 512).max_tokens, 512);
+
+  /* Na Anthropic o campo é OBRIGATÓRIO: vai o máximo do modelo, que a
+     documentação publica. Pedir alto não custa nada — cobra-se pelo que sai, e
+     o limite por minuto conta o que saiu, não o teto pedido. */
+  const cA = anth.corpo('claude-opus-5', 'I', msgs, tools, IA.SEM_TETO);
+  check('Anthropic: vai o máximo do modelo', cA.max_tokens, 128000);
+  check('  e cada modelo tem o seu',
+    anth.corpo('claude-haiku-4-5', 'I', msgs, tools, IA.SEM_TETO).max_tokens, 64000);
+  check('  com número explícito, ele manda',
+    anth.corpo('claude-opus-5', 'I', msgs, tools, 512).max_tokens, 512);
+  check('todo modelo declara seu máximo',
+    anth.modelos.every(m => m.maxSaida > 0), true);
+
+  /* O DEFEITO DO HAIKU. Eu mandava thinking adaptativo para todo modelo da
+     Anthropic. O Haiku 4.5 é da geração 4.5, e essa geração RECUSA adaptativo
+     com 400 ("adaptive thinking is not supported on this model") — quem
+     escolhesse o modelo mais barato da lista não conseguiria perguntar nada. */
+  check('Opus 5 recebe pensamento adaptativo', cA.thinking.type, 'adaptive');
+  const cH = anth.corpo('claude-haiku-4-5', 'I', msgs, tools, IA.SEM_TETO);
+  check('mas o Haiku 4.5 NÃO recebe o campo', 'thinking' in cH, false);
+  check('  porque ele o recusaria com erro 400',
+    anth.modelos.find(m => m.id === 'claude-haiku-4-5').pensa, 'nenhum');
+
+  /* O teste de chave também roda sem teto: com 512 e pensamento adaptativo, o
+     orçamento acabava antes da chamada de ferramenta e o app reprovava uma
+     chave boa dizendo "este modelo não chama ferramenta". */
+  const fonte = fs.readFileSync(BASE + 'js/ia.js', 'utf8');
+  const tst = fonte.slice(fonte.indexOf('async testar()'), fonte.indexOf('nomeDoModelo()'));
+  check('o teste de chave não se limita a 512', /brinquedo, 512\)/.test(tst), false);
+  check('  e distingue "cortada" de "não chamou"', /r\.cortada && !r\.pedidos\.length/.test(tst), true);
+
+  /* O laço continua pedindo sem teto — é o caminho real das perguntas. */
+  check('o laço pergunta sem teto', /msgs, tools, this\.SEM_TETO\)/.test(fonte), true);
+  check('e não sobrou o teto antigo', /MAX_TOKENS: \d+/.test(fonte), false);
+
+  IA.cfg = guarda;
+}
+
 console.log('\n=== O markdown da resposta ===');
 {
   /* formatarResposta vive no js/app.js e depende de esc(). Roda aqui isolada,
