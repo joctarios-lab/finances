@@ -113,28 +113,41 @@ quem calcula são as mesmas funções que desenham as telas.
 Desligado por padrão. Sem configurar, o app fica exatamente como está — o botão
 de conversa nem aparece.
 
-**Cada pessoa usa a própria conta da Anthropic, e paga o próprio uso.** Não há
-chave embutida no app, nem função a publicar: a configuração inteira é feita
-dentro do app.
+**Cada pessoa escolhe o provedor e usa a própria conta, pagando o próprio
+uso.** Não há chave embutida no app, nem função a publicar: a configuração
+inteira é feita dentro do app.
 
-**1. Crie uma chave** em [console.anthropic.com](https://console.anthropic.com)
-→ *API Keys*, e ponha crédito na conta. Vale criar a chave num **workspace com
-teto de gasto mensal**: assim, mesmo no pior caso, o prejuízo é limitado por
-construção.
+| | Claude (Anthropic) | DeepSeek |
+|---|---|---|
+| Onde criar a chave | console.anthropic.com | platform.deepseek.com |
+| Modelos | Opus 5, Sonnet 5, Haiku 4.5 | V4 Pro, V4 Flash |
+| Preço (US$ por milhão de tokens) | de 1/5 a 5/25 | de 0,44/1,32 a 1,32/3,96 |
 
-**2. Cole no app**: **⚙︎ → Assistente** → cole a chave e toque em **Testar e
-salvar**. O app confere a chave contra a API antes de guardar — chave errada é
-recusada ali, e não na primeira pergunta.
+Os dois funcionam igual dentro do app: mesmas ferramentas, mesmas permissões,
+mesma tela. A diferença é de quem é a conta e quanto custa.
 
-**3. Escolha o modelo e o que ele pode ver.** Opus 5 (mais capaz), Sonnet 5
-(equilibrado) ou Haiku 4.5 (mais barato) — o preço por milhão de tokens aparece
-ao lado de cada um. Depois marque o que ele pode consultar: tudo começa
-desmarcado, e uma permissão desmarcada não é só bloqueada — a ferramenta nem é
-oferecida ao modelo. Marcado o primeiro item, o botão ✨ aparece no topo.
+**1. Crie uma chave** no console do provedor escolhido e ponha crédito. Vale
+criar a chave num **workspace com teto de gasto mensal**: assim, mesmo no pior
+caso, o prejuízo é limitado por construção.
 
-**Quanto custa.** Uma pergunta típica custa cerca de R$ 0,15 no Opus 5; um uso de
-família fica na casa de R$ 15 a R$ 30 por mês. No Haiku sai cerca de cinco vezes
-menos.
+**2. Cole no app**: **⚙︎ → Assistente** → escolha o provedor, cole a chave e
+toque em **Testar e salvar**. O app confere duas coisas antes de guardar: que a
+chave é aceita, e que **o modelo escolhido sabe chamar ferramenta** — sem isso o
+assistente responderia sem consultar os seus números, que é o pior defeito
+possível aqui e o mais difícil de perceber.
+
+Trocar de provedor não apaga a chave do outro: cada uma fica guardada no lugar
+dela, e dá para alternar quando quiser.
+
+**3. Escolha o modelo e o que ele pode ver.** O preço por milhão de tokens
+aparece ao lado de cada modelo — quem paga é quem escolhe. Depois marque o que
+ele pode consultar: tudo começa desmarcado, e uma permissão desmarcada não é só
+bloqueada — a ferramenta nem é oferecida ao modelo. Marcado o primeiro item, o
+botão ✨ aparece no topo.
+
+**Quanto custa.** Uma pergunta típica custa cerca de R$ 0,15 no Opus 5; um uso
+de família fica na casa de R$ 15 a R$ 30 por mês. No Haiku 4.5 ou no DeepSeek V4
+Flash sai por volta de cinco vezes menos.
 
 ### Se você tem sincronização
 

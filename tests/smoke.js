@@ -4361,6 +4361,155 @@ console.log('\n=== Retorno ao usuário ===');
   check('texto secundário passa no AA (claro)', contraste(claro.dim, claro.fundo) >= 4.5, true);
 }
 
+console.log('\n=== O header nomeia o app e a tela ===');
+{
+  const idxH = fs.readFileSync(BASE + 'index.html', 'utf8');
+  const apH = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const cssH = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+
+  check('a marca é escrita pelo app', /topbar-hello.*textContent = 'DOMI'/.test(apH), true);
+  check('  com o nome da família quando existe', /'DOMI' \+ \(nome \? ' · ' \+ nome : ''\)/.test(apH), true);
+  check('a tela atual vai no topbar-month', /#topbar-month'\)\.textContent = TITULOS/.test(apH), true);
+
+  /* O bloco sumia abaixo de 1024px — justo o celular, onde o app vive. Se essa
+     regra voltar, o header fica sem marca e sem contexto de novo. */
+  const escondeNoCelular = /@media \(max-width: 1023px\) \{[^}]*\.topbar-ctx \{ display: none/.test(cssH);
+  check('e não é escondido no celular', escondeNoCelular, false);
+
+  /* Sem min-width:0 num filho de flex, a reticência não corta: o bloco empurra
+     as ações para fora da barra em vez de encolher. */
+  check('o bloco pode encolher (min-width:0)', /\.topbar-ctx \{ min-width: 0/.test(cssH), true);
+  check('e o nome da tela usa reticência',
+    /\.topbar-month \{[^}]*text-overflow: ellipsis/.test(cssH.replace(/\r?\n/g, ' ')), true);
+
+  /* A PILHA DE CAMADAS.
+
+     A topbar estava em z-index 100, acima de TODA a família de sobreposições
+     (que começa em 30) — inclusive do modal, que cobre a tela inteira com o
+     título grudado no topo. Resultado: o header pintava sobre o título e o
+     cortava pela metade em toda seção de configuração. */
+  const z = (sel, txt) => {
+    const m = txt.match(new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{[^}]*z-index:\\s*(\\d+)'));
+    return m ? Number(m[1]) : null;
+  };
+  const plano = cssH.replace(/\r?\n/g, ' ');
+  const zTopbar = z('.topbar', plano);
+  const zModal = z('.modal', plano);
+  const zFolha = z('.sheet', plano);
+  const zLock = z('.lock', plano);
+  check('a topbar fica ABAIXO do modal', zTopbar < zModal, true, `topbar ${zTopbar} < modal ${zModal}`);
+  check('  e abaixo da folha', zTopbar < zFolha, true, `topbar ${zTopbar} < folha ${zFolha}`);
+  check('  mas acima do card de mês', zTopbar > 20, true, `topbar ${zTopbar}`);
+  check('e a tela de bloqueio segue acima de tudo', zLock > zModal && zLock > zTopbar, true);
+
+  check('o HTML não fixa um mês de mentira no título',
+    /id="topbar-month"[^>]*>—</.test(idxH), false);
+}
+
+console.log('\n=== Os dois provedores ===');
+{
+  const iaSrc2 = fs.readFileSync(BASE + 'js/ia.js', 'utf8');
+
+  /* ---- A escolha é da pessoa, e nada se perde ao trocar ---- */
+  IA.cfg = IA.padrao();
+  check('nasce na Anthropic', IA.cfg.provedor, 'anthropic');
+  check('os dois provedores existem',
+    Object.keys(IA.PROVEDORES).sort().join(','), 'anthropic,deepseek');
+
+  IA.cfg.chaves.anthropic = 'sk-ant-UM';
+  IA.cfg.provedor = 'deepseek';
+  IA.cfg.chaves.deepseek = 'sk-DOIS';
+  check('cada provedor guarda a chave dele', IA.chaveAtual(), 'sk-DOIS');
+  IA.cfg.provedor = 'anthropic';
+  check('e trocar de volta não perdeu a outra', IA.chaveAtual(), 'sk-ant-UM');
+
+  /* Configuração da v158 tinha `chave`/`modelo` soltos, de quando só havia a
+     Anthropic. Quem já colou a chave não pode ser obrigado a colar de novo. */
+  DB.data.meta = DB.data.meta || {};
+  DB.data.meta.ia = { ligado: true, chave: 'sk-ant-VELHA', modelo: 'claude-sonnet-5', ver: { situacao: true } };
+  const migrada = IA.load();
+  check('config antiga migra a chave', migrada.chaves.anthropic, 'sk-ant-VELHA');
+  check('e o modelo', migrada.modelos.anthropic, 'claude-sonnet-5');
+  check('sem deixar o campo velho para trás', migrada.chave, undefined);
+  delete DB.data.meta.ia;
+
+  /* ---- Cada provedor traduz na borda ---- */
+  IA.cfg = IA.padrao();
+  IA.cfg.ligado = true;
+  IA.cfg.ver.situacao = true;
+  const tools = IA.ferramentasAutorizadas();
+
+  const anth = IA.PROVEDORES.anthropic;
+  const deep = IA.PROVEDORES.deepseek;
+  const msgs = [{ role: 'user', content: 'e aí?' }];
+
+  const cA = anth.corpo('claude-opus-5', 'INSTRUÇÃO', msgs, tools, 2000);
+  check('Anthropic: instrução é campo próprio', cA.system, 'INSTRUÇÃO');
+  check('  e a ferramenta usa input_schema', !!cA.tools[0].input_schema, true);
+  check('  com pensamento adaptativo', cA.thinking.type, 'adaptive');
+
+  const cD = deep.corpo('deepseek-v4-pro', 'INSTRUÇÃO', msgs, tools, 2000);
+  check('DeepSeek: instrução vira a 1ª mensagem', cD.messages[0].role, 'system');
+  check('  e a pergunta vem depois', cD.messages[1].content, 'e aí?');
+  check('  sem campo system solto', cD.system, undefined);
+  check('  a ferramenta é embrulhada em function', cD.tools[0].type, 'function');
+  check('  com parameters, não input_schema', !!cD.tools[0].function.parameters, true);
+  check('  e o mesmo nome dos dois lados', cD.tools[0].function.name, cA.tools[0].name);
+
+  /* ---- E lê a resposta de volta na forma neutra ---- */
+  const respA = { content: [
+    { type: 'text', text: 'deixa eu ver' },
+    { type: 'tool_use', id: 'tu_1', name: 'situacao_financeira', input: { mes: 0 } },
+  ] };
+  const lidoA = anth.ler(respA);
+  check('Anthropic: lê o texto', lidoA.texto, 'deixa eu ver');
+  check('  e o pedido de ferramenta', lidoA.pedidos[0].name, 'situacao_financeira');
+  check('  com o input já em objeto', lidoA.pedidos[0].input.mes, 0);
+
+  const respD = { choices: [{ message: {
+    role: 'assistant', content: 'deixa eu ver',
+    tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'situacao_financeira', arguments: '{"mes":0}' } }],
+  } }] };
+  const lidoD = deep.ler(respD);
+  check('DeepSeek: lê o texto', lidoD.texto, 'deixa eu ver');
+  check('  e o pedido dentro de tool_calls', lidoD.pedidos[0].name, 'situacao_financeira');
+  check('  desserializando os argumentos', lidoD.pedidos[0].input.mes, 0);
+  /* Um modelo pode mandar JSON que não fecha. Estourar aí derrubaria a conversa
+     inteira; o objeto vazio deixa a ferramenta rodar com os padrões dela. */
+  const quebrado = deep.ler({ choices: [{ message: { tool_calls: [
+    { id: 'c', function: { name: 'situacao_financeira', arguments: '{"mes":' } }] } }] });
+  check('  e argumento quebrado não derruba a conversa', JSON.stringify(quebrado.pedidos[0].input), '{}');
+
+  /* ---- O resultado volta no formato de cada uma ---- */
+  const pares = [{ id: 'x1', saida: '{"em_conta":10}' }, { id: 'x2', saida: '{"ok":true}' }];
+  const mA = anth.msgsResultado(pares);
+  check('Anthropic: os resultados vão numa ÚNICA mensagem', mA.length, 1);
+  check('  como blocos tool_result', mA[0].content.length, 2);
+  check('  amarrados pelo tool_use_id', mA[0].content[0].tool_use_id, 'x1');
+
+  const mD = deep.msgsResultado(pares);
+  check('DeepSeek: uma mensagem POR resultado', mD.length, 2);
+  check('  com papel tool', mD[0].role, 'tool');
+  check('  amarrada pelo tool_call_id', mD[1].tool_call_id, 'x2');
+
+  /* ---- O laço não conhece provedor ---- */
+  const laco = iaSrc2.slice(iaSrc2.indexOf('async perguntar('), iaSrc2.indexOf('async chamar('));
+  check('o laço não cita nenhum provedor pelo nome',
+    /anthropic|deepseek|tool_use|tool_calls/i.test(laco), false);
+
+  /* ---- Nenhuma chave literal escapou ---- */
+  check('nenhuma chave real no código', /sk-ant-[A-Za-z0-9]{20,}/.test(iaSrc2), false);
+
+  /* ---- As duas falam com o endereço certo ---- */
+  check('Anthropic no endereço dela', anth.url, 'https://api.anthropic.com/v1/messages');
+  check('DeepSeek no endereço dela', deep.url, 'https://api.deepseek.com/chat/completions');
+  check('a Anthropic manda o cabeçalho que ela exige do navegador',
+    !!anth.cabecalhos('k')['anthropic-dangerous-direct-browser-access'], true);
+  check('e a DeepSeek autentica por Bearer', deep.cabecalhos('k').Authorization, 'Bearer k');
+
+  IA.cfg = IA.padrao();
+}
+
 console.log('\n=== O assistente: permissões e ferramentas ===');
 {
   const iaSrc = fs.readFileSync(BASE + 'js/ia.js', 'utf8');
@@ -4410,13 +4559,41 @@ console.log('\n=== O assistente: permissões e ferramentas ===');
   check('e o login é quem o abre',
     /IA\.abrirCofre\(password\)/.test(fs.readFileSync(BASE + 'js/sync.js', 'utf8')), true);
 
-  /* O backup exportado é um .json solto na pasta de downloads. Credencial
-     nenhuma pode ir junto. */
+  /* O backup exportado é um .json solto na pasta de downloads, mandado por
+     e-mail, guardado no drive — o lugar do app onde criptografia nenhuma
+     protege. Credencial nenhuma pode ir junto.
+
+     ESTE TESTE RODA exportJSON DE VERDADE. A versão anterior procurava o texto
+     `chave: ''` no código-fonte e passou tranquila quando as chaves mudaram de
+     `meta.ia.chave` para `meta.ia.chaves.<provedor>` — o campo zerado deixou de
+     existir e as duas chaves passariam a sair no arquivo. Asserção de texto não
+     enxerga mudança de forma; execução enxerga. */
   {
-    const dbSrc = fs.readFileSync(BASE + 'js/db.js', 'utf8');
-    const exp = dbSrc.slice(dbSrc.indexOf('exportJSON()'), dbSrc.indexOf('importJSON('));
-    check('o backup sai sem a chave da API', /chave: ''/.test(exp), true);
-    check('e sem a chave do cofre', /ia_cofre: undefined/.test(exp), true);
+    const guardado = DB.data.meta ? { ...DB.data.meta } : undefined;
+    DB.data.meta = {
+      ...(DB.data.meta || {}),
+      ia_cofre: 'CHAVE-DO-COFRE-EM-BASE64',
+      ia: {
+        ligado: true,
+        provedor: 'deepseek',
+        chaves: { anthropic: 'sk-ant-SEGREDO-UM', deepseek: 'sk-SEGREDO-DOIS' },
+        modelos: { anthropic: 'claude-opus-5', deepseek: 'deepseek-v4-pro' },
+        ver: { situacao: true },
+      },
+    };
+
+    const saida = DB.exportJSON();
+    check('o backup não leva a chave da Anthropic', saida.includes('sk-ant-SEGREDO-UM'), false);
+    check('nem a chave da DeepSeek', saida.includes('sk-SEGREDO-DOIS'), false);
+    check('nem a chave do cofre', saida.includes('CHAVE-DO-COFRE-EM-BASE64'), false);
+
+    // O resto da configuração continua no backup: só as credenciais saem.
+    const volta = JSON.parse(saida);
+    check('mas o provedor escolhido continua lá', volta.meta.ia.provedor, 'deepseek');
+    check('e o modelo escolhido também', volta.meta.ia.modelos.deepseek, 'deepseek-v4-pro');
+    check('e as permissões', volta.meta.ia.ver.situacao, true);
+
+    DB.data.meta = guardado;
   }
 
   /* As duas tabelas do assistente são as únicas de escopo pessoal do app. Uma

@@ -20,10 +20,13 @@
    ferramenta declara a permissão que a habilita, e uma ferramenta sem permissão
    NÃO É NEM OFERECIDA ao modelo: ele não sabe que ela existe, então não pede.
 
-   A CHAVE É DE QUEM PERGUNTA. Cada pessoa cola a própria chave da Anthropic
-   nas configurações, e a chamada vai direto do navegador para a API — sem
-   servidor no meio. Assim quem usa paga o próprio uso, e o assistente não
-   obriga um app local-first a depender de backend publicado.
+   A CHAVE É DE QUEM PERGUNTA. Cada pessoa escolhe o provedor — Claude, da
+   Anthropic, ou DeepSeek — cola a própria chave nas configurações, e a chamada
+   vai direto do navegador para a API, sem servidor no meio. Assim quem usa paga
+   o próprio uso, e o assistente não obriga um app local-first a depender de
+   backend publicado.
+
+   O laço de conversa é neutro: cada provedor traduz na borda (ver PROVEDORES).
 
    A chave e as conversas ficam cifradas com o PIN aqui no aparelho, e sobem
    para o Supabase cifradas de novo — com uma chave derivada da senha do login,
@@ -51,8 +54,12 @@ const IA = {
   padrao() {
     return {
       ligado: false,
-      chave: '',
-      modelo: 'claude-opus-5',
+      provedor: 'anthropic',
+      /* Chave e modelo POR PROVEDOR. Um campo só faria trocar de provedor
+         apagar a chave do outro — e quem experimenta os dois teria de ir buscar
+         a chave no console de novo a cada troca. */
+      chaves: { anthropic: '', deepseek: '' },
+      modelos: { anthropic: 'claude-opus-5', deepseek: 'deepseek-v4-pro' },
       // O que o assistente pode consultar. Cada chave liga um grupo de ferramentas.
       ver: {
         situacao: false,     // saldo, disponível, comprometido, guardado
@@ -66,19 +73,21 @@ const IA = {
     };
   },
 
-  /* Os modelos que a pessoa pode escolher. O custo agora é dela, então a escolha
-     também é — e para escolher ela precisa do número, não de adjetivos. Preço
-     por milhão de tokens, em dólar, como a Anthropic cobra. */
-  MODELOS: [
-    { id: 'claude-opus-5', nome: 'Opus 5', sub: 'o mais capaz — raciocina melhor sobre cenários', entrada: 5, saida: 25 },
-    { id: 'claude-sonnet-5', nome: 'Sonnet 5', sub: 'equilibrado — bem mais barato que o Opus', entrada: 2, saida: 10 },
-    { id: 'claude-haiku-4-5', nome: 'Haiku 4.5', sub: 'o mais barato e rápido — para perguntas diretas', entrada: 1, saida: 5 },
-  ],
-
   load() {
     const salvo = (DB.data && DB.data.meta && DB.data.meta.ia) || null;
-    this.cfg = { ...this.padrao(), ...(salvo || {}) };
-    this.cfg.ver = { ...this.padrao().ver, ...(this.cfg.ver || {}) };
+    const p = this.padrao();
+    this.cfg = { ...p, ...(salvo || {}) };
+    this.cfg.ver = { ...p.ver, ...(this.cfg.ver || {}) };
+    this.cfg.chaves = { ...p.chaves, ...(this.cfg.chaves || {}) };
+    this.cfg.modelos = { ...p.modelos, ...(this.cfg.modelos || {}) };
+
+    /* Configuração da v158, de quando só existia a Anthropic: `chave` e `modelo`
+       soltos. Sobem para o formato novo em vez de serem descartados — quem já
+       tinha colado a chave não pode ser obrigado a colá-la de novo. */
+    if (this.cfg.chave) { this.cfg.chaves.anthropic = this.cfg.chave; delete this.cfg.chave; }
+    if (this.cfg.modelo) { this.cfg.modelos.anthropic = this.cfg.modelo; delete this.cfg.modelo; }
+
+    if (!this.PROVEDORES[this.cfg.provedor]) this.cfg.provedor = 'anthropic';
     return this.cfg;
   },
   save() {
@@ -91,16 +100,184 @@ const IA = {
     this.nuvemSalvarCfg().catch(() => {});
   },
 
-  /* O assistente existe quando a pessoa ligou E colou uma chave. Sem chave o
-     botão não aparece, em vez de aparecer e falhar no primeiro toque.
+  /* O assistente existe quando a pessoa ligou E há chave para o provedor
+     escolhido. Sem chave o botão não aparece, em vez de aparecer e falhar no
+     primeiro toque.
 
      Note que NÃO exige nuvem: a chamada vai direto do navegador para a API, e o
      app segue funcionando sem Supabase nenhum — como todo o resto dele. */
   disponivel() {
-    return !!(this.cfg && this.cfg.ligado && this.cfg.chave);
+    return !!(this.cfg && this.cfg.ligado && this.chaveAtual());
   },
   algoAutorizado() {
     return !!(this.cfg && Object.values(this.cfg.ver).some(Boolean));
+  },
+
+  /* ==========================================================================
+     OS DOIS PROVEDORES
+
+     O app fala com a Anthropic ou com a DeepSeek, à escolha de quem usa. As
+     duas cobram por token na conta de quem configurou, e as duas aceitam
+     chamada direta do navegador — verificado no preflight: a Anthropic devolve
+     `access-control-allow-origin: *` e admite o cabeçalho
+     `anthropic-dangerous-direct-browser-access`; a DeepSeek ecoa a origem do
+     app e libera `authorization`.
+
+     ONDE ELAS DIFEREM, e por isso este bloco existe:
+
+       • a instrução do sistema é campo próprio na Anthropic, e uma mensagem
+         `role:'system'` na DeepSeek (que segue o formato da OpenAI);
+       • a ferramenta é `{name, description, input_schema}` lá, e
+         `{type:'function', function:{name, description, parameters}}` cá;
+       • o pedido de ferramenta volta em blocos `content[]` lá, e em
+         `message.tool_calls[]` cá — com os argumentos em JSON já serializado;
+       • o resultado volta numa ÚNICA mensagem de usuário lá, e em UMA MENSAGEM
+         `role:'tool'` POR PEDIDO cá.
+
+     O laço de conversa (`perguntar`) não sabe nada disso. Ele fala a forma
+     neutra `{ texto, pedidos:[{id,name,input}] }`, e cada adaptador traduz na
+     borda. Foi assim que o segundo provedor coube sem reescrever o laço — e é
+     assim que um terceiro caberá. */
+  PROVEDORES: {
+    anthropic: {
+      nome: 'Claude',
+      empresa: 'Anthropic',
+      console: 'console.anthropic.com',
+      caminhoDaChave: 'API Keys',
+      exemplo: 'sk-ant-...',
+      url: 'https://api.anthropic.com/v1/messages',
+
+      /* Preço por milhão de tokens, em dólar. Fica no rótulo porque quem paga é
+         quem escolhe — e para escolher precisa do número, não de adjetivos. */
+      modelos: [
+        { id: 'claude-opus-5', nome: 'Opus 5', sub: 'o mais capaz — raciocina melhor sobre cenários', entrada: 5, saida: 25 },
+        { id: 'claude-sonnet-5', nome: 'Sonnet 5', sub: 'equilibrado — bem mais barato que o Opus', entrada: 2, saida: 10 },
+        { id: 'claude-haiku-4-5', nome: 'Haiku 4.5', sub: 'o mais barato e rápido — para perguntas diretas', entrada: 1, saida: 5 },
+      ],
+
+      cabecalhos(chave) {
+        return {
+          'Content-Type': 'application/json',
+          'x-api-key': chave,
+          'anthropic-version': '2023-06-01',
+          /* O nome do cabeçalho avisa do risco real: chave no navegador é
+             legível por quem tem acesso àquele navegador. Aceitável aqui porque
+             a chave é a DA PRÓPRIA PESSOA, no aparelho DELA. Inaceitável seria
+             embutir uma chave no app e distribuí-la — não é o caso. */
+          'anthropic-dangerous-direct-browser-access': 'true',
+        };
+      },
+
+      corpo(modelo, instrucao, mensagens, ferramentas, maxTokens) {
+        return {
+          model: modelo,
+          max_tokens: maxTokens,
+          /* As perguntas aqui vão de "qual meu saldo" a "o que muda se eu cortar
+             300 por mês durante um ano". O modelo decide quanto pensar em cada. */
+          thinking: { type: 'adaptive' },
+          system: instrucao,
+          messages: mensagens,
+          tools: ferramentas.length
+            ? ferramentas.map(f => ({ name: f.name, description: f.description, input_schema: f.input_schema }))
+            : undefined,
+        };
+      },
+
+      ler(json) {
+        const blocos = json.content || [];
+        return {
+          texto: blocos.filter(b => b.type === 'text').map(b => b.text).join('\n').trim(),
+          pedidos: blocos.filter(b => b.type === 'tool_use').map(b => ({ id: b.id, name: b.name, input: b.input })),
+          cru: blocos,
+        };
+      },
+
+      msgAssistente(cru) { return { role: 'assistant', content: cru }; },
+
+      /* Todos os resultados numa ÚNICA mensagem. Separá-los ensina o modelo a
+         parar de pedir ferramentas em paralelo, e aí cada pergunta vira várias
+         idas e vindas. */
+      msgsResultado(pares) {
+        return [{
+          role: 'user',
+          content: pares.map(p => ({ type: 'tool_result', tool_use_id: p.id, content: p.saida })),
+        }];
+      },
+    },
+
+    deepseek: {
+      nome: 'DeepSeek',
+      empresa: 'DeepSeek',
+      console: 'platform.deepseek.com',
+      caminhoDaChave: 'API Keys',
+      exemplo: 'sk-...',
+      url: 'https://api.deepseek.com/chat/completions',
+
+      /* Preço de PICO por milhão de tokens (entrada sem cache). Fora do pico cai
+         pela metade, mas o rótulo mostra o caro: ninguém deve ser surpreendido
+         para cima. Só os modelos de texto entram — o `vision-exp` é
+         experimental e o assistente não manda imagem nenhuma. */
+      modelos: [
+        { id: 'deepseek-v4-pro', nome: 'V4 Pro', sub: 'o mais capaz da DeepSeek — o indicado para cenários', entrada: 1.32, saida: 3.96 },
+        { id: 'deepseek-v4-flash', nome: 'V4 Flash', sub: 'bem mais barato e rápido — para perguntas diretas', entrada: 0.44, saida: 1.32 },
+      ],
+
+      cabecalhos(chave) {
+        return { 'Content-Type': 'application/json', Authorization: `Bearer ${chave}` };
+      },
+
+      corpo(modelo, instrucao, mensagens, ferramentas, maxTokens) {
+        return {
+          model: modelo,
+          max_tokens: maxTokens,
+          // Aqui a instrução é a primeira mensagem, não um campo à parte.
+          messages: [{ role: 'system', content: instrucao }].concat(mensagens),
+          tools: ferramentas.length
+            ? ferramentas.map(f => ({
+              type: 'function',
+              function: { name: f.name, description: f.description, parameters: f.input_schema },
+            }))
+            : undefined,
+        };
+      },
+
+      ler(json) {
+        const msg = ((json.choices || [])[0] || {}).message || {};
+        const chamadas = msg.tool_calls || [];
+        return {
+          texto: (msg.content || '').trim(),
+          pedidos: chamadas.map(c => ({
+            id: c.id,
+            name: c.function.name,
+            /* Os argumentos vêm como STRING de JSON. Um modelo pode mandar algo
+               que não fecha; nesse caso o objeto vazio é melhor que estourar —
+               a ferramenta roda com os padrões dela. */
+            input: (() => { try { return JSON.parse(c.function.arguments || '{}'); } catch (_) { return {}; } })(),
+          })),
+          cru: msg,
+        };
+      },
+
+      msgAssistente(cru) { return cru; },
+
+      // Uma mensagem por resultado, cada uma amarrada ao seu tool_call_id.
+      msgsResultado(pares) {
+        return pares.map(p => ({ role: 'tool', tool_call_id: p.id, content: p.saida }));
+      },
+    },
+  },
+
+  /* O provedor escolhido, já resolvido. Nunca devolve indefinido: uma
+     configuração antiga ou estragada cai na Anthropic, que era a única antes. */
+  prov() {
+    return this.PROVEDORES[(this.cfg && this.cfg.provedor) || 'anthropic'] || this.PROVEDORES.anthropic;
+  },
+  chaveAtual() {
+    return ((this.cfg && this.cfg.chaves) || {})[(this.cfg && this.cfg.provedor) || 'anthropic'] || '';
+  },
+  modeloAtual() {
+    const p = (this.cfg && this.cfg.provedor) || 'anthropic';
+    return ((this.cfg && this.cfg.modelos) || {})[p] || this.PROVEDORES[p].modelos[0].id;
   },
 
   /* ==========================================================================
@@ -675,84 +852,58 @@ const IA = {
      círculo.
      ========================================================================== */
   MAX_VOLTAS: 6,
+  MAX_TOKENS: 2000,
 
+  /* O laço não sabe com quem está falando. Ele pede ao adaptador do provedor
+     para montar o corpo e para ler a resposta, e trabalha na forma neutra
+     `{ texto, pedidos:[{id,name,input}] }`. Foi o que permitiu somar a DeepSeek
+     sem tocar em nada daqui. */
   async perguntar(historico, aoAndar) {
     if (!this.disponivel()) throw new Error('O assistente não está configurado. Vá em Configurações → Assistente.');
     if (!this.algoAutorizado()) {
       throw new Error('Nada foi autorizado ainda. Em Configurações → Assistente, escolha o que ele pode consultar.');
     }
 
+    const p = this.prov();
     const tools = this.ferramentasAutorizadas();
     const msgs = historico.slice();
     const consultou = [];
 
     for (let volta = 0; volta < this.MAX_VOLTAS; volta++) {
-      const resposta = await this.chamar({ system: this.instrucao(), messages: msgs, tools });
+      const bruto = await this.chamar(p.corpo(this.modeloAtual(), this.instrucao(), msgs, tools, this.MAX_TOKENS));
+      const r = p.ler(bruto);
 
-      const pedidos = (resposta.content || []).filter(b => b.type === 'tool_use');
-      if (!pedidos.length) {
-        const texto = (resposta.content || [])
-          .filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
-        return { texto, consultou, historico: msgs.concat([{ role: 'assistant', content: resposta.content }]) };
+      if (!r.pedidos.length) {
+        return { texto: r.texto, consultou, historico: msgs.concat([p.msgAssistente(r.cru)]) };
       }
 
-      msgs.push({ role: 'assistant', content: resposta.content });
-      /* TODOS os resultados voltam numa ÚNICA mensagem de usuário. Separá-los em
-         mensagens diferentes ensina o modelo a parar de pedir ferramentas em
-         paralelo, e aí cada pergunta vira várias idas e vindas. */
-      const resultados = pedidos.map(p => {
-        consultou.push(p.name);
-        if (aoAndar) aoAndar(p.name);
-        return {
-          type: 'tool_result',
-          tool_use_id: p.id,
-          content: JSON.stringify(this.executar(p.name, p.input)),
-        };
+      msgs.push(p.msgAssistente(r.cru));
+      const pares = r.pedidos.map(pedido => {
+        consultou.push(pedido.name);
+        if (aoAndar) aoAndar(pedido.name);
+        return { id: pedido.id, saida: JSON.stringify(this.executar(pedido.name, pedido.input)) };
       });
-      msgs.push({ role: 'user', content: resultados });
+      msgs.push(...p.msgsResultado(pares));
     }
     throw new Error('A conversa ficou longa demais. Tente uma pergunta mais direta.');
   },
 
-  /* A CHAMADA VAI DIRETO DO NAVEGADOR PARA A ANTHROPIC.
+  /* A CHAMADA VAI DIRETO DO NAVEGADOR PARA O PROVEDOR.
 
      Sem servidor no meio, e por escolha: o app é local-first e funciona sem
      nuvem nenhuma — o assistente não podia ser a única parte que exige um
      backend publicado. A chave é de quem está perguntando, mora no aparelho
-     dele, cifrada com o PIN dele e — se houver nuvem — cifrada de novo
-     antes de subir, com uma chave que o servidor não tem.
-
-     O cabeçalho `anthropic-dangerous-direct-browser-access` é o que a API exige
-     para aceitar chamada de página web. O nome avisa do risco real: uma chave no
-     navegador pode ser lida por quem tiver acesso àquele navegador. Aqui isso é
-     aceitável porque a chave é a DA PRÓPRIA PESSOA, no aparelho DELA — é o
-     cenário de ferramenta pessoal que a documentação da Anthropic descreve como
-     razoável. O que seria inaceitável é embutir UMA chave no app e distribuí-la
-     a todo mundo; não é o caso. */
-  API: 'https://api.anthropic.com/v1/messages',
-  MAX_TOKENS: 2000,
-
+     dele, cifrada com o PIN dele e — se houver nuvem — cifrada de novo antes de
+     subir, com uma chave que o servidor não tem. */
   async chamar(corpo) {
-    const res = await fetch(this.API, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.cfg.chave,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: this.cfg.modelo || 'claude-opus-5',
-        max_tokens: this.MAX_TOKENS,
-        /* Pensamento adaptativo: as perguntas aqui vão de "qual meu saldo" a
-           "o que acontece se eu cortar 300 por mês durante um ano". O modelo
-           decide quanto pensar em cada uma. */
-        thinking: { type: 'adaptive' },
-        system: corpo.system,
-        messages: corpo.messages,
-        tools: corpo.tools && corpo.tools.length ? corpo.tools : undefined,
-      }),
-    });
+    const p = this.prov();
+    let res;
+    try {
+      res = await fetch(p.url, { method: 'POST', headers: p.cabecalhos(this.chaveAtual()), body: JSON.stringify(corpo) });
+    } catch (_) {
+      // fetch só rejeita por rede/CORS; a API respondendo "não" vira res.ok false.
+      throw new Error('Sem conexão com o assistente. O resto do app não precisa de internet.');
+    }
     if (!res.ok) {
       const t = await res.text().catch(() => '');
       throw new Error(this.explicar(res.status, t));
@@ -760,53 +911,73 @@ const IA = {
     return res.json();
   },
 
-  /* Confere a chave com a menor chamada possível, para a tela de configuração
-     poder dizer "funciona" antes da primeira pergunta de verdade. Um token de
-     saída: o que se testa é a autenticação, não a resposta. */
+  /* Confere a chave ANTES de guardá-la, e confere junto o que realmente importa:
+     que o modelo escolhido sabe CHAMAR FERRAMENTA. Um modelo que responde bem
+     mas ignora ferramentas deixa o assistente inútil de um jeito difícil de
+     diagnosticar — ele responde, só que inventando, porque nunca consultou o
+     app. Melhor descobrir aqui, na tela de configuração.
+
+     A ferramenta de brinquedo é uma pergunta cuja resposta o modelo não tem: só
+     chamando é que ele responde. */
   async testar() {
-    const res = await fetch(this.API, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.cfg.chave,
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
-      body: JSON.stringify({
-        model: this.cfg.modelo || 'claude-opus-5',
-        max_tokens: 1,
-        messages: [{ role: 'user', content: 'oi' }],
-      }),
-    });
-    if (res.ok) return true;
-    const t = await res.text().catch(() => '');
-    throw new Error(this.explicar(res.status, t));
+    const p = this.prov();
+    const brinquedo = [{
+      name: 'saldo_de_teste',
+      description: 'Devolve o saldo atual da conta. Use sempre que perguntarem o saldo.',
+      input_schema: { type: 'object', properties: {}, required: [] },
+    }];
+    const corpo = p.corpo(this.modeloAtual(), 'Você responde sobre finanças. Consulte as ferramentas quando precisar de um número.',
+      [{ role: 'user', content: 'Qual é o meu saldo?' }], brinquedo, 512);
+
+    const bruto = await this.chamar(corpo);
+    const r = p.ler(bruto);
+    if (!r.pedidos.length) {
+      throw new Error(`A chave funciona, mas o modelo ${this.nomeDoModelo()} não chamou a ferramenta que ofereci. Sem isso o assistente responderia sem consultar os seus números. Escolha outro modelo.`);
+    }
+    return true;
   },
 
-  /* Erro de API é críptico por natureza. Aqui ele vira uma frase que diz o que
+  nomeDoModelo() {
+    const id = this.modeloAtual();
+    const m = this.prov().modelos.find(x => x.id === id);
+    return m ? m.nome : id;
+  },
+
+  /* Erro de API é críptico por natureza. Aqui vira uma frase que diz o que
      aconteceu e o que fazer — sobretudo nos dois casos que a pessoa REALMENTE
-     vai encontrar: chave errada e crédito acabado. */
+     vai encontrar: chave errada e crédito acabado. As duas APIs usam os mesmos
+     códigos HTTP para isso, então uma tradução serve às duas. */
   explicar(status, corpo) {
     let tipo = '';
-    try { tipo = (JSON.parse(corpo).error || {}).type || ''; } catch (_) {}
+    let msg = '';
+    try {
+      const j = JSON.parse(corpo);
+      const e = j.error || j;
+      tipo = e.type || e.code || '';
+      msg = e.message || '';
+    } catch (_) {}
+    const texto = (msg + ' ' + corpo).toLowerCase();
+    const onde = this.prov().console;
 
-    if (status === 401 || tipo === 'authentication_error') {
-      return 'A chave não foi aceita. Confira se copiou inteira, incluindo o "sk-ant-".';
+    if (status === 401 || /authentication/.test(tipo)) {
+      return `A chave não foi aceita. Confira se copiou inteira, direto de ${onde}.`;
     }
-    if (status === 403 || tipo === 'permission_error') {
-      return 'Essa chave não tem permissão para este modelo. Tente escolher outro modelo nas configurações.';
+    if (status === 403 || /permission/.test(tipo)) {
+      return 'Essa chave não tem permissão para este modelo. Escolha outro modelo aqui nas configurações.';
     }
-    if (status === 400 && /credit|balance/i.test(corpo)) {
-      return 'A conta está sem crédito. Adicione crédito em console.anthropic.com.';
+    if (status === 402 || /insufficient|credit|balance|quota/.test(texto)) {
+      return `A conta está sem crédito. Adicione crédito em ${onde}.`;
     }
-    if (status === 429 || tipo === 'rate_limit_error') {
+    if (status === 429 || /rate_limit/.test(tipo)) {
       return 'Muitas perguntas em pouco tempo. Espere um instante e tente de novo.';
+    }
+    if (status === 404 || /model/.test(texto) && /not.*(found|exist)/.test(texto)) {
+      return `O modelo ${this.nomeDoModelo()} não está disponível para esta chave. Escolha outro aqui nas configurações.`;
     }
     if (status === 400) {
       return 'A pergunta não pôde ser processada. Tente reformular ou comece uma conversa nova.';
     }
-    if (status >= 500) return 'O assistente está instável no momento. Tente daqui a pouco.';
-    if (!status) return 'Sem conexão. O assistente precisa de internet — o resto do app não.';
+    if (status >= 500) return 'O provedor está instável no momento. Tente daqui a pouco.';
     return `Não consegui falar com o assistente (${status}).`;
   },
 

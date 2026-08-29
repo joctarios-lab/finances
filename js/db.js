@@ -1871,7 +1871,14 @@ const DB = {
     const copia = { ...this.data };
     if (copia.meta) {
       copia.meta = { ...copia.meta, ia_cofre: undefined };
-      if (copia.meta.ia) copia.meta.ia = { ...copia.meta.ia, chave: '' };
+      if (copia.meta.ia) {
+        /* Uma chave POR PROVEDOR desde a v159: zerar um campo `chave` que não
+           existe mais deixaria as duas passarem. Zera o mapa inteiro, e assim um
+           provedor novo nasce protegido em vez de esquecido. */
+        const chaves = {};
+        for (const k of Object.keys(copia.meta.ia.chaves || {})) chaves[k] = '';
+        copia.meta.ia = { ...copia.meta.ia, chave: '', chaves };
+      }
     }
     return JSON.stringify(copia, null, 2);
   },

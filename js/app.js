@@ -3964,12 +3964,12 @@ function renderMetas() {
   return html;
 }
 
-// Saudação e identidade usam o nome que a própria família escolheu
+/* A marca no header: o nome do app e, quando a família escolheu um, o nome
+   dela. É a linha que responde "que app é este, e de quem". A tela atual vem
+   logo abaixo, em #topbar-month. */
 function refreshIdentity() {
-  const hora = new Date().getHours();
-  const saudacao = hora < 12 ? 'Bom dia' : hora < 18 ? 'Boa tarde' : 'Boa noite';
   const nome = DB.familyName();
-  $('#topbar-hello').textContent = saudacao + (nome ? ' · ' + nome : '');
+  $('#topbar-hello').textContent = 'DOMI' + (nome ? ' · ' + nome : '');
   const side = $('#side-family');
   if (side) side.textContent = DB.familyLabel();
   document.title = nome ? `DOMI — ${nome}` : 'DOMI — Finanças da Família';
@@ -8297,7 +8297,7 @@ function openConfig() {
     ${item('backup', 'upload', 'Backup', 'exportar ou importar um arquivo JSON')}
 
     <p class="cfg-grupo">O app</p>
-    ${item('ia', 'sparkles', 'Assistente', (function(){ const c = IA.load(); if (!c.chave) return 'sem chave — não configurado'; if (!c.ligado) return 'configurado, mas desligado'; return IA.algoAutorizado() ? 'ligado' : 'ligado, mas sem nada autorizado'; })())}
+    ${item('ia', 'sparkles', 'Assistente', (function(){ const cf = IA.load(); if (!IA.chaveAtual()) return 'sem chave — não configurado'; const q = IA.prov().nome; if (!cf.ligado) return q + ', mas desligado'; return IA.algoAutorizado() ? q : q + ', mas sem nada autorizado'; })())}
     ${item('tema', Tema.atual() === 'light' ? 'sun' : 'moon', 'Aparência', Tema.rotulo())}
     ${item('notif', 'bell', 'Notificações', Notif.enabled() ? 'ativas — faturas, orçamentos e metas' : 'desativadas')}
     ${item('security', 'shield', 'Segurança', Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'sem proteção local')}
@@ -8741,24 +8741,34 @@ function openConfigSection(sec) {
       const c = IA.load();
       const kb = Math.round(IA.tamanhoDoHistorico() / 1024);
       const nConversas = IA.conversas().length;
-      const temChave = !!c.chave;
-      /* Sync.loggedIn, não IA.temNuvem: aquele exige o access_token, que expira
-         em uma hora e é renovado sozinho por Sync.rest(). Usá-lo aqui faria a
-         tela dizer "só neste aparelho" a quem está sincronizando há mais tempo. */
+      const p = IA.prov();
+      const chave = IA.chaveAtual();
+      const temChave = !!chave;
       const naNuvem = typeof Sync !== 'undefined' && Sync.loggedIn();
 
-      const permissao = (chave, titulo, sub) => `
+      const permissao = (k, titulo, sub) => `
         <label class="ia-perm">
-          <input type="checkbox" data-perm="${chave}" ${c.ver[chave] ? 'checked' : ''}>
+          <input type="checkbox" data-perm="${k}" ${c.ver[k] ? 'checked' : ''}>
           <span><b>${titulo}</b><small>${sub}</small></span>
         </label>`;
 
-      /* O preço aparece no rótulo do modelo porque o custo é de quem escolhe.
-         "mais capaz" e "mais rápido" são adjetivos; 5 e 25 dólares por milhão
-         de tokens é o que permite decidir. */
+      /* Um cartão por provedor. O que está configurado se anuncia, para quem tem
+         os dois saber qual está valendo sem precisar abrir cada um. */
+      const provedor = (id, prov) => {
+        const marcado = c.provedor === id;
+        const temAChave = !!(c.chaves || {})[id];
+        return `
+          <label class="ia-perm">
+            <input type="radio" name="ia-prov" data-prov="${id}" ${marcado ? 'checked' : ''}>
+            <span><b>${prov.nome}</b><small>${prov.empresa} · ${temAChave ? 'chave já configurada' : 'sem chave ainda'}</small></span>
+          </label>`;
+      };
+
+      /* O preço fica no rótulo porque quem paga é quem escolhe — e para escolher
+         precisa do número, não de adjetivos. */
       const modelo = m => `
         <label class="ia-perm">
-          <input type="radio" name="ia-modelo" data-modelo="${m.id}" ${c.modelo === m.id ? 'checked' : ''}>
+          <input type="radio" name="ia-modelo" data-modelo="${m.id}" ${IA.modeloAtual() === m.id ? 'checked' : ''}>
           <span><b>${m.nome}</b><small>${m.sub} · US$ ${m.entrada}/${m.saida} por milhão de tokens</small></span>
         </label>`;
 
@@ -8767,13 +8777,17 @@ function openConfigSection(sec) {
 
         <p class="muted" style="margin-bottom:var(--e4)">Um assistente que responde sobre as suas contas — quanto sobra, para onde foi o dinheiro, como o mês fecha, e o que muda se você cortar um gasto. Ele consulta os números pelo próprio app: <b>nada é calculado por fora</b>.</p>
 
-        <p class="section-title" style="margin:0 0 var(--e2)">Sua chave da Anthropic</p>
-        <p class="muted" style="margin-bottom:var(--e3)">O assistente usa <b>a sua conta</b>, e o consumo é cobrado nela — ninguém paga por você, e você não paga por ninguém. Crie uma chave em <b>console.anthropic.com</b> → API Keys e cole abaixo.</p>
+        <p class="section-title" style="margin:0 0 var(--e2)">Qual assistente usar</p>
+        <p class="muted" style="margin-bottom:var(--e3)">Os dois funcionam igual dentro do app. A diferença é de quem é a conta que paga e quanto custa.</p>
+        ${Object.entries(IA.PROVEDORES).map(([id, pr]) => provedor(id, pr)).join('')}
+
+        <p class="section-title" style="margin:var(--e5) 0 var(--e2)">Sua chave da ${p.empresa}</p>
+        <p class="muted" style="margin-bottom:var(--e3)">O assistente usa <b>a sua conta</b>, e o consumo é cobrado nela — ninguém paga por você, e você não paga por ninguém. Crie uma chave em <b>${p.console}</b> → ${p.caminhoDaChave} e cole abaixo.</p>
 
         <div class="field">
           <label>Chave</label>
           <input id="ia-chave" type="password" autocomplete="off" spellcheck="false"
-                 placeholder="sk-ant-..." value="${esc(c.chave || '')}">
+                 placeholder="${p.exemplo}" value="${esc(chave)}">
         </div>
         <div style="display:flex;gap:var(--e2)">
           <button class="btn ghost" id="ia-ver" style="flex:0 0 auto;width:auto">Mostrar</button>
@@ -8791,8 +8805,8 @@ function openConfigSection(sec) {
         </div>
 
         <div id="ia-detalhe" ${temChave ? '' : 'hidden'}>
-          <p class="section-title" style="margin:var(--e5) 0 var(--e2)">Modelo</p>
-          ${IA.MODELOS.map(modelo).join('')}
+          <p class="section-title" style="margin:var(--e5) 0 var(--e2)">Modelo da ${p.empresa}</p>
+          ${p.modelos.map(modelo).join('')}
 
           <label class="ia-liga" style="margin-top:var(--e4)">
             <input type="checkbox" id="ia-ligado" ${c.ligado ? 'checked' : ''}>
@@ -8825,6 +8839,13 @@ function openConfigSection(sec) {
       const estado = $('#ia-estado');
       const btTestar = $('#ia-testar');
 
+      /* Trocar de provedor redesenha a tela inteira: muda a chave mostrada, a
+         lista de modelos, o console onde criá-la. Nada é perdido — a chave do
+         outro continua guardada no lugar dela. */
+      document.querySelectorAll('#modal [data-prov]').forEach(el => {
+        el.onchange = () => { IA.cfg.provedor = el.dataset.prov; IA.save(); pintarBotaoIA(); desenhar(); };
+      });
+
       $('#ia-ver').onclick = () => {
         const escondida = campo.type === 'password';
         campo.type = escondida ? 'text' : 'password';
@@ -8834,14 +8855,17 @@ function openConfigSection(sec) {
 
       /* Salvar só depois de testar é de propósito. Uma chave errada guardada faz
          o botão de conversa aparecer e falhar na primeira pergunta — o pior
-         momento possível para descobrir que faltou um caractere no meio. */
+         momento possível para descobrir que faltou um caractere no meio. E o
+         teste vai além da chave: confere que o modelo escolhido sabe chamar
+         ferramenta, sem o que o assistente responderia sem olhar os seus dados. */
       btTestar.onclick = async () => {
         const nova = campo.value.trim();
         if (!nova) return;
         btTestar.disabled = true;
-        estado.textContent = 'Conferindo a chave…';
-        const anterior = IA.cfg.chave;
-        IA.cfg.chave = nova;
+        estado.textContent = 'Conferindo a chave e o modelo…';
+        const prov = IA.cfg.provedor;
+        const anterior = IA.cfg.chaves[prov];
+        IA.cfg.chaves[prov] = nova;
         try {
           await IA.testar();
           IA.save();
@@ -8850,14 +8874,14 @@ function openConfigSection(sec) {
           pintarBotaoIA();
           desenhar();
         } catch (e) {
-          IA.cfg.chave = anterior;
+          IA.cfg.chaves[prov] = anterior;
           estado.textContent = e.message;
           btTestar.disabled = false;
         }
       };
 
       document.querySelectorAll('#modal [data-modelo]').forEach(el => {
-        el.onchange = () => { IA.cfg.modelo = el.dataset.modelo; IA.save(); };
+        el.onchange = () => { IA.cfg.modelos[IA.cfg.provedor] = el.dataset.modelo; IA.save(); };
       });
 
       const liga = $('#ia-ligado');

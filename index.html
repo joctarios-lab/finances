@@ -22,8 +22,8 @@
 <!-- CSS da propria ApexCharts. O .min.js NAO o injeta: sem ele a dica de valor
      perde a caixa e o ancoramento (.apexcharts-canvas{position:relative}) e voa
      para o canto da pagina. Vem ANTES do nosso, para o nosso poder sobrepor. -->
-<link rel="stylesheet" href="vendor/apexcharts.css?v=158">
-<link rel="stylesheet" href="css/styles.css?v=158">
+<link rel="stylesheet" href="vendor/apexcharts.css?v=159">
+<link rel="stylesheet" href="css/styles.css?v=159">
 <script>
   /* TEMA ANTES DA PRIMEIRA PINTURA.
 
@@ -87,8 +87,10 @@
         <div class="topbar-left">
           <img class="topbar-logo" src="icons/icon.svg" alt="" width="30" height="30">
           <div class="topbar-ctx">
+            <!-- A marca (DOMI · nome da família) e a tela atual. Os dois são
+                 escritos pelo app: refreshIdentity() e setTab(). -->
             <p class="topbar-hello" id="topbar-hello">DOMI</p>
-            <h1 class="topbar-month" id="topbar-month">—</h1>
+            <h1 class="topbar-month" id="topbar-month">Painel</h1>
           </div>
         </div>
         <div class="topbar-actions">
@@ -154,19 +156,19 @@
      quem usa leitor de tela tenta salvar, o formulário não fecha e nada é dito. -->
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/config.js?v=158"></script>
+<script src="js/config.js?v=159"></script>
 <!-- ApexCharts v3.54.1 (MIT), vendorizado: o app e offline-first e CDN quebraria
      o uso sem rede. Vem antes de app.js, que o usa ao desenhar. -->
-<script src="vendor/apexcharts.min.js?v=158"></script>
-<script src="js/icons.js?v=158"></script>
-<script src="js/ui.js?v=158"></script>
-<script src="js/graficos.js?v=158"></script>
-<script src="js/ofx.js?v=158"></script>
-<script src="js/db.js?v=158"></script>
-<script src="js/sync.js?v=158"></script>
-<script src="js/ia.js?v=158"></script>
-<script src="js/auth.js?v=158"></script>
-<script src="js/app.js?v=158"></script>
+<script src="vendor/apexcharts.min.js?v=159"></script>
+<script src="js/icons.js?v=159"></script>
+<script src="js/ui.js?v=159"></script>
+<script src="js/graficos.js?v=159"></script>
+<script src="js/ofx.js?v=159"></script>
+<script src="js/db.js?v=159"></script>
+<script src="js/sync.js?v=159"></script>
+<script src="js/ia.js?v=159"></script>
+<script src="js/auth.js?v=159"></script>
+<script src="js/app.js?v=159"></script>
 <script>
   if ('serviceWorker' in navigator) {
     /* REGISTRAR NÃO BASTA NUM APP INSTALADO: o navegador só procura versão nova em uma

@@ -424,7 +424,14 @@ body {
    HEADER GLOBAL — centro de controle situacional
    ============================================================================ */
 .topbar {
-  position: sticky; top: 0; z-index: 100;
+  /* 25: ACIMA do conteúdo (o card de mês sticky vai a 20) e ABAIXO de toda a
+     família de sobreposições, que começa em 30. Estava em 100, acima até do
+     modal — e como o modal cobre a tela inteira com o título grudado no seu
+     topo, o header pintava justamente sobre o título, cortando-o pela metade
+     em TODA seção de configuração. Sobreposição cobre o cromo da página; é a
+     ordem que o resto da pilha já supunha. A tela de bloqueio segue em 100,
+     acima de tudo, que é o lugar dela. */
+  position: sticky; top: 0; z-index: 25;
   background: var(--glass);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
@@ -526,12 +533,15 @@ body {
 .sync-status { font-size: 12px; color: var(--paper-dim); padding: 10px 2px 0; }
 .sync-status.err { color: var(--red-ink); }
 
-/* No celular o header guarda só marca e ações. O nome da tela sai porque a
-   própria tela já o diz no primeiro bloco — repetir custa altura numa barra que
-   fica presa o tempo todo. */
+/* O nome do app e a tela atual aparecem em TODA largura. Antes o bloco sumia
+   abaixo de 1024px para poupar altura — só que abaixo de 1024px é o celular,
+   onde o app de fato vive, e lá o header ficava sem marca e sem contexto. Não
+   custa altura nenhuma: as duas linhas cabem na altura que os botões já impõem.
+   O que pode faltar é LARGURA, e disso cuidam o min-width:0 e a reticência. */
 .only-desk { display: none; }
 @media (max-width: 1023px) {
-  .topbar-ctx { display: none; }
+  .topbar-month { font-size: 15px; }
+  .topbar-hello { font-size: 10px; }
 }
 @media (max-width: 400px) {
   .topbar-inner { gap: var(--e2); padding: var(--e2) var(--e3); }

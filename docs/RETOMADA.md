@@ -25,9 +25,10 @@ Leia primeiro, nesta ordem:
 
 ## Estado atual
 - Versão 157 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2978 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- 3028 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - a prova de cifra do assistente: `node tests/cofre.js` (roda o WebCrypto de verdade)
+- a conversa completa nos dois provedores: `node tests/provedores.js`
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
@@ -69,19 +70,40 @@ Leia primeiro, nesta ordem:
   teste exigindo que todo token de cor do escuro exista também no claro, porque
   um rgba solto não acompanha a troca de tema e vaza a cor do tema anterior.
 
-## O ASSISTENTE (v158) — como está montado
+## O ASSISTENTE (v159) — como está montado
 
-- **A chave é DO USUÁRIO, não do app.** Cada pessoa cola a própria chave da
-  Anthropic em ⚙︎ → Assistente, e `IA.chamar()` vai **direto do navegador** para
-  `api.anthropic.com` com o cabeçalho `anthropic-dangerous-direct-browser-access`.
-  Não há Edge Function, secret nem `functions deploy` — foi removido na v158.
-  Motivo: o custo passou a ser de quem usa, e um app local-first não podia ter o
-  assistente como a única parte que exige backend publicado.
+- **A chave é DO USUÁRIO, não do app**, e o provedor é escolha dele: Claude
+  (Anthropic) ou DeepSeek. `IA.chamar()` vai **direto do navegador** para a API
+  escolhida. Não há Edge Function, secret nem `functions deploy` — removido na
+  v158. Motivo: o custo passou a ser de quem usa, e um app local-first não podia
+  ter o assistente como a única parte que exige backend publicado.
+- **`IA.PROVEDORES` é a única coisa que sabe de formato.** O laço (`perguntar`)
+  fala a forma neutra `{texto, pedidos:[{id,name,input}]}`, e cada provedor
+  traduz na borda: instrução em campo próprio (Anthropic) ou como 1ª mensagem
+  `role:'system'` (DeepSeek); `input_schema` × `function.parameters`; blocos
+  `tool_use` × `message.tool_calls` (com argumentos em JSON serializado);
+  resultados numa ÚNICA mensagem de usuário × UMA mensagem `role:'tool'` por
+  pedido. Há teste proibindo o laço de citar provedor pelo nome.
+- **Chave e modelo são POR PROVEDOR** (`cfg.chaves`, `cfg.modelos`). Trocar de
+  provedor não apaga a chave do outro. `load()` migra o formato v158
+  (`chave`/`modelo` soltos) para o novo — quem já colou não recola.
+- **`IA.testar()` prova que o modelo CHAMA FERRAMENTA**, não só que a chave é
+  aceita: oferece uma ferramenta de brinquedo e recusa o modelo que a ignora. Um
+  modelo que responde sem consultar inventaria números, e nada no app acusaria.
+- **CORS verificado nas duas** (preflight real, não suposição): a Anthropic
+  devolve `allow-origin: *` e admite o cabeçalho `dangerous-direct-browser-access`;
+  a DeepSeek ecoa a origem e libera `authorization`.
+- **`tests/provedores.js`** roda uma conversa inteira em cada uma com um `fetch`
+  de mentira que confere o que recebeu — é o que prova que o laço fecha, não só
+  que os campos foram traduzidos.
 - **A chave mora em `DB.data.meta.ia`**, dentro do banco cifrado com o PIN — não
   no localStorage solto, que é onde criptografia nenhuma protege. `meta` está
   fora de `STORES`, e `sync.js` só olha `STORES`: a chave não vai junto com os
   dados da família.
-- **`DB.exportJSON()` limpa as duas chaves** antes de gerar o backup. O arquivo
+- **`DB.exportJSON()` limpa TODAS as chaves** (o mapa `cfg.chaves` inteiro, mais
+  a do cofre) antes de gerar o backup — zerar campo a campo deixou as duas
+  passarem quando o formato mudou na v159; o teste agora RODA `exportJSON` em vez
+  de procurar texto no fonte. O arquivo
   exportado é um `.json` solto na pasta de downloads — perder o assistente ao
   restaurar é aceitável; vazar credencial que gasta dinheiro, não.
 - **O cofre (`IA.abrirCofre`)** é o que permite guardar na nuvem sem que o
@@ -142,10 +164,10 @@ Leia primeiro, nesta ordem:
 - **Voz.** `SpeechRecognition` e `SpeechSynthesis` são nativas e sem
   dependência, mas o iOS exige gesto do usuário para iniciar e o Firefox não tem
   reconhecimento. Ficou para uma segunda rodada, sobre a base de texto.
-- **Outros provedores.** A configuração já fala em "assistente", não em "Claude".
-  Agora a troca é maior do que era: sem Edge Function no meio, `IA.chamar()` fala
-  o formato da Anthropic direto. Trocar de provedor significa mexer em `chamar()`,
-  no formato das ferramentas e no laço de tool use.
+- **Um terceiro provedor** custa só mais uma entrada em `IA.PROVEDORES`: url,
+  `cabecalhos`, `corpo`, `ler`, `msgAssistente`, `msgsResultado` e a lista de
+  modelos com preço. Nada no laço, nada na tela — ela varre `IA.PROVEDORES`
+  sozinha. Antes de somar, confira o CORS com um preflight de verdade.
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
 Rodar supabase/schema.sql (é idempotente). São DUAS coisas agora:
