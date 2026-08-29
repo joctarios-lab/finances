@@ -24,13 +24,13 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 155 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2915 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 156 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2921 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
-## O tema visual foi refeito (v155) — o que mudou e o que NÃO mudar
+## IDENTIDADE DOMI (v156) — o que mudou e o que NÃO mudar
 - `css/styles.css` foi reescrito do zero: **tema duplo**, escuro por padrão.
   A paleta vive em três camadas, nesta ordem: `:root` (escura, sempre definida)
   → `@media (prefers-color-scheme: light)` com `:not([data-tema="dark"])`

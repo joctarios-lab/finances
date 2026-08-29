@@ -1,29 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Finanças da Família">
-  <title>Finanças da Família</title>
-  <desc>Um telhado sobre colunas que crescem: o lar abrigando um patrimônio que se acumula mês a mês.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="DOMI">
+  <title>DOMI</title>
+  <desc>O arco: a cúpula que abriga, sobre a base que sustenta. De domus — casa.</desc>
 
-  <defs>
-    <linearGradient id="fundo" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0095e8"/>
-      <stop offset="1" stop-color="#7239ea"/>
-    </linearGradient>
-    <radialGradient id="brilho" cx="0.24" cy="0.12" r="0.9">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.20"/>
-      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
-    </radialGradient>
-  </defs>
+  <rect width="512" height="512" rx="128" fill="#2A52C9"/>
 
-  <rect width="512" height="512" rx="114" fill="url(#fundo)"/>
-  <rect width="512" height="512" rx="114" fill="url(#brilho)"/>
+  <!-- A cúpula, em traço de pontas redondas. Traço e não massa: o arco vazado
+       deixa o azul do fundo aparecer por dentro, e é isso que o faz ler como
+       abrigo em vez de morro. -->
+  <path d="M124 344 A132 132 0 0 1 388 344" fill="none" stroke="#FFFFFF"
+        stroke-width="46" stroke-linecap="round"/>
 
-  <!-- Telhado: o lar que abriga -->
-  <path d="M104 208 L256 100 L408 208" fill="none" stroke="#ffffff"
-        stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
-
-  <!-- Colunas crescentes: o patrimônio se acumulando mês a mês -->
-  <g fill="#ffffff">
-    <rect x="119" y="316" width="68" height="94"  rx="34" opacity="0.60"/>
-    <rect x="222" y="286" width="68" height="124" rx="34" opacity="0.80"/>
-    <rect x="325" y="252" width="68" height="158" rx="34"/>
-  </g>
+  <!-- A base, em pílula: o chão que a cúpula protege -->
+  <rect x="112" y="372" width="288" height="46" rx="23" fill="#FFFFFF"/>
 </svg>

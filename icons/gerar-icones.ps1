@@ -1,4 +1,11 @@
+# Gera os PNGs do ícone do DOMI a partir da mesma geometria do icons/icon.svg.
+#
+# Usa System.Drawing (vem com o Windows) porque o repositório não tem — e não
+# deve ter — dependência de build. Rode com:  powershell -File icons/gerar-icones.ps1
 Add-Type -AssemblyName System.Drawing
+
+$COBALTO = '#2A52C9'
+$BRANCO  = '#FFFFFF'
 
 function New-Icone {
   param([int]$Tam, [string]$Arquivo, [double]$Escala = 1.0)
@@ -8,8 +15,8 @@ function New-Icone {
   $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
   $k = $Tam / 512.0
 
-  # Fundo arredondado com gradiente azul -> roxo (paleta Metronic)
-  $raio = 114.0 * $k
+  # --- fundo: quadrado de cantos arredondados, cor chapada ---
+  $raio = 128.0 * $k
   $d = $raio * 2
   $fundo = New-Object System.Drawing.Drawing2D.GraphicsPath
   $fundo.AddArc(0, 0, $d, $d, 180, 90)
@@ -17,57 +24,44 @@ function New-Icone {
   $fundo.AddArc(($Tam - $d), ($Tam - $d), $d, $d, 0, 90)
   $fundo.AddArc(0, ($Tam - $d), $d, $d, 90, 90)
   $fundo.CloseFigure()
+  $brushFundo = New-Object System.Drawing.SolidBrush([System.Drawing.ColorTranslator]::FromHtml($COBALTO))
+  $g.FillPath($brushFundo, $fundo)
 
-  $p1 = New-Object System.Drawing.PointF(0, 0)
-  $p2 = New-Object System.Drawing.PointF($Tam, $Tam)
-  $grad = New-Object System.Drawing.Drawing2D.LinearGradientBrush(
-    $p1, $p2,
-    [System.Drawing.ColorTranslator]::FromHtml('#0095e8'),
-    [System.Drawing.ColorTranslator]::FromHtml('#7239ea'))
-  $g.FillPath($grad, $fundo)
-
-  # Zona de seguranca para o icone maskable
+  # A zona de segurança do ícone maskable: o desenho encolhe para o recorte
+  # circular de alguns lançadores não comer o arco.
   $g.TranslateTransform(($Tam / 2), ($Tam / 2))
   $g.ScaleTransform($Escala, $Escala)
   $g.TranslateTransform((-$Tam / 2), (-$Tam / 2))
 
-  # Telhado: o lar que abriga
-  $branco = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
-  $caneta = New-Object System.Drawing.Pen($branco, (42.0 * $k))
-  $caneta.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
-  $caneta.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
-  $caneta.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
-  $pts = @(
-    (New-Object System.Drawing.PointF((104.0 * $k), (208.0 * $k))),
-    (New-Object System.Drawing.PointF((256.0 * $k), (100.0 * $k))),
-    (New-Object System.Drawing.PointF((408.0 * $k), (208.0 * $k)))
-  )
-  $g.DrawLines($caneta, [System.Drawing.PointF[]]$pts)
+  $branco = [System.Drawing.ColorTranslator]::FromHtml($BRANCO)
 
-  # Colunas crescentes: o patrimonio acumulando mes a mes
-  $barras = @(
-    @{ x = 119.0; y = 316.0; h = 94.0;  a = 153 },
-    @{ x = 222.0; y = 286.0; h = 124.0; a = 204 },
-    @{ x = 325.0; y = 252.0; h = 158.0; a = 255 }
-  )
-  foreach ($b in $barras) {
-    $x = $b.x * $k; $y = $b.y * $k; $w = 68.0 * $k; $h = $b.h * $k
-    $pincel = New-Object System.Drawing.SolidBrush(
-      [System.Drawing.Color]::FromArgb($b.a, 255, 255, 255))
-    $forma = New-Object System.Drawing.Drawing2D.GraphicsPath
-    $forma.AddArc($x, $y, $w, $w, 180, 180)
-    $forma.AddArc($x, ($y + $h - $w), $w, $w, 0, 180)
-    $forma.CloseFigure()
-    $g.FillPath($pincel, $forma)
-  }
+  # --- a cúpula: arco de 180° com pontas arredondadas ---
+  # Centro (256, 344) e raio 132, como no SVG. O retângulo do AddArc é o
+  # quadrado que circunscreve esse círculo.
+  $cx = 256.0 * $k; $cy = 344.0 * $k; $r = 132.0 * $k
+  $pen = New-Object System.Drawing.Pen($branco, (46.0 * $k))
+  $pen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+  $pen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+  $g.DrawArc($pen, ($cx - $r), ($cy - $r), ($r * 2), ($r * 2), 180, 180)
+
+  # --- a base: pílula ---
+  $bx = 112.0 * $k; $by = 372.0 * $k; $bw = 288.0 * $k; $bh = 46.0 * $k
+  $br = $bh / 2
+  $base = New-Object System.Drawing.Drawing2D.GraphicsPath
+  $base.AddArc($bx, $by, ($br * 2), $bh, 90, 180)
+  $base.AddArc(($bx + $bw - $br * 2), $by, ($br * 2), $bh, 270, 180)
+  $base.CloseFigure()
+  $brushBase = New-Object System.Drawing.SolidBrush($branco)
+  $g.FillPath($brushBase, $base)
 
   $g.Dispose()
-  $bmp.Save($Arquivo, [System.Drawing.Imaging.ImageFormat]::Png)
+  $destino = Join-Path $PSScriptRoot $Arquivo
+  $bmp.Save($destino, [System.Drawing.Imaging.ImageFormat]::Png)
   $bmp.Dispose()
-  Write-Output "gerado: $Arquivo"
+  Write-Output "gerado: $Arquivo ($Tam px)"
 }
 
-$base = 'D:\Projetos\meus-projetos\financas\icons'
-New-Icone 192 "$base\icon-192.png" 1.0
-New-Icone 512 "$base\icon-512.png" 1.0
-New-Icone 512 "$base\icon-maskable.png" 0.70
+New-Icone -Tam 192 -Arquivo 'icon-192.png'
+New-Icone -Tam 512 -Arquivo 'icon-512.png'
+# Maskable: 80% do quadro, para sobreviver ao recorte circular do Android
+New-Icone -Tam 512 -Arquivo 'icon-maskable.png' -Escala 0.8

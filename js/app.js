@@ -65,7 +65,21 @@ function efeitoDaTransferencia(t, contas) {
    É transitório de propósito. Ver março e voltar depois achando que é o mês
    corrente leva a conclusão errada sobre o dinheiro — o risco é grande e o custo
    de reabrir o mês antigo é um toque. Zera ao trocar de tela e ao abrir o app. */
-const ESTADO_DA_TELA = { monthOffset: 0, repOffset: 0 };
+/* O QUE ZERA AO TROCAR DE TELA — e o que ACOMPANHA.
+
+   O mês ACOMPANHA. Antes ele voltava para o corrente a cada troca de aba, e o
+   motivo era real: um mês antigo esquecido faz ler o saldo errado. Só que isso
+   quebrava o uso normal — abrir julho no Painel, ir ao Extrato para conferir de
+   onde veio um número e encontrar agosto de novo, tendo que navegar de volta.
+
+   O que tornou seguro manter foi o cartão de mês preso abaixo do header: ele
+   anuncia o ciclo o tempo todo, em toda tela que tem mês. O risco que a regra
+   antiga cobria passou a ser coberto pela própria interface.
+
+   Os FILTROS continuam zerando, e por um motivo que o cartão não resolve: um
+   filtro esquecido deixa a lista curta sem dizer por quê, e nada na tela de
+   destino anuncia que ele existe. */
+const ESTADO_DA_TELA = { repOffset: 0 };
 function zerarEstadoDaTela() {
   Object.assign(state, ESTADO_DA_TELA);
   state.filtros = filtrosVazios();
@@ -107,6 +121,14 @@ function persistUI() {
    ("estou registrando os gastos da viagem"), não jeito de olhar a tela. */
 function restoreUI() {
   zerarEstadoDaTela();
+  /* ABRIR O APP É OUTRA COISA QUE TROCAR DE TELA.
+
+     O mês atravessa as telas dentro de uma sessão — quem foi para julho está
+     olhando julho, e o cartão preso diz isso o tempo todo. Mas ao ABRIR o app
+     ele volta ao corrente, sempre: um mês herdado da sessão de ontem seria lido
+     como "hoje" por alguém que acabou de destravar a tela, e é justamente aí
+     que o número errado passa despercebido. */
+  state.monthOffset = 0;
   state.tab = 'inicio';
   try {
     const s = JSON.parse(localStorage.getItem(UI_KEY));
@@ -327,9 +349,10 @@ function catLabel(id) { const c = catOf(id); return c ? `${DB.categoryIcon(id)} 
 
 /* ---------- Navegação ---------- */
 function setTab(tab) {
-  // Sair da tela e voltar devolve o estado inicial: mês corrente, sem filtro,
-  // e do começo da página. Só zera em troca real, para não perder o lugar quando
-  // a própria tela se redesenha (sincronização, salvar um lançamento).
+  // Trocar de tela limpa os filtros e volta ao começo da página — mas MANTÉM o
+  // mês, que atravessa as telas com quem está navegando (ver ESTADO_DA_TELA).
+  // Só zera em troca real, para não perder o lugar quando a própria tela se
+  // redesenha (sincronização, salvar um lançamento).
   const trocou = state.tab !== tab;
   state.tab = tab;
   if (trocou) {
@@ -351,7 +374,6 @@ function render() {
   // mostrar um mês em Cartões/Metas (que não são mensais) ou um mês diferente
   // do que a tela de Relatórios está exibindo.
   $('#topbar-month').textContent = TITULOS[state.tab] || 'Painel';
-  pintarPeriodo(period);
   const views = { inicio: renderInicio, extrato: renderExtrato, cartoes: renderCartoes, metas: renderMetas, relatorios: renderRelatorios };
   refreshIdentity();
   $('#view').innerHTML = views[state.tab](period);
@@ -1358,9 +1380,9 @@ function notaDoInvestimento(env, period, restante, usadoNoEnvelope) {
   if (restante > 0.005) {
     // Só a parte que cabe na sobra é "reservada"; o excedente já não tem de onde sair
     const reservado = Math.min(falta, restante);
-    return `<p class="muted" style="margin-top:6px">Do restante, <b>${fmtShort(reservado)}</b> é a meta de investimento ainda não cumprida — não é para gastar.</p>`;
+    return `<p class="muted" style="margin-top:var(--e2)">Do restante, <b>${fmtShort(reservado)}</b> é a meta de investimento ainda não cumprida — não é para gastar.</p>`;
   }
-  return `<p class="muted" style="margin-top:6px">O orçamento já estourou em <b>${fmtShort(-restante)}</b>, e ainda faltam <b>${fmtShort(falta)}</b> para a meta de investimento do mês.</p>`;
+  return `<p class="muted" style="margin-top:var(--e2)">O orçamento já estourou em <b>${fmtShort(-restante)}</b>, e ainda faltam <b>${fmtShort(falta)}</b> para a meta de investimento do mês.</p>`;
 }
 
 /* QUANDO a reserva fica pronta.
@@ -1700,11 +1722,11 @@ function renderInicio(period) {
       ${proj.naoComecou || !(proj.variavel > 0.005) ? '' : `<div class="proj-row muted"><span>+ gasto variável no ritmo atual</span><b>${fmtShort(proj.variavel)}</b></div>`}
       <div class="proj-row"><span>${proj.naoComecou ? 'Já comprometido no mês' : 'Fechamento projetado'}</span><b class="${refLimit > 0 && proj.total > refLimit ? 'txt-red' : 'txt-green'}">${fmtShort(proj.total)}</b></div>
       ${refLimit > 0 ? `
-        <div class="bar ${barClass(projPct)}" style="margin:8px 0 4px"><i style="width:${Math.min(100, projPct)}%"></i></div>
+        <div class="bar ${barClass(projPct)}" style="margin:var(--e2) 0 var(--e1)"><i style="width:${Math.min(100, projPct)}%"></i></div>
         <div class="proj-row muted"><span>${projPct}% ${income > 0 ? 'das receitas do período' : 'do orçamento total'} (${fmtShort(refLimit)})</span>
         ${savingsRate !== null ? `<span>Poupança projetada: <b class="${savingsRate >= 20 ? 'txt-green' : savingsRate >= 0 ? 'txt-amber' : 'txt-red'}">${savingsRate}%</b></span>` : ''}</div>
-        ${proj.naoComecou ? `<p class="muted" style="margin-top:6px">Sobrariam <b>${fmtShort(Math.max(0, income - proj.total))}</b> para o gasto variável do mês — mercado, transporte e o que mais aparecer. Não é sobra.</p>` : ''}
-      ` : `<p class="muted" style="margin-top:6px">Cadastre a renda familiar em Configurações → Membros &amp; ciclo para ver % da renda e taxa de poupança (especialistas recomendam poupar ≥ 20%).</p>`}
+        ${proj.naoComecou ? `<p class="muted" style="margin-top:var(--e2)">Sobrariam <b>${fmtShort(Math.max(0, income - proj.total))}</b> para o gasto variável do mês — mercado, transporte e o que mais aparecer. Não é sobra.</p>` : ''}
+      ` : `<p class="muted" style="margin-top:var(--e2)">Cadastre a renda familiar em Configurações → Membros &amp; ciclo para ver % da renda e taxa de poupança (especialistas recomendam poupar ≥ 20%).</p>`}
     </div>`;
 
   // --- 50/30/20 (Necessidades / Desejos / Poupança) ---
@@ -1765,7 +1787,7 @@ function renderInicio(period) {
       ` : `
         <div class="proj-row"><span>Guardado</span><b>${fmtShort(reserve)}</b></div>
         <div class="proj-row"><span>Cobre</span><b class="${coverage >= 6 ? 'txt-green' : coverage >= 3 ? 'txt-amber' : 'txt-red'}">${coverage.toFixed(1)} ${coverage === 1 ? 'mês' : 'meses'}</b></div>
-        <div class="bar ${coverage >= 6 ? 'bar-green' : coverage >= 3 ? 'bar-amber' : 'bar-red'}" style="margin:8px 0 4px"><i style="width:${covPct}%"></i></div>
+        <div class="bar ${coverage >= 6 ? 'bar-green' : coverage >= 3 ? 'bar-amber' : 'bar-red'}" style="margin:var(--e2) 0 var(--e1)"><i style="width:${covPct}%"></i></div>
         <p class="muted">Recomendação clássica: 3 a 6 meses do custo de vida (${fmtShort(avgSpend)}/mês)${faltaReserva > 0 ? ` — faltam <b>${fmtShort(faltaReserva)}</b>` : ' — objetivo alcançado 🎉'}.</p>
         ${previsaoDaReserva(reserveGoal, faltaReserva)}
         <div class="btn-row">
@@ -2150,7 +2172,7 @@ function renderInicio(period) {
       <div class="card">
         <div class="card-head"><div><b>Ritmo do mês</b><small>gasto acumulado vs. trilha ideal do ${income > 0 ? 'da renda' : 'orçamento'}</small></div></div>
         ${svgBurnup(period, refLimit)}
-        <p class="muted" style="margin-top:4px">Se a linha azul cruzar a tracejada antes do fim do mês, o limite estoura.</p>
+        <p class="muted" style="margin-top:var(--e1)">Se a linha azul cruzar a tracejada antes do fim do mês, o limite estoura.</p>
       </div>
     </div>
     <div class="grid-2">
@@ -3052,9 +3074,9 @@ function renderExtrato(period) {
      desaparecia justamente no mês em que ela importa. */
   if (!linhas.length) {
     list = ativos.length
-      ? `<div class="empty"><b>Nenhum lançamento com esses filtros</b>Há ${DB.txOfPeriod(period).length} no período. <button class="btn ghost" id="limpar-vazio" style="margin-top:10px">Limpar os filtros</button></div>`
+      ? `<div class="empty"><b>Nenhum lançamento com esses filtros</b>Há ${DB.txOfPeriod(period).length} no período. <button class="btn ghost" id="limpar-vazio" style="margin-top:var(--e3)">Limpar os filtros</button></div>`
       : `<div class="empty"><b>Sem lançamentos</b>Nada registrado neste período ainda.
-          <button class="btn" data-novo="Despesa" style="margin-top:12px">Lançar o primeiro gasto</button></div>`;
+          <button class="btn" data-novo="Despesa" style="margin-top:var(--e3)">Lançar o primeiro gasto</button></div>`;
   }
 
   const isCurrent = state.monthOffset === 0;
@@ -3208,7 +3230,7 @@ function custoFixoCard() {
   const acabam = cf.itens.filter(i => i.restam !== null).sort((a, b) => a.restam - b.restam);
   return `
     <div class="card">
-      <div class="card-head" style="margin-bottom:6px"><div><b>Custo fixo mensal</b><small>${
+      <div class="card-head" style="margin-bottom:var(--e2)"><div><b>Custo fixo mensal</b><small>${
         cf.itens.length} ${cf.itens.length === 1 ? 'item' : 'itens'}${pct !== null ? ` — ${pct}% da renda média` : ''}</small></div>
         ${/* Com todas as linhas à vista, o total do cabeçalho passou a ser a soma
               CONFERÍVEL delas — e aí ele não pode mais vir abreviado. Enquanto só
@@ -3234,7 +3256,7 @@ function custoFixoCard() {
             return `<div class="hc-l"><span>${esc(i.descricao)}${nota ? ` <i>${nota}</i>` : ''}</span><b>${fmt(i.mensal)}</b></div>`;
           }).join('')}
       </div>
-      ${acabam.length ? `<p class="muted" style="margin-top:8px">${acabam.slice(0, 2).map(i =>
+      ${acabam.length ? `<p class="muted" style="margin-top:var(--e2)">${acabam.slice(0, 2).map(i =>
         `<b>${esc(i.descricao)}</b> acaba em ${i.restam} ${i.restam === 1 ? 'mês' : 'meses'} e libera ${fmtShort(i.mensal)}/mês`).join('. ')}.</p>` : ''}
     </div>`;
 }
@@ -3551,7 +3573,7 @@ function openFaturasFuturas(cardId) {
   const total = futuras.reduce((s, i) => s + i.falta, 0);
   openModal(`
     <div class="modal-title">${esc(card.name)} — ainda vai faturar<button class="close-x" id="ff-back"><span data-ico="back"></span></button></div>
-    <div class="card" style="margin-bottom:14px">
+    <div class="card" style="margin-bottom:var(--e4)">
       <div class="proj-row"><span>Total já comprado</span><b>${fmt(total)}</b></div>
       <div class="proj-row"><span>Faturas</span><b>${futuras.length}</b></div>
     </div>
@@ -3639,7 +3661,7 @@ function openClassificarGastos(period) {
         <button class="sec-btn" data-vincular="${s.tx.id}" data-contrato="${s.contrato.id}">vincular</button>
       </div>`).join('')}
     </div>` : ''}
-    <div class="card" style="margin-bottom:12px">
+    <div class="card" style="margin-bottom:var(--e3)">
       <div class="proj-row"><span>Variável até hoje</span><b>${fmt(v.diaRitmo * v.decorridos)}</b></div>
       <div class="proj-row"><span>Ritmo</span><b>${fmt(v.diaRitmo)}/dia</b></div>
       <div class="proj-row"><span>Estimado até o fim do mês</span><b>${fmt(Math.min(v.contido, v.ritmo))} a ${fmt(Math.max(v.contido, v.ritmo))}</b></div>
@@ -3701,14 +3723,14 @@ function openEscolherContrato(txId, period) {
     .sort((a, b) => DB.valorDaRecorrencia(b) - DB.valorDaRecorrencia(a));
   openModal(`
     <div class="modal-title">De qual conta fixa?<button class="close-x" id="ec-back"><span data-ico="back"></span></button></div>
-    <p class="muted" style="margin-bottom:12px"><b>${esc(t.description)}</b> · ${fmt(t.amount)} · ${fmtDay(t.date)}<br>
+    <p class="muted" style="margin-bottom:var(--e3)"><b>${esc(t.description)}</b> · ${fmt(t.amount)} · ${fmtDay(t.date)}<br>
       Vincular tira este lançamento do ritmo do variável. Os próximos meses passam a
       vir do contrato, que já se lança sozinho na data certa.</p>
     ${ativos.map(r => `<button class="cg-esc" data-vincular="${t.id}" data-contrato="${r.id}">
       <span><b>${esc(r.description)}</b><i>dia ${esc(String(r.dia))} · ${fmt(DB.valorDaRecorrencia(r))}</i></span>
       <span data-ico="chev"></span>
     </button>`).join('') || '<div class="empty">Nenhuma conta fixa cadastrada ainda.</div>'}
-    <p class="section-title" style="margin-top:14px">Ou crie uma nova</p>
+    <p class="section-title" style="margin-top:var(--e4)">Ou crie uma nova</p>
     <button class="cg-esc" data-novo-contrato="${t.id}">
       <span><b>Criar conta fixa com este lançamento</b><i>usa a descrição, o valor e a categoria dele</i></span>
       <span data-ico="chev"></span>
@@ -3732,7 +3754,7 @@ function openCriarContrato(txId, period) {
   const diaBase = Number(String(t.date || todayISO()).slice(8, 10)) || 1;
   openModal(`
     <div class="modal-title">Nova conta fixa<button class="close-x" id="nc-back"><span data-ico="back"></span></button></div>
-    <p class="muted" style="margin-bottom:12px"><b>${esc(t.description)}</b> · ${fmt(t.amount)}<br>
+    <p class="muted" style="margin-bottom:var(--e3)"><b>${esc(t.description)}</b> · ${fmt(t.amount)}<br>
       A primeira ocorrência do contrato é a PRÓXIMA — este lançamento já existe e
       já está aqui. Depois de criado, o app lança sozinho na data certa.</p>
     <div class="massa-campo">
@@ -3765,7 +3787,7 @@ function openCriarContrato(txId, period) {
         <option value="media">Sim — usar a média (luz, água)</option>
       </select>
     </div>
-    <button class="btn" id="nc-ok" style="margin-top:12px">Criar e vincular</button>
+    <button class="btn" id="nc-ok" style="margin-top:var(--e3)">Criar e vincular</button>
   `);
   $('#nc-back').onclick = () => openEscolherContrato(txId, period);
   // Os campos de prazo só aparecem quando fazem sentido
@@ -3903,11 +3925,11 @@ function renderMetas() {
       // Mesma régua do painel: acima de 10 anos a data vira ficção e o que ajuda
       // é o quanto por mês faltaria para o prazo caber numa vida
       if (prazo && prazo.longe) {
-        forecast += `<div class="muted" style="margin-top:8px">🐢 Ritmo: <b>${fmtShort(pace)}/mês</b> → <b>${Math.round(prazo.meses / 12)} anos</b>. Para 5 anos: <b>${fmtShort(prazo.precisaria)}/mês</b></div>`;
+        forecast += `<div class="muted" style="margin-top:var(--e2)">🐢 Ritmo: <b>${fmtShort(pace)}/mês</b> → <b>${Math.round(prazo.meses / 12)} anos</b>. Para 5 anos: <b>${fmtShort(prazo.precisaria)}/mês</b></div>`;
       } else if (prazo) {
-        forecast += `<div class="muted" style="margin-top:8px">📈 Ritmo: <b>${fmtShort(pace)}/mês</b> → conclusão prevista em <b>${esc(prazo.rotulo)}</b></div>`;
+        forecast += `<div class="muted" style="margin-top:var(--e2)">📈 Ritmo: <b>${fmtShort(pace)}/mês</b> → conclusão prevista em <b>${esc(prazo.rotulo)}</b></div>`;
       } else {
-        forecast += `<div class="muted" style="margin-top:8px">📈 Sem aportes nos últimos 90 dias — a meta está parada.</div>`;
+        forecast += `<div class="muted" style="margin-top:var(--e2)">📈 Sem aportes nos últimos 90 dias — a meta está parada.</div>`;
       }
       if (g.target_date) {
         const monthsLeft = Math.max(0.5, (new Date(g.target_date) - Date.now()) / (30.44 * 86400000));
@@ -3926,17 +3948,17 @@ function renderMetas() {
       <!-- O PLANEJADO vem em linha própria, nunca somado ao guardado: são duas
            perguntas diferentes — "quanto já tenho" e "quanto pretendo ter". Somar
            daria uma barra cheia de dinheiro que ainda está na conta corrente. -->
-      ${planejado > 0.005 ? `<div class="muted" style="margin-top:6px">📅 Mais <b>${fmtShort(planejado)}</b> já agendado${
+      ${planejado > 0.005 ? `<div class="muted" style="margin-top:var(--e2)">📅 Mais <b>${fmtShort(planejado)}</b> já agendado${
         proximo ? ` — o próximo em ${fmtDay(proximo.date)}` : ''}. Ainda não entrou no guardado.</div>` : ''}
       ${forecast}
       <div class="btn-row">
         <button class="btn ghost" data-aporte="${g.id}">＋ Aporte</button>
         <button class="btn ghost" data-goal-detail="${g.id}">Ver histórico (${entries.length})</button>
       </div>
-      ${entries.length ? `<p class="muted" style="margin-top:10px;font-weight:600">Últimos aportes</p>` : ''}
-      ${entries.slice(0, 2).map(e => `<div class="muted" style="margin-top:4px">· ${fmtDay(e.date)} — ${esc(e.description)} <b style="color:var(--paper)">${fmtShort(e.amount)}</b>${
+      ${entries.length ? `<p class="muted" style="margin-top:var(--e3);font-weight:600">Últimos aportes</p>` : ''}
+      ${entries.slice(0, 2).map(e => `<div class="muted" style="margin-top:var(--e1)">· ${fmtDay(e.date)} — ${esc(e.description)} <b style="color:var(--paper)">${fmtShort(e.amount)}</b>${
         DB.aportePago(e) ? '' : ' <span class="selo-ajuste">agendado</span>'}</div>`).join('')}
-      ${entries.length > 2 ? `<div class="muted" style="margin-top:6px">e mais ${entries.length - 2} — toque em <b>Ver histórico</b> para ver todos</div>` : ''}
+      ${entries.length > 2 ? `<div class="muted" style="margin-top:var(--e2)">e mais ${entries.length - 2} — toque em <b>Ver histórico</b> para ver todos</div>` : ''}
     </div>`;
   }
   return html;
@@ -3950,28 +3972,9 @@ function refreshIdentity() {
   $('#topbar-hello').textContent = saudacao + (nome ? ' · ' + nome : '');
   const side = $('#side-family');
   if (side) side.textContent = DB.familyLabel();
-  document.title = nome ? `Finanças — ${nome}` : 'Finanças da Família';
+  document.title = nome ? `DOMI — ${nome}` : 'DOMI — Finanças da Família';
 }
 
-/* ---------- O período do ciclo, no header ----------
-   Indicador, não um segundo controle de navegação: as setas de mês moram dentro
-   da tela que tem mês. Quando se está fora do ciclo corrente ele acende e passa
-   a ser o atalho de volta — a única ação que faltava a quem se perdeu navegando
-   meses atrás. Some nas telas sem período (Cartões, Metas), porque ali um mês na
-   tela mentiria sobre o que está sendo mostrado. */
-function pintarPeriodo(period) {
-  const chip = $('#btn-periodo');
-  if (!chip) return;
-  const temMes = state.tab === 'inicio' || state.tab === 'extrato';
-  chip.hidden = !temMes;
-  if (!temMes) return;
-  const dia = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '');
-  const fim = new Date(period.end.getTime() - 86400000);   // `end` é exclusivo
-  $('#topbar-periodo').textContent = `${dia(period.start)} – ${dia(fim)}`;
-  const fora = state.monthOffset !== 0;
-  chip.classList.toggle('fora', fora);
-  chip.title = fora ? 'Voltar para o ciclo atual' : 'Ciclo financeiro em exibição';
-}
 
 /* ---------- Relatórios ---------- */
 /* ---------- Relatórios ----------
@@ -4188,7 +4191,7 @@ function relEntradas(period, receitas) {
         <small>origem das entradas do período</small></div>
         <span class="num" style="font-size:16px">${fmtShort(receitas)}</span></div>
       ${svgRanking(linhas.map(([cid, v]) => [catLabel(cid === '_sem' ? null : cid), v]))}
-      ${divida > 0 ? `<p class="muted" style="margin-top:10px">⚠️ <b>${fmt(divida)}</b> vieram de empréstimo ou antecipação — <b>não são ganho</b>, são dívida adiantada. Descontando isso, a renda real do período foi <b>${fmt(receitas - divida)}</b>.</p>` : ''}
+      ${divida > 0 ? `<p class="muted" style="margin-top:var(--e3)">⚠️ <b>${fmt(divida)}</b> vieram de empréstimo ou antecipação — <b>não são ganho</b>, são dívida adiantada. Descontando isso, a renda real do período foi <b>${fmt(receitas - divida)}</b>.</p>` : ''}
     </div>`;
 }
 
@@ -4240,7 +4243,7 @@ function relNormal({ evo, fechados, juizo, total, atual, fmtPct, vsMediana, filt
         ${juizo.med > 0 ? `<span>Diferença <b class="${vsMediana > 0 ? 'txt-red' : 'txt-green'}">${fmtPct(vsMediana)}</b></span>` : ''}
         ${positivos.length ? `<span>Menor mês <b>${fmtShort(Math.min(...positivos))}</b></span>` : ''}
       </div>
-      ${juizo.incerto ? '<p class="muted" style="margin-top:8px">Com menos de seis meses registrados, a faixa ainda é um chute. Ela fica confiável conforme o histórico cresce.</p>' : ''}
+      ${juizo.incerto ? '<p class="muted" style="margin-top:var(--e2)">Com menos de seis meses registrados, a faixa ainda é um chute. Ela fica confiável conforme o histórico cresce.</p>' : ''}
     </div>`;
 }
 
@@ -4345,7 +4348,7 @@ function relCategorias({ period, byCat, total }) {
           }).join('') : '');
         }).join('') : '<tr><td colspan="4" class="empty">Sem dados.</td></tr>'}</tbody>
       </table></div>
-      <p class="muted" style="margin-top:8px">“=” quer dizer variação pequena demais para ser notícia — abaixo de 15% ou R$ 20.</p>
+      <p class="muted" style="margin-top:var(--e2)">“=” quer dizer variação pequena demais para ser notícia — abaixo de 15% ou R$ 20.</p>
     </div>`;
 }
 
@@ -4451,11 +4454,11 @@ function relProjecao({ period, st, atual, total, receitas, juizo, filtrado }) {
           <div class="budget-head"><span class="muted">Uso do orçamento</span>
             <span class="num">${pctOrc}% <span class="muted">de ${fmtShort(orcamento)}</span></span></div>
           <div class="bar ${barClass(pctOrc)}"><i style="width:${Math.min(100, pctOrc)}%"></i></div>` : ''}
-        ${atual ? `<div class="proj-row" style="margin-top:12px"><span>Projeção do fechamento</span><b class="${estoura ? 'txt-red' : ''}">${fmt(proj)}</b></div>
+        ${atual ? `<div class="proj-row" style="margin-top:var(--e3)"><span>Projeção do fechamento</span><b class="${estoura ? 'txt-red' : ''}">${fmt(proj)}</b></div>
           ${orcamento > 0 ? `<div class="proj-row"><span>${estoura ? 'Deve passar do orçamento em' : 'Deve sobrar do orçamento'}</span><b class="${estoura ? 'txt-red' : 'txt-green'}">${fmt(Math.abs(orcamento - proj))}</b></div>` : ''}
           <div class="proj-row"><span>Para fechar no seu normal, gastar por dia</span><b>${
             st.remainingDays > 0 && juizo.med > total ? fmt((juizo.med - total) / st.remainingDays) : fmt(0)}</b></div>`
-          : `<div class="proj-row" style="margin-top:12px"><span>Gasto do mês</span><b>${fmt(total)}</b></div>
+          : `<div class="proj-row" style="margin-top:var(--e3)"><span>Gasto do mês</span><b>${fmt(total)}</b></div>
              <div class="proj-row"><span>Receita do mês</span><b class="txt-green">${fmt(receitas)}</b></div>`}
       </div>
       <div class="card">
@@ -4488,8 +4491,8 @@ function projecaoCard(period) {
       <span>Fecha em <b class="${fim.saldo < 0 ? 'txt-red' : 'txt-green'}">${fmtShort(fim.saldo)}</b></span>
     </div>
     ${negativo
-      ? `<p class="muted" style="margin-top:8px">⚠️ Fica negativo em <b>${dia(negativo.data)}</b>, chegando a <b class="txt-red">${fmt(negativo.saldo)}</b>. Antecipar uma entrada ou adiar uma conta resolve.</p>`
-      : '<p class="muted" style="margin-top:8px">O saldo se mantém positivo até o fim do ciclo com o que está previsto.</p>'}`;
+      ? `<p class="muted" style="margin-top:var(--e2)">⚠️ Fica negativo em <b>${dia(negativo.data)}</b>, chegando a <b class="txt-red">${fmt(negativo.saldo)}</b>. Antecipar uma entrada ou adiar uma conta resolve.</p>`
+      : '<p class="muted" style="margin-top:var(--e2)">O saldo se mantém positivo até o fim do ciclo com o que está previsto.</p>'}`;
 }
 
 /* Os próximos meses: o que já está prometido antes de acontecer.
@@ -4527,7 +4530,7 @@ function relProximosMeses() {
         <span>Previsto entrar <b class="txt-green">${fmtShort(futuros.reduce((s, m) => s + m.entra, 0))}</b></span>
         <span>Previsto sair <b class="txt-red">${fmtShort(futuros.reduce((s, m) => s + m.sai, 0))}</b></span>
       </div>
-      <p class="muted" style="margin-top:8px">${negativo
+      <p class="muted" style="margin-top:var(--e2)">${negativo
         ? `⚠️ Com o que já está prometido, o saldo fecha <b class="txt-red">${fmt(negativo.saldo)}</b> em <b>${esc(nomeMes(negativo.period))}</b>. Ainda dá tempo de mudar.`
         : 'O saldo se mantém positivo nos próximos seis meses. A previsão só conhece o que está cadastrado como conta fixa — receita fora disso não entra nesta conta.'}</p>
     </div>`;
@@ -4564,7 +4567,7 @@ function relConstrucao({ period, receitas, resultado, filtrado }) {
         <div class="proj-row"><span>Cobre quanto tempo</span><b class="${meses >= 6 ? 'txt-green' : meses >= 3 ? '' : 'txt-red'}">${
           meses > 0 ? `${meses.toFixed(1)} meses` : '—'}</b></div>
         ${taxa !== null ? `<div class="proj-row"><span>Taxa de poupança do mês</span><b class="${taxa >= 20 ? 'txt-green' : taxa >= 0 ? '' : 'txt-red'}">${Math.round(taxa)}%</b></div>` : ''}
-        <p class="muted" style="margin-top:8px">${
+        <p class="muted" style="margin-top:var(--e2)">${
           meses >= 6 ? 'A reserva cobre seis meses de gasto — o patamar em que uma emergência deixa de virar dívida.'
           : meses >= 3 ? `Faltam ${fmt(gastoMedio * 6 - reserva)} para chegar aos seis meses de cobertura.`
           : `Uma reserva de seis meses seria ${fmt(gastoMedio * 6)}, medida pelo seu próprio gasto médio.`}</p>
@@ -4675,7 +4678,7 @@ function bindView() {
       const g = DB.get('goals', e.goal_id) || {};
       openSheet(`
         <div class="sheet-title">Adiar — guardar em ${esc(g.name || 'meta')}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-        <p class="muted" style="margin:-4px 0 12px">O plano continua de pé, só muda a data. Ele volta à fila no novo dia.</p>
+        <p class="muted" style="margin:calc(var(--e1) * -1) 0 var(--e3)">O plano continua de pé, só muda a data. Ele volta à fila no novo dia.</p>
         <div class="field"><label>Nova data</label><input id="ad-data" type="date" value="${somarDias(DB.paraISO(new Date()), 1)}"></div>
         <button class="btn" id="sh-save">Adiar</button>
         <div class="btn-row"><button class="btn ghost t-danger" id="ad-cancelar">Não vou guardar — excluir</button></div>
@@ -4699,7 +4702,7 @@ function bindView() {
     if (!t) return;
     openSheet(`
       <div class="sheet-title">Adiar — ${esc(t.description)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-      <p class="muted" style="margin:-4px 0 12px">A conta continua a pagar, só muda a data. Ela volta à fila no novo dia.</p>
+      <p class="muted" style="margin:calc(var(--e1) * -1) 0 var(--e3)">A conta continua a pagar, só muda a data. Ela volta à fila no novo dia.</p>
       <div class="field"><label>Nova data</label><input id="ad-data" type="date" value="${somarDias(DB.paraISO(new Date()), 1)}"></div>
       <button class="btn" id="sh-save">Adiar</button>
       <div class="btn-row"><button class="btn ghost t-danger" id="ad-cancelar">Não vou pagar — excluir</button></div>
@@ -5039,7 +5042,7 @@ function openPagarFaturaSheet(key) {
 
   openSheet(`
     <div class="sheet-title">Pagar fatura — ${esc(card.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin:-4px 0 12px">Fatura de <b>${fmt(inv.total)}</b>${
+    <p class="muted" style="margin:calc(var(--e1) * -1) 0 var(--e3)">Fatura de <b>${fmt(inv.total)}</b>${
       jaPago ? ` · já pago <b>${fmt(inv.pago)}</b> · falta <b>${fmt(falta)}</b>` : ''} · vence ${fmtDate(inv.due)}</p>
 
     <div class="field"><label>Quanto está pagando</label>
@@ -5056,7 +5059,7 @@ function openPagarFaturaSheet(key) {
       <select id="pf-conta">${contas.map(a =>
         `<option value="${a.id}"${a.id === contaPadrao ? ' selected' : ''}>${esc(a.name)} — ${fmt(a.balance)}</option>`).join('')}</select>
     </div>
-    <p class="muted" style="margin-bottom:10px">O débito entra no extrato da conta escolhida. Não conta como gasto novo: as compras do cartão já entraram quando aconteceram.</p>
+    <p class="muted" style="margin-bottom:var(--e3)">O débito entra no extrato da conta escolhida. Não conta como gasto novo: as compras do cartão já entraram quando aconteceram.</p>
     <button class="btn" id="sh-save">Registrar pagamento</button>
     ${jaPago ? '<div class="btn-row"><button class="btn ghost t-danger" id="pf-desfazer">Desfazer pagamentos desta fatura</button></div>' : ''}
   `);
@@ -5523,7 +5526,7 @@ function openMassaEditSheet() {
     <div class="massa-campo">
       <label class="massa-liga"><input type="checkbox" data-liga="${chave}"><span>${rotulo}</span></label>
       <div class="massa-ctrl" data-ctrl="${chave}" hidden>${controle}
-        ${aviso ? `<p class="muted" style="margin-top:6px">${aviso}</p>` : ''}</div>
+        ${aviso ? `<p class="muted" style="margin-top:var(--e2)">${aviso}</p>` : ''}</div>
     </div>`;
   const foraDe = chave => alvos.filter(t => !massaAceita(chave, t)).length;
   const nota = chave => {
@@ -5533,7 +5536,7 @@ function openMassaEditSheet() {
 
   openSheet(`
     <div class="sheet-title">Editar ${alvos.length} lançamento${alvos.length === 1 ? '' : 's'}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin:-4px 0 14px">Ligue só o que quer mudar. O que ficar desligado permanece como está em cada lançamento.</p>
+    <p class="muted" style="margin:calc(var(--e1) * -1) 0 var(--e4)">Ligue só o que quer mudar. O que ficar desligado permanece como está em cada lançamento.</p>
 
     ${campo('type', 'Tipo', `
       ${chipGroup('ma-tipo', [
@@ -5541,7 +5544,7 @@ function openMassaEditSheet() {
         { value: 'Receita', label: 'Receita' },
         { value: 'Transferência', label: 'Transferência' },
       ], 'Despesa')}
-      <div class="field" id="ma-destino-campo" hidden style="margin-top:8px"><label>Conta de destino</label>
+      <div class="field" id="ma-destino-campo" hidden style="margin-top:var(--e2)"><label>Conta de destino</label>
         <select id="ma-destino">${DB.all('accounts').filter(a => a.active !== false)
           .map(a => `<option value="${a.id}">${esc(a.name)}</option>`).join('')}</select>
       </div>`,
@@ -5554,7 +5557,7 @@ function openMassaEditSheet() {
         { value: 'remover', label: 'Remover' },
         { value: 'substituir', label: 'Substituir' },
       ], 'adicionar')}
-      <input id="ma-tags" type="text" placeholder="viagem, presente" autocomplete="off" list="tag-hist-massa" style="margin-top:8px">
+      <input id="ma-tags" type="text" placeholder="viagem, presente" autocomplete="off" list="tag-hist-massa" style="margin-top:var(--e2)">
       <datalist id="tag-hist-massa">${tags.map(t => `<option value="${esc(t)}"></option>`).join('')}</datalist>`,
       'Separe por vírgula. “Adicionar” mantém as que já existem.')}
     ${campo('status', 'Situação',
@@ -5583,7 +5586,7 @@ function openMassaEditSheet() {
         { value: 'substituir', label: 'Substituir' },
         { value: 'acrescentar', label: 'Acrescentar' },
       ], 'substituir')}
-      <textarea id="ma-notas" rows="2" style="margin-top:8px"></textarea>`)}
+      <textarea id="ma-notas" rows="2" style="margin-top:var(--e2)"></textarea>`)}
 
     <button class="btn" id="sh-save">Revisar mudanças</button>
   `);
@@ -5663,9 +5666,9 @@ function confirmarMassa(campos, extras) {
 
   openSheet(`
     <div class="sheet-title">Confirmar<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin-bottom:10px">Sobre ${alvos.length} lançamento${alvos.length === 1 ? '' : 's'} selecionado${alvos.length === 1 ? '' : 's'}:</p>
+    <p class="muted" style="margin-bottom:var(--e3)">Sobre ${alvos.length} lançamento${alvos.length === 1 ? '' : 's'} selecionado${alvos.length === 1 ? '' : 's'}:</p>
     ${linhas.map(([txt, n]) => `<div class="proj-row"><span>${txt}</span><b>${n}</b></div>`).join('')}
-    <p class="muted" style="margin-top:10px">Dá para desfazer logo depois, enquanto o aviso estiver na tela.</p>
+    <p class="muted" style="margin-top:var(--e3)">Dá para desfazer logo depois, enquanto o aviso estiver na tela.</p>
     <button class="btn" id="sh-save">Aplicar</button>
     <div class="btn-row"><button class="btn ghost" id="ma-cancelar">Cancelar</button></div>
   `);
@@ -5787,12 +5790,12 @@ function openEnvelopeDetail(rootId) {
 
   openSheet(`
     <div class="sheet-title">${esc(c.icon)} ${esc(c.name)}</div>
-    <p class="muted" style="margin-bottom:12px">${esc(period.label)} · ${fmtShort(total)} gasto${limite ? ` de ${fmtShort(limite)} (${pct}%)` : ''}</p>
-    ${limite ? `<div class="bar ${barClass(pct)}" style="margin-bottom:16px"><i style="width:${Math.min(100, pct)}%"></i></div>` : ''}
+    <p class="muted" style="margin-bottom:var(--e3)">${esc(period.label)} · ${fmtShort(total)} gasto${limite ? ` de ${fmtShort(limite)} (${pct}%)` : ''}</p>
+    ${limite ? `<div class="bar ${barClass(pct)}" style="margin-bottom:var(--e4)"><i style="width:${Math.min(100, pct)}%"></i></div>` : ''}
     ${linhas.length
       ? svgRanking(linhas)
       : '<div class="empty">Nada gasto neste envelope no período.</div>'}
-    <div class="btn-row" style="margin-top:14px"><button class="btn ghost" id="sh-close">Fechar</button></div>
+    <div class="btn-row" style="margin-top:var(--e4)"><button class="btn ghost" id="sh-close">Fechar</button></div>
   `);
   $('#sh-close').onclick = closeSheet;
 }
@@ -5832,7 +5835,7 @@ function openOrcamentoSheet(categoryId, offset = 0) {
 
   openSheet(`
     <div class="sheet-title">${esc(c.icon)} ${esc(c.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin:-4px 0 12px">${
+    <p class="muted" style="margin:calc(var(--e1) * -1) 0 var(--e3)">${
       temAjuste ? `Ajustado neste mês · padrão ${fmtShort(padrao)}` : `Usando o padrão de ${fmtShort(padrao)}`} · já gasto ${fmtShort(gasto)}</p>
     <div class="field"><label>Qual mês</label>
       <select id="orc-mes">${Array.from({ length: 10 }, (_, n) => n - 3).map(o => {
@@ -5847,7 +5850,7 @@ function openOrcamentoSheet(categoryId, offset = 0) {
         { value: 'mes', label: 'Só neste mês' },
         { value: 'diante', label: 'Deste mês em diante' },
       ], 'mes')}
-      <p class="muted" id="orc-explica" style="margin-top:6px"></p>
+      <p class="muted" id="orc-explica" style="margin-top:var(--e2)"></p>
     </div>
     <button class="btn" id="sh-save">Salvar</button>
     <div class="btn-row">
@@ -5902,7 +5905,7 @@ function openMoverOrcamentoSheet(destinoId, period) {
 
   openSheet(`
     <div class="sheet-title">Mover para ${esc(destino.icon)} ${esc(destino.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin:-4px 0 12px">Em <b>${esc(period.label)}</b>. O total orçado do mês não muda — sai de um envelope e entra no outro.</p>
+    <p class="muted" style="margin:calc(var(--e1) * -1) 0 var(--e3)">Em <b>${esc(period.label)}</b>. O total orçado do mês não muda — sai de um envelope e entra no outro.</p>
     <div class="field"><label>Tirar de</label>
       <select id="mv-origem">${candidatos.map(o => `<option value="${o.id}">${esc(o.icon)} ${esc(o.name)} — tem ${fmtShort(DB.budgetOf(o.id, period))}</option>`).join('')}</select></div>
     <div class="field"><label>Quanto</label><input id="mv-valor" type="text" inputmode="numeric" placeholder="R$ 0,00"></div>
@@ -6043,11 +6046,11 @@ function openTxSheet(tx, asNew) {
     <div class="field" id="wrap-cat">
       <label id="lbl-cat">Categoria <span class="muted" id="cat-auto"></span></label>
       <div class="chips" id="g-cat"></div>
-      <select id="f-cat-more" hidden style="margin-top:8px"></select>
+      <select id="f-cat-more" hidden style="margin-top:var(--e2)"></select>
     </div>
     <div class="row2">
       <div class="field"><label>Data</label><input id="f-date" type="date" value="${tx.date}">
-        <div class="chips" id="g-day" style="margin-top:6px"><button type="button" class="chip" data-d="0">Hoje</button><button type="button" class="chip" data-d="1">Ontem</button><button type="button" class="chip" data-d="2">Anteontem</button></div>
+        <div class="chips" id="g-day" style="margin-top:var(--e2)"><button type="button" class="chip" data-d="0">Hoje</button><button type="button" class="chip" data-d="1">Ontem</button><button type="button" class="chip" data-d="2">Anteontem</button></div>
       </div>
       <div class="field"><label id="lbl-status">Situação</label><select id="f-status">
         <option value="Pago" ${tx.status === 'Pago' ? 'selected' : ''}>Pago</option>
@@ -6058,12 +6061,12 @@ function openTxSheet(tx, asNew) {
     <div class="field" id="wrap-card" ${tx.method === 'Cartão de Crédito' ? '' : 'hidden'}>
       <label>Cartão <span class="muted">— a fatura é escolhida sozinha pelo fechamento</span></label>
       <select id="f-card">${cards.map(c => `<option value="${c.id}" ${tx.card_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('') || '<option value="">— cadastre um cartão em Configurações —</option>'}</select>
-      <p class="muted" id="fatura-hint" style="margin-top:6px"></p>
+      <p class="muted" id="fatura-hint" style="margin-top:var(--e2)"></p>
     </div>
     ${isEdit ? '' : `<div class="field" id="wrap-parc" ${tx.method === 'Cartão de Crédito' ? '' : 'hidden'}>
       <label>Parcelas</label>
       <select id="f-parc">${Array.from({ length: 24 }, (_, i) => `<option value="${i + 1}">${i === 0 ? 'À vista' : `${i + 1}x`}</option>`).join('')}</select>
-      <p class="muted" id="parc-hint" style="margin-top:6px">Informe o <b>valor total</b> da compra — o app divide nas faturas seguintes.</p>
+      <p class="muted" id="parc-hint" style="margin-top:var(--e2)">Informe o <b>valor total</b> da compra — o app divide nas faturas seguintes.</p>
     </div>`}
     <div class="field" id="wrap-account" ${tx.method === 'Cartão de Crédito' ? 'hidden' : ''}>
       <label id="lbl-account">Conta <span class="muted">— o saldo é ajustado sozinho</span></label>
@@ -6072,7 +6075,7 @@ function openTxSheet(tx, asNew) {
     <div class="field" id="wrap-to-account" hidden>
       <label>Para qual conta</label>
       <select id="f-to-account"><option value="">— selecione —</option>${accounts.map(a => `<option value="${a.id}" ${tx.to_account === a.id ? 'selected' : ''}>${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}</select>
-      <p class="muted" style="margin-top:6px">Mover dinheiro entre contas suas <b>não é gasto nem renda</b> — só ajusta os saldos, sem poluir os relatórios.</p>
+      <p class="muted" style="margin-top:var(--e2)">Mover dinheiro entre contas suas <b>não é gasto nem renda</b> — só ajusta os saldos, sem poluir os relatórios.</p>
     </div>
     <div class="field" id="wrap-scope"><label>Âmbito</label>
       ${chipGroup('g-scope', [{ value: 'Família', label: '👨‍👩‍👧 Da família' }, { value: 'Pessoal', label: '👤 Pessoal' }], tx.scope)}
@@ -6083,7 +6086,7 @@ function openTxSheet(tx, asNew) {
         <option value="">— selecione —</option>
         ${pessoas.map(m => `<option ${tx.member === m ? 'selected' : ''}>${esc(m)}</option>`).join('')}
       </select>
-      <p class="muted" id="member-hint" style="margin-top:6px"></p>
+      <p class="muted" id="member-hint" style="margin-top:var(--e2)"></p>
     </div>
     <!-- Etiquetas: assunto que atravessa envelopes. "Viagem Bahia" junta passagem,
          comida e hospedagem, que estão em três categorias diferentes.
@@ -6101,11 +6104,11 @@ function openTxSheet(tx, asNew) {
       <div class="chips" id="g-tags">
         ${chips.map(({ t, on }) => `<button type="button" class="chip chip-tag ${on ? 'active' : ''}" data-v="${esc(t)}">#${esc(t)}</button>`).join('')}
       </div>
-      <input id="f-tag-nova" list="tag-hist" placeholder="Buscar ou criar etiqueta e Enter" autocomplete="off" maxlength="24" style="margin-top:8px">
+      <input id="f-tag-nova" list="tag-hist" placeholder="Buscar ou criar etiqueta e Enter" autocomplete="off" maxlength="24" style="margin-top:var(--e2)">
       <datalist id="tag-hist">${DB.allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
-      ${isEdit ? '' : `<button type="button" class="chip chip-fixa ${veioDeFixa ? 'active' : ''}" id="tag-fixar" style="margin-top:8px">
+      ${isEdit ? '' : `<button type="button" class="chip chip-fixa ${veioDeFixa ? 'active' : ''}" id="tag-fixar" style="margin-top:var(--e2)">
         📌 Manter nos próximos lançamentos</button>
-      <p class="muted" id="tag-fixa-hint" style="margin-top:6px;font-size:11.5px">${veioDeFixa
+      <p class="muted" id="tag-fixa-hint" style="margin-top:var(--e2);font-size:11.5px">${veioDeFixa
         ? `Fixado: ${atuais.map(t => '#' + t).join(' ')}. Desligue quando a sequência terminar.`
         : 'Use ao lançar vários gastos do mesmo assunto — uma viagem, uma reforma.'}</p>`}
     </div>`;
@@ -6144,7 +6147,7 @@ function openTxSheet(tx, asNew) {
           <option value="fixo">Não, é sempre o mesmo</option>
           <option value="media">Sim — usar a mediana do que já foi pago</option>
         </select></div>
-      <p class="muted" id="rep-resumo" style="margin-bottom:10px"></p>
+      <p class="muted" id="rep-resumo" style="margin-bottom:var(--e3)"></p>
     </div>`}
     <!-- ALCANCE, só quando a compra é parcelada. Corrigir a categoria de uma
          compra em 10x exigia abrir dez telas em dez meses; ninguém faz, e o dado
@@ -6160,7 +6163,7 @@ function openTxSheet(tx, asNew) {
           ...(futuras ? [{ value: 'proximas', label: `Esta e as próximas (${futuras + 1})` }] : []),
           { value: 'todas', label: `Todas as ${n}` },
         ], 'esta')}
-        <p class="muted" id="alcance-nota" style="margin-top:6px"></p></div>`;
+        <p class="muted" id="alcance-nota" style="margin-top:var(--e2)"></p></div>`;
     })()}
     <button class="btn" id="sh-save">${isEdit ? 'Salvar alterações' : 'Lançar'}</button>
     ${isEdit ? '<div class="btn-row"><button class="btn ghost" id="sh-dup">Repetir</button><button class="btn danger" id="sh-del">Excluir</button></div>' : ''}
@@ -6735,9 +6738,9 @@ function openSaldoSheet(accountId) {
   if (!a) return;
   openSheet(`
     <div class="sheet-title">Saldo — ${esc(a.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin-bottom:10px">Confira no app do banco e informe o saldo real. É a conciliação que mantém o <b>disponível para usar</b> confiável.</p>
+    <p class="muted" style="margin-bottom:var(--e3)">Confira no app do banco e informe o saldo real. É a conciliação que mantém o <b>disponível para usar</b> confiável.</p>
     <div class="field"><input class="amount-input" id="s-bal" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
-    <p class="muted" id="s-delta" style="margin-bottom:10px"></p>
+    <p class="muted" id="s-delta" style="margin-bottom:var(--e3)"></p>
     <button class="btn" id="sh-save">Conciliar saldo</button>
     <div class="btn-row"><button class="btn ghost" id="sh-edit">Editar conta</button></div>
   `);
@@ -6767,7 +6770,7 @@ function openTransferSheet(destinoId, titulo) {
   const origem = (contas.find(a => a.id !== destinoId) || {}).id;
   openSheet(`
     <div class="sheet-title">${esc(titulo || 'Transferir entre contas')}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin-bottom:10px">Mover dinheiro entre suas contas <b>não é despesa nem receita</b> — só ajusta os saldos, sem poluir seus relatórios.</p>
+    <p class="muted" style="margin-bottom:var(--e3)">Mover dinheiro entre suas contas <b>não é despesa nem receita</b> — só ajusta os saldos, sem poluir seus relatórios.</p>
     <div class="field"><input class="amount-input" id="t-val" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00"></div>
     <div class="field"><label>De</label><select id="t-from">${opts(origem)}</select></div>
     <div class="field"><label>Para</label><select id="t-to">${opts(destinoId)}</select></div>
@@ -6848,7 +6851,7 @@ function openInvoiceDetail(key) {
 
   openModal(`
     <div class="modal-title">${esc(card.name)} — fatura<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-    <div class="card" style="margin-bottom:14px">
+    <div class="card" style="margin-bottom:var(--e4)">
       <div class="proj-row"><span>Total</span><b>${fmt(inv.total)}</b></div>
       <div class="proj-row"><span>Fecha</span><b>${inv.closing.toLocaleDateString('pt-BR')}</b></div>
       <div class="proj-row"><span>Vence</span><b>${inv.due.toLocaleDateString('pt-BR')}</b></div>
@@ -6907,17 +6910,17 @@ function openGoalDetail(goalId) {
 
   openModal(`
     <div class="modal-title">${esc(g.icon)} ${esc(g.name)}<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-    <div class="card" style="margin-bottom:14px">
+    <div class="card" style="margin-bottom:var(--e4)">
       <div class="proj-row"><span>Guardado</span><b class="txt-green">${fmt(total)}</b></div>
       <div class="proj-row"><span>Meta</span><b>${fmt(alvo)}</b></div>
       <div class="proj-row"><span>Falta</span><b class="${falta ? '' : 'txt-green'}">${falta ? fmt(falta) : 'nada — meta atingida! 🎉'}</b></div>
-      <div class="bar ${pct >= 100 ? 'bar-green' : pct >= 50 ? 'bar-green' : 'bar-amber'}" style="margin:10px 0 6px"><i style="width:${Math.min(100, pct)}%"></i></div>
+      <div class="bar ${pct >= 100 ? 'bar-green' : pct >= 50 ? 'bar-green' : 'bar-amber'}" style="margin:var(--e3) 0 var(--e2)"><i style="width:${Math.min(100, pct)}%"></i></div>
       <div class="proj-row muted"><span>${pct}% concluído · ${entries.length} aporte(s)</span>
         <span>${pace > 0 ? `ritmo ${fmtShort(pace)}/mês` : 'sem aportes recentes'}</span></div>
-      ${previsao ? `<p class="muted" style="margin-top:6px">📈 Nesse ritmo, conclusão prevista para <b>${previsao}</b>.</p>` : ''}
+      ${previsao ? `<p class="muted" style="margin-top:var(--e2)">📈 Nesse ritmo, conclusão prevista para <b>${previsao}</b>.</p>` : ''}
       ${g.target_date && falta > 0 ? `<p class="muted">🎯 Para cumprir até ${fmtDay(g.target_date)}: <b>${fmtShort(falta / Math.max(0.5, (new Date(g.target_date) - Date.now()) / (30.44 * 86400000)))}/mês</b></p>` : ''}
     </div>
-    <div class="btn-row" style="margin-bottom:10px">
+    <div class="btn-row" style="margin-bottom:var(--e3)">
       <button class="btn" id="gd-novo">＋ Novo aporte</button>
       <button class="btn ghost" id="gd-edit">Editar meta</button>
     </div>
@@ -6947,7 +6950,7 @@ function openEntrySheet(entryId, goalId) {
       <div class="field"><label>Descrição</label><input id="e-desc" value="${esc(e.description || 'Aporte')}"></div>
       <div class="field"><label>Data</label><input id="e-date" type="date" value="${e.date}"></div>
     </div>
-    ${movimento ? `<p class="muted" style="margin-bottom:10px">💸 Este aporte movimentou contas (${esc(movimento)}). Alterar o valor ou excluir ajusta os saldos de volta automaticamente.</p>` : ''}
+    ${movimento ? `<p class="muted" style="margin-bottom:var(--e3)">💸 Este aporte movimentou contas (${esc(movimento)}). Alterar o valor ou excluir ajusta os saldos de volta automaticamente.</p>` : ''}
     <button class="btn" id="sh-save">Salvar</button>
     <div class="btn-row"><button class="btn danger" id="sh-del">Excluir aporte</button></div>
   `);
@@ -7025,7 +7028,7 @@ function filaDePendencias() {
         <span class="pend-selo ${vencidos.length ? 'ruim' : ''}">${vencidos.length ? 'atrasado' : 'hoje'}</span>
       </div>
       ${itens.slice(0, 6).map(linha).join('')}
-      ${itens.length > 6 ? `<p class="muted" style="margin-top:8px">e mais ${itens.length - 6} — veja no extrato, filtrando por “A Pagar”.</p>` : ''}
+      ${itens.length > 6 ? `<p class="muted" style="margin-top:var(--e2)">e mais ${itens.length - 6} — veja no extrato, filtrando por “A Pagar”.</p>` : ''}
     </div>`;
 }
 
@@ -7124,7 +7127,7 @@ function openConfirmarTarefas(kidId) {
     ${ganhos.length ? `<div class="sec-cab"><div class="sec-tit"><b>Ela ganhou</b>
       <small>o dinheiro entra no cofrinho quando você confirmar</small></div></div>
       ${ganhos.map(linha).join('')}` : ''}
-    ${saidas.length ? `<div class="sec-cab" style="margin-top:14px"><div class="sec-tit"><b>Ela gastou</b>
+    ${saidas.length ? `<div class="sec-cab" style="margin-top:var(--e4)"><div class="sec-tit"><b>Ela gastou</b>
       <small>confirmar lança a despesa e debita a sua conta</small></div></div>
       ${saidas.map(linha).join('')}` : ''}
     ${!pendentes.length ? '<div class="empty">Nada para confirmar agora.</div>' : ''}
@@ -7264,7 +7267,7 @@ function avisarSeUsouGuardado(tx) {
   const sugerido = Math.min(falta, DB.guardado());
   openSheet(`
     <div class="sheet-title">Este gasto usou dinheiro guardado<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin:-4px 0 12px">
+    <p class="muted" style="margin:calc(var(--e1) * -1) 0 var(--e3)">
       <b>${esc(tx.description)}</b> — ${fmt(tx.amount)}<br>
       Passou <b>${fmt(falta)}</b> do que estava livre, então entrou no que você já tinha guardado.</p>
     <div class="field"><label>De qual meta saiu?</label>
@@ -7278,7 +7281,7 @@ function avisarSeUsouGuardado(tx) {
     </div>
     <button class="btn" id="sh-save">Registrar o resgate</button>
     <div class="btn-row"><button class="btn ghost" id="ug-depois">Resolver depois</button></div>
-    <p class="muted" style="margin-top:8px">Adiando, o disponível fica negativo até você resgatar ou repor — o número continua honesto, só desconfortável.</p>
+    <p class="muted" style="margin-top:var(--e2)">Adiando, o disponível fica negativo até você resgatar ou repor — o número continua honesto, só desconfortável.</p>
   `);
   initMoney('#ug-valor', sugerido);
   bindChips('ug-meta');
@@ -7320,7 +7323,7 @@ function openAporteSheet(goalId, opcoes = {}) {
   const modo = opcoes.modo === 'resgate' ? 'resgate' : 'aporte';
   openSheet(`
     <div class="sheet-title">${esc(g.icon)} ${esc(g.name)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin:-4px 0 12px">Guardado hoje: <b>${fmt(saldoMeta)}</b>${
+    <p class="muted" style="margin:calc(var(--e1) * -1) 0 var(--e3)">Guardado hoje: <b>${fmt(saldoMeta)}</b>${
       g.target_amount > 0 ? ` de ${fmt(g.target_amount)}` : ''}</p>
     <div class="field">${chipGroup('a-modo', [
       { value: 'aporte', label: '＋ Guardar' },
@@ -7350,9 +7353,9 @@ function openAporteSheet(goalId, opcoes = {}) {
         { value: 'Pago', label: 'Já aconteceu' },
         { value: 'A Pagar', label: 'Agendado' },
       ], 'Pago')}
-      <p class="muted" id="a-status-nota" style="margin-top:6px"></p>
+      <p class="muted" id="a-status-nota" style="margin-top:var(--e2)"></p>
     </div>
-    <p class="muted" id="a-aviso" style="margin-bottom:10px">${ehReserva
+    <p class="muted" id="a-aviso" style="margin-bottom:var(--e3)">${ehReserva
       ? '🛡️ Esta é a reserva de emergência: ela existe para não ser gasta. Resgatar aqui é legítimo numa emergência — só lembre de repor depois.'
       : 'Guardar tira o valor do seu disponível; resgatar devolve.'}</p>
     <button class="btn" id="sh-save">Guardar</button>
@@ -7513,18 +7516,18 @@ function openCriancas() {
   };
   openModal(`
     <div class="modal-title">Crianças<button class="close-x" id="kd-back"><span data-ico="back"></span></button></div>
-    <p class="muted" style="margin-bottom:12px">O cofrinho de cada criança. Elas acompanham pelo app próprio;
+    <p class="muted" style="margin-bottom:var(--e3)">O cofrinho de cada criança. Elas acompanham pelo app próprio;
       aqui você define a semanada, as tarefas e a meta — e vê tudo em detalhe.</p>
     ${kids.map(linha).join('') || '<div class="empty"><b>Nenhuma criança ainda</b>Cadastre a primeira para começar o cofrinho dela.</div>'}
-    <button class="btn ghost" id="kd-nova" style="margin-top:12px">Adicionar criança</button>
+    <button class="btn ghost" id="kd-nova" style="margin-top:var(--e3)">Adicionar criança</button>
     ${kids.length ? `
-      <div class="hint" style="margin-top:18px">
+      <div class="hint" style="margin-top:var(--e5)">
         <b>O app dela</b>
         Abre em <code>/cofrinho/</code> — instale no aparelho da criança como
         atalho na tela inicial. Ele pede a senha de quatro números que você
         cadastrou e mostra só o cofrinho dela, nunca as contas da casa.
       </div>
-      <button class="btn ghost" id="kd-abrir" style="margin-top:10px">Abrir o app do cofrinho</button>` : ''}
+      <button class="btn ghost" id="kd-abrir" style="margin-top:var(--e3)">Abrir o app do cofrinho</button>` : ''}
   `);
   $('#kd-back').onclick = () => openConfig();
   $('#kd-nova').onclick = () => openCriancaSheet(null);
@@ -7560,11 +7563,11 @@ function openCriancaSheet(kidId) {
         `<option value="${i}"${sel(k ? k.semanada_dia : 5, i)}>${d}</option>`).join('')}</select></div>
     <div class="field"><label>Moeda mágica</label>
       <input class="amount-input" id="kd-rend" type="text" inputmode="numeric" autocomplete="off">
-      <p class="muted" style="margin-top:4px">Cai toda semana em que ela não mexer no que guardou.
+      <p class="muted" style="margin-top:var(--e1)">Cai toda semana em que ela não mexer no que guardou.
         É o rendimento em formato que a idade entende — zero desliga.</p></div>
     <div class="field"><label>Senha do cofrinho (4 números)</label>
       <input type="tel" id="kd-pin" maxlength="4" inputmode="numeric" autocomplete="off" placeholder="${k && k.pin_hash ? 'já tem senha — digite para trocar' : 'ex: dia e mês do aniversário'}">
-      <p class="muted" style="margin-top:4px">Só separa os cofrinhos entre irmãos. Não guarda dinheiro de verdade.</p></div>
+      <p class="muted" style="margin-top:var(--e1)">Só separa os cofrinhos entre irmãos. Não guarda dinheiro de verdade.</p></div>
     <button class="btn" id="sh-save">Salvar</button>
   `);
   initMoney('#kd-valor', k ? k.semanada_valor : 0);
@@ -7652,12 +7655,12 @@ function blocoDaSemanada(kidId) {
       ${fora ? `<div class="sec-acoes"><button class="sec-btn" id="kdd-contrato">${
         fora.motivo === 'faltando' ? 'Criar contrato' : fora.motivo === 'sobrando' ? 'Encerrar' : 'Acertar'
       }</button></div>` : ''}</div>
-    <div class="card" style="margin-bottom:12px">
+    <div class="card" style="margin-bottom:var(--e3)">
       <div class="proj-row"><span>No mês</span><b>${fmt(mensal)}</b></div>
       <div class="proj-row"><span>${contrato ? 'Contrato' : 'Sem contrato'}</span>
         <b>${contrato ? esc(contrato.description) : '—'}</b></div>
-      ${recado ? `<p class="muted" style="margin-top:8px">${recado}</p>` : ''}
-      ${!fora ? `<p class="muted" style="margin-top:8px">Entra no custo fixo mensal e na projeção,
+      ${recado ? `<p class="muted" style="margin-top:var(--e2)">${recado}</p>` : ''}
+      ${!fora ? `<p class="muted" style="margin-top:var(--e2)">Entra no custo fixo mensal e na projeção,
         como qualquer outro contrato.</p>` : ''}
     </div>`;
 }
@@ -7693,7 +7696,7 @@ function openKidExtrato(kidId) {
   const potes = DB.kidPotes(kidId);
   openModal(`
     <div class="modal-title">Extrato de ${esc(k.name)}<button class="close-x" id="kx-back"><span data-ico="back"></span></button></div>
-    <p class="muted" style="margin-bottom:12px">${movs.length} movimento(s) · saldo de ${fmt(potes.total)}</p>
+    <p class="muted" style="margin-bottom:var(--e3)">${movs.length} movimento(s) · saldo de ${fmt(potes.total)}</p>
     ${movs.map(linhaDoMovimento).join('') || '<div class="empty">Nada movimentado ainda.</div>'}
   `);
   $('#kx-back').onclick = () => openCriancaDetalhe(kidId);
@@ -7733,7 +7736,7 @@ function openCriancaDetalhe(kidId) {
   openModal(`
     <div class="modal-title">${esc(k.avatar || '🦖')} ${esc(k.name)}<button class="close-x" id="kdd-back"><span data-ico="back"></span></button></div>
 
-    <div class="card" style="margin-bottom:12px">
+    <div class="card" style="margin-bottom:var(--e3)">
       <div class="proj-row"><span>🍭 Gastar agora</span><b>${fmt(potes.gastar)}</b></div>
       <div class="proj-row"><span>🎯 Guardar</span><b>${fmt(potes.guardar)}</b></div>
       <div class="proj-row"><span>❤️ Doar</span><b>${fmt(potes.doar)}</b></div>
@@ -7747,10 +7750,10 @@ function openCriancaDetalhe(kidId) {
     <div class="sec-cab"><div class="sec-tit"><b>Meta</b><small>${meta
       ? `${esc(meta.name)} · ${fmt(meta.target_amount)}` : 'nenhuma agora'}</small></div>
       <div class="sec-acoes"><button class="sec-btn" id="kdd-meta">${meta ? 'Trocar' : 'Criar'}</button></div></div>
-    ${meta ? `<div class="card" style="margin-bottom:12px">
+    ${meta ? `<div class="card" style="margin-bottom:var(--e3)">
       <div class="budget-head"><span class="muted">${esc(meta.icon || '🎁')} ${esc(meta.name)}</span><span class="num">${fmt(potes.guardar)} de ${fmt(meta.target_amount)}</span></div>
       <div class="bar bar-green"><i style="width:${Math.min(100, meta.target_amount > 0 ? potes.guardar / meta.target_amount * 100 : 0)}%"></i></div>
-      ${DB.kidSemanadasParaMeta(kidId) !== null ? `<p class="muted" style="margin-top:6px">Faltam ${DB.kidSemanadasParaMeta(kidId)} semanada(s).</p>` : ''}
+      ${DB.kidSemanadasParaMeta(kidId) !== null ? `<p class="muted" style="margin-top:var(--e2)">Faltam ${DB.kidSemanadasParaMeta(kidId)} semanada(s).</p>` : ''}
     </div>` : ''}
 
     <div class="sec-cab"><div class="sec-tit"><b>Missões</b><small>valem dinheiro extra</small></div>
@@ -7770,21 +7773,21 @@ function openCriancaDetalhe(kidId) {
       <button class="link-btn t-danger" data-del-tarefa="${t.id}">tirar</button>
     </div>`).join('') || '<div class="empty">Nenhuma missão cadastrada.</div>'}
 
-    <div class="sec-cab" style="margin-top:14px"><div class="sec-tit"><b>Movimento</b><small>tudo que entrou e saiu</small></div>
+    <div class="sec-cab" style="margin-top:var(--e4)"><div class="sec-tit"><b>Movimento</b><small>tudo que entrou e saiu</small></div>
       <div class="sec-acoes"><button class="sec-btn" id="kdd-lanc">Lançar</button></div></div>
     ${/* SÓ OS ÚLTIMOS CINCO AQUI. Trinta linhas de extrato empurravam a meta, as
          missões e os botões de configuração para fora da tela — e esta é a tela de
          ADMINISTRAR, não de auditar. O extrato inteiro está a um toque, com espaço
          para ser lido. */''}
     ${entradas.slice(0, 5).map(linhaDoMovimento).join('') || '<div class="empty">Nada movimentado ainda.</div>'}
-    ${entradas.length > 5 ? `<button class="btn ghost" id="kdd-extrato" style="margin-top:8px">
+    ${entradas.length > 5 ? `<button class="btn ghost" id="kdd-extrato" style="margin-top:var(--e2)">
       Ver o extrato completo (${entradas.length})</button>` : ''}
 
-    <div class="sec-cab" style="margin-top:14px"><div class="sec-tit"><b>Configurações</b><small>semanada, senha e bichinho</small></div>
+    <div class="sec-cab" style="margin-top:var(--e4)"><div class="sec-tit"><b>Configurações</b><small>semanada, senha e bichinho</small></div>
       <div class="sec-acoes"><button class="sec-btn" id="kdd-editar">Editar</button></div></div>
-    <button class="btn ghost" id="kdd-pausar" style="margin-top:8px">${k.active === false ? 'Reativar cofrinho' : 'Pausar cofrinho'}</button>
-    <button class="btn ghost t-danger" id="kdd-excluir" style="margin-top:8px">Excluir cofrinho</button>
-    <p class="muted" style="margin-top:6px">Pausar guarda tudo e só esconde do app dela.
+    <button class="btn ghost" id="kdd-pausar" style="margin-top:var(--e2)">${k.active === false ? 'Reativar cofrinho' : 'Pausar cofrinho'}</button>
+    <button class="btn ghost t-danger" id="kdd-excluir" style="margin-top:var(--e2)">Excluir cofrinho</button>
+    <p class="muted" style="margin-top:var(--e2)">Pausar guarda tudo e só esconde do app dela.
       Excluir apaga o cofrinho inteiro — movimento, meta, tarefas e o contrato da semanada.</p>
   `);
   $('#kdd-back').onclick = () => openCriancas();
@@ -7968,12 +7971,12 @@ function openKidTarefaSheet(kidId, tarefaId) {
         <option value="diaria"${atual && atual.frequencia === 'diaria' ? ' selected' : ''}>Todo dia</option>
         <option value="especial"${atual && atual.frequencia === 'especial' ? ' selected' : ''}>Missão especial, com prazo</option>
       </select>
-      <p class="muted" id="kt-nota" style="margin-top:4px"></p></div>
+      <p class="muted" id="kt-nota" style="margin-top:var(--e1)"></p></div>
     <div class="field" id="kt-campo-prazo" hidden><label>Até quando?</label>
       <input type="date" id="kt-prazo" value="${atual && atual.expira_em ? esc(atual.expira_em) : ''}"></div>
     <div class="field"><label>Quanto vale?</label>
       <input class="amount-input" id="kt-valor" type="text" inputmode="numeric" autocomplete="off">
-      <p class="muted" id="kt-nota-valor" style="margin-top:4px"></p></div>
+      <p class="muted" id="kt-nota-valor" style="margin-top:var(--e1)"></p></div>
     <button class="btn" id="sh-save">${atual ? 'Salvar' : 'Criar'}</button>
   `);
   initMoney('#kt-valor', atual ? Number(atual.amount) || 0 : 1);
@@ -8247,32 +8250,65 @@ const Tema = {
 
 function openConfig() {
   const s = Sync.cfg || {};
+  /* ---------- AS CONFIGURAÇÕES, AGRUPADAS ----------
+
+     Eram doze linhas numa lista plana: "Contas" tinha exatamente o mesmo peso
+     visual de "Apagar dados deste aparelho", e achar qualquer coisa exigia ler
+     as doze. Agora elas vêm em quatro grupos nomeados, na ordem em que se
+     procura — o dinheiro primeiro, o app depois — e a ação destrutiva fica
+     sozinha no fim, separada por um respiro maior.
+
+     Os `data-go` continuam idênticos: a navegação não mudou, só a arrumação. */
+  const item = (go, ico, titulo, sub, extra = '') => `
+    <button class="settings-item ${extra}" data-go="${go}">
+      <span class="cfg-left">
+        <span class="cfg-ico${extra === 'danger-item' ? ' t-danger' : ''}"${ico.length > 2 ? ` data-ico="${ico}"` : ''}>${ico.length > 2 ? '' : ico}</span>
+        <span class="cfg-txt"><b>${titulo}</b><small>${sub}</small></span>
+      </span>
+      <span class="chev" data-ico="chev"></span>
+    </button>`;
+
+  const contasFixas = (() => {
+    const rs = DB.all('recurrences');
+    const ativas = rs.filter(r => r.status === 'ativa').length;
+    return ativas ? `${ativas} ativa(s)${rs.length > ativas ? ` · ${rs.length - ativas} parada(s)` : ''}` : 'nada se repete ainda';
+  })();
+  const criancas = (() => {
+    const ks = DB.kids();
+    return ks.length ? ks.map(k => esc(k.name)).join(', ') : 'o cofrinho delas, com semanada e metas';
+  })();
+
   openModal(`
-    <div class="modal-title">Configurações<button class="close-x" id="md-close"><span data-ico="x"></span></button></div>
-    <div class="settings-item" data-go="accounts"><span class="cfg-left"><span class="cfg-ico" data-ico="wallet"></span><span>Contas<br><small>${DB.all('accounts').length} cadastrada(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="cards"><span class="cfg-left"><span class="cfg-ico" data-ico="card"></span><span>Cartões de crédito<br><small>${DB.all('cards').length} cadastrado(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="categories"><span class="cfg-left"><span class="cfg-ico" data-ico="pie"></span><span>Categorias &amp; orçamentos<br><small>${DB.all('categories').length} categoria(s)</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="recorrencias"><span class="cfg-left"><span class="cfg-ico" data-ico="sync"></span><span>Contas fixas<br><small>${(() => {
-      const rs = DB.all('recurrences');
-      const ativas = rs.filter(r => r.status === 'ativa').length;
-      return ativas ? `${ativas} ativa(s)${rs.length > ativas ? ` · ${rs.length - ativas} parada(s)` : ''}` : 'nada se repete ainda';
-    })()}</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="criancas"><span class="cfg-left"><span class="cfg-ico">🦖</span><span>Crianças<br><small>${(() => {
-      const ks = DB.kids();
-      return ks.length ? ks.map(k => esc(k.name)).join(", ") : "o cofrinho delas, com semanada e metas";
-    })()}</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Família &amp; ciclo do mês<br><small>${esc(DB.familyLabel())}${Sync.hasFamily() ? ' · código para convidar' : ' · início no dia ' + DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="sync"><span class="cfg-left"><span class="cfg-ico" data-ico="cloud"></span><span>Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="ofx"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Importar extrato OFX<br><small>traga os lançamentos do banco ou cartão de uma vez</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="tema"><span class="cfg-left"><span class="cfg-ico" data-ico="${Tema.atual() === 'light' ? 'sun' : 'moon'}"></span><span>Aparência<br><small>${Tema.rotulo()}</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="notif"><span class="cfg-left"><span class="cfg-ico" data-ico="bell"></span><span>Notificações<br><small>${Notif.enabled() ? 'Ativas — faturas, orçamentos e metas' : 'Desativadas'}</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="security"><span class="cfg-left"><span class="cfg-ico" data-ico="shield"></span><span>Segurança<br><small>${Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'Sem proteção local'}</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item" data-go="backup"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Backup (exportar / importar)<br><small>Arquivo JSON local</small></span></span><span class="chev" data-ico="chev"></span></div>
-    <div class="settings-item danger-item" data-go="reset"><span class="cfg-left"><span class="cfg-ico t-danger" data-ico="trash"></span><span>Apagar dados deste aparelho<br><small>limpar pelas configurações do celular não funciona</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="modal-title">Configurações<button class="close-x" id="md-close" aria-label="Fechar"><span data-ico="x"></span></button></div>
+
+    <p class="cfg-grupo">Seu dinheiro</p>
+    ${item('accounts', 'wallet', 'Contas', `${DB.all('accounts').length} cadastrada(s)`)}
+    ${item('cards', 'card', 'Cartões de crédito', `${DB.all('cards').length} cadastrado(s)`)}
+    ${item('categories', 'pie', 'Categorias e orçamentos', `${DB.all('categories').length} categoria(s)`)}
+    ${item('recorrencias', 'calendar', 'Contas fixas', contasFixas)}
+
+    <p class="cfg-grupo">Família</p>
+    ${item('family', 'users', 'Família e ciclo do mês', `${esc(DB.familyLabel())}${Sync.hasFamily() ? ' · código para convidar' : ' · início no dia ' + DB.settings().month_start_day}`)}
+    ${item('criancas', 'piggy', 'Crianças', criancas)}
+    ${item('sync', 'cloud', 'Sincronização', Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada')}
+
+    <p class="cfg-grupo">Dados</p>
+    ${item('ofx', 'download', 'Importar extrato OFX', 'traga os lançamentos do banco ou do cartão de uma vez')}
+    ${item('backup', 'upload', 'Backup', 'exportar ou importar um arquivo JSON')}
+
+    <p class="cfg-grupo">O app</p>
+    ${item('tema', Tema.atual() === 'light' ? 'sun' : 'moon', 'Aparência', Tema.rotulo())}
+    ${item('notif', 'bell', 'Notificações', Notif.enabled() ? 'ativas — faturas, orçamentos e metas' : 'desativadas')}
+    ${item('security', 'shield', 'Segurança', Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'sem proteção local')}
+
+    <div class="cfg-perigo">
+      ${item('reset', 'trash', 'Apagar dados deste aparelho', 'limpar pelas configurações do celular não funciona', 'danger-item')}
+    </div>
   `);
   $('#md-close').onclick = closeModal;
-  document.querySelectorAll('[data-go]').forEach(el => el.onclick = () => openConfigSection(el.dataset.go));
+  document.querySelectorAll('#modal [data-go]').forEach(el => el.onclick = () => openConfigSection(el.dataset.go));
 }
+
 window.openConfigSection = openConfigSection;
 
 function crudList(store, title, renderRow, openEditor) {
@@ -8280,7 +8316,7 @@ function crudList(store, title, renderRow, openEditor) {
     <div class="settings-item" data-edit="${r.id}"><span>${renderRow(r)}</span><span class="chev" data-ico="chev"></span></div>`).join('');
   openModal(`
     <div class="modal-title">${title}<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-    <button class="btn ghost" id="md-new" style="margin-bottom:12px">＋ Adicionar</button>
+    <button class="btn ghost" id="md-new" style="margin-bottom:var(--e3)">＋ Adicionar</button>
     ${rows || '<div class="empty">Nada cadastrado ainda.</div>'}
   `);
   $('#md-back').onclick = openConfig;
@@ -8321,7 +8357,7 @@ function openEditarContrato(recId) {
 
   openSheet(`
     <div class="sheet-title">Editar — ${esc(r.description)}<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin:-4px 0 12px">Vale das próximas ocorrências em diante. O que já foi lançado
+    <p class="muted" style="margin:calc(var(--e1) * -1) 0 var(--e3)">Vale das próximas ocorrências em diante. O que já foi lançado
       continua como está.${r.geradas ? ` Já nasceram ${r.geradas}${restam !== null ? ` e faltam ${restam}` : ''}.` : ''}</p>
 
     <div class="field"><label>Descrição</label>
@@ -8354,7 +8390,7 @@ function openEditarContrato(recId) {
     <div class="field" id="ec-campo-vezes"${r.fim_tipo === 'vezes' ? '' : ' hidden'}>
       <label>Quantas ocorrências no total?</label>
       <input type="number" id="ec-vezes" min="1" value="${esc(String(Number(r.fim_vezes) || 12))}">
-      <p class="muted" style="margin-top:4px">${r.geradas
+      <p class="muted" style="margin-top:var(--e1)">${r.geradas
         ? `Contando as ${r.geradas} que já nasceram — faltariam ${Math.max(0, (Number(r.fim_vezes) || 0) - r.geradas)}.`
         : 'Nenhuma nasceu ainda.'}</p></div>
     <div class="field" id="ec-campo-data"${r.fim_tipo === 'data' ? '' : ' hidden'}>
@@ -8457,7 +8493,7 @@ function openRecorrencias() {
 
   openModal(`
     <div class="modal-title">Contas fixas<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-    <p class="muted" style="margin-bottom:12px">O que se repete todo mês. Elas são lançadas sozinhas como “A Pagar” na data certa — você só confirma quando pagar.</p>
+    <p class="muted" style="margin-bottom:var(--e3)">O que se repete todo mês. Elas são lançadas sozinhas como “A Pagar” na data certa — você só confirma quando pagar.</p>
     ${rs.length ? rs.map(linha).join('') : '<div class="empty"><b>Nada se repete ainda</b>Ao lançar um gasto, marque “se repete” para ele virar conta fixa.</div>'}
   `);
   $('#md-back').onclick = () => openConfig();
@@ -8641,13 +8677,13 @@ function openConfigSection(sec) {
       <div class="modal-title">Família & ciclo<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
       ${blocoConvite()}
       <div class="field"><label>Nome da família</label><input id="f-famname" placeholder="Ex: Nossa casa, Família Silva…" value="${esc(s.family_name || '')}">
-        <p class="muted" style="margin-top:6px">Aparece no topo do app e no menu lateral.</p></div>
+        <p class="muted" style="margin-top:var(--e2)">Aparece no topo do app e no menu lateral.</p></div>
       <div class="field"><label>Membros (um por linha)</label><textarea id="f-members" rows="4" placeholder="Ex:&#10;Ana&#10;Carlos">${esc((s.members || []).join('\n'))}</textarea>
-        <p class="muted" style="margin-top:6px">Quem pode aparecer como responsável por um gasto pessoal.</p></div>
+        <p class="muted" style="margin-top:var(--e2)">Quem pode aparecer como responsável por um gasto pessoal.</p></div>
       <div class="field"><label>Dia de início do mês financeiro</label><input id="f-start" type="number" min="1" max="28" value="${s.month_start_day}">
-        <p class="muted" style="margin-top:6px">1 = mês calendário. Ex: 5 = período do dia 5 ao dia 4 do mês seguinte (útil para quem se organiza pelo salário).</p></div>
+        <p class="muted" style="margin-top:var(--e2)">1 = mês calendário. Ex: 5 = período do dia 5 ao dia 4 do mês seguinte (útil para quem se organiza pelo salário).</p></div>
       <div class="field"><label>Renda mensal da família (líquida)</label><input id="f-income" type="text" inputmode="numeric" autocomplete="off" placeholder="R$ 0,00">
-        <p class="muted" style="margin-top:6px">Base para a projeção vs. renda, taxa de poupança e regra 50/30/20 no painel.</p></div>
+        <p class="muted" style="margin-top:var(--e2)">Base para a projeção vs. renda, taxa de poupança e regra 50/30/20 no painel.</p></div>
       <button class="btn" id="md-save">Salvar</button>
     `);
     initMoney('#f-income', s.monthly_income);
@@ -8693,21 +8729,21 @@ function openConfigSection(sec) {
   if (sec === 'notif') {
     openModal(`
       <div class="modal-title">🔔 Notificações<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-      <p class="muted" style="margin-bottom:12px">Avisos de ações importantes: fatura fechando/vencendo/vencida, orçamento estourado e meta atingida. Cada aviso sai no máximo 1x por dia.</p>
+      <p class="muted" style="margin-bottom:var(--e3)">Avisos de ações importantes: fatura fechando/vencendo/vencida, orçamento estourado e meta atingida. Cada aviso sai no máximo 1x por dia.</p>
 
-      <p class="section-title" style="margin-bottom:8px">1. Avisos ao abrir o app</p>
+      <p class="section-title" style="margin-bottom:var(--e2)">1. Avisos ao abrir o app</p>
       ${Notif.enabled()
         ? '<button class="btn danger" id="nt-off">Desativar</button>'
         : '<button class="btn" id="nt-on">Ativar</button>'}
       <div class="btn-row"><button class="btn ghost" id="nt-test">Testar agora</button></div>
 
       <hr class="sep">
-      <p class="section-title" style="margin-bottom:8px">2. Push automático (app fechado)</p>
-      <p class="muted" style="margin-bottom:10px">O servidor verifica suas faturas e orçamentos todo dia e avisa mesmo com o app fechado. Exige sincronização configurada e o passo a passo do README (Edge Function + cron no Supabase).</p>
-      <p class="muted" style="margin-bottom:10px">Estado deste aparelho: <b id="nt-push-state">verificando…</b></p>
+      <p class="section-title" style="margin-bottom:var(--e2)">2. Push automático (app fechado)</p>
+      <p class="muted" style="margin-bottom:var(--e3)">O servidor verifica suas faturas e orçamentos todo dia e avisa mesmo com o app fechado. Exige sincronização configurada e o passo a passo do README (Edge Function + cron no Supabase).</p>
+      <p class="muted" style="margin-bottom:var(--e3)">Estado deste aparelho: <b id="nt-push-state">verificando…</b></p>
       <button class="btn" id="nt-push-on">Ativar push neste aparelho</button>
       <div class="btn-row"><button class="btn ghost" id="nt-push-off">Desativar push aqui</button></div>
-      <p class="muted" style="margin-top:10px">📱 No iPhone, o push só funciona depois de adicionar o app à tela de início (iOS 16.4+).</p>
+      <p class="muted" style="margin-top:var(--e3)">📱 No iPhone, o push só funciona depois de adicionar o app à tela de início (iOS 16.4+).</p>
     `);
     $('#md-back').onclick = openConfig;
     const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
@@ -8740,18 +8776,18 @@ function openConfigSection(sec) {
   if (sec === 'security') {
     openModal(`
       <div class="modal-title">🔒 Segurança<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-      <p class="muted" style="margin-bottom:12px">O PIN não é só uma tela de bloqueio: ele deriva uma chave <b>AES-256</b> (PBKDF2) que <b>criptografa os dados guardados neste aparelho</b> — sem o PIN, o conteúdo é ilegível. Após 5 erros, o app bloqueia por tempo progressivo. A nuvem tem camada própria: login e-mail/senha + regras por família (RLS) no Supabase.</p>
+      <p class="muted" style="margin-bottom:var(--e3)">O PIN não é só uma tela de bloqueio: ele deriva uma chave <b>AES-256</b> (PBKDF2) que <b>criptografa os dados guardados neste aparelho</b> — sem o PIN, o conteúdo é ilegível. Após 5 erros, o app bloqueia por tempo progressivo. A nuvem tem camada própria: login e-mail/senha + regras por família (RLS) no Supabase.</p>
       ${Auth.enabled() ? `
         <div class="settings-item" id="sec-trocar"><span class="cfg-left"><span class="cfg-ico" data-ico="lock"></span><span>Trocar o PIN<br><small>abre o teclado para escolher um novo</small></span></span><span class="chev" data-ico="chev"></span></div>
-        <div class="field" style="margin-top:12px"><label>Bloquear após (minutos em segundo plano)</label><input id="sec-min" type="number" min="0" max="120" value="${Auth.cfg.lockAfterMin ?? 5}"></div>
+        <div class="field" style="margin-top:var(--e3)"><label>Bloquear após (minutos em segundo plano)</label><input id="sec-min" type="number" min="0" max="120" value="${Auth.cfg.lockAfterMin ?? 5}"></div>
         <button class="btn" id="sec-save">Salvar tempo de bloqueio</button>
         <hr class="sep">
-        <p class="section-title" style="margin-bottom:8px">👆 Desbloqueio por digital</p>
+        <p class="section-title" style="margin-bottom:var(--e2)">👆 Desbloqueio por digital</p>
         ${Auth.bioAtiva()
-          ? '<p class="muted" style="margin-bottom:10px">Ativo neste aparelho — o app pede a digital ao abrir e o PIN continua valendo como alternativa.</p><button class="btn ghost" id="sec-bio-off">Desativar digital</button>'
+          ? '<p class="muted" style="margin-bottom:var(--e3)">Ativo neste aparelho — o app pede a digital ao abrir e o PIN continua valendo como alternativa.</p><button class="btn ghost" id="sec-bio-off">Desativar digital</button>'
           : Auth.cfg.bioIndisponivel
             ? '<p class="bio-indisponivel">Este navegador ainda não permite usar a digital para proteger dados (falta suporte a PRF). Continue com o PIN.</p>'
-            : '<p class="muted" style="margin-bottom:10px">Use a digital (ou o rosto) em vez de digitar o PIN toda vez. A criptografia continua a mesma: o leitor do aparelho guarda o segredo que abre a chave.</p><button class="btn ghost" id="sec-bio-on">Ativar digital neste aparelho</button>'}
+            : '<p class="muted" style="margin-bottom:var(--e3)">Use a digital (ou o rosto) em vez de digitar o PIN toda vez. A criptografia continua a mesma: o leitor do aparelho guarda o segredo que abre a chave.</p><button class="btn ghost" id="sec-bio-on">Ativar digital neste aparelho</button>'}
         <div class="btn-row"><button class="btn danger" id="sec-off">Remover PIN</button></div>
       ` : `
         <button class="btn" id="sec-on">Criar PIN e proteger este aparelho</button>
@@ -8818,8 +8854,8 @@ function openConfigSection(sec) {
   if (sec === 'backup') {
     openModal(`
       <div class="modal-title">Backup<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-      <p class="muted" style="margin-bottom:12px">Com a sincronização ativa, a nuvem já é seu backup. Ainda assim, você pode guardar um arquivo local.</p>
-      <button class="btn ghost" id="bk-export" style="margin-bottom:10px">⬇ Exportar dados (.json)</button>
+      <p class="muted" style="margin-bottom:var(--e3)">Com a sincronização ativa, a nuvem já é seu backup. Ainda assim, você pode guardar um arquivo local.</p>
+      <button class="btn ghost" id="bk-export" style="margin-bottom:var(--e3)">⬇ Exportar dados (.json)</button>
       <button class="btn ghost" id="bk-import">⬆ Importar backup</button>
       <input type="file" id="bk-file" accept="application/json" hidden>
     `);
@@ -8851,12 +8887,12 @@ function openConfigSection(sec) {
         A limpeza feita pelas configurações do Android apaga o atalho, não o armazenamento — por isso os dados voltam a aparecer.
         O botão abaixo apaga de verdade.</p>
       </div>
-      <p class="muted" style="margin:12px 0">Serão apagados deste aparelho: lançamentos, contas, cartões, categorias, metas, PIN, digital, login e o cache do app.</p>
+      <p class="muted" style="margin:var(--e3) 0">Serão apagados deste aparelho: lançamentos, contas, cartões, categorias, metas, PIN, digital, login e o cache do app.</p>
       ${naNuvem ? `<div class="callout info"><b>Atenção: a nuvem não é afetada</b>
         <p>Os dados da família continuam no servidor. Se você entrar de novo com a mesma conta, eles voltam para cá — que é o esperado ao trocar de aparelho.
         Para começar do zero de verdade, apague também pelo painel do Supabase.</p></div>` : ''}
-      <div class="field" style="margin-top:14px"><label>Digite <b>APAGAR</b> para confirmar</label><input id="rs-conf" placeholder="APAGAR" autocomplete="off"></div>
-      <button class="btn ghost" id="rs-export" style="margin-bottom:10px">⬇ Antes disso, exportar um backup</button>
+      <div class="field" style="margin-top:var(--e4)"><label>Digite <b>APAGAR</b> para confirmar</label><input id="rs-conf" placeholder="APAGAR" autocomplete="off"></div>
+      <button class="btn ghost" id="rs-export" style="margin-bottom:var(--e3)">⬇ Antes disso, exportar um backup</button>
       <button class="btn danger" id="rs-go" disabled>Apagar tudo deste aparelho</button>
     `);
     $('#md-back').onclick = openConfig;
@@ -9032,11 +9068,11 @@ function openCategoriesConfig(estado) {
       <button class="chip ${st.lado === 'Despesa' ? 'active' : ''}" data-lado="Despesa">Saídas</button>
       <button class="chip ${st.lado === 'Receita' ? 'active' : ''}" data-lado="Receita">Entradas</button>
     </div>
-    <p class="muted" style="margin:10px 0 12px">${st.lado === 'Despesa'
+    <p class="muted" style="margin:var(--e3) 0 var(--e3)">${st.lado === 'Despesa'
       ? 'O orçamento fica no envelope. As subcategorias detalham e somam nele.'
       : 'Origem do dinheiro que entra. Não tem orçamento.'}</p>
 
-    <div class="busca-row" style="margin-bottom:12px">
+    <div class="busca-row" style="margin-bottom:var(--e3)">
       <input id="cat-busca" type="search" placeholder="Buscar categoria…" autocomplete="off" value="${esc(st.busca)}">
       <button class="btn-filtros" id="cat-novo">＋ ${st.lado === 'Despesa' ? 'Envelope' : 'Origem'}</button>
     </div>
@@ -9044,12 +9080,12 @@ function openCategoriesConfig(estado) {
     ${semSub ? `<div class="callout info">
       <b>Detalhar os gastos com subcategorias</b>
       <p>Seus envelopes ainda não têm subcategorias. Dá para preencher as sugeridas de uma vez e ajustar depois. Nada do que você já lançou muda de lugar.</p>
-      <button class="btn" id="md-sugerir" style="margin-top:10px">Adicionar sugeridas</button>
+      <button class="btn" id="md-sugerir" style="margin-top:var(--e3)">Adicionar sugeridas</button>
     </div>` : ''}
     ${semEntradas ? `<div class="callout info">
       <b>Classifique também o que entra</b>
       <p>Sem isto não dá para separar salário de empréstimo recebido — que entra na conta mas não é ganho.</p>
-      <button class="btn" id="md-entradas" style="margin-top:10px">Criar categorias sugeridas</button>
+      <button class="btn" id="md-entradas" style="margin-top:var(--e3)">Criar categorias sugeridas</button>
     </div>` : ''}
 
     ${cartoes || nada}
@@ -9128,7 +9164,7 @@ function openCategoryEditor(cat, paiFixo, tipoNovo, voltarPara) {
 
   openModal(`
     <div class="modal-title">${isEdit ? 'Editar' : (cat.parent_id ? 'Nova subcategoria' : ehEntrada ? 'Nova origem de entrada' : 'Novo envelope')}<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-    ${ehEntrada ? '<p class="muted" style="margin-bottom:12px">Categoria de <b>entrada</b>: diz de onde o dinheiro veio. Não tem orçamento nem entra na regra 50/30/20.</p>' : ''}
+    ${ehEntrada ? '<p class="muted" style="margin-bottom:var(--e3)">Categoria de <b>entrada</b>: diz de onde o dinheiro veio. Não tem orçamento nem entra na regra 50/30/20.</p>' : ''}
     <div class="row2">
       <div class="field"><label>Ícone</label><input id="c-icon" maxlength="4" value="${esc(cat.icon)}"></div>
       <div class="field"><label>Nome</label><input id="c-name" value="${esc(cat.name)}"></div>
@@ -9139,8 +9175,8 @@ function openCategoryEditor(cat, paiFixo, tipoNovo, voltarPara) {
         <option value="">— é um envelope (tem orçamento próprio) —</option>
         ${paisPossiveis.map(r => `<option value="${r.id}" ${cat.parent_id === r.id ? 'selected' : ''}>${esc(r.icon)} ${esc(r.name)}</option>`).join('')}
       </select>
-      <p class="muted" style="margin-top:6px">Escolher um envelope transforma isto numa subcategoria: o gasto soma no limite dele.</p>
-    </div>` : `<p class="muted" style="margin-bottom:12px">Este envelope tem subcategorias, então ele não pode virar subcategoria de outro.</p>`}
+      <p class="muted" style="margin-top:var(--e2)">Escolher um envelope transforma isto numa subcategoria: o gasto soma no limite dele.</p>
+    </div>` : `<p class="muted" style="margin-bottom:var(--e3)">Este envelope tem subcategorias, então ele não pode virar subcategoria de outro.</p>`}
     <div id="wrap-envelope" ${cat.parent_id || ehEntrada ? 'hidden' : ''}>
       <div class="row2">
         <div class="field"><label>Âmbito</label><select id="c-scope"><option ${cat.scope === 'Família' ? 'selected' : ''}>Família</option><option ${cat.scope === 'Pessoal' ? 'selected' : ''}>Pessoal</option></select></div>
@@ -9151,7 +9187,7 @@ function openCategoryEditor(cat, paiFixo, tipoNovo, voltarPara) {
         <option value="Estilo" ${cat.kind === 'Estilo' ? 'selected' : ''}>Desejo (lazer, assinaturas, extras…)</option>
       </select></div>
     </div>
-    <p class="muted" id="aviso-sub" ${cat.parent_id ? '' : 'hidden'} style="margin-bottom:12px">Âmbito, orçamento e tipo vêm do envelope — não se repetem aqui.</p>
+    <p class="muted" id="aviso-sub" ${cat.parent_id ? '' : 'hidden'} style="margin-bottom:var(--e3)">Âmbito, orçamento e tipo vêm do envelope — não se repetem aqui.</p>
     <button class="btn" id="md-save">Salvar</button>
     ${isEdit ? '<div class="btn-row"><button class="btn danger" id="md-del">Excluir</button></div>' : ''}
   `);
@@ -9212,18 +9248,18 @@ function openSyncConfig() {
   const step = !Sync.configured() ? 1 : !Sync.loggedIn() ? 2 : !Sync.hasFamily() ? 3 : 4;
   let body = '';
   if (step === 1) body = `
-    <p class="muted" style="margin-bottom:12px">Passo 1 de 3 — conecte seu projeto Supabase (gratuito). Veja o guia no README do projeto.</p>
+    <p class="muted" style="margin-bottom:var(--e3)">Passo 1 de 3 — conecte seu projeto Supabase (gratuito). Veja o guia no README do projeto.</p>
     <div class="field"><label>URL do projeto</label><input id="s-url" placeholder="https://xxxx.supabase.co" value="${esc(c.url || '')}"></div>
     <div class="field"><label>Chave anon (public)</label><input id="s-key" placeholder="eyJhbGciOi…" value="${esc(c.anonKey || '')}"></div>
     <button class="btn" id="s-save-cfg">Continuar</button>`;
   if (step === 2) body = `
-    <p class="muted" style="margin-bottom:12px">Passo 2 de 3 — entre ou crie sua conta.</p>
+    <p class="muted" style="margin-bottom:var(--e3)">Passo 2 de 3 — entre ou crie sua conta.</p>
     <div class="field"><label>E-mail</label><input id="s-email" type="email" value="${esc(c.user_email || '')}"></div>
     <div class="field"><label>Senha</label><input id="s-pass" type="password"></div>
     <div class="btn-row"><button class="btn" id="s-login">Entrar</button><button class="btn ghost" id="s-signup">Criar conta</button></div>
     <hr class="sep"><button class="btn ghost" id="s-reset">Alterar URL/chave</button>`;
   if (step === 3) body = `
-    <p class="muted" style="margin-bottom:12px">Passo 3 de 3 — crie a família ou entre na que seu cônjuge criou.</p>
+    <p class="muted" style="margin-bottom:var(--e3)">Passo 3 de 3 — crie a família ou entre na que seu cônjuge criou.</p>
     <div class="field"><label>Nome da família</label><input id="s-fam-name" placeholder="Ex: Nossa casa, Família Silva…" value="${esc(DB.familyName())}"></div>
     <button class="btn" id="s-create-fam">Criar família</button>
     <hr class="sep">
@@ -9232,8 +9268,8 @@ function openSyncConfig() {
   if (step === 4) body = `
     <p class="muted">Conectado como <b>${esc(c.user_email || '')}</b></p>
     ${blocoConvite()}
-    <button class="btn ghost" id="s-now" style="margin-top:10px">Sincronizar agora</button>
-    <button class="btn ghost" id="s-diag" style="margin-top:8px">Verificar conexão e banco</button>
+    <button class="btn ghost" id="s-now" style="margin-top:var(--e3)">Sincronizar agora</button>
+    <button class="btn ghost" id="s-diag" style="margin-top:var(--e2)">Verificar conexão e banco</button>
     <div id="s-diag-out"></div>
     <hr class="sep"><button class="btn danger" id="s-logout">Sair da conta</button>`;
 
@@ -9298,7 +9334,7 @@ function openSyncConfig() {
   });
   on('#s-diag', async () => {
     const caixa = $('#s-diag-out');
-    caixa.innerHTML = '<p class="muted" style="margin-top:10px">Verificando…</p>';
+    caixa.innerHTML = '<p class="muted" style="margin-top:var(--e3)">Verificando…</p>';
     const linhas = await Sync.diagnosticar();
     const ruins = linhas.filter(l => !l.ok);
     caixa.innerHTML = `
@@ -9306,11 +9342,11 @@ function openSyncConfig() {
         ${linhas.map(l => `<div class="diag-row ${l.ok ? 'ok' : 'ruim'}">
           <b>${l.ok ? '✓' : '✕'} ${esc(l.tabela)}</b><small>${esc(l.msg)}</small></div>`).join('')}
       </div>
-      ${ruins.length ? `<div class="callout warn" style="margin-top:10px">
+      ${ruins.length ? `<div class="callout warn" style="margin-top:var(--e3)">
         <b>O banco está atrás do app</b>
         <p>Abra o Supabase → SQL Editor e rode o <b>supabase/schema.sql</b> deste projeto inteiro. Ele é seguro de rodar de novo: só cria o que falta.</p></div>`
-      : `<p class="muted" style="margin-top:10px">Tudo certo — o banco aceita todos os campos que o app usa.</p>`}
-      ${Sync._descartados ? `<p class="muted" style="margin-top:8px">⚠️ ${Sync._descartados} registro(s) antigo(s) com dado inválido ficaram de fora do envio. Abra o lançamento e salve de novo para corrigir.</p>` : ''}`;
+      : `<p class="muted" style="margin-top:var(--e3)">Tudo certo — o banco aceita todos os campos que o app usa.</p>`}
+      ${Sync._descartados ? `<p class="muted" style="margin-top:var(--e2)">⚠️ ${Sync._descartados} registro(s) antigo(s) com dado inválido ficaram de fora do envio. Abra o lançamento e salve de novo para corrigir.</p>` : ''}`;
   });
   on('#s-logout', () => { if (confirm('Sair da conta? Os dados locais permanecem no aparelho.')) { Sync.signOut(); openSyncConfig(); } });
 }
@@ -9321,7 +9357,7 @@ function openOfxImport() {
   const cards = DB.all('cards').filter(c => c.active !== false);
   openModal(`
     <div class="modal-title">Importar extrato OFX<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
-    <p class="muted" style="margin-bottom:12px">No app do seu banco ou cartão, procure por <b>exportar extrato / OFX</b> e baixe o arquivo. Lançamentos já importados antes são reconhecidos e ignorados automaticamente.</p>
+    <p class="muted" style="margin-bottom:var(--e3)">No app do seu banco ou cartão, procure por <b>exportar extrato / OFX</b> e baixe o arquivo. Lançamentos já importados antes são reconhecidos e ignorados automaticamente.</p>
     <div id="ofx-estado"></div>
     <button class="btn" id="ofx-pick">Escolher arquivo .ofx</button>
     <input type="file" id="ofx-file" accept=".ofx,.OFX,.qfx,text/plain" hidden>
@@ -9366,15 +9402,15 @@ function openTagsLinhaSheet(tx, atuais, segueLote, aoAplicar) {
   const chips = [...atuais.map(t => ({ t, on: true })), ...sugeridas.map(t => ({ t, on: false }))];
   openSheet(`
     <div class="sheet-title">Etiquetas do lançamento<button class="close-x" id="sh-close"><span data-ico="x"></span></button></div>
-    <p class="muted" style="margin-bottom:4px">${esc(tx.memo)}</p>
-    <p class="muted" style="margin-bottom:14px;font-size:11.5px">${segueLote
+    <p class="muted" style="margin-bottom:var(--e1)">${esc(tx.memo)}</p>
+    <p class="muted" style="margin-bottom:var(--e4);font-size:11.5px">${segueLote
       ? 'Hoje esta linha usa as etiquetas do lote. Mexer aqui vale só para ela.'
       : 'Esta linha tem etiquetas próprias.'}</p>
     <div class="field">
       <div class="chips" id="tl-tags">
         ${chips.map(({ t, on }) => `<button type="button" class="chip chip-tag ${on ? 'active' : ''}" data-v="${esc(t)}">#${esc(t)}</button>`).join('')}
       </div>
-      <input id="tl-nova" list="tag-hist-linha" placeholder="Nova etiqueta e Enter" autocomplete="off" maxlength="24" style="margin-top:8px">
+      <input id="tl-nova" list="tag-hist-linha" placeholder="Nova etiqueta e Enter" autocomplete="off" maxlength="24" style="margin-top:var(--e2)">
       <datalist id="tag-hist-linha">${DB.allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
     </div>
     <button class="btn" id="sh-save">Aplicar nesta linha</button>
@@ -9516,7 +9552,7 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
 
   $('#ofx-result').innerHTML = `
     <hr class="sep">
-    <div class="mini-stats" style="margin-bottom:12px">
+    <div class="mini-stats" style="margin-bottom:var(--e3)">
       <div class="card"><small>Novos</small><b>${novos.length}</b></div>
       <div class="card"><small>Repetidos</small><b>${dups}</b></div>
       <div class="card"><small>Do arquivo</small><b>${parsed.txs.length}</b></div>
@@ -9535,11 +9571,11 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
         <div class="chips" id="ofx-tags">
           ${DB.tagsRelevantes(6).map(t => `<button type="button" class="chip chip-tag" data-v="${esc(t)}">#${esc(t)}</button>`).join('')}
         </div>
-        <input id="ofx-tag-nova" list="tag-hist-ofx" placeholder="Nova etiqueta e Enter (ex: viagem bahia)" autocomplete="off" maxlength="24" style="margin-top:8px">
+        <input id="ofx-tag-nova" list="tag-hist-ofx" placeholder="Nova etiqueta e Enter (ex: viagem bahia)" autocomplete="off" maxlength="24" style="margin-top:var(--e2)">
         <datalist id="tag-hist-ofx">${DB.allTags().map(t => `<option value="${esc(t)}">`).join('')}</datalist>
       </div>
       ${parsed.balance !== null ? `<div class="field"><label style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="ofx-bal" checked style="width:18px;height:18px;accent-color:var(--gold)">Atualizar saldo da conta para ${fmt(parsed.balance)} (informado pelo banco)</label></div>` : ''}
-      <div class="btn-row" style="margin-bottom:4px">
+      <div class="btn-row" style="margin-bottom:var(--e1)">
         <button class="btn ghost" id="ofx-all">Marcar todos</button>
         <button class="btn ghost" id="ofx-none">Desmarcar todos</button>
       </div>
@@ -9960,11 +9996,6 @@ $('#btn-privacidade').onclick = () => {
 };
 pintarPrivacidade();
 
-$('#btn-periodo').onclick = () => {
-  if (state.monthOffset === 0) return;    // no ciclo corrente ele é só rótulo
-  state.monthOffset = 0;
-  render();
-};
 /* Sincronizar a pedido do usuário: sempre responde algo. Antes o erro era
    engolido (.catch vazio) e o sucesso não dizia nada — em rede lenta a pessoa
    tocava várias vezes sem saber se tinha acontecido. */
@@ -9982,7 +10013,11 @@ async function sincronizarAgora() {
     toast(e.message || 'Falha ao sincronizar', 'err');
   }
 }
-$('#btn-sync').onclick = sincronizarAgora;
+/* Não há mais botão de sincronizar no header: ele sincroniza sozinho
+   (`Sync.startAuto`) e o "Sincronizar agora" continua em Configurações →
+   Sincronização, para quando alguém quiser forçar. `sincronizarAgora` segue
+   exportada porque é ela que aquele botão chama. */
+window.sincronizarAgora = sincronizarAgora;
 $('#sheet-backdrop').onclick = closeSheet;
 $('#modal-backdrop').onclick = closeModal;
 // Quando a sincronização traz lançamentos do outro aparelho, a tela se atualiza sozinha.
@@ -9995,27 +10030,32 @@ Sync.onChanged = qtd => {
 };
 
 // Indicador permanente no botão de sincronizar
+/* ---------- O estado da sincronização, no canto do avatar ----------
+
+   Ele tinha pastilha própria com rótulo, ao lado do chip de período: dois blocos
+   permanentes ocupando a barra inteira para dizer, quase sempre, que está tudo
+   em dia. Virou um ponto na quina do avatar, e SÓ APARECE QUANDO HÁ ALGO A
+   DIZER — fila, sem conexão ou sincronizando. Indicador permanente de "nada
+   acontecendo" é ruído, e ruído constante deixa de ser lido.
+
+   O `title` continua dizendo em palavras o que a cor diz, para quem passa o
+   mouse e para leitor de tela. */
 Sync.onState = (estado, pendentes) => {
-  const btn = $('#btn-sync');
+  const btn = $('#btn-perfil');
   if (!btn) return;
-  btn.dataset.estado = estado;
-  btn.title = {
+  // 'ok' e 'off' não acendem nada: nos dois casos não há o que resolver agora
+  const acende = { sync: 'sync', pendente: 'pendente', offline: 'offline' }[estado];
+  if (acende) btn.dataset.sync = acende;
+  else delete btn.dataset.sync;
+
+  const dito = {
     ok: 'Tudo sincronizado', sync: 'Sincronizando…',
     pendente: `${pendentes} alteração(ões) aguardando conexão`,
     offline: 'Sem conexão — será enviado assim que voltar',
     off: 'Sincronização não configurada',
   }[estado] || '';
-  /* O rótulo ao lado do ponto. Curto porque divide a barra com o período e as
-     ações — em tela estreita ele some e sobra só o ponto, que já carrega o
-     estado pela cor. O número de pendências entra no rótulo porque "3" é
-     acionável de um jeito que "pendente" não é. */
-  const rot = $('#sync-rotulo');
-  if (rot) rot.textContent = {
-    ok: 'Em dia', sync: 'Sincronizando',
-    pendente: `${pendentes} na fila`,
-    offline: 'Sem conexão',
-    off: 'Local',
-  }[estado] || 'Local';
+  btn.title = dito ? `Perfil e configurações · ${dito}` : 'Perfil e configurações';
+  btn.setAttribute('aria-label', btn.title);
 };
 
 function refreshUserChip() {

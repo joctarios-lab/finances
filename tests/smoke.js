@@ -2295,7 +2295,13 @@ console.log('\n=== Sincronização automática ===');
   // A falha que existia: puxava dados e a tela ficava velha
   check('tela redesenha quando chega dado novo', a.includes('Sync.onChanged') && /onChanged[\s\S]{0,220}render\(\)/.test(a), true);
   check('não redesenha com formulário aberto', /onChanged[\s\S]{0,200}editando/.test(a), true);
-  check('estado da sincronização visível no botão', a.includes('Sync.onState') && /#btn-sync\[data-estado/.test(fs.readFileSync(BASE + 'css/styles.css', 'utf8')), true);
+  /* O indicador saiu do botão próprio e foi para o canto do avatar: ele só
+     acende quando há algo a resolver — fila, sem conexão, sincronizando —,
+     porque um sinal permanente de "nada acontecendo" deixa de ser lido. */
+  check('estado da sincronização visível no avatar',
+    a.includes('Sync.onState') && /#btn-perfil\[data-sync=/.test(fs.readFileSync(BASE + 'css/styles.css', 'utf8')), true);
+  check('e não acende quando não há o que resolver',
+    /const acende = \{ sync:[\s\S]{0,140}delete btn\.dataset\.sync/.test(a), true);
   check('startAuto é ligado na abertura', a.includes('Sync.startAuto()'), true);
 }
 
@@ -2459,17 +2465,23 @@ console.log('\n=== Identidade visual (logo) ===');
 {
   const svg = fs.readFileSync(BASE + 'icons/icon.svg', 'utf8');
   const mf = JSON.parse(fs.readFileSync(BASE + 'manifest.webmanifest', 'utf8'));
-  check('SVG usa a paleta do app', svg.includes('#0095e8') && svg.includes('#7239ea'), true);
-  check('conceito documentado no próprio arquivo', /<desc>[\s\S]*lar[\s\S]*<\/desc>/i.test(svg), true);
+  check('SVG usa o cobalto da marca', svg.includes('#2A52C9'), true);
+  check('e nada da paleta antiga', /#0095e8|#7239ea|gradient/i.test(svg), false);
+  check('conceito documentado no próprio arquivo', /<desc>[\s\S]*domus[\s\S]*<\/desc>/i.test(svg), true);
   check('acessível para leitores de tela', svg.includes('role="img"') && svg.includes('aria-label'), true);
-  check('telhado e três colunas', (svg.match(/<rect x=/g) || []).length === 3 && svg.includes('L256 100'), true);
+  /* O arco em traço: a cúpula vazada sobre a base em pílula. Vazada e não
+     maciça — é o azul aparecendo por dentro que faz o desenho ler como abrigo
+     em vez de morro. */
+  check('a cúpula é um arco em traço', /<path d="M124 344 A132 132/.test(svg) && svg.includes('fill="none"'), true);
+  check('sobre a base em pílula', (svg.match(/<rect x=/g) || []).length === 1 && /rx="23"/.test(svg), true);
   check('nada do ícone antigo (F$ em serifa)', !svg.includes('Georgia') && !svg.includes('F$'), true);
   check('traço grosso o bastante para 32px', /stroke-width="4\d"/.test(svg), true);
   for (const f of ['icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable.png']) {
     check(`${f} existe`, fs.existsSync(BASE + f), true);
   }
   check('maskable declarado à parte no manifest', mf.icons.some(i => i.purpose === 'maskable'), true);
-  check('maskable tem zona de segurança', /New-Icone 512 .*maskable.* 0\.7/.test(fs.readFileSync(BASE + 'icons/gerar-icones.ps1', 'utf8')), true);
+  check('maskable tem zona de segurança',
+    /maskable\.png' -Escala 0\.8/.test(fs.readFileSync(BASE + 'icons/gerar-icones.ps1', 'utf8')), true);
   check('gerador dos PNG versionado junto', fs.existsSync(BASE + 'icons/gerar-icones.ps1'), true);
 }
 
@@ -4372,7 +4384,8 @@ console.log('\n=== Tema, privacidade e o header ===');
   const blocoDark = cssT2.slice(cssT2.indexOf(':root {'), cssT2.indexOf('@media (prefers-color-scheme: light)'));
   const blocoLight = cssT2.slice(cssT2.indexOf(':root[data-tema="light"]'), cssT2.indexOf('/* ---------- Base'));
   const nomes = t => [...new Set([...t.matchAll(/(--[a-z0-9-]+):/g)].map(m => m[1]))];
-  const estrutural = /^--(radius|font|h-topbar|teclado|ease|glass-blur)/;
+  // Raio, fonte, escada de espaçamento (--e1..--e6) e alturas não dependem de tema
+  const estrutural = /^--(radius|font|h-topbar|h-dock|dock-|fab$|teclado|ease|glass-blur|e[1-6]$)/;
   const soNoEscuro = nomes(blocoDark).filter(t => !estrutural.test(t) && !nomes(blocoLight).includes(t));
   check('nenhum token de cor existe só no tema escuro', soNoEscuro.join(', '), '');
 
@@ -4396,8 +4409,13 @@ console.log('\n=== Tema, privacidade e o header ===');
     });
   check('nem sombra colorida de brilho', sombrasCromaticas.join(', '), '');
   check('o fundo da página é plano', /body::before/.test(cssT2), false);
-  check('cantos discretos nos cards', /--radius: 8px/.test(cssT2), true);
-  check('e no máximo 12px no que flutua', /--radius-lg: 12px/.test(cssT2), true);
+  /* A escada de raios acompanha a direção arredondada escolhida: controle menor
+     que cartão, e cartão menor que o que flutua. Raio igual em tudo achata a
+     hierarquia — é a escada, não o número em si, que importa aqui. */
+  const raio = n => Number((cssT2.match(new RegExp('--radius' + n + ': (\\d+)px')) || [])[1]);
+  check('a escada de raios sobe do controle para o que flutua',
+    raio('-sm') < raio('') && raio('') < raio('-lg'), true);
+  check('e nenhum passo é exagerado', raio('-lg') <= 24, true);
 
   /* O hero e o cartão se destacam por superfície e filete, não por gradiente */
   check('o hero usa a superfície de destaque', /\.hero \{[^}]*background: var\(--destaque\)/.test(cssT2), true);
@@ -4494,7 +4512,22 @@ console.log('\n=== Teclado do celular não esconde nada ===');
   check('folha se apoia acima do teclado', /\.sheet \{[^}]*bottom: var\(--teclado\)/.test(cssK), true);
   check('e continua rolável', /\.sheet \{[^}]*max-height: calc\(90dvh - var\(--teclado\)\)/.test(cssK), true);
   check('modal ganha rodapé do tamanho do teclado', /\.modal \{[^}]*\+ var\(--teclado\)\)/.test(cssK), true);
-  check('barra de abas sai de cena', /body\.teclado-aberto \.tabbar \{ display: none/.test(cssK), true);
+  /* A BARRA E O BOTÃO SOMEM SEMPRE JUNTOS.
+
+     O botão vive FORA da barra no HTML — precisa disso para transbordar por cima
+     dela sem ser cortado. O efeito colateral é que toda regra que esconde a
+     barra tem de citar os dois: quando só a barra some, o botão fica flutuando
+     sozinho. Aconteceu no desktop, onde a ação já existe no header.
+
+     São dois lugares que escondem a barra, e os dois são conferidos aqui. */
+  const escondeAmbos = re => {
+    const m = cssK.match(re);
+    return !!m && /\.tabbar/.test(m[0]) && /\.fab/.test(m[0]);
+  };
+  check('com o teclado aberto, barra e botão saem juntos',
+    escondeAmbos(/body\.teclado-aberto[^{]*\{ display: none[^}]*\}/), true);
+  check('e no desktop também',
+    escondeAmbos(/\n  \.tabbar[^{]*\{ display: none[^}]*\}/), true);
   check('painel pode abrir para cima', /\.ui-panel\.acima \{ top: auto; bottom:/.test(cssK), true);
   check('campo em foco é trazido à vista', uiSrc.includes('scrollIntoView') && uiSrc.includes("'focusin'"), true);
   // Sem janela fixa: crescer o init() não pode reprovar um teste sobre outra coisa
@@ -7701,14 +7734,21 @@ console.log('\n=== Voltar para a tela zera o estado ===');
   setTab('extrato');
   state.monthOffset = -3; state.filtros.membro = ['Joctã']; state.filtros.situacao = ['A Pagar']; state.filtros.busca = 'mer';
   setTab('cartoes');
-  check('trocar de tela zera o mês', state.monthOffset, 0);
+  /* O MÊS ACOMPANHA A NAVEGAÇÃO. Ele zerava a cada troca de aba, o que quebrava
+     o uso normal: abrir julho no Painel, ir ao Extrato para conferir de onde veio
+     um número e encontrar agosto de novo. O que tornou seguro manter foi o cartão
+     de mês preso abaixo do header, que anuncia o ciclo o tempo todo. */
+  check('trocar de tela mantém o mês escolhido', state.monthOffset, -3);
   check('trocar de tela zera o filtro de membro', state.filtros.membro.length, 0);
   check('trocar de tela zera o filtro de situação', state.filtros.situacao.length, 0);
   check('trocar de tela zera a busca', state.filtros.busca, '');
   setTab('inicio');
   state.monthOffset = -5;
-  setTab('extrato'); setTab('inicio');
-  check('voltar ao painel mostra o mês corrente', state.monthOffset, 0);
+  setTab('extrato');
+  check('o extrato herda o mês do painel', state.monthOffset, -5);
+  setTab('inicio');
+  check('e voltar ao painel mantém o mesmo mês', state.monthOffset, -5);
+  state.monthOffset = 0;
 
   // Redesenho da MESMA tela não pode perder o que está sendo olhado
   setTab('extrato');
@@ -7737,7 +7777,9 @@ console.log('\n=== Voltar para a tela zera o estado ===');
   const gravado = JSON.parse(store['financas.ui.v1']);
   check('a aba nem é gravada', Object.keys(gravado).join(','), 'tagsFixas');
   const apA = fs.readFileSync(BASE + 'js/app.js', 'utf8');
-  check('o Painel é fixado ao abrir', /function restoreUI\(\)[\s\S]{0,400}state\.tab = 'inicio';/.test(apA), true);
+  check('o Painel é fixado ao abrir', /function restoreUI\(\)[\s\S]{0,900}state\.tab = 'inicio';/.test(apA), true);
+  // E o mês volta ao corrente ao ABRIR, mesmo acompanhando as trocas de tela
+  check('e o mês corrente também', /function restoreUI\(\)[\s\S]{0,900}state\.monthOffset = 0;/.test(apA), true);
   const ap = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   check('não grava mais a cada rolagem', /addEventListener\('scroll'[\s\S]{0,120}persistUI/.test(ap), false);
   check('volta ao topo ao trocar de tela', /if \(trocou\) \{[\s\S]{0,140}scrollTo\(0, 0\)/.test(ap), true);
@@ -8871,7 +8913,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
   const apW = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   check('esqueci o PIN usa a limpeza completa', auW.includes('DB.apagarTudo()'), true);
   check('não sobrou limpeza parcial por chave solta', !/removeItem\(DB_KEY\)/.test(auW), true);
-  check('configurações têm a opção de apagar', apW.includes(`data-go="reset"`) && apW.includes(`sec === 'reset'`), true);
+  check('configurações têm a opção de apagar', apW.includes("item('reset'") && apW.includes(`sec === 'reset'`), true);
   check('a tela explica por que o Android não resolve', /WebAPK|é um atalho|é só um atalho/.test(apW), true);
   check('apagar exige digitar a confirmação', /rs-conf[\s\S]{0,900}!== 'APAGAR'/.test(apW), true);
   check('oferece backup antes de apagar', apW.includes('rs-export'), true);
@@ -11271,7 +11313,7 @@ try {
     corpoEd.includes('Vale das próximas ocorrências em diante'), true);
 
   // A entrada existe nas Configurações
-  check('as contas fixas têm entrada nas configurações', apU.includes('data-go="recorrencias"'), true);
+  check('as contas fixas têm entrada nas configurações', apU.includes("item('recorrencias'"), true);
   check('e o roteamento leva até a tela', apU.includes("if (sec === 'recorrencias') return openRecorrencias();"), true);
 } catch (e) { console.log(` FALHA | tela de contas fixas: ${e.message}`); fail++; }
 /* A limpeza fica FORA do try: registro dirty deixado para trás faz os testes

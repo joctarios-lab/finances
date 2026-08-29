@@ -26,101 +26,117 @@
 :root {
   color-scheme: dark;
 
-  /* ---------- Superfícies ----------
-     Três degraus, e nenhum gradiente. A hierarquia vem da luminosidade e de uma
-     borda de 1px — é assim que Mercury e Linear separam plano de plano, e é o que
-     mantém a tela legível quando ela está cheia de número. */
-  --ink: #0C0D0E;          /* fundo da página — grafite plano */
-  --ink-2: #141619;        /* cards e painéis */
-  --ink-3: #1C1F23;        /* campos, menus e superfícies elevadas */
-  --ink-4: #141619;        /* faixas: header, dock, sidebar */
-  /* A superfície do bloco de DESTAQUE (hero, cartão de crédito): sempre a mais
-     à frente do tema. No escuro isso é um degrau acima do card; no claro é o
-     branco sobre o fundo cinza. Nos dois casos ela avança em direção ao leitor. */
-  --destaque: #1C1F23;
-  /* E o plano que RECUA dentro do destaque: os painéis de conta do hero. No
-     escuro ele volta para a cor do card; no claro, para a do fundo da página.
-     Nos dois casos é um degrau para trás — é essa terceira camada que dá relevo
-     ao hero sem nenhuma tinta decorativa. */
-  --embutido: #141619;
-  --line: rgba(255, 255, 255, .08);
-  --line-strong: rgba(255, 255, 255, .14);
+  /* ---------- Superfícies · ambiente Nítido ----------
+     Quatro planos, do fundo para a frente. O tingimento é leve — a página tem um
+     sopro de cobalto e o cartão é a superfície limpa —, o suficiente para a
+     identidade estar em toda a tela sem o app virar azul. */
+  --ink: #070A12;          /* página */
+  --ink-2: #161C2B;        /* cartões */
+  --ink-3: #1F2634;        /* campos, menus e superfícies internas */
+  --ink-4: #161C2B;        /* faixas: header, barra inferior, sidebar */
+  /* O plano de DESTAQUE (hero, cartão de crédito) avança; o EMBUTIDO (painéis de
+     conta dentro do hero) recua. É essa terceira camada que dá relevo sem tinta. */
+  --destaque: #1F2634;
+  --embutido: #161C2B;
+  --line: #262E3E;
+  --line-strong: #38425A;
 
-  /* Texto. O secundário carrega decisão ("faltam R$ X", "vence dia 5"), então
-     ele passa em AA sobre o card, não só sobre o fundo da página. */
-  --paper: #E6E8EA;
-  --paper-dim: #9BA1A8;
-  --paper-faint: #6B7076;
+  --paper: #EDEFF4;
+  --paper-dim: #A2A9B8;
+  --paper-faint: #757D8E;
 
-  /* ---------- Cor: só para dado ----------
-     Fora destes três, a interface é grafite. Cor aqui significa alguma coisa —
-     saiu, entrou, precisa de atenção —, e por isso ela não aparece em fundo
-     decorativo, borda de destaque nem brilho: gastá-la em enfeite é o que faz o
-     vermelho de uma conta vencida deixar de saltar. */
-  --gold: #3B82F6;         /* ação primária e link (nome herdado do tema antigo) */
-  --gold-ink: #60A5FA;
-  --gold-soft: rgba(59, 130, 246, .12);
+  /* ---------- Cobalto · a marca ----------
+     Ele é a cor da MARCA e da AÇÃO — arco, botão, link, valor principal. Nunca
+     significa "bom" nem "ruim": isso pertence ao verde e ao vermelho.
 
-  --green: #22C55E;
-  --green-ink: #4ADE80;
-  --green-soft: rgba(34, 197, 94, .12);
+     No escuro o botão INVERTE: fundo em cobalto claro e texto escuro. Cobalto
+     médio com texto branco dava 4,49:1 e reprovava em AA — além de parecer
+     embarrado sobre fundo escuro. Invertido, chega a 8,68:1. */
+  --gold: #8FA8FF;             /* preenchimento e traço */
+  --gold-ink: #8FA8FF;         /* como texto */
+  --gold-contraste: #070A12;   /* o que se escreve SOBRE o preenchimento */
+  --gold-soft: #1C2540;
+  --gold-borda: #2E3C63;
+  /* O cobalto a meio caminho: a segunda faixa da barra de limite e o passo já
+     cumprido do onboarding — presença menor que a do cheio, sem virar cinza. */
+  --gold-fraco: #4E6296;
 
-  --amber: #F59E0B;
-  --amber-ink: #FBBF24;
-  --amber-soft: rgba(245, 158, 11, .12);
+  --green: #6FCB99;
+  --green-ink: #6FCB99;
+  --green-contraste: #06231A;
+  --green-soft: #16301F;
+  --green-borda: #2A5340;
 
-  --red: #EF4444;
-  --red-ink: #F87171;
-  --red-soft: rgba(239, 68, 68, .12);
+  --amber: #E3B15C;
+  --amber-ink: #E3B15C;
+  --amber-contraste: #1A1204;
+  --amber-soft: #2E2410;
+  --amber-borda: #55431C;
 
-  /* Transferência e "parcial": movimento que não é ganho nem perda. Violeta
-     contido, usado só no dado — nunca como fundo de bloco. */
-  --blue: #8B5CF6;
-  --blue-ink: #A78BFA;
-  --blue-soft: rgba(139, 92, 246, .12);
+  --red: #F08A78;
+  --red-ink: #F08A78;
+  --red-contraste: #2A0A05;
+  --red-soft: #33191A;
+  --red-borda: #5C2E2C;
 
-  /* Header, sidebar e dock. O desfoque é o que os separa do conteúdo que passa
-     por baixo; a cor é a mesma do card, sem tingimento. */
-  --glass: rgba(20, 22, 25, .82);
-  --glass-blur: saturate(120%) blur(16px);
+  /* Transferência e "parcial": movimento que não é ganho nem perda */
+  --blue: #B9A5FF;
+  --blue-ink: #B9A5FF;
+  --blue-contraste: #150A2E;
+  --blue-soft: #241C40;
+  --blue-borda: #3E3266;
 
-  /* Elevação discreta: a borda faz o trabalho, a sombra só confirma a distância.
-     Sombras largas e escuras somem no fundo grafite e só embaçam a borda. */
-  --shadow: 0 1px 2px rgba(0, 0, 0, .3);
-  --shadow-lg: 0 8px 28px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .3);
+  /* Header, sidebar e barra inferior */
+  --glass: rgba(22, 28, 43, .86);
+  --glass-blur: saturate(130%) blur(18px);
 
-  /* Cantos discretos. 8px no que é caixa de dado, 6px no que é controle, 12px só
-     no que flutua sobre a tela. Raio grande arredonda a densidade e faz um painel
-     financeiro parecer aplicativo de celular. */
-  --radius: 8px;
-  --radius-sm: 6px;
-  --radius-lg: 12px;
-  /* Só o que é genuinamente uma pastilha: o ponto de status e o selo numérico.
-     Container de dashboard não leva pílula. */
-  --radius-pill: 999px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .34);
+  --shadow-lg: 0 10px 34px rgba(0, 0, 0, .5), 0 2px 8px rgba(0, 0, 0, .34);
 
-  /* Bordas tintadas: a versão de contorno de cada tinta. Existem como token
-     porque um rgba() escrito à mão na regra não acompanha a troca de tema — foi
-     assim que o azul da paleta anterior sobreviveu em quinze bordas. */
-  --gold-borda: rgba(59, 130, 246, .32);
-  --green-borda: rgba(34, 197, 94, .32);
-  --amber-borda: rgba(245, 158, 11, .32);
-  --red-borda: rgba(239, 68, 68, .32);
-  --blue-borda: rgba(139, 92, 246, .32);
-  /* O azul a meio caminho, para a segunda faixa da barra de limite */
-  --gold-fraco: rgba(59, 130, 246, .45);
+  /* ---------- Forma ----------
+     Geometria arredondada, mas com escada clara: controle < cartão < peça que
+     flutua. Raio igual em tudo achata a hierarquia. */
+  --radius-sm: 10px;      /* controles: chips, botões pequenos, campos */
+  --radius: 16px;         /* cartões e linhas de lista */
+  --radius-lg: 22px;      /* o que flutua: folhas, modais, a barra inferior */
+  --radius-pill: 999px;   /* pastilhas e alvos redondos */
 
-  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+  /* ---------- Espaçamento ----------
+     Uma escada só, de base 4. Todo respiro do app sai daqui: sem isso cada tela
+     inventa o próprio valor e o alinhamento entre elas nunca fecha. */
+  --e1: 4px;
+  --e2: 8px;
+  --e3: 12px;
+  --e4: 16px;
+  --e5: 24px;
+  --e6: 32px;
 
-  /* Altura do header preso. As barras internas que também grudam (o topo do
-     extrato) se ancoram nela em vez de repetir o número. */
-  --h-topbar: 52px;
+  --font-body: 'Figtree', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-num: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+
+  /* Altura do header preso. As barras internas que também grudam se ancoram
+     nela em vez de repetir o número. */
+  --h-topbar: 54px;
+  /* Altura ocupada pela barra inferior flutuante, com a área segura. As listas
+     descontam isto no rodapé para a última linha não ficar embaixo dela. */
+  /* GEOMETRIA DA BARRA, em tokens para as medidas não poderem divergir:
+       --dock-folga  distância da barra até a base da tela
+       --dock-alt    altura da ilha
+       --fab         diâmetro do botão (a borda do anel entra nele: box-sizing)
+     Daí saem as três posições — a barra, o botão e o rodapé que a lista
+     precisa reservar. O centro do botão fica sobre a aresta da ilha:
+       aresta = folga + altura              = 16 + 60 = 76
+       botão  = aresta − metade do diâmetro = 76 − 28 = 48 */
+  --dock-folga: 16px;
+  --dock-alt: 60px;
+  --fab: 56px;
+  /* Altura total ocupada, já contando a metade do botão que transborda */
+  --h-dock: calc(var(--dock-folga) + var(--dock-alt) + var(--fab) / 2 + env(safe-area-inset-bottom));
 
   /* Altura coberta pelo teclado do celular. js/ui.js atualiza pelo visualViewport;
      0 quando não há teclado, para o valor servir em calc() sem condicional. */
   --teclado: 0px;
 
-  /* A curva de folha nativa (iOS): sai rápido e assenta devagar. */
   --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-out: cubic-bezier(.22, 1, .36, 1);
 }
@@ -129,101 +145,109 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-tema="dark"]) {
     color-scheme: light;
-    --ink: #F6F8FA;
+    --ink: #F4F6FB;
     --ink-2: #FFFFFF;
-    --ink-3: #F1F3F5;
+    --ink-3: #E9EDF7;
     --ink-4: #FFFFFF;
     --destaque: #FFFFFF;
-    --embutido: #F6F8FA;
-    --line: rgba(0, 0, 0, .08);
-    --line-strong: rgba(0, 0, 0, .14);
+    --embutido: #F4F6FB;
+    --line: #DFE4F0;
+    --line-strong: #C6D0E4;
 
-    --paper: #16181B;
-    --paper-dim: #5B6167;
-    --paper-faint: #8A9098;
+    --paper: #171A21;
+    --paper-dim: #565B69;
+    --paper-faint: #878DA0;
 
-    --gold: #3B82F6;
-    --gold-ink: #2563EB;
-    --gold-soft: rgba(59, 130, 246, .09);
+    --gold: #2A52C9;
+    --gold-ink: #2647B0;
+    --gold-contraste: #FFFFFF;
+    --gold-soft: #E5EBFA;
+    --gold-borda: #BFCDF0;
+    --gold-fraco: #9AB0E8;
 
-    --green: #16A34A;
-    --green-ink: #15803D;
-    --green-soft: rgba(22, 163, 74, .10);
+    /* Verde e âmbar mais escuros que o tom de catálogo: sobre a superfície
+       interna (#E9EDF7) os tons médios davam 4,44 e 4,26 — reprovavam em AA. */
+    --green: #2C7250;
+    --green-ink: #2C7250;
+    --green-contraste: #FFFFFF;
+    --green-soft: #E2F1E9;
+    --green-borda: #B9DBC8;
 
-    --amber: #D97706;
-    --amber-ink: #B45309;
-    --amber-soft: rgba(217, 119, 6, .10);
+    --amber: #8E5C0E;
+    --amber-ink: #8E5C0E;
+    --amber-contraste: #FFFFFF;
+    --amber-soft: #F7EEDC;
+    --amber-borda: #E2CBA0;
 
-    --red: #DC2626;
-    --red-ink: #B91C1C;
-    --red-soft: rgba(220, 38, 38, .08);
+    --red: #C0392F;
+    --red-ink: #C0392F;
+    --red-contraste: #FFFFFF;
+    --red-soft: #FBE9E7;
+    --red-borda: #EEC4BF;
 
-    --blue: #7C3AED;
-    --blue-ink: #6D28D9;
-    --blue-soft: rgba(124, 58, 237, .08);
+    --blue: #6B46C1;
+    --blue-ink: #6B46C1;
+    --blue-contraste: #FFFFFF;
+    --blue-soft: #EDE7FA;
+    --blue-borda: #CFC0EE;
 
-    --gold-borda: rgba(59, 130, 246, .28);
-    --green-borda: rgba(22, 163, 74, .28);
-    --amber-borda: rgba(217, 119, 6, .28);
-    --red-borda: rgba(220, 38, 38, .24);
-    --blue-borda: rgba(124, 58, 237, .24);
-    --gold-fraco: rgba(59, 130, 246, .4);
+    --glass: rgba(255, 255, 255, .86);
 
-    --glass: rgba(255, 255, 255, .85);
-
-    /* Quase imperceptível: no claro a elevação vem da borda, não de uma mancha
-       cinza embaixo do cartão. */
-    --shadow: 0 1px 3px rgba(0, 0, 0, .04);
-    --shadow-lg: 0 8px 28px rgba(0, 0, 0, .10), 0 2px 6px rgba(0, 0, 0, .05);
+    --shadow: 0 1px 3px rgba(23, 26, 33, .05);
+    --shadow-lg: 0 10px 30px rgba(23, 26, 33, .11), 0 2px 8px rgba(23, 26, 33, .05);
   }
 }
 
 /* A escolha explícita vence o sistema, nos dois sentidos */
 :root[data-tema="light"] {
   color-scheme: light;
-  --ink: #F6F8FA;
+  --ink: #F4F6FB;
   --ink-2: #FFFFFF;
-  --ink-3: #F1F3F5;
+  --ink-3: #E9EDF7;
   --ink-4: #FFFFFF;
   --destaque: #FFFFFF;
-  --embutido: #F6F8FA;
-  --line: rgba(0, 0, 0, .08);
-  --line-strong: rgba(0, 0, 0, .14);
+  --embutido: #F4F6FB;
+  --line: #DFE4F0;
+  --line-strong: #C6D0E4;
 
-  --paper: #16181B;
-  --paper-dim: #5B6167;
-  --paper-faint: #8A9098;
+  --paper: #171A21;
+  --paper-dim: #565B69;
+  --paper-faint: #878DA0;
 
-  --gold: #3B82F6;
-  --gold-ink: #2563EB;
-  --gold-soft: rgba(59, 130, 246, .09);
+  --gold: #2A52C9;
+  --gold-ink: #2647B0;
+  --gold-contraste: #FFFFFF;
+  --gold-soft: #E5EBFA;
+  --gold-borda: #BFCDF0;
+  --gold-fraco: #9AB0E8;
 
-  --green: #16A34A;
-  --green-ink: #15803D;
-  --green-soft: rgba(22, 163, 74, .10);
+  --green: #2C7250;
+  --green-ink: #2C7250;
+  --green-contraste: #FFFFFF;
+  --green-soft: #E2F1E9;
+  --green-borda: #B9DBC8;
 
-  --amber: #D97706;
-  --amber-ink: #B45309;
-  --amber-soft: rgba(217, 119, 6, .10);
+  --amber: #8E5C0E;
+  --amber-ink: #8E5C0E;
+  --amber-contraste: #FFFFFF;
+  --amber-soft: #F7EEDC;
+  --amber-borda: #E2CBA0;
 
-  --red: #DC2626;
-  --red-ink: #B91C1C;
-  --red-soft: rgba(220, 38, 38, .08);
+  --red: #C0392F;
+  --red-ink: #C0392F;
+  --red-contraste: #FFFFFF;
+  --red-soft: #FBE9E7;
+  --red-borda: #EEC4BF;
 
-  --blue: #7C3AED;
-  --blue-ink: #6D28D9;
-  --blue-soft: rgba(124, 58, 237, .08);
+  --blue: #6B46C1;
+  --blue-ink: #6B46C1;
+  --blue-contraste: #FFFFFF;
+  --blue-soft: #EDE7FA;
+  --blue-borda: #CFC0EE;
 
-  --gold-borda: rgba(59, 130, 246, .28);
-  --green-borda: rgba(22, 163, 74, .28);
-  --amber-borda: rgba(217, 119, 6, .28);
-  --red-borda: rgba(220, 38, 38, .24);
-  --blue-borda: rgba(124, 58, 237, .24);
-  --gold-fraco: rgba(59, 130, 246, .4);
-
-  --glass: rgba(255, 255, 255, .85);
-  --shadow: 0 1px 3px rgba(0, 0, 0, .04);
-  --shadow-lg: 0 8px 28px rgba(0, 0, 0, .10), 0 2px 6px rgba(0, 0, 0, .05);
+  --glass: rgba(255, 255, 255, .86);
+  --shadow: 0 1px 3px rgba(23, 26, 33, .05);
+  --shadow-lg: 0 10px 30px rgba(23, 26, 33, .11), 0 2px 8px rgba(23, 26, 33, .05);
 }
 
 /* ---------- Base ---------- */
@@ -264,6 +288,10 @@ body {
 .res-tip-l b, .kid-tarefa b, .cc-linha b, .amount-input, .mini-stats b, .hero-stats b {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
+  /* A Inter fica com o VALOR e a Figtree com o resto: num algarismo,
+     neutralidade é qualidade — ele precisa alinhar em coluna e ser lido sem
+     personalidade atrapalhando. O caráter vem da moldura em volta. */
+  font-family: var(--font-num);
 }
 
 /* Ícones SVG inline. O tamanho é decidido aqui, não no atributo do SVG. */
@@ -380,7 +408,7 @@ body {
 .user-avatar {
   width: 34px; height: 34px; border-radius: 10px; flex: none;
   background: var(--gold);
-  color: #fff; font-weight: 700; display: grid; place-items: center; font-size: 13px;
+  color: var(--gold-contraste); font-weight: 700; display: grid; place-items: center; font-size: 13px;
 }
 .user-chip > div { min-width: 0; }
 .user-chip b { color: var(--paper); font-size: 12.5px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -389,7 +417,7 @@ body {
 .wrapper { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .content {
   width: 100%; max-width: 1180px; margin: 0 auto;
-  padding: 0 16px calc(104px + env(safe-area-inset-bottom));
+  padding: 0 var(--e4) calc(var(--h-dock) + var(--e2));
 }
 
 /* ============================================================================
@@ -431,63 +459,6 @@ body {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* O período do ciclo financeiro. Fica apagado enquanto se olha o mês corrente e
-   acende quando se está em outro — é assim que ele avisa, sem alarme, que os
-   números na tela não são os de hoje. */
-.periodo-chip {
-  display: inline-flex; align-items: center; gap: 6px; flex: none;
-  padding: 5px 9px; border-radius: var(--radius-sm); cursor: default;
-  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper-dim);
-  font-family: var(--font-body); font-size: 12px; font-weight: 600;
-  white-space: nowrap; font-variant-numeric: tabular-nums;
-  transition: border-color .15s ease, color .15s ease, background .15s ease;
-}
-.periodo-chip svg { width: 14px; height: 14px; }
-.periodo-ico { flex: none; opacity: .8; }
-.periodo-chip.fora {
-  cursor: pointer; background: var(--amber-soft);
-  border-color: var(--amber-borda); color: var(--amber-ink);
-}
-.periodo-chip.fora:hover { border-color: var(--amber); }
-.periodo-chip.fora:active { transform: scale(.97); }
-
-/* ---------- Badge de sincronização ----------
-   Estado e ação no mesmo alvo: ele diz em que pé está a nuvem e, tocado,
-   sincroniza. O ponto é a informação — o rótulo some quando a tela aperta. */
-.sync-badge {
-  display: inline-flex; align-items: center; gap: 7px; flex: none;
-  padding: 5px 9px 5px 8px; border-radius: var(--radius-sm); cursor: pointer;
-  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper-dim);
-  font-family: var(--font-body); font-size: 12px; font-weight: 600; white-space: nowrap;
-  transition: border-color .15s ease, color .15s ease, transform .12s ease;
-}
-.sync-badge:hover { border-color: var(--line-strong); color: var(--paper); }
-.sync-badge:active { transform: scale(.96); }
-.sync-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex: none;
-  background: var(--paper-faint); position: relative;
-}
-/* O halo é um pseudo-elemento com transform próprio: animar o ponto faria a
-   pílula inteira recalcular a cada quadro. */
-.sync-dot::after {
-  content: ''; position: absolute; inset: -3px; border-radius: 50%;
-  background: inherit; opacity: 0;
-}
-#btn-sync[data-estado="ok"] .sync-dot { background: var(--green); }
-#btn-sync[data-estado="ok"] .sync-dot::after { animation: pulsoDot 2.6s ease-out infinite; }
-#btn-sync[data-estado="pendente"] .sync-dot { background: var(--amber); }
-#btn-sync[data-estado="pendente"] .sync-dot::after { animation: pulsoDot 1.6s ease-out infinite; }
-#btn-sync[data-estado="offline"] .sync-dot { background: var(--paper-faint); }
-#btn-sync[data-estado="off"] .sync-dot { background: var(--line-strong); }
-#btn-sync[data-estado="sync"] { color: var(--gold-ink); border-color: var(--gold-borda); }
-#btn-sync[data-estado="sync"] .sync-dot { background: var(--gold); animation: pulsoVivo 1s ease-in-out infinite; }
-#btn-sync[data-estado="pendente"] { color: var(--amber-ink); }
-@keyframes pulsoDot {
-  0% { opacity: .5; transform: scale(1); }
-  70%, 100% { opacity: 0; transform: scale(2.2); }
-}
-@keyframes pulsoVivo { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-
 .topbar-actions { display: flex; gap: 7px; align-items: center; flex: none; }
 .icon-btn {
   width: 38px; height: 38px; border-radius: var(--radius-sm); flex: none;
@@ -505,7 +476,7 @@ body {
   width: 38px; height: 38px; border-radius: var(--radius-sm); flex: none;
   border: 1px solid var(--line); cursor: pointer; padding: 0;
   background: var(--gold);
-  color: #fff; font-family: var(--font-body); font-size: 13px; font-weight: 700;
+  color: var(--gold-contraste); font-family: var(--font-body); font-size: 13px; font-weight: 700;
   display: grid; place-items: center;
   transition: transform .12s ease, box-shadow .18s ease;
 }
@@ -516,7 +487,7 @@ body {
    a única ação primária da barra, e a cor sólida já basta para dizer isso. */
 .btn-new-desktop {
   display: none;
-  background: var(--gold); color: #fff; border: none; border-radius: var(--radius-sm);
+  background: var(--gold); color: var(--gold-contraste); border: none; border-radius: var(--radius-sm);
   padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-body);
   align-items: center; gap: 7px; white-space: nowrap;
   transition: transform .12s ease, background .16s ease;
@@ -525,19 +496,45 @@ body {
 .btn-new-desktop:hover { background: var(--gold-ink); }
 .btn-new-desktop:active { transform: scale(.97); }
 
+
+/* ---------- O estado da sincronização, no canto do avatar ----------
+   Ele não tem rótulo e não ocupa lugar próprio: é um ponto de 9px na quina do
+   avatar, com um anel da cor da barra para se descolar dela. Some quando está
+   tudo em dia — um indicador permanente de "nada acontecendo" é ruído — e
+   aparece quando há fila, erro ou sincronização em curso.
+
+   O `title` do botão continua dizendo em palavras o que o ponto diz em cor,
+   para quem passa o mouse e para leitor de tela. */
+.avatar-btn { position: relative; overflow: visible; }
+.sync-dot {
+  position: absolute; right: -2px; bottom: -2px;
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--ink-4);
+  background: transparent;
+  opacity: 0; transition: opacity .2s ease, background .2s ease;
+  pointer-events: none;
+}
+#btn-perfil[data-sync="pendente"] .sync-dot { background: var(--amber); opacity: 1; }
+#btn-perfil[data-sync="offline"] .sync-dot { background: var(--paper-faint); opacity: 1; }
+#btn-perfil[data-sync="erro"] .sync-dot { background: var(--red); opacity: 1; }
+#btn-perfil[data-sync="sync"] .sync-dot {
+  background: var(--gold); opacity: 1;
+  animation: pulsoSync 1s ease-in-out infinite;
+}
+@keyframes pulsoSync { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
 .sync-status { font-size: 12px; color: var(--paper-dim); padding: 10px 2px 0; }
 .sync-status.err { color: var(--red-ink); }
 
-/* No celular o header guarda só o que é situacional */
+/* No celular o header guarda só marca e ações. O nome da tela sai porque a
+   própria tela já o diz no primeiro bloco — repetir custa altura numa barra que
+   fica presa o tempo todo. */
 .only-desk { display: none; }
 @media (max-width: 1023px) {
   .topbar-ctx { display: none; }
 }
 @media (max-width: 400px) {
-  .topbar-inner { gap: 8px; padding: 8px 12px; }
-  .sync-txt { display: none; }
-  .sync-badge { padding: 7px; }
-  .periodo-chip { padding: 6px 9px; font-size: 11.5px; }
+  .topbar-inner { gap: var(--e2); padding: var(--e2) var(--e3); }
 }
 
 /* ============================================================================
@@ -1087,7 +1084,8 @@ body {
 .dia-badge.ok   { background: var(--green-soft); color: var(--green-ink); }
 .dia-badge.ruim { background: var(--red-soft);  color: var(--red-ink); }
 /* O saldo é a conclusão, não uma parcela: fundo sólido em vez de tingido */
-.dia-badge.saldo { color: #fff; }
+.dia-badge.saldo.pos { color: var(--green-contraste); }
+.dia-badge.saldo.neg { color: var(--red-contraste); }
 .dia-badge.saldo i { opacity: .8; }
 .dia-badge.saldo.pos { background: var(--green); }
 .dia-badge.saldo.neg { background: var(--red); }
@@ -1149,7 +1147,7 @@ body {
   border: 1px solid var(--line); background: var(--green-soft); color: var(--green-ink);
   display: grid; place-items: center;
 }
-.pay-btn:hover { background: var(--green); color: #fff; border-color: var(--green); }
+.pay-btn:hover { background: var(--green); color: var(--green-contraste); border-color: var(--green); }
 
 /* ============================================================================
    IMPORTAÇÃO OFX — duas linhas, não quatro colunas.
@@ -1215,7 +1213,36 @@ body {
 .ofx-dup { opacity: .5; }
 
 /* ---------- Navegação de mês, dentro da tela ---------- */
-.month-nav { display: flex; align-items: center; justify-content: space-between; }
+/* ---------- O seletor de mês, preso abaixo do header ----------
+
+   Ele é o CONTEXTO de tudo que está embaixo: todo número da tela pertence ao
+   ciclo que este cartão nomeia. Rolando junto com a lista, some no primeiro
+   gesto — e a partir daí lê-se uma coluna de valores sem saber de que mês são,
+   que é exatamente a dúvida que ele existe para responder.
+
+   Preso, ele também deixa as setas sempre à mão: dá para varrer o extrato de
+   agosto, pular para setembro e voltar sem rolar de volta ao topo.
+
+   O `top` sai da altura do header mais a área segura — sem isso ele encosta por
+   baixo da faixa de vidro e o texto atravessa o desfoque. */
+.month-nav {
+  position: sticky; z-index: 18;
+  top: calc(var(--h-topbar) + env(safe-area-inset-top) + var(--e2));
+  display: flex; align-items: center; justify-content: space-between;
+}
+/* A borda ganha corpo enquanto ele está grudado: presa sobre o conteúdo que
+   passa por baixo, a linha de 1px sozinha não separa o suficiente. */
+.month-nav { box-shadow: var(--shadow); }
+/* O ESCUDO DA FRESTA. Entre a faixa de vidro do header e o cartão preso sobra o
+   respiro de 8px — e o conteúdo rolava visível por essa fresta, um filete de
+   texto deslizando entre os dois. Este bloco pinta a fresta com a cor da página,
+   acompanhando o cartão. Fora da rolagem ele é invisível: é a mesma cor do que
+   está atrás. */
+.month-nav::before {
+  content: ''; position: absolute; left: 0; right: 0;
+  bottom: 100%; height: calc(var(--e2) + 1px);
+  background: var(--ink);
+}
 .month-nav b { font-size: 15px; font-weight: 700; }
 .month-nav button {
   background: var(--ink-3); border: 1px solid var(--line); color: var(--paper);
@@ -1232,7 +1259,7 @@ body {
   padding: 7px 14px; border-radius: var(--radius-sm); font-size: 12.5px; font-weight: 600;
   cursor: pointer; font-family: var(--font-body);
 }
-.chip.active { background: var(--gold); border-color: var(--gold); color: #fff; }
+.chip.active { background: var(--gold); border-color: var(--gold); color: var(--gold-contraste); }
 .chip-more { border-style: dashed; }
 .chip-num { opacity: .7; font-weight: 500; margin-left: 4px; font-size: 11.5px; }
 .chip-tag { font-size: 12.5px; }
@@ -1242,9 +1269,9 @@ body {
 
 /* Semântica de cor por tipo de ação — sai vermelho, entra verde, move azul.
    A cor vem sempre acompanhada do ícone e do texto, nunca sozinha. */
-.chip[data-v="Despesa"].active { background: var(--red); border-color: var(--red); }
-.chip[data-v="Receita"].active { background: var(--green); border-color: var(--green); }
-.chip[data-v="Transferência"].active { background: var(--blue); border-color: var(--blue); }
+.chip[data-v="Despesa"].active { background: var(--red); border-color: var(--red); color: var(--red-contraste); }
+.chip[data-v="Receita"].active { background: var(--green); border-color: var(--green); color: var(--green-contraste); }
+.chip[data-v="Transferência"].active { background: var(--blue); border-color: var(--blue); color: var(--blue-contraste); }
 
 .sheet[data-tipo="Despesa"] .amount-input { color: var(--red-ink); }
 .sheet[data-tipo="Receita"] .amount-input { color: var(--green-ink); }
@@ -1279,7 +1306,15 @@ body {
 /* Fora da animação de entrada da tela: transform num elemento preso o desloca
    justamente enquanto ele deveria estar ancorado */
 .view > .ext-topo { animation: none; }
-.ext-topo .month-nav { padding: 8px 12px; }
+/* No Extrato o cartão de mês já viaja preso DENTRO da barra do topo, que é
+   sticky por inteiro — com a régua e as pílulas de filtro junto. Prender o
+   cartão de novo aqui dentro seria um sticky dentro de outro: ele passaria a
+   se descolar da própria barra que o carrega. Aqui ele volta a ser estático e
+   quem gruda é a barra. */
+.ext-topo .month-nav {
+  position: static; box-shadow: none;
+  padding: var(--e2) var(--e3);
+}
 
 /* ---------- A régua do mês ----------
    Seletor de intervalo E mapa de movimento: as marcas mostram onde o dinheiro se
@@ -1395,7 +1430,7 @@ body {
   background: none; border: none; color: var(--gold-ink); cursor: pointer;
   font-family: var(--font-body); font-size: 12px; font-weight: 700; padding: 4px 2px;
 }
-.ui-pop-pe button[data-pop-ok] { color: #fff; background: var(--gold); border-radius: 7px; padding: 6px 12px; }
+.ui-pop-pe button[data-pop-ok] { color: var(--gold-contraste); background: var(--gold); border-radius: var(--radius-sm); padding: 6px 12px; }
 .ui-pop-form { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
 .pop-check { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .pop-check input { width: 18px; height: 18px; accent-color: var(--gold); }
@@ -1458,7 +1493,7 @@ body {
 .res-tip-l i { font-style: normal; opacity: .7; }
 .res-tip-l b { font-weight: 700; }
 /* Dentro do balão escuro as cores do app não teriam contraste; aqui elas clareiam */
-.res-tip-l b.txt-green { color: #7EE2AB; }
+.res-tip-l b.txt-green { color: #7EE2AB; }   /* o balão da lib é escuro nos dois temas */
 .res-tip-l b.txt-red { color: #FF8FA8; }
 /* A ponte até o fim do período usa as MESMAS linhas do hero (.hc-l, .hc-total):
    as duas telas respondem a mesma pergunta e não devem ter formas diferentes de
@@ -1683,53 +1718,80 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 .goal-nums b { color: var(--paper); }
 
 /* ============================================================================
-   BARRA INFERIOR (mobile)
+   BARRA INFERIOR (mobile) — ilha flutuante com o botão transbordando
 
-   Ancorada no rodapé, não flutuando com cantos de 24px. A barra solta com sombra
-   larga é um maneirismo: ela come 16px de cada lado da lista, projeta sombra
-   sobre o conteúdo que se está tentando ler e arredonda a base da tela inteira.
-   Encostada, com uma borda de 1px em cima, ela some do caminho — que é o que uma
-   barra de navegação deve fazer.
+   O botão sai da barra pela metade e leva um ANEL da cor da página. É o anel que
+   faz ele parecer pousado sobre a ilha em vez de colado nela — e, ao contrário
+   do entalhe, funciona igual em claro, escuro e sobre qualquer conteúdo que
+   passe por baixo, sem depender de máscara.
+
+   O ALINHAMENTO sai de uma regra só: o centro do botão fica exatamente sobre a
+   aresta superior da ilha. Dali vêm todas as medidas, e o vão entre as abas tem
+   a largura do botão mais o anel, então nada encosta nele.
+
+     ilha ....... 60px de altura, 14px de folga nas laterais e embaixo
+     aresta ..... 14 + 60 = 74px a partir da base
+     botão ...... 56px → centro em 74px → bottom = 74 − 28 = 46px
+     vão ........ 56 + 2×5 do anel + 8 de respiro = 74px
    ============================================================================ */
 .tabbar {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
-  display: flex; justify-content: space-around; align-items: center;
+  position: fixed; z-index: 30;
+  left: var(--dock-folga); right: var(--dock-folga);
+  bottom: calc(var(--dock-folga) + env(safe-area-inset-bottom));
+  height: var(--dock-alt);
+  display: flex; align-items: center;
   background: var(--glass);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
-  border-top: 1px solid var(--line);
-  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 0 var(--e1);
 }
+/* flex:1 nas abas e largura fixa no vão: é o que mantém o botão no centro exato
+   e as quatro abas com a mesma largura, em qualquer tamanho de tela. */
 .tab {
-  background: none; border: none; color: var(--paper-dim); font-size: 10px; font-weight: 500; cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; gap: 2px; width: 62px; min-height: 44px;
-  justify-content: center; font-family: var(--font-body);
+  flex: 1; min-width: 0;
+  background: none; border: none; cursor: pointer;
+  color: var(--paper-dim); font-size: 10px; font-weight: 500;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  min-height: 48px; justify-content: center; font-family: var(--font-body);
   transition: color .15s ease;
+  padding: 0 2px;
 }
-/* Sem pastilha atrás do ícone: no item ativo, cor e peso já bastam. A pílula
-   tingida era mais um container arredondado numa tela que não precisa deles. */
-.tabbar .tab-ico { width: 24px; height: 24px; display: grid; place-items: center; transition: transform .18s var(--ease-out); }
+.tab > span:last-child {
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tabbar .tab-ico {
+  width: 22px; height: 22px; display: grid; place-items: center;
+  transition: transform .18s var(--ease-out);
+}
 .tab.active { color: var(--gold-ink); font-weight: 600; }
 .tab:active .tab-ico { transform: scale(.9); }
 
-/* O botão de lançar, no meio da barra. Continua redondo — é um alvo para o
-   polegar, não um container de dado — mas em azul chapado, sem gradiente e sem
-   halo colorido embaixo. */
+/* O botão. `position: fixed` e não `absolute`: a barra tem overflow próprio e a
+   metade de cima do botão seria cortada por ela. Fixo, ele fica por cima. */
 .fab {
-  width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
-  background: var(--gold);
-  color: #fff; font-size: 24px; font-weight: 600;
-  display: grid; place-items: center;
-  margin-top: -4px; flex: none;
+  position: fixed; z-index: 31;
+  left: 50%; transform: translateX(-50%);
+  bottom: calc(var(--dock-folga) + var(--dock-alt) - var(--fab) / 2 + env(safe-area-inset-bottom));
+  width: var(--fab); height: var(--fab); border-radius: 50%;
+  border: 5px solid var(--ink);          /* o anel: a cor da PÁGINA */
+  background: var(--gold); color: var(--gold-contraste);
+  display: grid; place-items: center; cursor: pointer;
   transition: transform .14s var(--ease-out), background .16s ease;
 }
-.fab svg { width: 22px; height: 22px; }
-.fab:active { transform: scale(.92); }
+.fab svg { width: 24px; height: 24px; }
+.fab:active { transform: translateX(-50%) scale(.92); }
 .fab:hover { background: var(--gold-ink); }
+/* O vão que reserva o lugar do botão entre as abas */
+.tab-vao { width: 74px; flex: none; }
 
 /* Com o teclado aberto a barra fica prensada entre ele e o conteúdo, roubando
    altura de quem está digitando — e ninguém troca de aba nesse momento. */
-body.teclado-aberto .tabbar { display: none; }
+body.teclado-aberto .tabbar,
+body.teclado-aberto .fab { display: none; }
+
 
 /* ============================================================================
    FOLHA (bottom sheet) E MODAL
@@ -1770,8 +1832,8 @@ body.teclado-aberto .tabbar { display: none; }
 }
 .modal-inner { max-width: 560px; margin: 0 auto; }
 .sheet-title, .modal-title {
-  font-size: 18px; font-weight: 800; margin-bottom: 16px; letter-spacing: -.025em;
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  font-size: 18px; font-weight: 700; letter-spacing: -.025em;
+  display: flex; justify-content: space-between; align-items: center; gap: var(--e3);
 }
 .close-x {
   background: var(--ink-3); border: 1px solid var(--line); color: var(--paper-dim);
@@ -1803,12 +1865,19 @@ input:focus, select:focus, textarea:focus {
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
 .btn {
-  width: 100%; padding: 13px; border-radius: var(--radius-sm); border: none; cursor: pointer;
-  font-size: 14px; font-weight: 700; font-family: var(--font-body);
-  background: var(--gold); color: #fff;
-  transition: transform .12s ease, filter .2s ease, box-shadow .2s ease;
+  width: 100%; padding: var(--e3) var(--e4); border-radius: var(--radius-pill); border: none; cursor: pointer;
+  font-size: 14px; font-weight: 600; font-family: var(--font-body);
+  background: var(--gold); color: var(--gold-contraste);
+  min-height: 46px;
+  transition: transform .12s ease, background .16s ease;
 }
 .btn:hover { background: var(--gold-ink); }
+/* A folha de lançamento tinge o botão de salvar com a cor do TIPO escolhido, e o
+   texto tem de acompanhar: branco sobre o verde claro do tema escuro seria
+   ilegível. Cada tinta traz o próprio contraste. */
+.sheet[data-tipo="Despesa"] #sh-save { color: var(--red-contraste); }
+.sheet[data-tipo="Receita"] #sh-save { color: var(--green-contraste); }
+.sheet[data-tipo="Transferência"] #sh-save { color: var(--blue-contraste); }
 .btn:active { transform: scale(.98); }
 .btn.ghost { background: var(--ink-3); color: var(--paper); border: 1px solid var(--line); }
 .btn.ghost:hover { background: var(--ink-2); border-color: var(--line-strong); box-shadow: none; filter: none; }
@@ -1824,7 +1893,7 @@ input:focus, select:focus, textarea:focus {
 .btn.is-loading::after, .sec-btn.is-loading::after {
   content: ''; position: absolute; top: 50%; left: 50%;
   width: 16px; height: 16px; margin: -8px 0 0 -8px;
-  border: 2px solid rgba(255, 255, 255, .35); border-top-color: #fff; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; opacity: .9;
   animation: girar .7s linear infinite;
 }
 .sec-btn.is-loading::after { border-color: var(--line-strong); border-top-color: var(--gold); }
@@ -1855,28 +1924,66 @@ input:focus, select:focus, textarea:focus {
 .empty { text-align: center; color: var(--paper-dim); padding: 30px 12px; font-size: 13.5px; }
 .empty b { display: block; font-size: 15px; font-weight: 700; color: var(--paper); margin-bottom: 4px; }
 
-.settings-item {
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  padding: 13px 16px; background: var(--ink-2); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); margin-bottom: 8px; cursor: pointer; box-shadow: var(--shadow);
-  font-weight: 600; font-size: 13.5px;
-}
-.settings-item:hover { border-color: var(--line-strong); }
-.settings-item small { color: var(--paper-dim); font-weight: 400; }
-.cfg-left { display: flex; align-items: center; gap: 12px; }
-.cfg-ico {
-  width: 40px; height: 40px; border-radius: var(--radius-sm); flex: none;
-  background: var(--ink-3); color: var(--paper-dim);
-  display: grid; place-items: center;
-}
-.settings-item .chev { color: var(--paper-faint); }
-.settings-item .chev svg { width: 16px; height: 16px; }
 /* Ação destrutiva: vestida de vermelho desde a lista, para não ser tocada por engano */
 .danger-item { border-color: var(--red-borda); color: var(--red-ink); }
 .danger-item:hover { border-color: var(--red); background: var(--red-soft); }
 .danger-item small { color: var(--red-ink); opacity: .78; }
 /* precisa vir depois de .cfg-ico, senão o fundo neutro dela vence a tinta vermelha */
 .danger-item .cfg-ico { background: var(--red-soft); color: var(--red-ink); }
+
+
+/* ---------- Configurações: cabeçalho preso e grupos ----------
+   O título rolava para fora junto com o conteúdo, e numa lista de doze itens
+   isso significava perder o contexto — e o botão de voltar — logo no primeiro
+   gesto. Agora ele fica preso no topo do modal, com o fundo da própria folha
+   para o conteúdo passar por baixo sem transparecer. */
+.modal-title {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--ink);
+  margin: calc(var(--e4) * -1) calc(var(--e4) * -1) var(--e4);
+  padding: var(--e4);
+  border-bottom: 1px solid var(--line);
+}
+/* No desktop o modal tem moldura própria, então o cabeçalho herda o fundo dela */
+@media (min-width: 1024px) {
+  .modal-title { background: var(--ink-2); border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+}
+
+.cfg-grupo {
+  font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--paper-faint); margin: var(--e5) 0 var(--e2); padding: 0 var(--e1);
+}
+.cfg-grupo:first-of-type { margin-top: var(--e2); }
+/* A ação destrutiva ganha um respiro maior que a distância entre grupos: é o
+   espaço que impede o toque por engano depois de percorrer a lista. */
+.cfg-perigo { margin-top: var(--e6); }
+
+/* A linha é um <button> de largura inteira: antes era um <div> com onclick, que
+   não recebe foco pelo teclado nem é anunciado como acionável. */
+.settings-item {
+  width: 100%; text-align: left; font-family: var(--font-body);
+  display: flex; justify-content: space-between; align-items: center; gap: var(--e3);
+  padding: var(--e3) var(--e4); background: var(--ink-2); border: 1px solid var(--line);
+  border-radius: var(--radius); margin-bottom: var(--e2); cursor: pointer;
+  box-shadow: var(--shadow); font-weight: 600; font-size: 13.5px; color: var(--paper);
+  transition: transform .12s ease, border-color .15s ease;
+}
+.settings-item:hover { border-color: var(--line-strong); }
+.settings-item:active { transform: scale(.99); }
+.cfg-txt { min-width: 0; }
+.cfg-txt b { display: block; font-weight: 600; }
+.cfg-txt small {
+  display: block; color: var(--paper-dim); font-weight: 400; font-size: 11.5px;
+  line-height: 1.4; margin-top: 1px;
+}
+.cfg-left { display: flex; align-items: center; gap: var(--e3); min-width: 0; }
+.cfg-ico {
+  width: 38px; height: 38px; border-radius: var(--radius-sm); flex: none;
+  background: var(--ink-3); color: var(--paper-dim);
+  display: grid; place-items: center; font-size: 17px;
+}
+.settings-item .chev { color: var(--paper-faint); flex: none; }
+.settings-item .chev svg { width: 16px; height: 16px; }
 
 /* Aviso em bloco dentro de folhas e modais */
 .callout {
@@ -1891,16 +1998,16 @@ input:focus, select:focus, textarea:focus {
 .callout.info b { color: var(--gold-ink); }
 
 .toast {
-  position: fixed; bottom: calc(104px + env(safe-area-inset-bottom)); left: 50%;
+  position: fixed; bottom: calc(var(--h-dock) + var(--e4)); left: 50%;
   background: var(--ink-2); color: var(--paper);
   border: 1px solid var(--line-strong);
   padding: 11px 20px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; z-index: 60;
   box-shadow: var(--shadow-lg); max-width: 90vw; text-align: center;
   animation: toastIn .34s var(--ease-out);
 }
-.toast.t-ok { background: var(--green); border-color: transparent; color: #06231A; }
-.toast.t-err { background: var(--red); border-color: transparent; color: #fff; }
-.toast.t-info { background: var(--gold); border-color: transparent; color: #fff; }
+.toast.t-ok { background: var(--green); border-color: transparent; color: var(--green-contraste); }
+.toast.t-err { background: var(--red); border-color: transparent; color: var(--red-contraste); }
+.toast.t-info { background: var(--gold); border-color: transparent; color: var(--gold-contraste); }
 /* Aviso com ação junto (desfazer um lote): o botão precisa ser alcançável com o
    polegar e distinguir-se do texto sem virar outra cor. */
 .toast.tem-acao { display: flex; align-items: center; gap: 14px; text-align: left; padding: 9px 10px 9px 18px; }
@@ -2016,7 +2123,7 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .ui-cal-d:hover { background: var(--ink-3); }
 .ui-cal-d.is-out { visibility: hidden; }
 .ui-cal-d.is-today { color: var(--gold-ink); font-weight: 700; box-shadow: inset 0 0 0 1px var(--gold); }
-.ui-cal-d.is-sel { background: var(--gold); color: #fff; font-weight: 700; }
+.ui-cal-d.is-sel { background: var(--gold); color: var(--gold-contraste); font-weight: 700; }
 .ui-cal-quick { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .ui-cal-quick button {
   flex: 1; padding: 8px 6px; border-radius: 8px; border: 1px solid var(--line);
@@ -2397,7 +2504,7 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
 .pin-key:active { transform: scale(.93); background: var(--gold-soft); }
 .pin-aux { font-size: 20px; color: var(--paper-dim); border-color: transparent; background: transparent; }
 .pin-aux:hover { background: var(--ink-3); }
-.pin-ok { background: var(--gold); border-color: var(--gold); color: #fff; font-size: 22px; }
+.pin-ok { background: var(--gold); border-color: var(--gold); color: var(--gold-contraste); font-size: 22px; }
 .pin-ok:hover { filter: brightness(1.08); border-color: var(--gold); }
 .pin-ok:disabled {
   background: var(--ink-3); border-color: var(--line); color: var(--paper-faint);
@@ -2470,7 +2577,11 @@ hr.sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
    ============================================================================ */
 @media (min-width: 1024px) {
   .sidebar { display: flex; }
-  .tabbar { display: none; }
+  /* A barra E o botão saem juntos. Ele vive FORA dela no HTML — precisa disso
+     para transbordar por cima sem ser cortado —, então esconder só a barra
+     deixava o botão flutuando sozinho num layout que já tem "Novo lançamento"
+     no header. Os dois somem pela mesma regra, e a de teclado faz igual. */
+  .tabbar, .fab { display: none; }
   .btn-new-desktop { display: inline-flex; }
   .only-desk { display: grid; }
   .content { padding: 0 32px 48px; }
