@@ -26,6 +26,7 @@ No **computador** funciona como um painel administrativo (menu lateral, cards, t
 **Plataforma**
 - **☁️ Sincronização familiar** via Supabase (opcional — o app funciona 100% sem ela).
 - **🔒 Segurança** — PIN que **criptografa os dados no aparelho** (AES-256-GCM, chave derivada por PBKDF2) e bloqueio progressivo contra tentativas.
+- **✨ Assistente** — um chat que responde sobre as suas contas usando os números do próprio app. Opcional, com permissão por tipo de dado, e desligado até você ligar.
 - **🔔 Notificações** — avisos locais ao abrir o app e **push automático** com o app fechado (ver abaixo).
 
 ## Como rodar localmente
@@ -101,6 +102,48 @@ supabase functions deploy notify --no-verify-jwt
 > A chave **privada** VAPID fica só no servidor (secrets do Supabase) — nunca em `js/config.js`.
 
 Para testar sem esperar o horário agendado, rode o `net.http_post` comentado no fim de `supabase/cron.sql`.
+
+## Assistente (opcional)
+
+Um assistente que responde sobre as suas contas — como o mês fecha, para onde
+foi o dinheiro, quanto dá para gastar hoje, o que muda se você cortar um gasto.
+Ele **não recebe o seu banco**: pergunta ao app pelos números de que precisa, e
+quem calcula são as mesmas funções que desenham as telas.
+
+Desligado por padrão. Sem configurar, o app fica exatamente como está — o botão
+de conversa nem aparece.
+
+**1. Uma chave da Anthropic.** Crie em [console.anthropic.com](https://console.anthropic.com)
+e ponha crédito. Vale definir um **limite de gasto** por lá: quem publica a
+função paga o uso de toda a família.
+
+**2. Publicar a Edge Function** (a CLI já está instalada e o projeto linkado, se
+você configurou o push):
+
+```bash
+supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
+supabase functions deploy assistente
+```
+
+> ⚠️ **Sem `--no-verify-jwt`**, ao contrário da função `notify`. A `notify` é
+> chamada pelo agendador, sem usuário; esta é chamada por uma pessoa, e a
+> verificação do JWT é o que impede alguém de fora usar a sua chave.
+
+**Não há mudança no banco** — nada de rodar `schema.sql` de novo. As conversas
+ficam no próprio aparelho, cifradas com o seu PIN, e não sincronizam.
+
+**3. Ligar no app**: **⚙︎ → Assistente** → ative e marque o que ele pode
+consultar. Tudo começa desmarcado: uma permissão desmarcada não é só bloqueada,
+ela nem é oferecida ao modelo. Marcado o primeiro item, o botão ✨ aparece no
+topo do app.
+
+### O que sai do seu aparelho
+Só o que a pergunta exigir, e só do que estiver marcado. "Gastos por categoria"
+manda `Alimentação: 625,40` — não manda "Mercado São João, 12/08". Enquanto
+responde, a tela diz qual dado está sendo consultado.
+
+A opção **Lançamentos** é a única que envia descrições, e existe para perguntas
+como "o que foi aquela conta de R$ 890?". Deixe-a desmarcada se não precisar.
 
 ## Testes
 
