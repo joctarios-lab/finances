@@ -2217,12 +2217,14 @@ input:focus, select:focus, textarea:focus {
   border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 10px;
   border-left: 3px solid var(--paper-dim); background: var(--ink-3);
 }
-.callout b { display: block; font-size: 13px; margin-bottom: 4px; }
+.callout > b { display: block; font-size: 13px; margin-bottom: 4px; }
+/* Negrito DENTRO do texto do aviso é ênfase, não título: herda a cor do corpo. */
+.callout p b { display: inline; font-size: inherit; margin: 0; color: inherit; }
 .callout p { font-size: 12.5px; line-height: 1.55; color: var(--paper-dim); }
 .callout.warn { border-left-color: var(--red); background: var(--red-soft); }
-.callout.warn b { color: var(--red-ink); }
+.callout.warn > b { color: var(--red-ink); }
 .callout.info { border-left-color: var(--gold); background: var(--gold-soft); }
-.callout.info b { color: var(--gold-ink); }
+.callout.info > b { color: var(--gold-ink); }
 
 .toast {
   position: fixed; bottom: calc(var(--h-dock) + var(--e4)); left: 50%;

@@ -4503,6 +4503,34 @@ console.log('\n=== O contexto que viaja em toda pergunta ===');
   DB.data.accounts = guardaAcc; DB.data.cards = guardaCards; DB.data.kids = guardaKids;
 }
 
+console.log('\n=== Liberar o cofre num aparelho novo ===');
+{
+  const ap2 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const ia2 = fs.readFileSync(BASE + 'js/ia.js', 'utf8');
+
+  /* A tela tem de OFERECER A SAÍDA, não só constatar o problema. */
+  check('a tela pede a senha quando falta liberar', /id="ia-senha"/.test(ap2), true);
+  check('  com botão para liberar', /id="ia-liberar"/.test(ap2), true);
+  check('  e a lista de configurações também avisa', /falta liberar a cópia na nuvem/.test(ap2), true);
+  /* A tela não pode mais afirmar "ligada" só por estar logada: era exatamente a
+     mentira que fazia o defeito passar despercebido. */
+  check('o texto da nuvem vem do estado, não de "está logado"',
+    /IA\.estadoDaNuvem\(\)/.test(ap2), true);
+
+  /* SENHA ERRADA NÃO PODE PASSAR. Derivar chave de qualquer texto funciona —
+     inclusive do errado, que criaria um cofre inútil E sobrescreveria a cópia
+     boa na nuvem com dados que ninguém mais abriria. */
+  const lib = ia2.slice(ia2.indexOf('async liberarCofre('), ia2.indexOf('async sincronizar('));
+  check('a senha é conferida no servidor antes de virar chave', /await Sync\.signIn\(/.test(lib), true);
+  check('  puxa da nuvem ANTES de subir', lib.indexOf('nuvemPuxarCfg') < lib.indexOf('nuvemSalvarCfg'), true);
+  check('  e sobe também as conversas locais', /nuvemSalvarChat/.test(lib), true);
+  check('  recusando senha vazia', /Digite a senha do seu login/.test(lib), true);
+
+  /* A senha NÃO é guardada em lugar nenhum: guardá-la destruiria a garantia de
+     que o servidor não consegue ler. */
+  check('a senha não é gravada no DB', /meta\.senha|cfg\.senha|senha:/.test(ia2), false);
+}
+
 console.log('\n=== Apagar uma conversa ===');
 {
   const guardaChats = DB.data.ia_chats;

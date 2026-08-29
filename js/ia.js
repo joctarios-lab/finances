@@ -430,6 +430,65 @@ const IA = {
     return novas;
   },
 
+  /* ---------- Liberar o cofre neste aparelho ----------
+
+     O DEFEITO QUE ISTO CONSERTA. A chave do cofre nasce da senha do login, e a
+     senha só passa pelo app em `Sync.signIn`. Só que ninguém faz login toda
+     hora: a sessão se renova pelo refresh token, e `signIn` pode não rodar
+     durante meses. Resultado, num aparelho que já estava logado quando o
+     assistente foi configurado:
+
+       • `cifrar()` devolvia null, e `nuvemSalvarCfg()` retornava calado —
+         NUNCA SUBIU NADA;
+       • `sincronizar()` retornava antes de puxar — nunca desceu nada;
+       • e a tela dizia "Cópia na nuvem ligada", que era falso.
+
+     A saída não é guardar a senha (seria destruir a própria garantia: o servidor
+     não pode conseguir ler). É PEDIR a senha quando ela faz falta, uma vez por
+     aparelho.
+
+     E PEDIR CONFERINDO. Derivar chave de qualquer texto funciona — inclusive da
+     senha errada, que produziria um cofre silenciosamente inútil e, pior,
+     sobrescreveria a cópia boa na nuvem com dados cifrados por uma chave que
+     ninguém mais tem. Por isso a senha vai primeiro ao Supabase, via signIn: se
+     o servidor recusar, nada aqui é tocado. */
+  cofreAberto() {
+    return !!(DB.data && DB.data.meta && DB.data.meta.ia_cofre);
+  },
+
+  /* Estado da cópia na nuvem, para a tela poder dizer a verdade em vez de
+     supor. Cada valor é uma frase diferente na configuração. */
+  estadoDaNuvem() {
+    if (typeof Sync === 'undefined' || !Sync.loggedIn()) return 'sem-nuvem';
+    if (!this.cofreAberto()) return 'falta-liberar';
+    return 'ligada';
+  },
+
+  /* Libera e ACERTA OS DOIS LADOS na mesma ida: primeiro traz o que existe lá
+     (pode ser que outro aparelho já tenha subido a chave), depois sobe o que só
+     existe aqui. Nessa ordem, porque o que está na nuvem é o que sobreviveu a
+     "apagar os dados deste aparelho" — tem precedência sobre um cofre recém-
+     aberto que ainda não sabe de nada. */
+  async liberarCofre(email, senha) {
+    if (!senha) throw new Error('Digite a senha do seu login.');
+    if (typeof Sync === 'undefined' || !Sync.cfg || !Sync.cfg.url) {
+      throw new Error('A sincronização não está configurada neste aparelho.');
+    }
+    // Confere a senha CONTRA O SERVIDOR antes de derivar qualquer coisa.
+    await Sync.signIn(email || Sync.cfg.user_email, senha);
+    if (!this.cofreAberto()) throw new Error('Não consegui preparar o cofre neste aparelho.');
+
+    const achou = await this.nuvemPuxarCfg().catch(() => false);
+    const chats = await this.nuvemPuxarChats().catch(() => 0);
+
+    /* Sobe o que temos. Se a nuvem estava vazia — o caso de quem configurou num
+       aparelho que nunca chegou a subir —, é isto que finalmente a preenche. */
+    await this.nuvemSalvarCfg().catch(() => {});
+    for (const c of this.conversas()) await this.nuvemSalvarChat(c.id).catch(() => {});
+
+    return { veioDaNuvem: !!achou, conversas: chats };
+  },
+
   /* Uma vez por abertura, depois que o PIN já liberou o DB e o login já existe. */
   async sincronizar() {
     if (!this.temNuvem()) return;

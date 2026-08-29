@@ -87,6 +87,43 @@ const ok = (rot, cond, extra = '') => {
   const chatVoltou = await IA.decifrar(chatSubiu);
   ok('e volta inteira', chatVoltou && chatVoltou.turnos[0].r === 'Sobram R$ 1.240,00.');
 
+
+  console.log('\n=== 5. o cofre fechado: o aparelho que não sincronizava ===');
+  /* O CENÁRIO RELATADO, e que este teste existe para não voltar.
+
+     A chave do cofre nasce da senha do login, e a senha só passa pelo app em
+     Sync.signIn. Ninguém faz login toda hora — a sessão se renova sozinha pelo
+     refresh token. Então, num aparelho que já estava logado quando o assistente
+     foi configurado, o cofre nunca era criado. E aí:
+
+       • cifrar() devolvia null e nuvemSalvarCfg() retornava calado: nunca subiu
+         nada, nem a chave nem uma conversa;
+       • sincronizar() saía antes de puxar: nunca desceu nada;
+       • e a tela afirmava "Cópia na nuvem ligada" — falso.
+
+     Nenhum erro em lugar nenhum. Falha silenciosa é a pior categoria: o app
+     parecia estar fazendo backup e não estava. */
+  IA.cofre = null;
+  DB.data.meta = {};
+  IA.cfg = IA.padrao();
+  IA.cfg.ligado = true;
+  IA.cfg.chaves.anthropic = 'sk-ant-CONFIGURADA-NO-PC';
+
+  /* O stub de Sync precisa existir ANTES: temNuvem() o consulta. */
+  global.Sync = { loggedIn: () => true, cfg: { user_email: 'x@y.z', user_id: 'u1', url: 'https://u' } };
+
+  ok('tem chave e está pronto para usar', IA.disponivel() === true);
+  ok('mas o cofre não está aberto', IA.cofreAberto() === false);
+  ok('  logo, cifrar não produz nada', (await IA.cifrar({ x: 1 })) === null);
+  ok('  e nada subiria para a nuvem', (await IA.nuvemSalvarCfg()) === undefined);
+
+  ok('logado e sem cofre => "falta liberar"', IA.estadoDaNuvem() === 'falta-liberar');
+  await IA.abrirCofre('a-senha-do-login');
+  ok('com o cofre aberto => "ligada"', IA.estadoDaNuvem() === 'ligada');
+  ok('  e agora cifrar funciona', typeof (await IA.cifrar({ x: 1 })) === 'string');
+  Sync.loggedIn = () => false;
+  ok('sem login => "sem nuvem"', IA.estadoDaNuvem() === 'sem-nuvem');
+
   console.log(falhas ? `\n❌ ${falhas} falharam` : '\n✅ o cofre faz o que promete');
   process.exit(falhas ? 1 : 0);
 })();

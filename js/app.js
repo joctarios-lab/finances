@@ -8297,7 +8297,7 @@ function openConfig() {
     ${item('backup', 'upload', 'Backup', 'exportar ou importar um arquivo JSON')}
 
     <p class="cfg-grupo">O app</p>
-    ${item('ia', 'sparkles', 'Assistente', (function(){ const cf = IA.load(); if (!IA.chaveAtual()) return 'sem chave — não configurado'; const q = IA.prov().nome; if (!cf.ligado) return q + ', mas desligado'; return IA.algoAutorizado() ? q : q + ', mas sem nada autorizado'; })())}
+    ${item('ia', 'sparkles', 'Assistente', (function(){ const cf = IA.load(); if (!IA.chaveAtual()) return 'sem chave — não configurado'; const q = IA.prov().nome; /* O cofre fechado é silencioso e caro: nada sobe nem desce. Tem de aparecer aqui, para quem nunca abre a tela do assistente. */ if (IA.estadoDaNuvem() === 'falta-liberar') return q + ' — falta liberar a cópia na nuvem'; if (!cf.ligado) return q + ', mas desligado'; return IA.algoAutorizado() ? q : q + ', mas sem nada autorizado'; })())}
     ${item('tema', Tema.atual() === 'light' ? 'sun' : 'moon', 'Aparência', Tema.rotulo())}
     ${item('notif', 'bell', 'Notificações', Notif.enabled() ? 'ativas — faturas, orçamentos e metas' : 'desativadas')}
     ${item('security', 'shield', 'Segurança', Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'sem proteção local')}
@@ -8744,7 +8744,10 @@ function openConfigSection(sec) {
       const p = IA.prov();
       const chave = IA.chaveAtual();
       const temChave = !!chave;
-      const naNuvem = typeof Sync !== 'undefined' && Sync.loggedIn();
+      /* Três estados, não dois. "Logado" não basta: o cofre pode não ter sido
+         aberto neste aparelho, e aí nada sobe nem desce — era o defeito que
+         fazia a tela prometer uma cópia que não existia. */
+      const estadoNuvem = IA.estadoDaNuvem();
 
       const permissao = (k, titulo, sub) => `
         <label class="ia-perm">
@@ -8797,12 +8800,25 @@ function openConfigSection(sec) {
           ? 'Chave guardada neste aparelho, cifrada com o seu PIN.'
           : 'Sem chave, o assistente não aparece em lugar nenhum do app.'}</p>
 
-        <div class="callout info" style="margin-top:var(--e4)">
-          <b>${naNuvem ? 'Cópia na nuvem ligada' : 'Guardado só neste aparelho'}</b>
-          <p>${naNuvem
-            ? 'A chave e as conversas sobem para o seu Supabase <b>cifradas com a senha do seu login</b> — nem o dono do projeto consegue lê-las. Se você apagar os dados deste aparelho, elas voltam quando você entrar de novo. Trocar a senha do login torna essa cópia ilegível: aí é colar a chave outra vez.'
-            : 'A chave e as conversas ficam aqui, cifradas com o seu PIN — e some tudo se você apagar os dados deste aparelho. Para que voltem sozinhas depois, ligue a sincronização em <b>Configurações → Sincronização</b>'}</p>
-        </div>
+        ${estadoNuvem === 'falta-liberar' ? `
+          <div class="callout warn" style="margin-top:var(--e4)">
+            <b>Falta liberar a cópia na nuvem</b>
+            <p>A chave e as conversas sobem <b>cifradas com a senha do seu login</b> — nem o dono do projeto consegue lê-las. Por isso o app precisa da senha uma vez neste aparelho: ele nunca a guarda, e sem ela não há como cifrar nem decifrar.</p>
+          </div>
+          <div class="field">
+            <label>Senha do seu login${Sync.cfg && Sync.cfg.user_email ? ` (${esc(Sync.cfg.user_email)})` : ''}</label>
+            <input id="ia-senha" type="password" autocomplete="current-password" placeholder="a senha que você usa para entrar">
+          </div>
+          <button class="btn" id="ia-liberar">Liberar neste aparelho</button>
+          <p class="muted" id="ia-liberar-estado" style="margin-top:var(--e2)">Depois disso, a chave e as conversas passam a ir e vir sozinhas.</p>
+        ` : `
+          <div class="callout info" style="margin-top:var(--e4)">
+            <b>${estadoNuvem === 'ligada' ? 'Cópia na nuvem ligada' : 'Guardado só neste aparelho'}</b>
+            <p>${estadoNuvem === 'ligada'
+              ? 'A chave e as conversas sobem para o seu Supabase <b>cifradas com a senha do seu login</b> — nem o dono do projeto consegue lê-las. Se você apagar os dados deste aparelho, elas voltam quando você entrar de novo. Trocar a senha do login torna essa cópia ilegível: aí é colar a chave outra vez.'
+              : 'A chave e as conversas ficam aqui, cifradas com o seu PIN — e some tudo se você apagar os dados deste aparelho. Para que voltem sozinhas depois, ligue a sincronização em <b>Configurações → Sincronização</b>'}</p>
+          </div>
+        `}
 
         <div id="ia-detalhe" ${temChave ? '' : 'hidden'}>
           <p class="section-title" style="margin:var(--e5) 0 var(--e2)">Modelo da ${p.empresa}</p>
@@ -8880,7 +8896,32 @@ function openConfigSection(sec) {
         }
       };
 
-      document.querySelectorAll('#modal [data-modelo]').forEach(el => {
+    
+  /* Liberar o cofre: a senha vai ao Supabase para ser CONFERIDA antes de virar
+     chave de cifra. Senha errada aqui não pode passar — ela produziria um cofre
+     inútil e sobrescreveria a cópia boa na nuvem com dados que ninguém mais
+     conseguiria abrir. */
+  const btLiberar = $('#ia-liberar');
+  if (btLiberar) btLiberar.onclick = async () => {
+    const senha = ($('#ia-senha') || {}).value || '';
+    const aviso = $('#ia-liberar-estado');
+    if (!senha) { aviso.textContent = 'Digite a senha do seu login.'; return; }
+    btLiberar.disabled = true;
+    aviso.textContent = 'Conferindo a senha e trazendo o que está na nuvem…';
+    try {
+      const r = await IA.liberarCofre((Sync.cfg || {}).user_email, senha);
+      toast(r.veioDaNuvem || r.conversas ? 'Cópia recuperada ✓' : 'Cópia na nuvem ligada ✓');
+      pintarBotaoIA();
+      desenhar();
+    } catch (e) {
+      aviso.textContent = /senha|password|invalid|credential/i.test(e.message)
+        ? 'Senha não confere. É a mesma que você usa para entrar no app.'
+        : e.message;
+      btLiberar.disabled = false;
+    }
+  };
+
+  document.querySelectorAll('#modal [data-modelo]').forEach(el => {
         el.onchange = () => { IA.cfg.modelos[IA.cfg.provedor] = el.dataset.modelo; IA.save(); };
       });
 

@@ -25,7 +25,7 @@ Leia primeiro, nesta ordem:
 
 ## Estado atual
 - Versão 157 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 3105 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- 3114 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - a prova de cifra do assistente: `node tests/cofre.js` (roda o WebCrypto de verdade)
 - a conversa completa nos dois provedores: `node tests/provedores.js`
@@ -69,6 +69,26 @@ Leia primeiro, nesta ordem:
   sobre o fundo) e `--x-borda` (contorno). Nunca escreva rgba() na regra: há
   teste exigindo que todo token de cor do escuro exista também no claro, porque
   um rgba solto não acompanha a troca de tema e vaza a cor do tema anterior.
+
+## O ASSISTENTE (v163) — como está montado
+
+- **O COFRE PRECISA SER LIBERADO POR APARELHO, e isso é visível.** A chave do
+  cofre nasce da senha do login, e a senha só passa pelo app em `Sync.signIn` —
+  que pode não rodar por meses, já que a sessão se renova pelo refresh token. Num
+  aparelho que já estava logado quando o assistente foi configurado, o cofre
+  nunca existia: `cifrar()` devolvia null, `nuvemSalvarCfg()` retornava calado
+  (NUNCA SUBIU NADA) e `sincronizar()` saía antes de puxar. Sem erro nenhum, e
+  com a tela afirmando "Cópia na nuvem ligada".
+- **`IA.estadoDaNuvem()` tem TRÊS valores** — `sem-nuvem`, `falta-liberar`,
+  `ligada` — e a tela fala a partir dele. Estar logado não é mais sinônimo de
+  estar sincronizando; foi essa suposição que escondeu o defeito.
+- **`IA.liberarCofre(email, senha)` valida a senha NO SERVIDOR antes de derivar
+  qualquer chave** (via `Sync.signIn`). Derivar de texto errado funcionaria e
+  criaria um cofre inútil que ainda por cima sobrescreveria a cópia boa na nuvem
+  com dados que ninguém mais abriria. Depois puxa da nuvem e só então sobe o que
+  é local — nessa ordem, porque o que está lá sobreviveu a "apagar os dados".
+- **A senha nunca é guardada.** Guardá-la destruiria a garantia inteira. Ela é
+  pedida uma vez por aparelho, e some.
 
 ## O ASSISTENTE (v161) — como está montado
 
