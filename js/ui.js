@@ -276,6 +276,9 @@ const UI = {
     painel.className = 'ui-panel ui-pop';
     painel.innerHTML = html;
     document.body.appendChild(painel);
+    // O painel também mostra valor (contagens e somas por filtro): marca as
+    // cifras dele para o modo privado alcançá-las como alcança o resto.
+    if (typeof marcarValores === 'function') marcarValores(painel);
     this.aberto = {
       painel, box: ancora,
       aoFechar: () => { ancora.classList.remove('tem-pop'); if (aoFechar) aoFechar(); },

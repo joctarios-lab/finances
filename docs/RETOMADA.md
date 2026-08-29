@@ -24,10 +24,49 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 132 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2478 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 155 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2915 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
+
+## O tema visual foi refeito (v155) — o que mudou e o que NÃO mudar
+- `css/styles.css` foi reescrito do zero: **tema duplo**, escuro por padrão.
+  A paleta vive em três camadas, nesta ordem: `:root` (escura, sempre definida)
+  → `@media (prefers-color-scheme: light)` com `:not([data-tema="dark"])`
+  → `:root[data-tema="light"]`. **Nenhuma cor pode ter sua única definição dentro
+  de um media query**, senão ela some no outro tema.
+- As tintas vêm em conjunto (ver o item sobre os quatro tokens, abaixo). Use os
+  tokens; não escreva hex nem rgba solto numa regra.
+- O tema é escolhido em Configurações → Aparência (`auto`/`dark`/`light`) e
+  aplicado por um bloco inline no topo do index.html, ANTES de qualquer script:
+  lido depois, o app abre no tema errado e troca no quadro seguinte.
+- **Modo privado** (o olho no header): quem esconde é `marcarValores()` em
+  js/app.js — ele varre o texto renderizado e embrulha cada cifra num
+  `<span class="v">`; o CSS só tem `.privado .v`. Não volte a listar classes:
+  a lista borrava o rótulo junto e deixava valores de fora.
+- O painel é UMA COLUNA. Uma divisão em duas foi tentada e desfeita — abaixo do
+  ponto de corte as colunas viravam pilha na ordem dos wrappers e o conselheiro
+  passava à frente do saldo. Há teste travando a volta disso.
+- O header ocupa a largura inteira da tela (`.topbar-inner` sem max-width); só o
+  conteúdo abaixo dele é limitado e centralizado.
+- **A cor é do dado, e só dele.** Não há gradiente, halo, névoa de fundo nem
+  sombra colorida em estado permanente — há teste reprovando a volta de cada um.
+  Fundo grafite plano (#0C0D0E), cards #141619, superfície de destaque #1C1F23.
+  Verde/vermelho/azul aparecem em valor, selo e filete; nunca em enfeite.
+- Hero e cartão de crédito se destacam por CAMADA, não por cor. São três planos:
+  página (`--ink`) → hero (`--destaque`) → painel de conta (`--embutido`). O hero
+  avança, os blocos de conta recuam dentro dele. Some isso e ele volta a parecer
+  pobre — foi exatamente o que aconteceu quando o gradiente saiu e nada entrou no
+  lugar. O acabamento completa: fio de luz de 1px na aresta de cima
+  (`inset 0 1px 0` branco a 5%), filete de situação de 2px e o valor em 40px.
+- O filete do hero segue o SELO (`:has(.b-amber)`), não a classe `.hero-*`: a
+  classe é binária e o selo tem três estados, e os dois discordavam num caso real
+  ("Aperto no variável" âmbar com filete verde ao lado).
+- Toda tinta tem QUATRO tokens: `--x`, `--x-soft` (fundo), `--x-ink` (texto
+  sobre o fundo) e `--x-borda` (contorno). Nunca escreva rgba() na regra: há
+  teste exigindo que todo token de cor do escuro exista também no claro, porque
+  um rgba solto não acompanha a troca de tema e vaza a cor do tema anterior.
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
 Rodar supabase/schema.sql (é idempotente). São DUAS coisas agora:

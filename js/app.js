@@ -137,6 +137,70 @@ const fmtDay = iso => new Date(iso + 'T12:00:00').toLocaleDateString('pt-BR', { 
 const fmtDate = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' });
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
+/* ---------- MARCAR O DINHEIRO ----------
+
+   O modo privado precisa esconder VALOR, e valor não tem elemento próprio: ele
+   aparece solto no meio de frases ("faltam R$ 200 para a meta"), dentro de
+   rótulos, em células de tabela e como texto de gráfico. A primeira versão disto
+   era uma lista de classes no CSS, e ela errava dos dois lados — borrava a caixa
+   inteira junto com o rótulo, e mesmo com quarenta seletores continuava deixando
+   cifras de fora, porque toda tela nova traz um lugar novo.
+
+   Aqui a marcação passa a ser feita no texto já renderizado: uma varredura pelos
+   nós de texto embrulha cada cifra num `<span class="v">`. O que o CSS esconde
+   passa a ser exatamente o número — nunca o rótulo ao lado dele — e a cobertura
+   deixa de depender de alguém lembrar de atualizar uma lista.
+
+   Roda SEMPRE, não só no modo privado: assim ligar e desligar o olho é só uma
+   classe no <html>, sem redesenhar a tela. Uma passada custa uma varredura de
+   alguns milhares de nós — abaixo do que o próprio innerHTML acabou de gastar. */
+const RE_DINHEIRO = /-?R\$[\s ]?-?\d[\d.]*(?:,\d{2})?/;
+const RE_DINHEIRO_G = new RegExp(RE_DINHEIRO.source, 'g');
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function marcarValores(root) {
+  const alvo = root || $('#view');
+  if (!alvo || typeof document.createTreeWalker !== 'function') return;
+  const it = document.createTreeWalker(alvo, NodeFilter.SHOW_TEXT, {
+    acceptNode(no) {
+      const pai = no.parentNode;
+      if (!pai) return NodeFilter.FILTER_REJECT;
+      // Já marcado, ou texto que não é para ser tocado
+      if (pai.nodeName === 'SCRIPT' || pai.nodeName === 'STYLE' || pai.nodeName === 'TEXTAREA') return NodeFilter.FILTER_REJECT;
+      if (pai.classList && pai.classList.contains('v')) return NodeFilter.FILTER_REJECT;
+      return RE_DINHEIRO.test(no.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+    },
+  });
+  /* Coleta antes de mexer: trocar um nó durante a caminhada invalida o iterador
+     e a varredura para no primeiro valor encontrado. */
+  const nos = [];
+  while (it.nextNode()) nos.push(it.currentNode);
+
+  for (const no of nos) {
+    const pai = no.parentNode;
+    if (!pai) continue;
+    /* Dentro de um SVG não cabe <span> — ele não tem caixa e não renderiza. O
+       elemento <text> inteiro é a cifra ali, então basta marcá-lo. */
+    if (pai.namespaceURI === SVG_NS) { pai.classList.add('v'); continue; }
+
+    const txt = no.nodeValue;
+    const frag = document.createDocumentFragment();
+    let fim = 0, m;
+    RE_DINHEIRO_G.lastIndex = 0;
+    while ((m = RE_DINHEIRO_G.exec(txt))) {
+      if (m.index > fim) frag.appendChild(document.createTextNode(txt.slice(fim, m.index)));
+      const span = document.createElement('span');
+      span.className = 'v';
+      span.textContent = m[0];
+      frag.appendChild(span);
+      fim = m.index + m[0].length;
+    }
+    if (fim < txt.length) frag.appendChild(document.createTextNode(txt.slice(fim)));
+    pai.replaceChild(frag, no);
+  }
+}
+window.marcarValores = marcarValores;
+
 // tipo: 'ok' (confirmação), 'err' (algo faltou), 'info' (neutro)
 function toast(msg, tipo) {
   const t = $('#toast');
@@ -287,10 +351,12 @@ function render() {
   // mostrar um mês em Cartões/Metas (que não são mensais) ou um mês diferente
   // do que a tela de Relatórios está exibindo.
   $('#topbar-month').textContent = TITULOS[state.tab] || 'Painel';
+  pintarPeriodo(period);
   const views = { inicio: renderInicio, extrato: renderExtrato, cartoes: renderCartoes, metas: renderMetas, relatorios: renderRelatorios };
   refreshIdentity();
   $('#view').innerHTML = views[state.tab](period);
   paintIcons($('#view'));
+  marcarValores($('#view'));
   if (typeof UI !== 'undefined') UI.enhance($('#view'));
   /* Os gráficos entram DEPOIS do innerHTML: ApexCharts mede o elemento para
      desenhar, e um div fora do DOM não tem largura. limpar() antes derruba as
@@ -1977,6 +2043,19 @@ function renderInicio(period) {
       ${resumoDoProximoMes()}
     </div>`;
 
+  /* ---------- A ORDEM DO PAINEL, EM UMA COLUNA ----------
+
+     Chegou a existir aqui uma divisão em duas colunas (ação à esquerda, números
+     à direita). Foi desfeita: com o conteúdo que este painel tem, a coluna
+     estreita ficava com o conselheiro sozinho ao lado de uma coluna três vezes
+     mais alta, e — pior — abaixo do ponto de corte as duas viravam uma pilha na
+     ordem dos wrappers, jogando o conselheiro e a fila na frente do saldo. O
+     cartão de configuração aparecia depois deles, longe do topo.
+
+     A ordem abaixo é a leitura pretendida, e ela é linear: o que falta
+     configurar, o que precisa de ação, o saldo, o que ele implica, e só então a
+     análise. Quem quiser duas colunas de novo precisa de widgets próprios para a
+     segunda — não de uma fatia desta. */
   return `
     ${setupCard}
     ${atual ? filaDePendencias() : ''}
@@ -3872,6 +3951,26 @@ function refreshIdentity() {
   const side = $('#side-family');
   if (side) side.textContent = DB.familyLabel();
   document.title = nome ? `Finanças — ${nome}` : 'Finanças da Família';
+}
+
+/* ---------- O período do ciclo, no header ----------
+   Indicador, não um segundo controle de navegação: as setas de mês moram dentro
+   da tela que tem mês. Quando se está fora do ciclo corrente ele acende e passa
+   a ser o atalho de volta — a única ação que faltava a quem se perdeu navegando
+   meses atrás. Some nas telas sem período (Cartões, Metas), porque ali um mês na
+   tela mentiria sobre o que está sendo mostrado. */
+function pintarPeriodo(period) {
+  const chip = $('#btn-periodo');
+  if (!chip) return;
+  const temMes = state.tab === 'inicio' || state.tab === 'extrato';
+  chip.hidden = !temMes;
+  if (!temMes) return;
+  const dia = d => d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' }).replace('.', '');
+  const fim = new Date(period.end.getTime() - 86400000);   // `end` é exclusivo
+  $('#topbar-periodo').textContent = `${dia(period.start)} – ${dia(fim)}`;
+  const fora = state.monthOffset !== 0;
+  chip.classList.toggle('fora', fora);
+  chip.title = fora ? 'Voltar para o ciclo atual' : 'Ciclo financeiro em exibição';
 }
 
 /* ---------- Relatórios ---------- */
@@ -5846,6 +5945,7 @@ function openSheet(html) {
   sheet.innerHTML = `<div class="sheet-handle"></div>${html}`;
   sheet.hidden = false; $('#sheet-backdrop').hidden = false;
   paintIcons(sheet);
+  marcarValores(sheet);
   if (typeof UI !== 'undefined') UI.enhance(sheet);
   // A folha também injeta HTML de uma vez: o gráfico dela só existe depois disso
   if (typeof Graficos !== 'undefined') Graficos.montar();
@@ -7365,6 +7465,7 @@ function openModal(html) {
   $('#modal').innerHTML = `<div class="modal-inner">${html}</div>`;
   $('#modal').hidden = false; $('#modal-backdrop').hidden = false;
   paintIcons($('#modal'));
+  marcarValores($('#modal'));
   if (typeof UI !== 'undefined') UI.enhance($('#modal'));
 }
 function closeModal() { $('#modal').hidden = true; $('#modal-backdrop').hidden = true; render(); }
@@ -8113,6 +8214,37 @@ function confirmarTarefa(entryId, aceitar) {
 }
 
 
+/* ---------- Aparência ----------
+   Três estados, e o terceiro é o padrão: SEGUIR O SISTEMA. Um app que ignora a
+   preferência do aparelho fica claro às onze da noite porque alguém escolheu
+   "claro" uma vez, seis meses atrás.
+
+   A escolha vive no <html> (não no <body>) porque o bloco no topo do index.html
+   a aplica antes da primeira pintura — sem isso, a tela pisca no tema errado a
+   cada abertura. Aqui só se grava e se marca; toda a cor está no CSS. */
+const Tema = {
+  KEY: 'financas.tema',
+  atual() {
+    try { return localStorage.getItem(this.KEY) || 'auto'; } catch (_) { return 'auto'; }
+  },
+  rotulo() {
+    return { dark: 'Sempre escuro', light: 'Sempre claro' }[this.atual()] || 'Acompanha o aparelho';
+  },
+  aplicar(valor) {
+    try {
+      if (valor === 'auto') localStorage.removeItem(this.KEY);
+      else localStorage.setItem(this.KEY, valor);
+    } catch (_) {}
+    if (valor === 'auto') delete document.documentElement.dataset.tema;
+    else document.documentElement.dataset.tema = valor;
+    /* A cor da barra do sistema é uma tag <meta>, e o navegador só a relê quando
+       ela muda. Sem isto, o topo do app instalado continuava preto num app que
+       acabou de ficar claro. */
+    const bg = getComputedStyle(document.documentElement).getPropertyValue('--ink').trim();
+    document.querySelectorAll('meta[name="theme-color"]').forEach(m => m.setAttribute('content', bg));
+  },
+};
+
 function openConfig() {
   const s = Sync.cfg || {};
   openModal(`
@@ -8132,6 +8264,7 @@ function openConfig() {
     <div class="settings-item" data-go="family"><span class="cfg-left"><span class="cfg-ico" data-ico="users"></span><span>Família &amp; ciclo do mês<br><small>${esc(DB.familyLabel())}${Sync.hasFamily() ? ' · código para convidar' : ' · início no dia ' + DB.settings().month_start_day}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="sync"><span class="cfg-left"><span class="cfg-ico" data-ico="cloud"></span><span>Sincronização<br><small>${Sync.hasFamily() ? 'Conectado como ' + esc(s.user_email || '') : 'Não configurada'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="ofx"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Importar extrato OFX<br><small>traga os lançamentos do banco ou cartão de uma vez</small></span></span><span class="chev" data-ico="chev"></span></div>
+    <div class="settings-item" data-go="tema"><span class="cfg-left"><span class="cfg-ico" data-ico="${Tema.atual() === 'light' ? 'sun' : 'moon'}"></span><span>Aparência<br><small>${Tema.rotulo()}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="notif"><span class="cfg-left"><span class="cfg-ico" data-ico="bell"></span><span>Notificações<br><small>${Notif.enabled() ? 'Ativas — faturas, orçamentos e metas' : 'Desativadas'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="security"><span class="cfg-left"><span class="cfg-ico" data-ico="shield"></span><span>Segurança<br><small>${Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'Sem proteção local'}</small></span></span><span class="chev" data-ico="chev"></span></div>
     <div class="settings-item" data-go="backup"><span class="cfg-left"><span class="cfg-ico" data-ico="download"></span><span>Backup (exportar / importar)<br><small>Arquivo JSON local</small></span></span><span class="chev" data-ico="chev"></span></div>
@@ -8371,6 +8504,37 @@ function openRecorrencias() {
 function openConfigSection(sec) {
   if (sec === 'recorrencias') return openRecorrencias();
   if (sec === 'criancas') return openCriancas();
+  if (sec === 'tema') {
+    const opcoes = [
+      ['auto', 'Acompanhar o aparelho', 'muda sozinho quando o celular muda — é o padrão'],
+      ['dark', 'Sempre escuro', 'para consultar à noite sem levar um facho na cara'],
+      ['light', 'Sempre claro', 'para usar de dia, no computador'],
+    ];
+    const desenhar = () => {
+      const agora = Tema.atual();
+      openModal(`
+        <div class="modal-title">Aparência<button class="close-x" id="md-back"><span data-ico="back"></span></button></div>
+        <div class="ob-opts">
+          ${opcoes.map(([v, t, d]) => `
+            <button class="ob-opt" data-tema-op="${v}" style="${v === agora ? 'border-color:var(--gold)' : ''}">
+              <b>${t} ${v === agora ? '✓' : ''}</b><small>${d}</small>
+            </button>`).join('')}
+        </div>
+      `);
+      $('#md-back').onclick = openConfig;
+      /* `data-tema-op`, e não `data-tema`: o próprio <html> carrega `data-tema`
+         quando há um tema escolhido, então um seletor por `[data-tema]` pegava o
+         documento inteiro e pendurava o handler nele. Qualquer clique na página
+         — o botão de voltar inclusive — subia até o <html> e redesenhava esta
+         tela, o que fazia o voltar parecer sem função. */
+      document.querySelectorAll('#modal [data-tema-op]').forEach(b => b.onclick = () => {
+        Tema.aplicar(b.dataset.temaOp);
+        desenhar();                       // redesenha para o ✓ acompanhar a escolha
+        toast('Aparência atualizada ✓');
+      });
+    };
+    return desenhar();
+  }
   if (sec === 'accounts') {
     crudList('accounts', 'Contas',
       a => `${esc(a.name)}<br><small>${esc(a.type)} · ${fmt(a.balance)}</small>`,
@@ -9764,9 +9928,43 @@ Sync.onStatus = (msg, ok = true) => {
 document.querySelectorAll('.tab, .side-item[data-tab]').forEach(b => b.onclick = () => setTab(b.dataset.tab));
 $('#fab').onclick = () => openTxSheet(null);
 $('#btn-new-desktop').onclick = () => openTxSheet(null);
-$('#btn-config').onclick = openConfig;
 $('#side-config').onclick = openConfig;
 $('#side-lock').onclick = () => Auth.lockNow();
+/* Atalhos do header e da sidebar para telas que já existem em Configurações.
+   Nada de lógica nova: são as mesmas funções que a lista de ajustes chama. */
+$('#btn-perfil').onclick = openConfig;
+$('#btn-ofx').onclick = () => openOfxImport();
+$('#side-recorrencias').onclick = () => openRecorrencias();
+$('#side-criancas').onclick = () => openCriancas();
+
+/* ---------- Ocultar valores ----------
+   O borrão é CSS puro (`.privado`, em styles.css); aqui só se guarda a escolha e
+   se mantém o botão contando o estado atual. Fica no <html> e não no <body>
+   porque o mesmo bloco no topo do index.html o aplica antes da primeira pintura —
+   sem isso, os valores apareceriam por um quadro antes de borrar. */
+const PRIVACIDADE_KEY = 'financas.privacidade';
+function pintarPrivacidade() {
+  const ligado = document.documentElement.classList.contains('privado');
+  const btn = $('#btn-privacidade');
+  if (!btn) return;
+  btn.setAttribute('aria-pressed', String(ligado));
+  btn.title = ligado ? 'Mostrar valores' : 'Ocultar valores';
+  btn.setAttribute('aria-label', btn.title);
+  btn.querySelector('[data-ico]').dataset.ico = ligado ? 'eyeOff' : 'eye';
+  paintIcons(btn);
+}
+$('#btn-privacidade').onclick = () => {
+  const ligado = document.documentElement.classList.toggle('privado');
+  try { localStorage.setItem(PRIVACIDADE_KEY, ligado ? '1' : '0'); } catch (_) {}
+  pintarPrivacidade();
+};
+pintarPrivacidade();
+
+$('#btn-periodo').onclick = () => {
+  if (state.monthOffset === 0) return;    // no ciclo corrente ele é só rótulo
+  state.monthOffset = 0;
+  render();
+};
 /* Sincronizar a pedido do usuário: sempre responde algo. Antes o erro era
    engolido (.catch vazio) e o sucesso não dizia nada — em rede lenta a pessoa
    tocava várias vezes sem saber se tinha acontecido. */
@@ -9807,13 +10005,28 @@ Sync.onState = (estado, pendentes) => {
     offline: 'Sem conexão — será enviado assim que voltar',
     off: 'Sincronização não configurada',
   }[estado] || '';
+  /* O rótulo ao lado do ponto. Curto porque divide a barra com o período e as
+     ações — em tela estreita ele some e sobra só o ponto, que já carrega o
+     estado pela cor. O número de pendências entra no rótulo porque "3" é
+     acionável de um jeito que "pendente" não é. */
+  const rot = $('#sync-rotulo');
+  if (rot) rot.textContent = {
+    ok: 'Em dia', sync: 'Sincronizando',
+    pendente: `${pendentes} na fila`,
+    offline: 'Sem conexão',
+    off: 'Local',
+  }[estado] || 'Local';
 };
 
 function refreshUserChip() {
   const mail = (Sync.cfg && Sync.cfg.user_email) || '';
   $('#user-name').textContent = mail ? mail.split('@')[0] : 'Família';
   $('#user-mail').textContent = mail ? (Sync.hasFamily() ? 'sincronizado ☁️' : 'conectado') : 'modo local';
-  $('#user-avatar').textContent = (mail || 'F').charAt(0).toUpperCase();
+  const inicial = (mail || 'F').charAt(0).toUpperCase();
+  $('#user-avatar').textContent = inicial;
+  // O mesmo avatar aparece no header (é o atalho de perfil em qualquer largura)
+  const topo = $('#topbar-avatar');
+  if (topo) topo.textContent = inicial;
 }
 refreshUserChip();
 paintIcons();   // ícones do shell estático (sidebar, topbar, tabbar)

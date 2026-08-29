@@ -1,47 +1,238 @@
-/* Finanças da Família — tema inspirado no Metronic 8 (demo1)
-   Desktop: admin template (sidebar escura + conteúdo claro em cards brancos)
-   Mobile: app com barra de abas inferior e FAB */
+/* ============================================================================
+   Finanças da Família — sistema visual
+
+   ESCURO É O PADRÃO, e não uma variante. O app é de consulta rápida e noturna
+   (confere-se o saldo na cama, lança-se o gasto na fila do mercado), e um fundo
+   de carbono devolve menos luz na mão de quem só quer ver um número. O claro
+   existe inteiro ao lado dele, para quem usa no computador de dia.
+
+   COMO O TEMA É DECIDIDO, em três camadas, nesta ordem:
+     1. :root                    → a paleta escura, sempre definida;
+     2. @media (light) + :not()  → o sistema pede claro e ninguém escolheu nada;
+     3. [data-tema="…"]          → a escolha explícita, que vence as duas acima.
+   Nenhuma cor tem sua ÚNICA definição dentro de um media query: sem isso, um
+   token esquecido fica sem valor em um dos temas e o elemento herda transparente.
+
+   AS TINTAS VÊM EM TRIOS. Cada cor semântica tem a cor cheia (--red), o fundo
+   tintado (--red-soft) e a cor do texto sobre esse fundo (--red-ink). É o que
+   permite o mesmo badge ter contraste nos dois temas sem uma regra por tema:
+   no escuro o texto clareia, no claro ele escurece, e a marcação não muda.
+
+   O QUE NÃO SE MEXE: os nomes --ink/--paper/--gold vêm do tema anterior e estão
+   espalhados por app.js e ui.js. Renomeá-los seria uma varredura de risco sem
+   ganho visual nenhum, então eles seguem — só o valor mudou.
+   ============================================================================ */
 
 :root {
-  --ink: #f5f8fa;          /* fundo da página (cinza claro Metronic) */
-  --ink-2: #ffffff;        /* cards */
-  --ink-3: #f5f8fa;        /* campos / superfícies internas */
-  --line: #eff2f5;         /* bordas */
-  --paper: #181c32;        /* texto principal */
-  /* 4,96:1 sobre branco — passa no AA (4,5:1). O #7e8299 do Metronic dava 3,79:1,
-     e aqui o cinza carrega informação de decisão: "faltam R$ X", data de
-     vencimento, em que fatura a compra cai. */
-  --paper-dim: #6b6f85;    /* texto secundário */
-  --gold: #009ef7;         /* primário Metronic (azul) — nome mantido por compatibilidade */
-  --green: #50cd89;
-  --amber: #f6a609;
-  --red: #f1416c;
-  --blue: #7239ea;         /* info (roxo Metronic) */
-  --sidebar: #1e1e2d;
-  --sidebar-2: #1b1b28;
-  --sidebar-text: #9899ac;
-  --sidebar-active: #2a2a3c;
-  --shadow: 0 0 20px 0 rgba(76, 87, 125, .04), 0 1px 2px rgba(76, 87, 125, .06);
-  --radius: 12px;
-  --font-body: 'Inter', 'Segoe UI', system-ui, sans-serif;
+  color-scheme: dark;
+
+  /* ---------- Superfícies ----------
+     Três degraus, e nenhum gradiente. A hierarquia vem da luminosidade e de uma
+     borda de 1px — é assim que Mercury e Linear separam plano de plano, e é o que
+     mantém a tela legível quando ela está cheia de número. */
+  --ink: #0C0D0E;          /* fundo da página — grafite plano */
+  --ink-2: #141619;        /* cards e painéis */
+  --ink-3: #1C1F23;        /* campos, menus e superfícies elevadas */
+  --ink-4: #141619;        /* faixas: header, dock, sidebar */
+  /* A superfície do bloco de DESTAQUE (hero, cartão de crédito): sempre a mais
+     à frente do tema. No escuro isso é um degrau acima do card; no claro é o
+     branco sobre o fundo cinza. Nos dois casos ela avança em direção ao leitor. */
+  --destaque: #1C1F23;
+  /* E o plano que RECUA dentro do destaque: os painéis de conta do hero. No
+     escuro ele volta para a cor do card; no claro, para a do fundo da página.
+     Nos dois casos é um degrau para trás — é essa terceira camada que dá relevo
+     ao hero sem nenhuma tinta decorativa. */
+  --embutido: #141619;
+  --line: rgba(255, 255, 255, .08);
+  --line-strong: rgba(255, 255, 255, .14);
+
+  /* Texto. O secundário carrega decisão ("faltam R$ X", "vence dia 5"), então
+     ele passa em AA sobre o card, não só sobre o fundo da página. */
+  --paper: #E6E8EA;
+  --paper-dim: #9BA1A8;
+  --paper-faint: #6B7076;
+
+  /* ---------- Cor: só para dado ----------
+     Fora destes três, a interface é grafite. Cor aqui significa alguma coisa —
+     saiu, entrou, precisa de atenção —, e por isso ela não aparece em fundo
+     decorativo, borda de destaque nem brilho: gastá-la em enfeite é o que faz o
+     vermelho de uma conta vencida deixar de saltar. */
+  --gold: #3B82F6;         /* ação primária e link (nome herdado do tema antigo) */
+  --gold-ink: #60A5FA;
+  --gold-soft: rgba(59, 130, 246, .12);
+
+  --green: #22C55E;
+  --green-ink: #4ADE80;
+  --green-soft: rgba(34, 197, 94, .12);
+
+  --amber: #F59E0B;
+  --amber-ink: #FBBF24;
+  --amber-soft: rgba(245, 158, 11, .12);
+
+  --red: #EF4444;
+  --red-ink: #F87171;
+  --red-soft: rgba(239, 68, 68, .12);
+
+  /* Transferência e "parcial": movimento que não é ganho nem perda. Violeta
+     contido, usado só no dado — nunca como fundo de bloco. */
+  --blue: #8B5CF6;
+  --blue-ink: #A78BFA;
+  --blue-soft: rgba(139, 92, 246, .12);
+
+  /* Header, sidebar e dock. O desfoque é o que os separa do conteúdo que passa
+     por baixo; a cor é a mesma do card, sem tingimento. */
+  --glass: rgba(20, 22, 25, .82);
+  --glass-blur: saturate(120%) blur(16px);
+
+  /* Elevação discreta: a borda faz o trabalho, a sombra só confirma a distância.
+     Sombras largas e escuras somem no fundo grafite e só embaçam a borda. */
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-lg: 0 8px 28px rgba(0, 0, 0, .45), 0 2px 6px rgba(0, 0, 0, .3);
+
+  /* Cantos discretos. 8px no que é caixa de dado, 6px no que é controle, 12px só
+     no que flutua sobre a tela. Raio grande arredonda a densidade e faz um painel
+     financeiro parecer aplicativo de celular. */
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-lg: 12px;
+  /* Só o que é genuinamente uma pastilha: o ponto de status e o selo numérico.
+     Container de dashboard não leva pílula. */
+  --radius-pill: 999px;
+
+  /* Bordas tintadas: a versão de contorno de cada tinta. Existem como token
+     porque um rgba() escrito à mão na regra não acompanha a troca de tema — foi
+     assim que o azul da paleta anterior sobreviveu em quinze bordas. */
+  --gold-borda: rgba(59, 130, 246, .32);
+  --green-borda: rgba(34, 197, 94, .32);
+  --amber-borda: rgba(245, 158, 11, .32);
+  --red-borda: rgba(239, 68, 68, .32);
+  --blue-borda: rgba(139, 92, 246, .32);
+  /* O azul a meio caminho, para a segunda faixa da barra de limite */
+  --gold-fraco: rgba(59, 130, 246, .45);
+
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif;
+
+  /* Altura do header preso. As barras internas que também grudam (o topo do
+     extrato) se ancoram nela em vez de repetir o número. */
+  --h-topbar: 52px;
+
   /* Altura coberta pelo teclado do celular. js/ui.js atualiza pelo visualViewport;
      0 quando não há teclado, para o valor servir em calc() sem condicional. */
   --teclado: 0px;
+
+  /* A curva de folha nativa (iOS): sai rápido e assenta devagar. */
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out: cubic-bezier(.22, 1, .36, 1);
 }
 
+/* O sistema pede claro e ninguém escolheu tema no app */
+@media (prefers-color-scheme: light) {
+  :root:not([data-tema="dark"]) {
+    color-scheme: light;
+    --ink: #F6F8FA;
+    --ink-2: #FFFFFF;
+    --ink-3: #F1F3F5;
+    --ink-4: #FFFFFF;
+    --destaque: #FFFFFF;
+    --embutido: #F6F8FA;
+    --line: rgba(0, 0, 0, .08);
+    --line-strong: rgba(0, 0, 0, .14);
+
+    --paper: #16181B;
+    --paper-dim: #5B6167;
+    --paper-faint: #8A9098;
+
+    --gold: #3B82F6;
+    --gold-ink: #2563EB;
+    --gold-soft: rgba(59, 130, 246, .09);
+
+    --green: #16A34A;
+    --green-ink: #15803D;
+    --green-soft: rgba(22, 163, 74, .10);
+
+    --amber: #D97706;
+    --amber-ink: #B45309;
+    --amber-soft: rgba(217, 119, 6, .10);
+
+    --red: #DC2626;
+    --red-ink: #B91C1C;
+    --red-soft: rgba(220, 38, 38, .08);
+
+    --blue: #7C3AED;
+    --blue-ink: #6D28D9;
+    --blue-soft: rgba(124, 58, 237, .08);
+
+    --gold-borda: rgba(59, 130, 246, .28);
+    --green-borda: rgba(22, 163, 74, .28);
+    --amber-borda: rgba(217, 119, 6, .28);
+    --red-borda: rgba(220, 38, 38, .24);
+    --blue-borda: rgba(124, 58, 237, .24);
+    --gold-fraco: rgba(59, 130, 246, .4);
+
+    --glass: rgba(255, 255, 255, .85);
+
+    /* Quase imperceptível: no claro a elevação vem da borda, não de uma mancha
+       cinza embaixo do cartão. */
+    --shadow: 0 1px 3px rgba(0, 0, 0, .04);
+    --shadow-lg: 0 8px 28px rgba(0, 0, 0, .10), 0 2px 6px rgba(0, 0, 0, .05);
+  }
+}
+
+/* A escolha explícita vence o sistema, nos dois sentidos */
+:root[data-tema="light"] {
+  color-scheme: light;
+  --ink: #F6F8FA;
+  --ink-2: #FFFFFF;
+  --ink-3: #F1F3F5;
+  --ink-4: #FFFFFF;
+  --destaque: #FFFFFF;
+  --embutido: #F6F8FA;
+  --line: rgba(0, 0, 0, .08);
+  --line-strong: rgba(0, 0, 0, .14);
+
+  --paper: #16181B;
+  --paper-dim: #5B6167;
+  --paper-faint: #8A9098;
+
+  --gold: #3B82F6;
+  --gold-ink: #2563EB;
+  --gold-soft: rgba(59, 130, 246, .09);
+
+  --green: #16A34A;
+  --green-ink: #15803D;
+  --green-soft: rgba(22, 163, 74, .10);
+
+  --amber: #D97706;
+  --amber-ink: #B45309;
+  --amber-soft: rgba(217, 119, 6, .10);
+
+  --red: #DC2626;
+  --red-ink: #B91C1C;
+  --red-soft: rgba(220, 38, 38, .08);
+
+  --blue: #7C3AED;
+  --blue-ink: #6D28D9;
+  --blue-soft: rgba(124, 58, 237, .08);
+
+  --gold-borda: rgba(59, 130, 246, .28);
+  --green-borda: rgba(22, 163, 74, .28);
+  --amber-borda: rgba(217, 119, 6, .28);
+  --red-borda: rgba(220, 38, 38, .24);
+  --blue-borda: rgba(124, 58, 237, .24);
+  --gold-fraco: rgba(59, 130, 246, .4);
+
+  --glass: rgba(255, 255, 255, .85);
+  --shadow: 0 1px 3px rgba(0, 0, 0, .04);
+  --shadow-lg: 0 8px 28px rgba(0, 0, 0, .10), 0 2px 6px rgba(0, 0, 0, .05);
+}
+
+/* ---------- Base ---------- */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }   /* garante que hidden vença classes com display próprio (ex: .lock) */
 /* Sem "puxar para atualizar": num app instalado, o gesto recarregava a tela
    por acidente durante a rolagem. Também impede o efeito de elástico da borda. */
 html { -webkit-text-size-adjust: 100%; overscroll-behavior-y: none; }
 
-/* Ícones SVG inline */
-[data-ico] { display: inline-flex; align-items: center; justify-content: center; }
-[data-ico] svg { width: 18px; height: 18px; }
-:focus-visible { outline: 2px solid rgba(0, 158, 247, .55); outline-offset: 2px; border-radius: 6px; }
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-}
 body {
   background: var(--ink);
   color: var(--paper);
@@ -50,143 +241,554 @@ body {
   line-height: 1.5;
   min-height: 100dvh;
   overscroll-behavior-y: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Ligaduras e alternativas contextuais da Inter: números e maiúsculas ficam
+     mais limpos sem custo de renderização. */
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
 }
 
-/* ---------- Estrutura: sidebar (desktop) + wrapper ---------- */
+/* O FUNDO É PLANO, e é de propósito. Houve aqui uma névoa de dois focos coloridos
+   presa na viewport. Ela some: num app de dado, todo pixel colorido que não é
+   dado disputa com o que é, e a tinta violeta de fundo é exatamente o que faz uma
+   interface parecer template. O grafite chapado deixa o vermelho de uma conta
+   vencida ser a única coisa colorida na tela — que é o trabalho dele. */
+
+/* TODO VALOR MONETÁRIO EM DÍGITOS DE MESMA LARGURA. Sem isso, uma coluna de
+   valores no extrato serrilha: o "1" é estreito e cada linha começa num lugar
+   diferente, e o olho perde a vertical justamente onde precisa comparar. */
+.num, .tx-amount, .kpi-value, .hero-value, .cc-invoice-val, .pat-val,
+.pend-val, .kid-saldo, .kid-mov-val, .cg-val, .mover-delta, .legend-val,
+.hc-l b, .res-dir > b, .dia-badge, .regua-pes, .prev-dia, .cc-legenda i,
+.rep-table .num, .val-rel, .delta, .goal-nums, .apx-tip-l b, .apx-tip-l small,
+.res-tip-l b, .kid-tarefa b, .cc-linha b, .amount-input, .mini-stats b, .hero-stats b {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+/* Ícones SVG inline. O tamanho é decidido aqui, não no atributo do SVG. */
+[data-ico] { display: inline-flex; align-items: center; justify-content: center; }
+[data-ico] svg { width: 18px; height: 18px; }
+
+/* O ícone dentro da caixa tintada (icoBadge, em js/icons.js) */
+.ico-badge {
+  width: 38px; height: 38px; border-radius: var(--radius-sm); flex: none;
+  display: grid; place-items: center;
+}
+.ico-badge svg { width: 19px; height: 19px; }
+
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; border-radius: 6px; }
+::selection { background: var(--gold-soft); color: var(--paper); }
+
+/* Barras de rolagem discretas, no tom do tema */
+* { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--paper-faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* ---------- MODO PRIVADO ----------
+   Um toque esconde o dinheiro sem tirar nada mais da tela: dá para mostrar o app
+   a alguém, ou abri-lo no ônibus, e continuar navegando.
+
+   O ALVO É A CIFRA, e só ela. Quem marca é `marcarValores()`, em js/app.js: ele
+   varre o texto já renderizado e embrulha cada valor num `<span class="v">`.
+   Aqui só existe a regra que esconde essa marca.
+
+   Foi assim que o modo deixou de ser uma lista de classes. A lista errava dos
+   dois lados — borrava a caixa inteira, levando o rótulo junto ("Em contas"
+   sumia com o número), e mesmo com quarenta seletores deixava cifras de fora,
+   porque toda tela nova tem um lugar novo onde o valor aparece. Marcando o
+   texto, o rótulo fica legível, a frase continua inteira e a cobertura não
+   depende de ninguém lembrar de atualizar nada.
+
+   `filter` roda na GPU e não força layout — a alternância é instantânea mesmo
+   com duzentas linhas na tela. `user-select: none` junto, senão o valor sai
+   legível ao copiar o texto da página. */
+.privado .v {
+  filter: blur(6px);
+  user-select: none; -webkit-user-select: none;
+  transition: filter .18s ease;
+}
+/* Texto de gráfico é pequeno: 6px de desfoque apagariam a linha em vez de
+   embaçá-la, e o eixo viraria uma mancha que atrapalha ler o desenho. O gráfico
+   continua inteiro — a forma da curva não é sigilo, o valor dela é. */
+.privado svg text.v { filter: blur(3px); }
+/* O campo de valor é um <input>: seu conteúdo não é nó de texto e nenhum span o
+   alcança, então ele é o único que continua escondido pelo elemento. */
+.privado .amount-input { filter: blur(7px); user-select: none; }
+/* Um toque na cifra a revela enquanto o dedo está nela: é o gesto de "só eu, só
+   agora", sem precisar desligar o modo inteiro. */
+.privado .v:active { filter: none; }
+
+/* ============================================================================
+   ESTRUTURA: sidebar + wrapper + header preso
+   ============================================================================ */
 #app { display: flex; min-height: 100dvh; }
 
+/* ---------- Sidebar (desktop) ----------
+   Vidro sobre a névoa de fundo: ela não é um bloco escuro colado à esquerda, é
+   uma camada da mesma tela. Fica presa em toda a altura e só o menu rola. */
 .sidebar {
   display: none;
-  width: 265px; flex: none;
-  background: var(--sidebar);
-  flex-direction: column;
+  width: 260px; flex: none;
   position: sticky; top: 0; height: 100dvh;
+  flex-direction: column;
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-right: 1px solid var(--line);
 }
 .sidebar-logo {
-  display: flex; align-items: center; gap: 10px;
-  padding: 22px 24px; border-bottom: 1px dashed #2c2c41;
+  display: flex; align-items: center; gap: 11px;
+  padding: 18px 20px; border-bottom: 1px solid var(--line);
 }
-.sidebar-logo img { width: 34px; height: 34px; border-radius: 8px; }
-.sidebar-logo b { color: #fff; font-size: 16px; font-weight: 700; letter-spacing: .01em; }
-.sidebar-logo small { display: block; color: var(--sidebar-text); font-size: 11px; font-weight: 400; }
-.sidebar-menu { padding: 16px 12px; display: flex; flex-direction: column; gap: 2px; flex: 1; overflow-y: auto; }
+.sidebar-logo img { width: 32px; height: 32px; border-radius: 9px; }
+.sidebar-logo b { color: var(--paper); font-size: 15px; font-weight: 700; letter-spacing: -.01em; }
+.sidebar-logo small {
+  display: block; color: var(--paper-dim); font-size: 11px; font-weight: 500;
+  max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sidebar-menu { padding: 10px; display: flex; flex-direction: column; gap: 1px; flex: 1; overflow-y: auto; }
 .sidebar-section {
-  font-size: 11px; text-transform: uppercase; letter-spacing: .12em;
-  color: #565674; padding: 14px 12px 6px; font-weight: 600;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em;
+  color: var(--paper-faint); padding: 14px 10px 5px; font-weight: 700;
 }
 .side-item {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 12px; border-radius: 8px; cursor: pointer;
-  color: var(--sidebar-text); background: none; border: none;
-  font-family: var(--font-body); font-size: 14px; font-weight: 500; text-align: left; width: 100%;
+  position: relative;
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 11px; border-radius: var(--radius-sm); cursor: pointer;
+  color: var(--paper-dim); background: none; border: none;
+  font-family: var(--font-body); font-size: 13.5px; font-weight: 500; text-align: left; width: 100%;
+  transition: color .15s ease, background .15s ease;
 }
-.side-item .tab-ico { font-size: 16px; width: 20px; text-align: center; }
-.side-item:hover { background: var(--sidebar-active); color: #fff; }
-.side-item.active { background: var(--sidebar-active); color: #fff; }
-.side-item.active .tab-ico { color: var(--gold); }
-.sidebar-footer { padding: 14px 16px; border-top: 1px dashed #2c2c41; }
-.user-chip { display: flex; align-items: center; gap: 10px; }
+.side-item .tab-ico { width: 20px; flex: none; display: grid; place-items: center; }
+.side-item:hover { background: var(--ink-3); color: var(--paper); }
+.side-item.active { background: var(--gold-soft); color: var(--gold-ink); font-weight: 600; }
+/* Filete à esquerda no item ativo: com um fundo tintado só, dois itens de cores
+   próximas ficam ambíguos numa olhada rápida. */
+.side-item.active::before {
+  content: ''; position: absolute; left: -10px; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 20px; border-radius: 0 3px 3px 0; background: var(--gold);
+}
+.sidebar-footer { padding: 12px 14px; border-top: 1px solid var(--line); }
+.user-chip { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .user-avatar {
-  width: 36px; height: 36px; border-radius: 8px; flex: none;
-  background: linear-gradient(135deg, #009ef7, #7239ea);
-  color: #fff; font-weight: 700; display: grid; place-items: center; font-size: 14px;
+  width: 34px; height: 34px; border-radius: 10px; flex: none;
+  background: var(--gold);
+  color: #fff; font-weight: 700; display: grid; place-items: center; font-size: 13px;
 }
-.user-chip b { color: #fff; font-size: 13px; display: block; }
-.user-chip small { color: var(--sidebar-text); font-size: 11px; }
+.user-chip > div { min-width: 0; }
+.user-chip b { color: var(--paper); font-size: 12.5px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-chip small { color: var(--paper-dim); font-size: 11px; }
 
 .wrapper { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .content {
-  width: 100%; max-width: 1140px; margin: 0 auto;
-  padding: 0 16px calc(88px + env(safe-area-inset-bottom));
+  width: 100%; max-width: 1180px; margin: 0 auto;
+  padding: 0 16px calc(104px + env(safe-area-inset-bottom));
 }
 
-/* ---------- Topo ---------- */
+/* ============================================================================
+   HEADER GLOBAL — centro de controle situacional
+   ============================================================================ */
 .topbar {
-  display: flex; justify-content: space-between; align-items: center; gap: 12px;
-  padding: calc(14px + env(safe-area-inset-top)) 2px 14px;
+  position: sticky; top: 0; z-index: 100;
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--line);
+  padding-top: env(safe-area-inset-top);
 }
-.topbar-hello { color: var(--paper-dim); font-size: 12px; font-weight: 500; }
-.topbar-month { font-weight: 700; font-size: 22px; color: var(--paper); }
-.topbar-actions { display: flex; gap: 8px; align-items: center; }
+/* LARGURA INTEIRA, e não a do conteúdo.
+
+   O header é a moldura da janela, não mais um bloco na pilha: as ações moram na
+   borda direita da tela e o contexto na esquerda, que é onde a mão e o olho os
+   procuram. Preso à largura do conteúdo (1180px), num monitor de 1920 ele abria
+   240px de vão em cada lado e as ações ficavam boiando no meio da faixa, longe
+   de qualquer borda — parecia uma barra centralizada dentro de outra barra.
+
+   O conteúdo abaixo continua limitado e centralizado: ali a medida de linha é
+   que manda, e texto de 1660px de largura não se lê. */
+.topbar-inner {
+  width: 100%;
+  min-height: var(--h-topbar);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 16px;
+}
+.topbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.topbar-logo { width: 30px; height: 30px; border-radius: 9px; flex: none; }
+.topbar-ctx { min-width: 0; }
+.topbar-hello {
+  color: var(--paper-dim); font-size: 11px; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.topbar-month {
+  font-weight: 700; font-size: 17px; color: var(--paper); letter-spacing: -.02em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* O período do ciclo financeiro. Fica apagado enquanto se olha o mês corrente e
+   acende quando se está em outro — é assim que ele avisa, sem alarme, que os
+   números na tela não são os de hoje. */
+.periodo-chip {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  padding: 5px 9px; border-radius: var(--radius-sm); cursor: default;
+  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper-dim);
+  font-family: var(--font-body); font-size: 12px; font-weight: 600;
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+  transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.periodo-chip svg { width: 14px; height: 14px; }
+.periodo-ico { flex: none; opacity: .8; }
+.periodo-chip.fora {
+  cursor: pointer; background: var(--amber-soft);
+  border-color: var(--amber-borda); color: var(--amber-ink);
+}
+.periodo-chip.fora:hover { border-color: var(--amber); }
+.periodo-chip.fora:active { transform: scale(.97); }
+
+/* ---------- Badge de sincronização ----------
+   Estado e ação no mesmo alvo: ele diz em que pé está a nuvem e, tocado,
+   sincroniza. O ponto é a informação — o rótulo some quando a tela aperta. */
+.sync-badge {
+  display: inline-flex; align-items: center; gap: 7px; flex: none;
+  padding: 5px 9px 5px 8px; border-radius: var(--radius-sm); cursor: pointer;
+  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper-dim);
+  font-family: var(--font-body); font-size: 12px; font-weight: 600; white-space: nowrap;
+  transition: border-color .15s ease, color .15s ease, transform .12s ease;
+}
+.sync-badge:hover { border-color: var(--line-strong); color: var(--paper); }
+.sync-badge:active { transform: scale(.96); }
+.sync-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: var(--paper-faint); position: relative;
+}
+/* O halo é um pseudo-elemento com transform próprio: animar o ponto faria a
+   pílula inteira recalcular a cada quadro. */
+.sync-dot::after {
+  content: ''; position: absolute; inset: -3px; border-radius: 50%;
+  background: inherit; opacity: 0;
+}
+#btn-sync[data-estado="ok"] .sync-dot { background: var(--green); }
+#btn-sync[data-estado="ok"] .sync-dot::after { animation: pulsoDot 2.6s ease-out infinite; }
+#btn-sync[data-estado="pendente"] .sync-dot { background: var(--amber); }
+#btn-sync[data-estado="pendente"] .sync-dot::after { animation: pulsoDot 1.6s ease-out infinite; }
+#btn-sync[data-estado="offline"] .sync-dot { background: var(--paper-faint); }
+#btn-sync[data-estado="off"] .sync-dot { background: var(--line-strong); }
+#btn-sync[data-estado="sync"] { color: var(--gold-ink); border-color: var(--gold-borda); }
+#btn-sync[data-estado="sync"] .sync-dot { background: var(--gold); animation: pulsoVivo 1s ease-in-out infinite; }
+#btn-sync[data-estado="pendente"] { color: var(--amber-ink); }
+@keyframes pulsoDot {
+  0% { opacity: .5; transform: scale(1); }
+  70%, 100% { opacity: 0; transform: scale(2.2); }
+}
+@keyframes pulsoVivo { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+.topbar-actions { display: flex; gap: 7px; align-items: center; flex: none; }
 .icon-btn {
-  width: 38px; height: 38px; border-radius: 8px; border: 1px solid transparent;
-  background: var(--ink-2); color: var(--paper-dim); font-size: 16px; cursor: pointer;
-  box-shadow: var(--shadow);
+  width: 38px; height: 38px; border-radius: var(--radius-sm); flex: none;
+  border: 1px solid var(--line); background: var(--ink-3); color: var(--paper-dim);
+  cursor: pointer; display: grid; place-items: center;
+  transition: color .15s ease, border-color .15s ease, background .15s ease, transform .12s ease;
 }
-.icon-btn:hover { color: var(--gold); }
-/* Estado da sincronização, sempre visível no botão ⇅ */
-#btn-sync { position: relative; }
-#btn-sync::after {
-  content: ''; position: absolute; top: 6px; right: 6px;
-  width: 7px; height: 7px; border-radius: 50%; background: transparent;
-  box-shadow: 0 0 0 2px var(--ink-2);
-}
-#btn-sync[data-estado="ok"]::after { background: var(--green); }
-#btn-sync[data-estado="pendente"]::after { background: var(--amber); }
-#btn-sync[data-estado="offline"]::after { background: #a1a5b7; }
-#btn-sync[data-estado="sync"] { color: var(--gold); }
-#btn-sync[data-estado="sync"] svg { animation: girar 1s linear infinite; }
-@keyframes girar { to { transform: rotate(360deg); } }
+.icon-btn:hover { color: var(--paper); border-color: var(--line-strong); }
 .icon-btn:active { transform: scale(.94); }
+/* Valores ocultos: o botão fica aceso enquanto o modo está ligado, senão não há
+   como saber por que a tela está borrada. */
+.privado #btn-privacidade { background: var(--gold-soft); border-color: var(--gold-borda); color: var(--gold-ink); }
+
+.avatar-btn {
+  width: 38px; height: 38px; border-radius: var(--radius-sm); flex: none;
+  border: 1px solid var(--line); cursor: pointer; padding: 0;
+  background: var(--gold);
+  color: #fff; font-family: var(--font-body); font-size: 13px; font-weight: 700;
+  display: grid; place-items: center;
+  transition: transform .12s ease, box-shadow .18s ease;
+}
+.avatar-btn:hover { border-color: var(--line-strong); }
+.avatar-btn:active { transform: scale(.94); }
+
+/* O botão de lançar, no desktop. Azul chapado, sem brilho e sem gradiente: ele é
+   a única ação primária da barra, e a cor sólida já basta para dizer isso. */
 .btn-new-desktop {
   display: none;
-  background: var(--gold); color: #fff; border: none; border-radius: 8px;
-  padding: 10px 16px; font-size: 13.5px; font-weight: 600; cursor: pointer; font-family: var(--font-body);
-  align-items: center; gap: 7px;
+  background: var(--gold); color: #fff; border: none; border-radius: var(--radius-sm);
+  padding: 8px 14px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: var(--font-body);
+  align-items: center; gap: 7px; white-space: nowrap;
+  transition: transform .12s ease, background .16s ease;
 }
 .btn-new-desktop svg { width: 16px; height: 16px; }
-.btn-new-desktop:hover { background: #0095e8; }
+.btn-new-desktop:hover { background: var(--gold-ink); }
+.btn-new-desktop:active { transform: scale(.97); }
 
-.sync-status { font-size: 12px; color: var(--paper-dim); padding: 0 2px 8px; }
-.sync-status.err { color: var(--red); }
+.sync-status { font-size: 12px; color: var(--paper-dim); padding: 10px 2px 0; }
+.sync-status.err { color: var(--red-ink); }
 
-/* ---------- Seções e cards ---------- */
-.view { display: flex; flex-direction: column; gap: 16px; animation: fadeUp .25s ease; }
-@keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+/* No celular o header guarda só o que é situacional */
+.only-desk { display: none; }
+@media (max-width: 1023px) {
+  .topbar-ctx { display: none; }
+}
+@media (max-width: 400px) {
+  .topbar-inner { gap: 8px; padding: 8px 12px; }
+  .sync-txt { display: none; }
+  .sync-badge { padding: 7px; }
+  .periodo-chip { padding: 6px 9px; font-size: 11.5px; }
+}
+
+/* ============================================================================
+   SEÇÕES, CARTÕES E RITMO DA PÁGINA
+   ============================================================================ */
+.view { display: flex; flex-direction: column; gap: 12px; }
 
 .section-title {
-  font-size: 13px; font-weight: 700; color: var(--paper);
-  display: flex; align-items: center; gap: 8px; margin-top: 4px;
+  font-size: 12.5px; font-weight: 700; color: var(--paper);
+  display: flex; align-items: center; gap: 10px; margin-top: 4px;
+  letter-spacing: .01em;
 }
 .section-title::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 
-/* ---------- Fluxo e saldo: dois painéis, um eixo de tempo ----------
-   Barras em cima, saldo embaixo. Dois painéis e não dois eixos no mesmo: fluxo
-   mensal vive nos milhares e saldo acumulado nas dezenas de milhares, e sobrepor
-   os dois exigiria alinhar duas escalas — o que é arbitrário e faz o gráfico
-   insinuar uma correlação que não está no dado. */
-/* A legenda do previsto usa a mesma marca vazada das barras futuras, para o olho
-   casar legenda e gráfico sem precisar de explicação */
-@media (max-width: 560px) { .fl-combo { height: 190px; } }
+/* Cabeçalho de seção com ações à direita. Nomeia a seção e ancora as ações
+   dela, no lugar de botões de largura inteira que cortavam a leitura. */
+.sec-cab {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  flex-wrap: wrap; gap: 8px 12px; margin: 6px 0 -6px;
+}
+.sec-tit b { display: block; font-size: 14px; font-weight: 700; letter-spacing: -.015em; }
+.sec-tit small { display: block; margin-top: 1px; font-size: 11.5px; color: var(--paper-dim); font-weight: 500; }
+.sec-acoes { display: flex; gap: 6px; flex: none; }
+/* Ação secundária: presente sem competir com a lista. Contorno em vez de
+   preenchimento — o preenchido puxaria o olho antes do conteúdo. */
+.sec-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 11px; border-radius: var(--radius-sm); min-height: 34px;
+  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper-dim);
+  font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+  transition: border-color .15s ease, color .15s ease, transform .12s ease;
+}
+.sec-btn:hover { border-color: var(--gold); color: var(--gold-ink); }
+.sec-btn:active { transform: scale(.97); }
+.sec-btn svg { width: 14px; height: 14px; }
 
-/* Barras na FRENTE: elas são o movimento, o dado que se compara mês a mês */
-/* Futuro esmaecido: é estimativa, e preenchimento cheio o faria pesar igual ao fato */
+.card {
+  background: var(--ink-2); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 14px; box-shadow: var(--shadow);
+}
+/* Cards lado a lado esticam para a mesma altura e alinham o rodapé embaixo */
+.grid-2 { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: stretch; }
+.grid-2 > .card { display: flex; flex-direction: column; }
+.grid-2 > .card > .chart-foot { margin-top: auto; }
+.grid-2 > .card > .donut-wrap { flex: 1; }
 
-/* Área ATRÁS, lavada: ela é o nível, não o movimento. Com o mesmo peso visual das
-   barras, as duas competiriam e nenhuma seria lida. */
-/* Tracejado é o que diz "daqui para frente é estimativa" sem precisar de rótulo */
-/* A fronteira de hoje: à esquerda é fato conciliado, à direita é estimativa */
-/* Fundo próprio no rótulo do saldo: ele pousa sobre as barras, e sem o fundo o
-   número se perderia no meio delas */
-.fl-nota { margin-top: 8px; font-size: 11px; color: var(--paper-dim); line-height: 1.45; }
+/* Três em linha no desktop: os gráficos de "de onde veio / para onde foi / é
+   normal" são uma resposta em três tempos, e a comparação entre eles É a
+   leitura. Empilhados, exigem rolar e o raciocínio se perde no caminho. */
+.grid-3 { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: stretch; }
+.grid-3 > .card { display: flex; flex-direction: column; min-width: 0; }
+.grid-3 > .card > .chart-foot { margin-top: auto; }
+/* Card vazio (uma seção que saiu sob recorte) não pode virar coluna fantasma */
+.grid-3:empty { display: none; }
 
-/* Linha prevista no extrato (fatura que ainda vai vencer): tracejada e recuada,
-   para não se confundir com movimento que já aconteceu.
+/* Cabeçalho de card: título + subtítulo + toolbar */
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+.card-head b { font-size: 14.5px; font-weight: 700; display: block; letter-spacing: -.015em; }
+.card-head small { color: var(--paper-dim); font-size: 12px; }
 
-   Sem regra aninhada em .tx-amount de propósito: os testes de alvo de toque e de
-   truncamento localizam a PRIMEIRA regra de cada classe, e um seletor aninhado
-   passaria na frente do original e faria o teste medir outra coisa. */
-.tx-prev { border-left: 2px dashed var(--amber); padding-left: 8px; }
+/* ============================================================================
+   HERO — a situação financeira
 
-/* A fila de pendências, no topo de tudo. Borda âmbar à esquerda em vez de cartão
-   inteiro colorido: chama sem gritar, e a lista continua legível. */
+   Ele já foi duas coisas erradas. Primeiro um objeto escuro com gradiente e halo
+   colorido: o halo lavava o canto onde mora o selo de situação e obrigava uma
+   placa preta no meio do tema claro. Depois um card chapado com o número grande
+   — e aí ficou pobre, porque dez linhas de conta empilhadas sem estrutura leem
+   como uma lista de texto, não como um painel.
+
+   O QUE O TORNA RICO NÃO É COR, É CAMADA. São três planos empilhados:
+
+     página (--ink)  →  hero (--destaque)  →  painel de conta (--embutido)
+
+   O hero avança em direção ao leitor; os blocos de conta recuam dentro dele. Isso
+   é o que dá relevo a um painel financeiro sem uma gota de tinta decorativa — a
+   mesma construção do extrato do Mercury e dos painéis do Linear. O acabamento
+   fecha o efeito: um fio de luz de 1px na aresta de cima, o filete de situação e
+   o número em 40px contra os 26px do maior valor seguinte da tela.
+   ============================================================================ */
+.hero {
+  border-radius: var(--radius); padding: 16px;
+  position: relative; overflow: hidden;
+  background: var(--destaque);
+  border: 1px solid var(--line-strong);
+  /* O fio de luz na aresta superior. É 1px de branco a 5% — o mesmo recurso que
+     dá acabamento a um botão de macOS. De perto quase não se vê; o que se nota é
+     que a peça tem espessura. */
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+/* O filete de situação, na aresta de cima. É a única cor grande da tela, e é
+   dado: verde para saudável, âmbar para atenção, vermelho para crítico — o mesmo
+   estado que o selo ao lado nomeia por escrito. */
+.hero::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--gold);
+}
+.hero-green::before { background: var(--green); }
+.hero-amber::before { background: var(--amber); }
+.hero-red::before { background: var(--red); }
+/* O FILETE SEGUE O SELO, e não a classe do hero.
+
+   As duas medidas não são a mesma: a classe do hero é binária (`fechaNoAzul`),
+   enquanto o selo tem três estados e conhece o "Aperto no variável" — o caso em
+   que o mês fecha no azul mas o gasto do dia a dia derruba a conta. O resultado
+   era um filete verde ao lado de um selo âmbar dizendo o contrário.
+
+   Quem manda é o selo, porque é ele que a pessoa lê. Sai daqui e não do JS
+   porque a informação já está no HTML: o badge carrega o estado. */
+.hero:has(.b-green)::before { background: var(--green); }
+.hero:has(.b-amber)::before { background: var(--amber); }
+.hero:has(.b-red)::before { background: var(--red); }
+.hero-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.hero-label { font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--paper-dim); }
+.hero-badge {
+  font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: var(--radius-sm); flex: none;
+  border: 1px solid transparent;
+}
+.b-green { background: var(--green-soft); color: var(--green-ink); border-color: var(--green-borda); }
+.b-amber { background: var(--amber-soft); color: var(--amber-ink); border-color: var(--amber-borda); }
+.b-red { background: var(--red-soft); color: var(--red-ink); border-color: var(--red-borda); }
+/* O número é o protagonista da tela. -0.035em de tracking porque, neste corpo, o
+   espaçamento padrão da Inter abre demais entre os dígitos. */
+.hero-value { font-size: 40px; font-weight: 700; letter-spacing: -.035em; margin-top: 6px; line-height: 1.05; }
+.hero-msg { font-size: 12px; color: var(--paper-dim); margin-top: 4px; line-height: 1.45; max-width: 68ch; }
+
+/* ---------- O painel de conta, embutido no hero ----------
+   Recuado um plano, com cabeçalho próprio: cada bloco vira uma pequena tabela
+   fechada, com um começo e um total. Soltos sobre o hero eles se misturavam num
+   bloco de dez linhas em que não dava para ver onde uma conta terminava e a
+   outra começava. */
+.hero .hero-conta {
+  margin-top: 12px; padding: 10px 12px 8px;
+  background: var(--embutido);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+.hero .hero-conta + .hero-conta { margin-top: 8px; }
+/* Cabeçalho de tabela: some a borda de cima que o layout antigo usava para
+   separar os blocos — quem separa agora é o próprio painel. */
+.hero .hc-cab {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px; margin-bottom: 6px; opacity: 1;
+  color: var(--paper-dim);
+}
+.hero .hc-l { padding: 4px 0; }
+/* O subtotal fecha uma etapa; o total fecha a conta. Peso e uma régua acima,
+   nada de cor: numa coluna de números, cor em linha de soma vira alarme falso. */
+.hero .hc-sub, .hero .hc-total {
+  margin-top: 5px; padding-top: 6px; border-top: 1px solid var(--line);
+}
+.hero .hc-total { font-weight: 700; }
+.hero .hc-total b { font-size: 14px; }
+.hero-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+}
+.hero-stats > div { min-width: 0; }
+/* Rótulo em uma linha só: se quebrasse, os três valores saíam de alinhamento */
+.hero-stats small {
+  display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--paper-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.hero-stats b { font-size: 14.5px; font-weight: 700; display: block; white-space: nowrap; }
+/* Telas estreitas: encolhe o texto em vez de deixar quebrar */
+@media (max-width: 420px) {
+  .hero-stats { gap: 6px; }
+  .hero-stats small { font-size: 9.5px; letter-spacing: .02em; }
+  .hero-stats b { font-size: 13px; }
+}
+@media (max-width: 340px) {
+  .hero-stats small { font-size: 9px; }
+  .hero-stats b { font-size: 12px; }
+}
+
+/* A conta do disponível, por extenso. Cada linha responde a uma pergunta:
+   quanto existe, quanto já é de outra pessoa, quanto já tem plano. Sem ela,
+   "disponível" é um número que se acredita sem poder conferir. */
+.hero-conta {
+  margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--line);
+  font-size: 12.5px;
+}
+.hc-l { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 3px 0; }
+.hc-l span { opacity: .82; }
+.hc-l i { font-style: normal; font-size: 11px; opacity: .7; }
+.hc-l b { white-space: nowrap; }
+.hc-total {
+  margin-top: 5px; padding-top: 7px;
+  border-top: 1px solid var(--line);
+  font-weight: 700;
+}
+.hc-total span { opacity: 1; }
+/* Subtotal intermediário: "= Em contas ao fim" fecha a metade de CAIXA da conta
+   e abre a metade de DESTINO. Sem peso próprio ele se lê como mais uma parcela,
+   e a conta parece ter dois totais concorrentes. */
+.hc-sub {
+  margin-top: 4px; padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, .07);
+  font-weight: 600;
+}
+.hc-sub span { opacity: .95; }
+/* Cabeçalho de bloco: o hero do mês corrente tem DUAS contas — o caixa de hoje e
+   a projeção até o fim do ciclo — e sem um rótulo separando as duas elas se leem
+   como uma conta só de nove linhas que não fecha. */
+.hc-cab {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  opacity: .5; margin-bottom: 4px;
+}
+.hc-cab i { font-style: normal; font-weight: 600; letter-spacing: 0; text-transform: none; opacity: .8; }
+/* "Fecha em": alinhado ao "= Livre ao fim" e com MENOS peso que ele. O total
+   firme continua sendo a resposta da conta; esta linha é estimativa. */
+.hc-fecha { margin-top: 2px; font-weight: 600; }
+.hc-fecha span { opacity: .95; }
+.hc-fecha-ruim b { color: var(--red-ink); }
+/* A linha do variável é um botão: leva à classificação. Herda a forma das outras
+   linhas da conta para não virar um corpo estranho no meio dela. */
+.hc-acao {
+  width: 100%; background: none; border: 0; color: inherit; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.hc-acao i { text-decoration: underline dotted; text-underline-offset: 2px; }
+.hc-acao:hover span { opacity: 1; }
+.hero-depois { margin-top: 8px; font-size: 11.5px; opacity: .78; }
+
+.proj-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; margin-top: 6px; gap: 8px; flex-wrap: wrap; }
+.txt-green { color: var(--green-ink); }
+.txt-amber { color: var(--amber-ink); }
+.txt-red { color: var(--red-ink); }
+
+/* Conselheiro (insights) */
+.tip {
+  font-size: 13px; padding: 10px 13px 10px 14px; border-radius: var(--radius-sm); margin-bottom: 6px;
+  border-left: 3px solid; background: var(--ink-3); line-height: 1.5;
+}
+.tip-red { border-color: var(--red); background: var(--red-soft); }
+.tip-amber { border-color: var(--amber); background: var(--amber-soft); }
+.tip-green { border-color: var(--green); background: var(--green-soft); }
+
+/* A fila de pendências. Borda âmbar à esquerda em vez de cartão inteiro
+   colorido: chama sem gritar, e a lista continua legível. */
 .pend { border-left: 3px solid var(--amber); }
 .pend-cab { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
 .pend-cab b { display: block; font-size: 14px; }
 .pend-cab small { display: block; font-size: 11.5px; color: var(--paper-dim); margin-top: 1px; }
-.pend-selo { flex: none; padding: 3px 9px; border-radius: 6px; font-size: 11px; font-weight: 700;
-  background: rgba(246, 166, 9, .14); color: #d18b00; }
-.pend-selo.ruim { background: rgba(241, 65, 108, .12); color: var(--red); }
+.pend-selo {
+  flex: none; padding: 3px 9px; border-radius: 6px; font-size: 11px; font-weight: 700;
+  background: var(--amber-soft); color: var(--amber-ink);
+}
+.pend-selo.ruim { background: var(--red-soft); color: var(--red-ink); }
 .pend-item {
   display: grid; grid-template-columns: auto 1fr auto; gap: 4px 10px;
   align-items: center; padding: 9px 0; border-top: 1px solid var(--line);
@@ -195,8 +797,8 @@ body {
 .pend-info { min-width: 0; }
 .pend-info b { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pend-info small { font-size: 11px; color: var(--paper-dim); }
-.pend-item.atraso .pend-info small { color: var(--red); font-weight: 600; }
-.pend-val { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pend-item.atraso .pend-info small { color: var(--red-ink); font-weight: 600; }
+.pend-val { font-weight: 700; white-space: nowrap; }
 /* As ações ocupam a linha inteira embaixo: espremidas ao lado do valor elas
    ficariam com alvo pequeno demais para o polegar */
 .pend-acoes { grid-column: 2 / -1; display: flex; gap: 6px; }
@@ -218,155 +820,32 @@ body {
 .rec-acoes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .rec-acoes .sec-btn { padding: 5px 10px; min-height: 30px; font-size: 11.5px; }
 
-/* Linha do extrato que o OFX veio confirmar: verde discreto, porque nada será
-   duplicado — é o oposto do aviso vermelho de conflito */
-.ofx-aviso.ok { color: #1f9d61; }
-.ofx-casado { background: rgba(80, 205, 137, .06); }
-
-/* A conta do disponível, por extenso. Cada linha responde a uma pergunta:
-   quanto existe, quanto já é de outra pessoa, quanto já tem plano. Sem ela,
-   "disponível" é um número que se acredita sem poder conferir. */
-.hero-conta {
-  margin-top: 12px; padding-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, .18);
-  font-size: 12.5px;
-}
-.hc-l { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 3px 0; }
-.hc-l span { opacity: .82; }
-.hc-l i { font-style: normal; font-size: 11px; opacity: .7; }
-.hc-l b { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.hc-total {
-  margin-top: 5px; padding-top: 7px;
-  border-top: 1px solid rgba(255, 255, 255, .18);
-  font-weight: 700;
-}
-.hc-total span { opacity: 1; }
-/* Subtotal intermediário: "= Em contas ao fim" fecha a metade de CAIXA da conta e
-   abre a metade de DESTINO. Sem peso próprio ele se lê como mais uma parcela, e a
-   conta parece ter dois totais concorrentes. Mais leve que .hc-total de propósito:
-   só o último número é a resposta da tela. */
-.hc-sub {
-  margin-top: 4px; padding-top: 6px;
-  border-top: 1px solid rgba(255, 255, 255, .10);
-  font-weight: 600;
-}
-.hc-sub span { opacity: .95; }
-/* Cabeçalho de bloco. O hero do mês corrente tem DUAS contas — o caixa de hoje e
-   a projeção até o fim do ciclo — e sem um rótulo separando as duas elas se leem
-   como uma conta só de nove linhas que não fecha. Cada bloco fecha no seu total.
-
-   O segundo `.hero-conta` já traz a própria borda de topo, então o cabeçalho não
-   acrescenta outra: duas linhas seguidas viram moldura e pesam a tela. */
-.hc-cab {
-  font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
-  opacity: .5; margin-bottom: 4px;
-}
-/* "Fecha em": alinhado ao "= Livre ao fim" e com MENOS peso que ele. O total
-   firme continua sendo a resposta da conta; esta linha é estimativa, e o peso
-   menor é o que diz isso sem precisar de rótulo. Fica entre o .hc-l comum e o
-   .hc-total, como o .hc-sub — mas sem borda de topo, porque ela vem logo abaixo
-   da borda do total e duas linhas seguidas viram moldura. */
-.hc-fecha { margin-top: 2px; font-weight: 600; }
-.hc-fecha span { opacity: .95; }
-.hc-fecha-ruim b { color: #ffd7e0; }
-/* A linha do variável é um botão: leva à classificação. Herda a forma das outras
-   linhas da conta para não virar um corpo estranho no meio dela — o que a
-   distingue é o "ajustar" na nota e o sublinhado pontilhado no toque. */
-.hc-acao {
-  width: 100%; background: none; border: 0; color: inherit; font: inherit;
-  text-align: left; cursor: pointer;
-}
-.hc-acao i { text-decoration: underline dotted; text-underline-offset: 2px; }
-.hc-acao:hover span { opacity: 1; }
-
-/* Folha de classificação: fixo ou variável, um toque por linha. */
-.cg-linha {
-  display: flex; align-items: center; gap: 10px; padding: 10px 0;
-  border-bottom: 1px dashed var(--line);
-}
-.cg-linha:last-child { border-bottom: 0; }
-.cg-info { flex: 1; min-width: 0; }
-.cg-info b { display: block; font-size: 13px; font-weight: 600; }
-.cg-info small { color: var(--paper-dim); font-size: 11px; }
-.cg-val { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.cg-botoes { display: flex; gap: 4px; flex: none; }
-.cg-b {
-  min-height: 32px; padding: 0 10px; border-radius: 8px; cursor: pointer;
-  border: 1px solid var(--line); background: var(--ink-2); color: var(--paper-dim);
-  font-size: 11.5px; font-weight: 600; font-family: var(--font-body);
-}
-.cg-b.on { border-color: var(--gold); background: rgba(0, 158, 247, .12); color: var(--gold); }
-.cg-travado { font-size: 11px; color: var(--paper-dim); flex: none; padding: 0 8px; }
-/* Três botões numa linha apertam o celular: abaixo de 420px eles descem para
-   baixo do valor, em vez de espremer a descrição até ela virar reticências. */
-@media (max-width: 420px) {
-  .cg-linha { flex-wrap: wrap; }
-  .cg-info { flex: 1 1 60%; }
-  .cg-botoes { flex: 1 1 100%; justify-content: flex-end; }
-}
-/* A ajuda dos três estados: dita pelo EFEITO, porque o rótulo sozinho não avisa
-   que "fixo" faz o gasto voltar todo mês. */
-.cg-ajuda { margin-bottom: 12px; font-size: 12px; color: var(--paper-dim); line-height: 1.5; }
-.cg-ajuda b { color: var(--paper); }
-.cg-ajuda p { margin-bottom: 3px; }
-.cg-conta { margin-top: 7px; font-weight: 600; color: var(--paper); }
-
-/* Sugestões de vínculo: lançamento com o nome de um contrato ativo, contando como
-   variável. Bloco à parte e em âmbar porque é o que mais distorce a projeção — na
-   base real eram nove lançamentos e R$ 5.460,80 lidos como gasto do dia a dia. */
-.cg-sug {
-  margin-bottom: 12px; padding: 12px; border-radius: 12px;
-  background: rgba(246, 166, 9, .08); border: 1px solid rgba(246, 166, 9, .3);
-}
-.cg-sug-tit { font-size: 13px; font-weight: 700; margin-bottom: 3px; }
-.cg-sug .muted { font-size: 11.5px; line-height: 1.45; margin-bottom: 8px; }
-.cg-sug-l {
-  display: flex; align-items: center; gap: 10px; padding: 7px 0;
-  border-top: 1px dashed rgba(246, 166, 9, .28); font-size: 12.5px;
-}
-.cg-sug-l > span:first-child { flex: 1; min-width: 0; }
-.cg-sug-l i { display: block; font-style: normal; font-size: 11px; color: var(--paper-dim); }
-
-/* Escolher o contrato: lista de opções em largura inteira, área de toque na linha. */
-.cg-esc {
-  display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 8px;
-  padding: 12px 14px; background: var(--ink-2); border: 1px solid var(--line);
-  border-radius: 10px; text-align: left; cursor: pointer; color: var(--paper);
-  font-family: var(--font-body); font-size: 13px;
-}
-.cg-esc > span:first-child { flex: 1; }
-.cg-esc i { display: block; font-style: normal; font-size: 11.5px; color: var(--paper-dim); margin-top: 1px; }
-.cg-esc svg { width: 15px; height: 15px; color: var(--paper-dim); flex: none; }
-.cg-esc:hover { border-color: var(--gold); }
-.hc-cab i { font-style: normal; font-weight: 600; letter-spacing: 0; text-transform: none; opacity: .8; }
-.hero-depois { margin-top: 8px; font-size: 11.5px; opacity: .78; }
-
 /* Aviso de recorte ativo: sem ele, alguém abre a tela com um filtro esquecido e
    lê os números como se fossem do mês inteiro */
 .rel-recorte {
-  margin: -6px 0 0; padding: 9px 12px; border-radius: 9px;
-  background: rgba(0, 158, 247, .07); border: 1px solid rgba(0, 158, 247, .22);
-  font-size: 12px; color: #0072b8; line-height: 1.45;
+  margin: -6px 0 0; padding: 9px 12px; border-radius: var(--radius-sm);
+  background: var(--gold-soft); border: 1px solid var(--gold-borda);
+  font-size: 12px; color: var(--gold-ink); line-height: 1.45;
 }
 
 /* ---------- Relatórios ----------
-   A frase de abertura. Um relatório que começa com doze números obriga o leitor a
-   montar a conclusão sozinho — e quem não é do ramo não monta. */
+   A frase de abertura. Um relatório que começa com doze números obriga o leitor
+   a montar a conclusão sozinho — e quem não é do ramo não monta. */
 .rel-frase { display: flex; align-items: flex-start; gap: 13px; }
 .rel-frase-ico {
-  flex: none; width: 40px; height: 40px; border-radius: 10px;
+  flex: none; width: 40px; height: 40px; border-radius: var(--radius-sm);
   display: flex; align-items: center; justify-content: center;
 }
 .rel-frase-ico svg { width: 19px; height: 19px; }
-.rel-frase-ico.ok { background: rgba(80, 205, 137, .14); color: #1f9d61; }
-.rel-frase-ico.ruim { background: rgba(241, 65, 108, .11); color: var(--red); }
+.rel-frase-ico.ok { background: var(--green-soft); color: var(--green-ink); }
+.rel-frase-ico.ruim { background: var(--red-soft); color: var(--red-ink); }
 .rel-frase b { font-size: 15px; font-weight: 700; line-height: 1.4; }
 .rel-frase p { margin-top: 4px; font-size: 12.5px; line-height: 1.5; }
-/* Selo de veredito no cabeçalho (padrão badge-light-* do Metronic) */
+/* Selo de veredito no cabeçalho */
 .rel-selo { flex: none; padding: 4px 10px; border-radius: 7px; font-size: 11.5px; font-weight: 700; }
-.rel-selo.ok { background: rgba(0, 158, 247, .1); color: #0072b8; }
-.rel-selo.bom { background: rgba(80, 205, 137, .16); color: #1f9d61; }
-.rel-selo.ruim { background: rgba(241, 65, 108, .12); color: var(--red); }
+.rel-selo.ok { background: var(--gold-soft); color: var(--gold-ink); }
+.rel-selo.bom { background: var(--green-soft); color: var(--green-ink); }
+.rel-selo.ruim { background: var(--red-soft); color: var(--red-ink); }
 
 /* Os desvios que explicam o mês. Cada um é uma frase curta: categoria, quanto
    fugiu do costume, e o costume — nessa ordem, porque é a ordem da leitura. */
@@ -374,34 +853,20 @@ body {
 @media (min-width: 560px) { .rel-movers { grid-template-columns: 1fr 1fr; } }
 .mover {
   display: grid; grid-template-columns: 1fr auto; gap: 2px 10px;
-  padding: 10px 12px; border-radius: 9px; background: var(--ink-3);
-  border-left: 3px solid var(--line);
+  padding: 10px 12px; border-radius: var(--radius-sm); background: var(--ink-3);
+  border-left: 3px solid var(--line-strong);
 }
 .mover.sobe { border-left-color: var(--red); }
 .mover.desce { border-left-color: var(--green); }
 .mover-cat { font-size: 13px; font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mover-delta { font-size: 13px; font-weight: 700; white-space: nowrap; }
-.mover.sobe .mover-delta { color: var(--red); }
-.mover.desce .mover-delta { color: #1f9d61; }
+.mover.sobe .mover-delta { color: var(--red-ink); }
+.mover.desce .mover-delta { color: var(--green-ink); }
 .mover small { grid-column: 1 / -1; font-size: 11px; color: var(--paper-dim); }
-
-/* ---------- Composição: envelope por dentro ----------
-   A hierarquia vem no encadeamento das cores: o matiz identifica o envelope, o
-   tom identifica a subcategoria dentro dele. 75 folhas não caberiam em matizes
-   distintos — acima de ~8 eles ficam indistinguíveis mesmo para quem vê bem. */
-/* A barra do envelope é proporcional ao MAIOR envelope, então a largura compara
-   entre grupos; os segmentos dentro dela comparam dentro do grupo */
-/* Área de toque maior que a marca: a barra tem 9px, e um segmento pode ter 2% da
-   largura — acertar a marca no celular seria impossível. O padding invisível dá
-   folga vertical sem mudar o desenho. */
-
-/* Tooltip da composição: o envelope inteiro, com a parte apontada em destaque.
-   Um segmento sozinho não responde nada — "delivery R$ 400" só quer dizer algo
-   ao lado de "mercado R$ 900". */
 
 /* Linhas de subcategoria na tabela */
 .rep-raiz.abre { cursor: pointer; }
-.rep-raiz.abre:hover td { background: rgba(0, 158, 247, .04); }
+.rep-raiz.abre:hover td { background: var(--gold-soft); }
 .rep-seta {
   display: inline-flex; margin-right: 6px; color: var(--paper-dim);
   transition: transform .18s ease;
@@ -416,154 +881,23 @@ body {
   content: ''; position: absolute; left: 13px; top: 0; bottom: 0;
   width: 2px; background: var(--line);
 }
-.rep-sub > td { background: rgba(245, 248, 250, .55); }
+.rep-sub > td { background: var(--ink-3); }
 .rep-sub i { font-style: italic; color: var(--paper-dim); }
 .prox-linha { cursor: pointer; }
-.prox-linha:hover td { background: rgba(0, 158, 247, .04); }
+.prox-linha:hover td { background: var(--gold-soft); }
 .prox-linha.aberto .rep-seta { transform: rotate(90deg); }
 .prox-linha td small, .prox-item td small { display: block; font-size: 10.5px; margin-top: 1px; }
 
-/* ---------- Gráfico com texto fora do SVG ----------
-   Medido: viewBox de 720 num cartão de 307px dá escala 0,43 — um rótulo de 11px
-   saía a 4,7px na tela, e hairline de 1px a 0,43px. Pior: o mesmo gráfico mudava
-   de tamanho conforme a largura do cartão (15,9px num card cheio de desktop).
-
-   Por isso o SVG guarda só a GEOMETRIA, esticada para preencher o contêiner, e
-   texto e pontos vêm num overlay HTML posicionado em %. Assim o texto renderiza
-   sempre no tamanho real do dispositivo, idêntico em qualquer contexto, e círculo
-   continua redondo mesmo com o SVG esticado. */
-@media (max-width: 560px) { .g-wrap { height: 175px; } .g-wrap-linha { height: 150px; } }
-/* O overlay não intercepta toque: quem manda no clique é o que está embaixo */
-/* O período atual em destaque: a barra dele já tem tom próprio, e o rótulo
-   acompanha para a leitura casar de cima a baixo */
-
-/* Barras: mais alto que a linha, porque doze colunas precisam de espaço para o
-   rótulo de cada mês caber embaixo sem colidir */
-@media (max-width: 560px) { .g-wrap-bars { height: 215px; } }
-/* Eixo à esquerda e referências à direita, ancorados na própria altura da linha */
-/* Div com border-radius em vez de <circle>: o SVG é esticado sem preservar
-   proporção para o overlay casar, e círculo esticado vira elipse */
-/* Rótulo do valor perto da borda: encolhe o deslocamento para não vazar */
-
-/* ---------- Cascata ---------- */
-/* Hairline sólida e recessiva: grade tracejada lê como projeção ou limite, e
-   aqui é só régua */
-/* O conector é o que faz a leitura fluir de um bloco ao seguinte */
-
-/* ---------- Faixa de normalidade ----------
-   A faixa é o que "normal" significa PARA ESTA FAMÍLIA. Sem ela toda subida
-   parece alarme, e o leitor aprende a ignorar o gráfico. */
-
-/* Cabeçalho de seção com ações à direita (padrão card-header + card-toolbar do
-   Metronic). Nomeia a seção e ancora as ações dela, no lugar de botões de
-   largura inteira que cortavam a leitura e pesavam mais que o conteúdo. */
-.sec-cab {
-  display: flex; align-items: flex-end; justify-content: space-between;
-  flex-wrap: wrap; gap: 8px 12px; margin: 6px 0 -6px;
-}
-.sec-tit b { display: block; font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
-.sec-tit small { display: block; margin-top: 1px; font-size: 11.5px; color: var(--paper-dim); font-weight: 500; }
-.sec-acoes { display: flex; gap: 6px; flex: none; }
-/* Botão de ação secundária: presente sem competir com a lista. Contorno em vez
-   de preenchimento — o preenchido puxaria o olho antes do conteúdo. */
-.sec-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 6px 11px; border-radius: 8px; min-height: 34px;
-  background: var(--ink-2); border: 1px solid var(--line); color: var(--paper-dim);
-  font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
-  cursor: pointer; white-space: nowrap;
-  transition: border-color .15s ease, color .15s ease;
-}
-.sec-btn:hover { border-color: var(--gold); color: var(--gold); }
-.sec-btn:active { transform: scale(.97); }
-.sec-btn svg { width: 14px; height: 14px; }
-
-.card {
-  background: var(--ink-2); border: 1px solid var(--line);
-  border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow);
-}
-/* Cards lado a lado esticam para a mesma altura e alinham o rodapé embaixo */
-.grid-2 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: stretch; }
-.grid-2 > .card { display: flex; flex-direction: column; }
-.grid-2 > .card > .chart-foot { margin-top: auto; }
-.grid-2 > .card > .donut-wrap { flex: 1; }
-
-/* Três em linha no desktop: os gráficos de "de onde veio / para onde foi / é
-   normal" são uma resposta em três tempos, e a comparação entre eles É a
-   leitura. Empilhados, exigem rolar e o raciocínio se perde no caminho.
-   O rodapé cola embaixo para os três terminarem alinhados. */
-.grid-3 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: stretch; }
-.grid-3 > .card { display: flex; flex-direction: column; min-width: 0; }
-.grid-3 > .card > .chart-foot { margin-top: auto; }
-/* Card vazio (uma seção que saiu sob recorte) não pode virar coluna fantasma */
-.grid-3:empty { display: none; }
-
-/* Cabeçalho de card (padrão Metronic: título + subtítulo + toolbar) */
-.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
-.card-head b { font-size: 15px; font-weight: 800; display: block; }
-.card-head small { color: var(--paper-dim); font-size: 12px; }
-
-/* ---------- Hero de situação financeira ---------- */
-.hero {
-  border-radius: 16px; padding: 22px 20px; color: #fff; position: relative; overflow: hidden;
-  background: linear-gradient(135deg, #1e1e2d 0%, #2b2b40 100%);
-  box-shadow: var(--shadow);
-}
-.hero::before {
-  content: ''; position: absolute; right: -60px; top: -60px; width: 220px; height: 220px; border-radius: 50%;
-  background: radial-gradient(circle, rgba(0, 158, 247, .35), transparent 70%);
-}
-.hero-green::before { background: radial-gradient(circle, rgba(80, 205, 137, .35), transparent 70%); }
-.hero-amber::before { background: radial-gradient(circle, rgba(255, 199, 0, .3), transparent 70%); }
-.hero-red::before { background: radial-gradient(circle, rgba(241, 65, 108, .35), transparent 70%); }
-.hero-top { display: flex; justify-content: space-between; align-items: center; position: relative; }
-.hero-label { font-size: 11.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: #9899ac; }
-.hero-badge { font-size: 11px; font-weight: 700; padding: 5px 12px; border-radius: 999px; }
-.b-green { background: rgba(80, 205, 137, .18); color: #50cd89; }
-.b-amber { background: rgba(255, 199, 0, .16); color: #ffc700; }
-.b-red { background: rgba(241, 65, 108, .18); color: #f1416c; }
-.hero-value { font-size: 34px; font-weight: 800; letter-spacing: -.02em; margin-top: 6px; position: relative; }
-.hero-msg { font-size: 12.5px; color: #9899ac; margin-top: 2px; position: relative; }
-.hero-stats {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
-  margin-top: 16px; padding-top: 14px; border-top: 1px dashed #3a3a52; position: relative;
-}
-.hero-stats > div { min-width: 0; }
-/* Rótulo em uma linha só: se quebrasse, os três valores saíam de alinhamento */
-.hero-stats small {
-  display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em;
-  color: #9899ac; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.hero-stats b { font-size: 14.5px; font-weight: 700; display: block; white-space: nowrap; }
-/* Telas estreitas: encolhe o texto em vez de deixar quebrar */
-@media (max-width: 420px) {
-  .hero-stats { gap: 6px; }
-  .hero-stats small { font-size: 9.5px; letter-spacing: .02em; }
-  .hero-stats b { font-size: 13px; }
-}
-@media (max-width: 340px) {
-  .hero-stats small { font-size: 9px; }
-  .hero-stats b { font-size: 12px; }
-}
-
-.proj-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; margin-top: 6px; gap: 8px; flex-wrap: wrap; }
-.txt-green { color: #47be7d; }
-.txt-amber { color: #d18b00; }
-.txt-red { color: var(--red); }
-
-/* Conselheiro (insights) */
-.tip {
-  font-size: 13px; padding: 9px 12px 9px 14px; border-radius: 8px; margin-bottom: 6px;
-  border-left: 3px solid; background: var(--ink-3);
-}
-.tip-red { border-color: var(--red); background: rgba(241, 65, 108, .06); }
-.tip-amber { border-color: var(--amber); background: rgba(246, 166, 9, .07); }
-.tip-green { border-color: var(--green); background: rgba(80, 205, 137, .08); }
-
-/* ---------- Gráficos (ApexCharts) ----------
+/* ============================================================================
+   GRÁFICOS (ApexCharts)
    A biblioteca traz o próprio CSS embutido, com fontes e cores dela. O que este
    bloco faz é encaixá-la no tema: o gráfico tem de parecer parte do app, não um
-   componente colado dentro dele. */
+   componente colado dentro dele.
+   ============================================================================ */
+@media (max-width: 560px) { .fl-combo { height: 190px; } }
+.fl-nota { margin-top: 8px; font-size: 11px; color: var(--paper-dim); line-height: 1.45; }
+@media (max-width: 560px) { .g-wrap { height: 175px; } .g-wrap-linha { height: 150px; } }
+@media (max-width: 560px) { .g-wrap-bars { height: 215px; } }
 
 /* O div de montagem. A altura vem inline (Graficos.novo) para o cartão não pular
    no instante entre o HTML entrar na tela e o gráfico ser desenhado. */
@@ -575,11 +909,12 @@ body {
 /* Cursor de mão só onde o clique leva a algum lugar */
 .apx-ranking .apexcharts-bar-area { cursor: pointer; }
 
-/* Dica padrão da lib, repintada no tema escuro das nossas dicas */
+/* A dica é escura NOS DOIS temas: ela pousa sobre o gráfico, e um balão claro
+   sobre uma área clara perde a borda. */
 .apx .apexcharts-tooltip {
-  border: none !important; border-radius: 8px !important;
+  border: none !important; border-radius: var(--radius-sm) !important;
   background: rgba(24, 28, 50, .96) !important;
-  box-shadow: 0 8px 24px rgba(24, 28, 50, .22) !important;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .4) !important;
   color: #fff !important;
 }
 .apx .apexcharts-tooltip-title {
@@ -594,8 +929,7 @@ body {
 .apx .apexcharts-yaxis-annotation-label { fill: var(--paper-dim); }
 
 /* Dica da composição: lista o envelope INTEIRO com percentuais e destaca só o
-   item apontado. Um segmento sozinho não diz composição — por isso ela é própria
-   e não a nativa da biblioteca. */
+   item apontado. Um segmento sozinho não diz composição. */
 .apx-tip { min-width: 190px; max-width: 260px; padding: 8px 2px 6px; font-size: 12px; }
 .apx-tip-cab {
   display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
@@ -611,31 +945,28 @@ body {
 .apx-tip-l.on { opacity: 1; background: rgba(255, 255, 255, .13); }
 .apx-tip-l i { width: 9px; height: 9px; border-radius: 3px; }
 .apx-tip-r { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.apx-tip-l b { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.apx-tip-l small { font-size: 11px; opacity: .75; font-variant-numeric: tabular-nums; }
+.apx-tip-l b { font-weight: 700; white-space: nowrap; }
+.apx-tip-l small { font-size: 11px; opacity: .75; }
 
-.fl-nota { margin-top: 8px; font-size: 11px; color: var(--paper-dim); line-height: 1.45; }
 .chart-foot {
   display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 14px; padding-top: 12px;
-  border-top: 1px dashed var(--line); font-size: 12px; color: var(--paper-dim);
+  border-top: 1px solid var(--line); font-size: 12px; color: var(--paper-dim);
 }
 .chart-foot b { color: var(--paper); font-weight: 700; }
 
 /* Lista de orçamentos: rola dentro do card para não esticar a linha */
-.budget-scroll { flex: 1; max-height: 300px; overflow-y: auto; scrollbar-width: thin; }
-.budget-scroll::-webkit-scrollbar { width: 5px; }
-.budget-scroll::-webkit-scrollbar-thumb { background: #d8e3ea; border-radius: 3px; }
+.budget-scroll { flex: 1; max-height: 300px; overflow-y: auto; }
 
-/* Tabelas de relatório */
+/* ---------- Tabelas de relatório ---------- */
 .table-wrap { overflow-x: auto; }
 .rep-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .rep-table th {
-  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
-  color: var(--paper-dim); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em;
+  color: var(--paper-dim); font-weight: 700; padding: 8px 10px; border-bottom: 1px solid var(--line);
 }
 /* A primeira coluna é a descrição do lançamento: quebra em vez de esticar a
    tabela e empurrar o valor para fora da área visível */
-.rep-table td { padding: 9px 10px; border-bottom: 1px dashed var(--line); overflow-wrap: anywhere; }
+.rep-table td { padding: 9px 10px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 .rep-table td:first-child { min-width: 150px; }
 .rep-table tr:last-child td { border-bottom: 0; }
 .rep-table .num { text-align: right; white-space: nowrap; }
@@ -643,8 +974,7 @@ body {
 
 /* Duas linhas na mesma célula: o número em cima, a leitura relativa embaixo.
    Em colunas próprias seriam seis colunas, e a tabela passaria a rolar na
-   horizontal no celular. Assim cada número vem com o que o qualifica ao lado —
-   quanto foi e quanto pesou, quanto mudou e quanto isso representa. */
+   horizontal no celular. */
 .val-rel, .delta {
   display: inline-flex; flex-direction: column; align-items: flex-end;
   line-height: 1.25; white-space: nowrap;
@@ -654,10 +984,6 @@ body {
 .val-rel i { color: var(--paper-dim); font-weight: 600; }
 .delta i { opacity: .72; }
 .rep-table td:last-child { text-align: right; }
-
-/* Duas colunas: o par de cima é o que se compara (entrou x saiu, receita x
-   despesa), e o de baixo são leituras de apoio. Em três colunas o valor com
-   centavos não cabia na largura do celular. */
 
 .mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .mini-stats .card { padding: 12px 14px; text-align: center; min-width: 0; }
@@ -673,37 +999,37 @@ body {
   .mini-stats b { font-size: 13.5px; }
 }
 
-/* KPIs (padrão Metronic: ícone em caixa tintada + valor + rótulo) */
-.kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-.kpi { padding: 16px 18px; }
+/* ---------- KPIs: ícone em caixa tintada + valor + rótulo ---------- */
+.kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.kpi { padding: 14px; }
 .kpi-ico {
-  width: 42px; height: 42px; border-radius: 10px; margin-bottom: 12px;
+  width: 42px; height: 42px; border-radius: var(--radius-sm); margin-bottom: 12px;
   display: grid; place-items: center;
 }
 .kpi-ico svg { width: 21px; height: 21px; }
-.t-primary { background: rgba(0, 158, 247, .1); color: var(--gold); }
-.t-danger { background: rgba(241, 65, 108, .1); color: var(--red); }
-.t-success { background: rgba(80, 205, 137, .12); color: #47be7d; }
-.t-info { background: rgba(114, 57, 234, .1); color: var(--blue); }
-.t-warning { background: rgba(246, 166, 9, .12); color: #d18b00; }
-.kpi-label { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--paper-dim); }
-.kpi-value { font-size: 22px; font-weight: 800; margin-top: 4px; letter-spacing: -.01em; }
-.kpi-value.gold { color: var(--gold); }
-.kpi-value.green { color: var(--green); }
-.kpi-value.red { color: var(--red); }
+/* As tintas de fundo, compartilhadas por KPI, badge de ícone e caixas de estado */
+.t-primary { background: var(--gold-soft); color: var(--gold-ink); }
+.t-danger { background: var(--red-soft); color: var(--red-ink); }
+.t-success { background: var(--green-soft); color: var(--green-ink); }
+.t-info { background: var(--blue-soft); color: var(--blue-ink); }
+.t-warning { background: var(--amber-soft); color: var(--amber-ink); }
+.kpi-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--paper-dim); }
+.kpi-value { font-size: 22px; font-weight: 800; margin-top: 4px; letter-spacing: -.025em; }
+.kpi-value.gold { color: var(--gold-ink); }
+.kpi-value.green { color: var(--green-ink); }
+.kpi-value.red { color: var(--red-ink); }
 .kpi-sub { font-size: 11.5px; color: var(--paper-dim); margin-top: 2px; }
 
-/* Donut em SVG — anel espesso, fatias separadas, cresce com o card.
-
+/* ---------- Donut em SVG ----------
    É o único gráfico que não passou para a ApexCharts, e por medida: quadrado e
    com proporção preservada, a escala do viewBox fica entre 0,79 e 1,04, então o
-   texto dele já sai no tamanho certo. O `clamp` abaixo é o que garante isso —
-   sem teto de 250px o anel esticaria num card largo e a escala fugiria da faixa. */
+   texto dele já sai no tamanho certo. O clamp é o que garante isso — sem teto de
+   250px o anel esticaria num card largo e a escala fugiria da faixa. */
 .donut-svg { width: clamp(190px, 46%, 250px); height: auto; flex: none; }
 /* O buraco do meio é onde mora o número que responde à pergunta do cartão */
 .dn-total { font-size: 27px; font-weight: 800; fill: var(--paper); font-family: var(--font-body); letter-spacing: -.02em; }
 .dn-cap { font-size: 11px; fill: var(--paper-dim); font-family: var(--font-body); }
-.dn-sub { font-size: 10px; fill: #b5bcc9; font-family: var(--font-body); }
+.dn-sub { font-size: 10px; fill: var(--paper-faint); font-family: var(--font-body); }
 /* A fatia engorda no hover em vez de mudar de cor: cor é identidade e não pode
    variar com o ponteiro, mas espessura pode */
 .dn-arc { transition: stroke-width .18s ease; }
@@ -718,39 +1044,37 @@ body {
 .legend-val { font-weight: 700; white-space: nowrap; }
 .legend-pct { color: var(--paper-dim); font-weight: 500; font-size: 12px; width: 34px; text-align: right; flex: none; }
 
-/* Barras de orçamento */
-.budget-row { padding: 10px 0; border-bottom: 1px dashed var(--line); }
+/* ---------- Barras de orçamento ---------- */
+.budget-row { padding: 10px 0; border-bottom: 1px solid var(--line); }
 .budget-row:last-child { border-bottom: 0; }
 .budget-head { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; gap: 8px; }
 .budget-head b { font-weight: 600; }
 .budget-head .num, .num { font-weight: 700; }
 /* Selo do mês ajustado. Discreto de propósito: ele informa, não alerta — um
-   orçamento diferente do padrão é uma decisão de quem usa, não um problema.
-   Note que ele NÃO vem acompanhado de botão de editar: no Painel o orçamento se
-   lê, e o ajuste mora em Configurações → Categorias. */
+   orçamento diferente do padrão é uma decisão de quem usa, não um problema. */
 .selo-ajuste {
   font-size: 10px; font-weight: 700; letter-spacing: .02em; text-transform: lowercase;
-  padding: 2px 7px; border-radius: 999px; margin-left: 6px; vertical-align: middle;
-  background: rgba(0, 158, 247, .1); color: var(--gold);
+  padding: 2px 6px; border-radius: var(--radius-sm); margin-left: 6px; vertical-align: middle;
+  background: var(--gold-soft); color: var(--gold-ink);
 }
 .bar { height: 7px; border-radius: 4px; background: var(--ink-3); overflow: hidden; }
-.bar > i { display: block; height: 100%; border-radius: 4px; transition: width .5s ease; }
+.bar > i { display: block; height: 100%; border-radius: 4px; transition: width .5s var(--ease-out); }
 .bar-green > i { background: var(--green); }
 .bar-amber > i { background: var(--amber); }
 .bar-red > i { background: var(--red); }
 
-/* Transações */
+/* ============================================================================
+   TRANSAÇÕES
+   ============================================================================ */
 .tx-day {
   display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
-  font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-  color: var(--paper-dim); margin: 12px 2px 6px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--paper-dim); margin: 14px 2px 6px;
 }
-/* O total do dia acompanha o rótulo, sem competir com o valor de cada lançamento:
-   mesmo tamanho da data, não o corpo da linha. */
+/* O total do dia acompanha o rótulo, sem competir com o valor de cada lançamento */
 .tx-day-tot { display: flex; align-items: center; gap: 6px; letter-spacing: 0; flex: none; }
-/* Badge tingido, no padrão badge-light-* do Metronic: o bloco inteiro recebe a
-   cor, então a leitura é imediata mesmo de relance. O rótulo vai dentro, mais
-   claro que o valor, para nomear sem disputar atenção com ele. */
+/* Badge tingido: o bloco inteiro recebe a cor, então a leitura é imediata mesmo
+   de relance. O rótulo vai dentro, mais claro que o valor. */
 .dia-badge {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 4px 9px; border-radius: 7px;
@@ -760,14 +1084,13 @@ body {
   font-style: normal; font-size: 9.5px; font-weight: 600;
   letter-spacing: .04em; text-transform: uppercase; opacity: .72;
 }
-.dia-badge.ok   { background: rgba(80, 205, 137, .14); color: #2f9c62; }
-.dia-badge.ruim { background: rgba(241, 65, 108, .1);  color: var(--red); }
+.dia-badge.ok   { background: var(--green-soft); color: var(--green-ink); }
+.dia-badge.ruim { background: var(--red-soft);  color: var(--red-ink); }
 /* O saldo é a conclusão, não uma parcela: fundo sólido em vez de tingido */
 .dia-badge.saldo { color: #fff; }
 .dia-badge.saldo i { opacity: .8; }
-.dia-badge.saldo.pos { background: #47be7d; }
+.dia-badge.saldo.pos { background: var(--green); }
 .dia-badge.saldo.neg { background: var(--red); }
-/* Em tela estreita os badges descem para a própria linha, em vez de espremer a data */
 @media (max-width: 520px) {
   .tx-day { flex-wrap: wrap; row-gap: 6px; }
   .tx-day-tot { width: 100%; justify-content: flex-start; }
@@ -778,40 +1101,66 @@ body {
 }
 .tx {
   display: flex; align-items: center; gap: 12px; padding: 11px 14px;
-  background: var(--ink-2); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;
+  background: var(--ink-2); border: 1px solid var(--line); border-radius: var(--radius-sm); margin-bottom: 8px;
   cursor: pointer; box-shadow: var(--shadow);
 }
-.tx:hover { border-color: #d8e3ea; }
-.tx-ico { font-size: 19px; width: 40px; height: 40px; border-radius: 9px; background: var(--ink-3); display: grid; place-items: center; flex: none; }
+.tx:hover { border-color: var(--line-strong); }
+.tx-ico { font-size: 19px; width: 40px; height: 40px; border-radius: var(--radius-sm); background: var(--ink-3); display: grid; place-items: center; flex: none; }
 .tx-info { flex: 1; min-width: 0; }
 /* O nome não é cortado: é ele que identifica o lançamento. Extrato de banco traz
    descrição longa ("COMPRA CARTAO 1234 MERCADO SAO JOAO"), e truncar no meio
-   deixava linhas diferentes com a mesma aparência. Melhor a linha crescer.
-   display:block porque em <span> inline o overflow nem se aplica de forma previsível. */
+   deixava linhas diferentes com a mesma aparência. */
 .tx-name { display: block; font-weight: 600; overflow-wrap: anywhere; line-height: 1.35; }
 .tx-meta { display: block; font-size: 11.5px; color: var(--paper-dim); overflow-wrap: anywhere; line-height: 1.4; }
-/* flex:none para o valor nunca ser espremido pelo nome que agora ocupa mais espaço */
+/* flex:none para o valor nunca ser espremido pelo nome */
 .tx-amount { font-weight: 800; font-size: 14.5px; white-space: nowrap; flex: none; }
 /* Extrato: a cor do valor diz o que aconteceu com o dinheiro */
-.tx-amount { color: var(--red); }                 /* saiu */
-.tx-amount.pending { color: var(--amber); }       /* ainda vai sair */
-.tx-amount.income { color: var(--green); }        /* entrou */
-.tx-amount.transfer { color: var(--blue); }       /* só mudou de lugar */
-.tx-ico.i-receita { background: rgba(80, 205, 137, .12); }
-.tx-ico.i-transfer { background: rgba(114, 57, 234, .1); }
+.tx-amount { color: var(--red-ink); }              /* saiu */
+.tx-amount.pending { color: var(--amber-ink); }    /* ainda vai sair */
+.tx-amount.income { color: var(--green-ink); }     /* entrou */
+.tx-amount.transfer { color: var(--blue-ink); }    /* só mudou de lugar */
+.tx-ico.i-receita { background: var(--green-soft); }
+.tx-ico.i-transfer { background: var(--blue-soft); }
 .tx-adj { border-style: dashed; background: var(--ink-3); }
 .tx-adj .tx-amount { color: var(--paper-dim); }
 
-/* Importação OFX — duas linhas, não quatro colunas.
+/* Linha prevista no extrato (fatura que ainda vai vencer): tracejada e recuada,
+   para não se confundir com movimento que já aconteceu.
+
+   Sem regra aninhada em .tx-amount de propósito: os testes de alvo de toque e de
+   truncamento localizam a PRIMEIRA regra de cada classe, e um seletor aninhado
+   passaria na frente do original e faria o teste medir outra coisa. */
+.tx-prev { border-left: 2px dashed var(--amber); padding-left: 8px; }
+
+/* Etiquetas do lançamento, na própria linha do extrato */
+.tx-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.tx-tag {
+  background: var(--ink-3); color: var(--paper-dim); border: 1px solid var(--line);
+  /* Tocar aqui APLICA um filtro, então precisa de alvo de ação, não de rótulo */
+  border-radius: var(--radius-sm); padding: 4px 8px; font-size: 11px; font-weight: 600;
+  cursor: pointer; font-family: var(--font-body); min-height: 28px;
+}
+.tx-tag:hover { border-color: var(--gold); color: var(--gold-ink); }
+
+/* Ação rápida de pagar no extrato. Fica colado à linha que abre a edição: alvo
+   pequeno fazia errar e abrir a folha. */
+.pay-btn {
+  width: 40px; height: 40px; border-radius: var(--radius-sm); flex: none; cursor: pointer;
+  border: 1px solid var(--line); background: var(--green-soft); color: var(--green-ink);
+  display: grid; place-items: center;
+}
+.pay-btn:hover { background: var(--green); color: #fff; border-color: var(--green); }
+
+/* ============================================================================
+   IMPORTAÇÃO OFX — duas linhas, não quatro colunas.
    Em quatro colunas na largura do celular a descrição ficava com ~100px, e é
-   justamente ela que a pessoa precisa ler para decidir a categoria. Aqui a
-   descrição ganha a linha de cima quase inteira e o seletor fica na de baixo,
-   com largura total (o caminho "Alimentação › Mercado" também não cabia em 130px). */
+   justamente ela que a pessoa precisa ler para decidir a categoria.
+   ============================================================================ */
 .ofx-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start; gap: 4px 10px;
-  padding: 10px 0; border-bottom: 1px dashed var(--line);
+  padding: 10px 0; border-bottom: 1px solid var(--line);
 }
 .ofx-row input[type="checkbox"] {
   grid-column: 1; grid-row: 1; margin-top: 2px;
@@ -823,19 +1172,18 @@ body {
 .ofx-val { grid-column: 3; grid-row: 1; font-weight: 700; font-size: 13px; white-space: nowrap; text-align: right; }
 .ofx-cat { grid-column: 2; grid-row: 2; min-width: 0; }
 /* Etiqueta por linha: um botão pequeno, não um campo. Quarenta campos de texto
-   resolveriam o mesmo com a tela cheia. O texto do botão pode reticenciar — é
-   rótulo de controle, não o nome do lançamento. */
+   resolveriam o mesmo com a tela cheia. */
 .ofx-tag-btn {
   grid-column: 3; grid-row: 2; justify-self: end; align-self: center;
   display: flex; align-items: center; gap: 5px; cursor: pointer;
-  max-width: 120px; padding: 6px 9px; border-radius: 8px;
+  max-width: 120px; padding: 6px 9px; border-radius: var(--radius-sm);
   background: var(--ink-3); border: 1px solid var(--line); color: var(--paper-dim);
   font-family: var(--font-body); font-size: 11.5px; font-weight: 600;
 }
 .ofx-tag-btn svg { width: 13px; height: 13px; flex: none; }
 .ofx-tag-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ofx-tag-btn:hover { border-color: var(--gold); color: var(--gold); }
-.ofx-tag-btn.tem { border-color: var(--gold); color: var(--gold); background: rgba(0, 158, 247, .07); }
+.ofx-tag-btn:hover { border-color: var(--gold); color: var(--gold-ink); }
+.ofx-tag-btn.tem { border-color: var(--gold); color: var(--gold-ink); background: var(--gold-soft); }
 .ofx-cat select { width: 100%; padding: 6px 8px; font-size: 12px; }
 /* Depois do UI.enhance quem aparece é o .ui-select; o nativo fica escondido atrás */
 .ofx-cat .ui-select { width: 100%; }
@@ -846,15 +1194,18 @@ body {
 .ofx-par { opacity: .62; }
 /* Dúvida não é o mesmo que certeza: fica em pé de igualdade com as demais e
    marcada, porque desmarcar por engano faz dinheiro sumir sem aviso */
-.ofx-duvida { background: rgba(246, 166, 9, .05); border-radius: 8px; }
-.ofx-aviso.duvida { color: #b57500; background: rgba(246, 166, 9, .1); margin-bottom: 6px; }
+.ofx-duvida { background: var(--amber-soft); border-radius: var(--radius-sm); }
+.ofx-aviso.duvida { color: var(--amber-ink); background: var(--amber-soft); margin-bottom: 6px; }
 .ofx-aviso {
-  display: block; font-size: 11.5px; line-height: 1.4; color: var(--blue);
-  background: rgba(114, 57, 234, .07); border-radius: 8px; padding: 6px 9px;
+  display: block; font-size: 11.5px; line-height: 1.4; color: var(--blue-ink);
+  background: var(--blue-soft); border-radius: var(--radius-sm); padding: 6px 9px;
 }
+/* Linha do extrato que o OFX veio confirmar: verde discreto, porque nada será
+   duplicado — é o oposto do aviso vermelho de conflito */
+.ofx-aviso.ok { color: var(--green-ink); }
+.ofx-casado { background: var(--green-soft); }
 /* Sem rolagem própria: o painel do select é posicionado em relação ao campo, e um
-   contêiner com overflow cortaria o dropdown das últimas linhas. Quem rola é o
-   modal, e o botão de importar fica fixo no rodapé para não ficar longe. */
+   contêiner com overflow cortaria o dropdown das últimas linhas. */
 .ofx-list { margin: 10px 0; }
 .ofx-acoes {
   position: sticky; bottom: 0; z-index: 2;
@@ -863,24 +1214,31 @@ body {
 }
 .ofx-dup { opacity: .5; }
 
+/* ---------- Navegação de mês, dentro da tela ---------- */
 .month-nav { display: flex; align-items: center; justify-content: space-between; }
 .month-nav b { font-size: 15px; font-weight: 700; }
 .month-nav button {
   background: var(--ink-3); border: 1px solid var(--line); color: var(--paper);
-  width: 34px; height: 34px; border-radius: 8px; font-size: 15px; cursor: pointer;
+  width: 34px; height: 34px; border-radius: var(--radius-sm); font-size: 15px; cursor: pointer;
+  transition: border-color .15s ease, transform .12s ease;
 }
+.month-nav button:hover { border-color: var(--line-strong); }
+.month-nav button:active { transform: scale(.94); }
 
-/* Recorte de dias dentro do mês: rola na horizontal em vez de quebrar linha, para
-   não empurrar a lista para baixo da dobra logo depois de a fileira de atalhos ter
-   saído justamente por isso. */
-
+/* ---------- Chips ---------- */
 .chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .chip {
   border: 1px solid var(--line); background: var(--ink-2); color: var(--paper-dim);
-  padding: 7px 14px; border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer; font-family: var(--font-body);
+  padding: 7px 14px; border-radius: var(--radius-sm); font-size: 12.5px; font-weight: 600;
+  cursor: pointer; font-family: var(--font-body);
 }
 .chip.active { background: var(--gold); border-color: var(--gold); color: #fff; }
 .chip-more { border-style: dashed; }
+.chip-num { opacity: .7; font-weight: 500; margin-left: 4px; font-size: 11.5px; }
+.chip-tag { font-size: 12.5px; }
+/* Fixar etiqueta é decisão deliberada, então o estado ligado precisa ser óbvio */
+.chip-fixa { font-size: 12.5px; border-style: dashed; }
+.chip-fixa.active { border-style: solid; background: var(--gold-soft); color: var(--gold-ink); border-color: var(--gold); }
 
 /* Semântica de cor por tipo de ação — sai vermelho, entra verde, move azul.
    A cor vem sempre acompanhada do ícone e do texto, nunca sozinha. */
@@ -888,52 +1246,44 @@ body {
 .chip[data-v="Receita"].active { background: var(--green); border-color: var(--green); }
 .chip[data-v="Transferência"].active { background: var(--blue); border-color: var(--blue); }
 
-.sheet[data-tipo="Despesa"] .amount-input { color: var(--red); }
-.sheet[data-tipo="Receita"] .amount-input { color: var(--green); }
-.sheet[data-tipo="Transferência"] .amount-input { color: var(--blue); }
+.sheet[data-tipo="Despesa"] .amount-input { color: var(--red-ink); }
+.sheet[data-tipo="Receita"] .amount-input { color: var(--green-ink); }
+.sheet[data-tipo="Transferência"] .amount-input { color: var(--blue-ink); }
 .sheet[data-tipo="Despesa"] .amount-input:focus { border-color: var(--red); }
 .sheet[data-tipo="Receita"] .amount-input:focus { border-color: var(--green); }
 .sheet[data-tipo="Transferência"] .amount-input:focus { border-color: var(--blue); }
 .sheet[data-tipo="Despesa"] #sh-save { background: var(--red); }
 .sheet[data-tipo="Receita"] #sh-save { background: var(--green); }
 .sheet[data-tipo="Transferência"] #sh-save { background: var(--blue); }
-.sheet[data-tipo] #sh-save:hover { filter: brightness(.93); }
+.sheet[data-tipo] #sh-save:hover { filter: brightness(1.08); }
 /* Faixa colorida no topo da folha reforça em qual modo se está */
 .sheet[data-tipo]::before {
-  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px;
-  border-radius: 16px 16px 0 0; transition: background .25s ease;
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0; transition: background .25s ease;
 }
 .sheet[data-tipo="Despesa"]::before { background: var(--red); }
 .sheet[data-tipo="Receita"]::before { background: var(--green); }
 .sheet[data-tipo="Transferência"]::before { background: var(--blue); }
-.chip-num { opacity: .7; font-weight: 500; margin-left: 4px; font-size: 11.5px; }
 
 /* ---------- Topo do extrato ----------
-   Barra presa no topo enquanto a lista rola. Usa o fundo da PÁGINA, não o dos
-   cartões: ela não flutua sobre o conteúdo, ela é o topo da página preso. Um
-   cartão branco aqui leria como algo que veio de fora e pousou.
-
-   Sem sombra, só borda. Sombra competiria com a lista que passa por baixo, e a
-   lista é o que a tela existe para mostrar. */
+   Barra presa enquanto a lista rola, logo abaixo do header global — daí o `top`
+   sair da altura dele em vez de um número solto. Usa o fundo da PÁGINA, não o
+   dos cartões: ela não flutua sobre o conteúdo, ela é o topo da página preso. */
 .ext-topo {
-  position: sticky; top: 0; z-index: 20;
+  position: sticky; top: calc(var(--h-topbar) + env(safe-area-inset-top)); z-index: 20;
   background: var(--ink);
-  margin: 0 -16px; padding: 6px 16px 8px;
+  margin: 0 -16px; padding: 8px 16px;
   border-bottom: 1px solid var(--line);
   display: flex; flex-direction: column; gap: 8px;
 }
 /* Fora da animação de entrada da tela: transform num elemento preso o desloca
    justamente enquanto ele deveria estar ancorado */
 .view > .ext-topo { animation: none; }
-/* O cartão de mês é o mesmo do Painel; aqui ele só ganha um respiro menor,
-   porque a barra inteira precisa caber sem roubar a lista */
 .ext-topo .month-nav { padding: 8px 12px; }
 
 /* ---------- A régua do mês ----------
    Seletor de intervalo E mapa de movimento: as marcas mostram onde o dinheiro se
-   mexeu, então dá para ver o aglomerado antes de arrastar até ele. Dois
-   <input type="range"> sobrepostos — o trilho desenhado fica embaixo, e só os
-   polegares recebem o toque. */
+   mexeu, então dá para ver o aglomerado antes de arrastar até ele. */
 .regua { position: relative; padding: 2px 0 0; }
 .regua-trilho {
   position: relative; height: 26px; border-radius: 7px;
@@ -942,15 +1292,15 @@ body {
 .regua-marcas { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 1px; padding: 0 1px; }
 .regua-marca {
   flex: 1; min-width: 0; border-radius: 1.5px 1.5px 0 0;
-  background: rgba(107, 111, 133, .22);
+  background: var(--line-strong);
   transition: background .15s ease;
 }
-.regua-marca.dentro { background: rgba(0, 158, 247, .55); }
+.regua-marca.dentro { background: var(--gold); }
 /* A faixa escolhida tinge, não cobre: as marcas precisam continuar legíveis
    dentro dela, senão o mapa some justamente onde se está olhando */
 .regua-faixa {
   position: absolute; top: 0; bottom: 0;
-  background: rgba(0, 158, 247, .1);
+  background: var(--gold-soft);
   border-left: 2px solid var(--gold); border-right: 2px solid var(--gold);
   pointer-events: none;
 }
@@ -965,46 +1315,37 @@ body {
 .regua-thumb::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none; pointer-events: auto;
   width: 22px; height: 26px; border-radius: 6px; cursor: grab;
-  background: var(--gold); border: 2px solid #fff;
-  box-shadow: 0 1px 4px rgba(24, 28, 50, .3);
+  background: var(--gold); border: 2px solid var(--ink-2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
 }
 .regua-thumb::-moz-range-thumb {
   pointer-events: auto;
   width: 18px; height: 22px; border-radius: 6px; cursor: grab;
-  background: var(--gold); border: 2px solid #fff;
-  box-shadow: 0 1px 4px rgba(24, 28, 50, .3);
+  background: var(--gold); border: 2px solid var(--ink-2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
 }
-.regua-thumb:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px rgba(0, 158, 247, .4); }
-.regua-thumb:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px rgba(0, 158, 247, .4); }
+.regua-thumb:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px var(--gold-soft); }
+.regua-thumb:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px var(--gold-soft); }
 .regua-pes {
   display: flex; align-items: center; justify-content: space-between;
   margin-top: 4px; font-size: 11px; color: var(--paper-dim); font-weight: 600;
-  font-variant-numeric: tabular-nums;
 }
 .regua-pes b { color: var(--paper); font-size: 11.5px; font-weight: 700; }
 
 /* ---------- Pílulas de filtro ----------
-   Cada pílula mostra o próprio valor, então ela É o estado do filtro — foi o que
-   permitiu tirar da tela a fileira de etiquetas ativas, que repetia a mesma
-   informação um bloco abaixo. */
-/* QUEBRA DE LINHA, não rolagem horizontal.
+   Cada pílula mostra o próprio valor, então ela É o estado do filtro.
 
-   A fileira rolava e mostrava só as primeiras: o resto existia e ninguém
-   alcançava. Filtro escondido é filtro que não é usado, e aqui o custo de
-   esconder é alto — a pessoa fica sem saber por que a lista está daquele jeito.
-   Duas linhas de altura valem mais que uma linha com metade dos filtros fora
-   de vista. */
+   QUEBRA DE LINHA, não rolagem horizontal: a fileira rolava e mostrava só as
+   primeiras — o resto existia e ninguém alcançava. */
 .ext-pilulas { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 2px; }
 .pilula {
   position: relative; flex: 0 1 auto; display: inline-flex; align-items: center; gap: 5px;
-  max-width: 100%; padding: 6px 10px; border-radius: 999px;
+  max-width: 100%; padding: 5px 9px; border-radius: var(--radius-sm);
   background: var(--ink-2); border: 1px solid var(--line); color: var(--paper-dim);
   font-family: var(--font-body); font-size: 12.5px; font-weight: 600;
   white-space: nowrap; cursor: pointer;
   transition: border-color .15s ease, color .15s ease, background .15s ease;
 }
-/* Em tela muito estreita, encolher a fonte antes de deixar cair para uma
-   terceira linha — a barra é fixa, e cada linha dela é altura roubada da lista */
 @media (max-width: 360px) {
   .ext-pilulas { gap: 5px; }
   .pilula { font-size: 12px; padding: 5px 9px; }
@@ -1012,10 +1353,10 @@ body {
 /* O corte com reticências mora AQUI, não na pílula: em contêiner flex o
    text-overflow não alcança o texto solto, e o rótulo saía decepado. */
 .pilula-rot { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pilula:hover { border-color: #d8e3ea; color: var(--paper); }
+.pilula:hover { border-color: var(--line-strong); color: var(--paper); }
 .pilula svg { width: 14px; height: 14px; flex: none; }
-.pilula.on { background: rgba(0, 158, 247, .08); border-color: rgba(0, 158, 247, .45); color: #0072b8; }
-.pilula.tem-pop { border-color: var(--gold); color: #0072b8; }
+.pilula.on { background: var(--gold-soft); border-color: var(--gold-borda); color: var(--gold-ink); }
+.pilula.tem-pop { border-color: var(--gold); color: var(--gold-ink); }
 .pilula-seta {
   width: 0; height: 0; flex: none; margin-left: 1px;
   border-left: 4px solid transparent; border-right: 4px solid transparent;
@@ -1026,19 +1367,17 @@ body {
   padding: 0 1px 2px; flex: none;
 }
 .pilula-x:hover { opacity: 1; }
-.pilula-limpar { color: var(--red); border-color: rgba(241, 65, 108, .3); background: rgba(241, 65, 108, .06); }
+.pilula-limpar { color: var(--red-ink); border-color: var(--red-borda); background: var(--red-soft); }
 
 /* Painel ancorado na pílula: mesmo visual do dropdown, sem cobrir a lista.
    Fica no <body> com position:fixed — dentro da fileira de pílulas o
-   overflow-x:auto dela cortaria o painel. */
-/* `.ui-panel.ui-pop` com duas classes de propósito, não por estilo: `.ui-panel`
-   aparece DEPOIS neste arquivo, então com uma classe só ele venceria o empate de
-   especificidade e reimporia `position: absolute`.
+   overflow-x:auto dela cortaria o painel.
 
-   E isso não era detalhe: com `absolute` num filho do <body>, o `top` que o JS
-   calcula em coordenadas de viewport passa a valer como coordenada de DOCUMENTO.
-   Com a página rolada, o painel ia para o topo do documento — fora da tela. As
-   pílulas apareciam e o dropdown não. */
+   `.ui-panel.ui-pop` com duas classes de propósito, não por estilo: `.ui-panel`
+   aparece DEPOIS neste arquivo, então com uma classe só ele venceria o empate de
+   especificidade e reimporia `position: absolute`. E isso não era detalhe: com
+   `absolute` num filho do <body>, o `top` que o JS calcula em coordenadas de
+   viewport passa a valer como coordenada de DOCUMENTO. */
 .ui-panel.ui-pop {
   position: fixed; min-width: 210px; max-width: min(88vw, 320px);
   z-index: 45; margin: 0;
@@ -1053,7 +1392,7 @@ body {
   font-size: 11.5px; color: var(--paper-dim);
 }
 .ui-pop-pe button {
-  background: none; border: none; color: var(--gold); cursor: pointer;
+  background: none; border: none; color: var(--gold-ink); cursor: pointer;
   font-family: var(--font-body); font-size: 12px; font-weight: 700; padding: 4px 2px;
 }
 .ui-pop-pe button[data-pop-ok] { color: #fff; background: var(--gold); border-radius: 7px; padding: 6px 12px; }
@@ -1061,19 +1400,13 @@ body {
 .pop-check { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .pop-check input { width: 18px; height: 18px; accent-color: var(--gold); }
 
-/* ---------- Resumo do período ----------
-   Um número grande, não quatro iguais: o saldo do fim do recorte é a pergunta
-   que traz alguém ao extrato. O resto é apoio, e a explicação por extenso fica
-   atrás do toque porque se lê uma vez e depois só ocupa espaço. */
 /* ---------- Resumo do período, com evolução diária ----------
    O saldo tem forma no tempo; "entrou" e "saiu" têm magnitude por dia. Formas
    diferentes para perguntas diferentes: área para o caminho do saldo, colunas
    a partir do zero para o volume de cada dia.
 
-   O saldo anterior não virou gráfico porque não tem evolução — é uma constante.
-   Ele é o PONTO DE PARTIDA da linha, e aparece escrito no pé dela. */
-/* padding 0 + overflow hidden: é o que deixa o gráfico encostar nas bordas e
-   herdar o raio do cartão (card-body p-0 + card-rounded-bottom, no Metronic) */
+   padding 0 + overflow hidden: é o que deixa o gráfico encostar nas bordas e
+   herdar o raio do cartão. */
 .res { padding: 0; overflow: hidden; }
 .res-topo {
   width: 100%; display: block;
@@ -1104,40 +1437,34 @@ body {
   display: inline-flex; align-items: center; gap: 3px; margin-top: 4px;
   padding: 3px 8px; border-radius: 6px; font-size: 11.5px; font-weight: 700;
 }
-.res-selo.ok { background: rgba(80, 205, 137, .16); color: #1f9d61; }
-.res-selo.ruim { background: rgba(241, 65, 108, .12); color: var(--red); }
+.res-selo.ok { background: var(--green-soft); color: var(--green-ink); }
+.res-selo.ruim { background: var(--red-soft); color: var(--red-ink); }
 .res-seta { flex: none; margin-top: 3px; color: var(--paper-dim); transition: transform .2s ease; }
 .res-seta svg { width: 13px; height: 13px; }
 .res.fechado .res-seta { transform: rotate(-90deg); }
 
-/* 130px, não 40: os gráficos do Metronic têm 150–200px, e era essa proporção que
-   faltava. Gráfico espremido entre textos parece encaixado às pressas; gráfico
-   generoso parece desenhado. */
+/* 130px, não 40: gráfico espremido entre textos parece encaixado às pressas;
+   gráfico generoso parece desenhado. */
 .res-graf { height: 130px; }
-/* O sparkline sangra até a borda de baixo do cartão. Não precisa de raio próprio
-   no SVG (é o que o Metronic faz no .card-rounded-bottom) porque `.res` já tem
-   overflow: hidden com o raio do cartão, e isso recorta o filho. */
+/* O sparkline sangra até a borda de baixo do cartão: `.res` já tem overflow
+   hidden com o raio do cartão, e isso recorta o filho. */
 .res-graf .apx { margin-top: 0; }
 
-/* Conteúdo da dica do saldo diário. O balão em si é da biblioteca (posição,
-   toque e recorte pelo cartão vêm dela); estas regras são o miolo — saldo do dia,
-   quanto entrou e quanto saiu, que a dica nativa não saberia montar. */
+/* Conteúdo da dica do saldo diário. O balão em si é da biblioteca; estas regras
+   são o miolo — saldo do dia, quanto entrou e quanto saiu. */
 .res-tip-in { min-width: 118px; padding: 7px 9px; font-size: 11.5px; line-height: 1.5; }
 .res-tip-d { display: block; font-weight: 700; opacity: .75; margin-bottom: 2px; text-transform: capitalize; }
 .res-tip-l { display: flex; justify-content: space-between; gap: 12px; }
 .res-tip-l i { font-style: normal; opacity: .7; }
-.res-tip-l b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.res-tip-l b { font-weight: 700; }
 /* Dentro do balão escuro as cores do app não teriam contraste; aqui elas clareiam */
-.res-tip-l b.txt-green { color: #7ee2ab; }
-.res-tip-l b.txt-red { color: #ff8fa8; }
+.res-tip-l b.txt-green { color: #7EE2AB; }
+.res-tip-l b.txt-red { color: #FF8FA8; }
 /* A ponte até o fim do período usa as MESMAS linhas do hero (.hc-l, .hc-total):
    as duas telas respondem a mesma pergunta e não devem ter formas diferentes de
-   escrever uma conta. Só as bordas mudam — no hero elas são brancas
-   translúcidas, porque lá o fundo é colorido; aqui sumiriam sobre o papel. */
+   escrever uma conta. Só as bordas mudam. */
 .res-conta { padding: 10px 16px 2px; border-top: 1px solid var(--line); font-size: 12.5px; }
-/* Linha de DETALHE: não é parcela da conta, é a decomposição da linha logo acima.
-   Recuada e menor de propósito — no mesmo peso das outras ela pareceria mais um
-   termo da soma, e a conta passaria a ter dois caminhos possíveis. */
+/* Linha de DETALHE: não é parcela da conta, é a decomposição da linha acima. */
 .res-conta .hc-d { padding-left: 12px; font-size: 11.5px; opacity: .85; }
 .res-conta .hc-d b { font-weight: 600; }
 .res-conta .hc-total,
@@ -1155,100 +1482,97 @@ body {
 .pt-up { border-bottom: 6px solid var(--green); }
 .pt-dn { border-top: 6px solid var(--red); }
 
-/* Linha de filtro rotulada (extrato) */
 /* Barra de busca + botão de filtros. Só estes dois ficam sempre na tela; os
    outros dez controles moram no painel, senão a lista sairia da primeira dobra. */
 .busca-row { display: flex; gap: 8px; align-items: stretch; }
 .busca-row input { flex: 1; min-width: 0; }
 .btn-filtros {
   display: flex; align-items: center; gap: 7px; flex: none; cursor: pointer;
-  padding: 0 14px; border-radius: 8px; font-family: var(--font-body);
+  padding: 0 14px; border-radius: var(--radius-sm); font-family: var(--font-body);
   font-size: 13px; font-weight: 600; white-space: nowrap;
   background: var(--ink-2); border: 1px solid var(--line); color: var(--paper-dim);
   box-shadow: var(--shadow);
 }
-.btn-filtros:hover { border-color: #d8e3ea; color: var(--paper); }
+.btn-filtros:hover { border-color: var(--line-strong); color: var(--paper); }
 .btn-filtros svg { width: 15px; height: 15px; }
-.btn-filtros.tem { border-color: var(--gold); color: var(--gold); background: rgba(0, 158, 247, .06); }
-
-/* Filtros aplicados, sempre à vista: painel fechado esconde os controles, não o
-   que está filtrando — senão a lista fica curta sem explicação. */
-
-/* Etiquetas do lançamento, na própria linha do extrato */
-.tx-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
-.tx-tag {
-  background: var(--ink-3); color: var(--paper-dim); border: 1px solid var(--line);
-  /* Tocar aqui APLICA um filtro, então precisa de alvo de ação, não de rótulo */
-  border-radius: 20px; padding: 5px 10px; font-size: 11px; font-weight: 600;
-  cursor: pointer; font-family: var(--font-body); min-height: 28px;
-}
-.tx-tag:hover { border-color: var(--gold); color: var(--gold); }
-.chip-tag { font-size: 12.5px; }
-/* Fixar etiqueta é decisão deliberada, então o estado ligado precisa ser óbvio */
-.chip-fixa { font-size: 12.5px; border-style: dashed; }
-.chip-fixa.active { border-style: solid; background: rgba(0, 158, 247, .1); color: var(--gold); border-color: var(--gold); }
+.btn-filtros.tem { border-color: var(--gold); color: var(--gold-ink); background: var(--gold-soft); }
 
 .filter-lbl {
   font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
   color: var(--paper-dim); width: 46px; flex: none;
 }
-/* min-width:0 é o que permite o item flex encolher e rolar em vez de estourar a tela */
 
-/* Nenhuma tela pode empurrar o corpo para os lados */
+/* Nenhuma tela pode empurrar o corpo para os lados.
+
+   `max-width: 100%` aqui é rede contra overflow — um gráfico ou uma tabela larga
+   não pode abrir rolagem horizontal na página inteira. O efeito colateral é que
+   ele anula, por ordem, o teto de largura que `.content` declara lá em cima.
+
+   Isso vinha do tema anterior e ficava: o conteúdo esticava sem limite nenhum
+   numa tela larga. O teto volta na linha seguinte, depois desta regra, para ser
+   uma decisão visível em vez de um acidente de cascata — e generoso, porque a
+   tela grande é para ser usada, não para virar duas tarjas vazias. */
 body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
+.content { max-width: min(100%, 1720px); }
 .view > * { min-width: 0; }
 
-/* Ação rápida de pagar no extrato */
-/* Fica colado à linha que abre a edição: alvo pequeno fazia errar e abrir a folha */
-.pay-btn {
-  width: 40px; height: 40px; border-radius: 9px; flex: none; cursor: pointer;
-  border: 1px solid var(--line); background: rgba(80, 205, 137, .1); color: #47be7d;
-  display: grid; place-items: center;
-}
-.pay-btn:hover { background: var(--green); color: #fff; border-color: var(--green); }
-
-/* Linhas de conta */
+/* ---------- Linhas de conta ---------- */
 .acc-row {
   display: flex; align-items: center; gap: 12px; padding: 11px 0;
-  border-bottom: 1px dashed var(--line); cursor: pointer;
+  border-bottom: 1px solid var(--line); cursor: pointer;
 }
 .acc-row:last-of-type { border-bottom: 0; }
-.acc-row:hover { background: var(--ink-3); border-radius: 8px; padding-left: 8px; padding-right: 8px; }
-.acc-ico { font-size: 19px; width: 38px; height: 38px; border-radius: 9px; background: var(--ink-3); display: grid; place-items: center; flex: none; }
+.acc-row:hover { background: var(--ink-3); border-radius: var(--radius-sm); padding-left: 8px; padding-right: 8px; }
+.acc-ico { font-size: 19px; width: 38px; height: 38px; border-radius: var(--radius-sm); background: var(--ink-3); display: grid; place-items: center; flex: none; }
 .acc-info { flex: 1; min-width: 0; }
 .acc-info b { display: block; font-size: 13.5px; font-weight: 600; }
 .acc-info small { color: var(--paper-dim); font-size: 11.5px; }
 
-/* Cartões de crédito */
+/* ============================================================================
+   CARTÕES DE CRÉDITO
+
+   Também deixou de imitar um cartão de plástico (gradiente escuro e halo azul no
+   canto). O que interessa desta tela é o VALOR DA FATURA e quanto do limite já
+   foi usado — dois números e uma barra. A moldura brilhante só competia com eles,
+   e no tema claro obrigava uma placa preta no meio da página.
+   ============================================================================ */
+/* Mesmo destaque do hero, pelo mesmo motivo: na tela de Cartões é ESTE bloco que
+   responde à pergunta que trouxe alguém aqui — quanto é a fatura. Degrau de
+   superfície, borda firme e o filete de 2px no topo.
+
+   A cor do filete é o estado da fatura, e ela é lida da própria estrutura: o
+   bloco só contém `.cc-alerta` quando existe fatura fechada e não paga. Sem
+   `:has()` seria preciso uma classe nova vinda do JS para dizer o que o HTML já
+   diz. Em navegador sem suporte, o filete fica azul — nada quebra. */
 .credit-card {
-  border-radius: 14px; padding: 20px; position: relative; overflow: hidden; color: #fff;
-  background: linear-gradient(135deg, #1e1e2d, #323248 90%);
+  border-radius: var(--radius); padding: 18px 16px 16px; position: relative; overflow: hidden;
+  background: var(--destaque);
+  border: 1px solid var(--line-strong);
   box-shadow: var(--shadow);
 }
 .credit-card::before {
-  content: ''; position: absolute; right: -50px; top: -50px; width: 190px; height: 190px;
-  border-radius: 50%; background: radial-gradient(circle, rgba(0, 158, 247, .35), transparent 70%);
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--gold);
 }
-.cc-head { display: flex; justify-content: space-between; align-items: baseline; }
-.cc-name { font-size: 17px; font-weight: 700; }
-.cc-brand { font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: #9899ac; }
-.cc-invoice { margin-top: 12px; }
-.cc-invoice-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: #9899ac; }
-.cc-invoice-val { font-size: 26px; font-weight: 800; color: #fff; }
-.cc-dates { display: flex; gap: 16px; margin-top: 10px; font-size: 12px; color: #9899ac; }
+.credit-card:has(.cc-alerta)::before { background: var(--red); }
+.cc-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.cc-name { font-size: 15px; font-weight: 600; letter-spacing: -.015em; }
+.cc-brand { font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--paper-faint); }
+.cc-invoice { margin-top: 10px; }
+.cc-invoice-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--paper-dim); }
+.cc-invoice-val { font-size: 26px; font-weight: 700; letter-spacing: -.03em; line-height: 1.15; }
+.cc-dates { display: flex; gap: 16px; margin-top: 8px; font-size: 12px; color: var(--paper-dim); }
 .cc-limit { margin-top: 12px; }
-.cc-limit .muted { color: #9899ac; }
-.credit-card .bar { background: rgba(255, 255, 255, .12); }
+.cc-limit .muted { color: var(--paper-dim); }
 
 /* CAPA DA TELA: o patrimônio e as duas metades que o compõem. Sem moldura de
-   card — ela é o cabeçalho da tela, não mais um bloco na pilha; uma borda aqui
-   faria competir com as seções que ela apresenta. */
+   card — ela é o cabeçalho da tela, não mais um bloco na pilha. */
 .pat-capa { padding: 4px 2px 14px; }
 .pat-rot {
   display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .1em;
   color: var(--paper-dim); font-weight: 600;
 }
-.pat-val { display: block; font-size: 30px; font-weight: 800; letter-spacing: -.02em; margin-top: 2px; }
+.pat-val { display: block; font-size: 30px; font-weight: 800; letter-spacing: -.03em; margin-top: 2px; }
 .pat-partes { display: flex; gap: 8px; align-items: baseline; margin-top: 4px; font-size: 12.5px; color: var(--paper-dim); }
 .pat-partes b { font-weight: 700; color: var(--paper); }
 .pat-sep { opacity: .5; }
@@ -1257,41 +1581,41 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
    alerta é um fundo translúcido — vermelho chapado sobre o gradiente escuro
    vibra e fica ilegível. */
 .cc-alerta {
-  margin-top: 12px; padding: 10px 12px; border-radius: 10px;
-  background: rgba(241, 65, 108, .18); border: 1px solid rgba(241, 65, 108, .45);
+  margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-sm); position: relative;
+  background: var(--red-soft); border: 1px solid var(--red-borda);
 }
-.cc-alerta-top { display: flex; justify-content: space-between; gap: 10px; font-size: 11.5px; color: #ffd7e0; }
-.cc-alerta-val { font-size: 21px; font-weight: 800; color: #fff; margin-top: 2px; }
+.cc-alerta-top { display: flex; justify-content: space-between; gap: 10px; font-size: 11.5px; color: var(--red-ink); }
+.cc-alerta-val { font-size: 20px; font-weight: 700; color: var(--paper); margin-top: 2px; letter-spacing: -.02em; }
 .cc-acoes { display: flex; gap: 14px; margin-top: 8px; }
-.cc-limit-erro { font-size: 11.5px; color: #ffc7d2; line-height: 1.45; }
+.cc-limit-erro { font-size: 11.5px; color: var(--red-ink); line-height: 1.45; }
 
 /* Barra do limite em DUAS faixas: o que já é fatura e o que ainda vai faturar.
    As duas se encostam dentro do mesmo trilho, então a barra deixa de arredondar
    cada pedaço — cantos internos abririam um vão que leria como espaço livre. */
 .bar-2 { display: flex; }
-.bar-2 > i { border-radius: 0; transition: width .5s ease; }
+.bar-2 > i { border-radius: 0; transition: width .5s var(--ease-out); }
 .bar-2 > i:first-child { border-radius: 4px 0 0 4px; }
 .bar-2 > i:last-child { border-radius: 0 4px 4px 0; }
-/* --gold é o azul primário (#009ef7); --blue aqui é o roxo do Metronic. */
 .bar-usado { background: var(--gold); }
-.bar-futuro { background: rgba(0, 158, 247, .42); }
-.cc-legenda { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 7px; font-size: 11px; color: #9899ac; }
+.bar-futuro { background: var(--gold-fraco); }
+.cc-legenda { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 7px; font-size: 11px; color: var(--paper-dim); }
 .cc-legenda span { display: inline-flex; align-items: center; gap: 5px; }
-.cc-legenda i { font-style: normal; font-weight: 700; color: #e6e7f0; font-variant-numeric: tabular-nums; }
+.cc-legenda i { font-style: normal; font-weight: 600; color: var(--paper); }
 .cc-legenda b { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .pt-usado { background: var(--gold); }
-.pt-futuro { background: rgba(0, 158, 247, .42); }
+.pt-futuro { background: var(--gold-fraco); }
 
 /* Linhas de navegação abaixo do cartão: futuras e histórico. Botão de largura
    inteira porque a área de toque no celular é a linha, não o texto. */
 .cc-linha {
   display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 8px;
   padding: 12px 14px; background: var(--ink-2); border: 1px solid var(--line);
-  border-radius: 10px; font-size: 13px; color: var(--paper); text-align: left; cursor: pointer;
+  border-radius: var(--radius-sm); font-size: 13px; color: var(--paper); text-align: left; cursor: pointer;
+  font-family: var(--font-body);
 }
 .cc-linha > span:first-child { flex: 1; }
 .cc-linha i { display: block; font-style: normal; font-size: 11.5px; color: var(--paper-dim); margin-top: 1px; }
-.cc-linha b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.cc-linha b { font-weight: 700; }
 .cc-linha svg { width: 15px; height: 15px; color: var(--paper-dim); flex: none; }
 .cc-linha:hover { border-color: var(--gold); }
 .cc-linha:active { transform: scale(.99); }
@@ -1299,8 +1623,9 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 /* Cartão sem movimento: uma linha, não um bloco. */
 .cc-vazio {
   display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 8px;
-  padding: 13px 14px; background: var(--ink-2); border: 1px dashed var(--line);
-  border-radius: 12px; font-size: 13px; color: var(--paper); text-align: left; cursor: pointer;
+  padding: 13px 14px; background: var(--ink-2); border: 1px dashed var(--line-strong);
+  border-radius: var(--radius); font-size: 13px; color: var(--paper); text-align: left; cursor: pointer;
+  font-family: var(--font-body);
 }
 .cc-vazio-nome { font-weight: 600; }
 .cc-vazio .muted { flex: 1; font-size: 11.5px; }
@@ -1308,7 +1633,7 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 
 .invoice-row {
   display: flex; align-items: center; gap: 10px; padding: 11px 14px;
-  background: var(--ink-2); border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px;
+  background: var(--ink-2); border: 1px solid var(--line); border-radius: var(--radius-sm); margin-bottom: 8px;
   box-shadow: var(--shadow); font-size: 13px;
 }
 
@@ -1317,146 +1642,310 @@ body, #app, .wrapper, .content, .view { max-width: 100%; overflow-x: clip; }
 .prev-lista { margin-top: 4px; }
 .prev-linha {
   display: flex; align-items: center; gap: 10px;
-  padding: 9px 0; border-bottom: 1px dashed var(--line); font-size: 13px;
+  padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 13px;
 }
 .prev-linha:last-child { border-bottom: none; }
 /* Largura fixa na data para os nomes alinharem numa coluna só */
-.prev-dia { flex: none; width: 62px; font-size: 11.5px; color: var(--paper-dim); font-variant-numeric: tabular-nums; }
+.prev-dia { flex: none; width: 62px; font-size: 11.5px; color: var(--paper-dim); }
 /* min-width 0 é o que deixa o nome longo encolher em vez de empurrar o valor */
 .prev-nome { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .prev-nome small { display: block; font-size: 10.5px; color: var(--paper-dim); margin-top: 1px; }
 .prev-linha .num { flex: none; font-weight: 700; }
+
 .badge { font-size: 11px; padding: 4px 10px; border-radius: 6px; font-weight: 700; }
-.badge.aberta { background: rgba(0, 158, 247, .1); color: var(--gold); }
-.badge.fechada { background: rgba(246, 166, 9, .12); color: #d18b00; }
-.badge.paga { background: rgba(80, 205, 137, .12); color: #47be7d; }
+.badge.aberta { background: var(--gold-soft); color: var(--gold-ink); }
+.badge.fechada { background: var(--amber-soft); color: var(--amber-ink); }
+.badge.paga { background: var(--green-soft); color: var(--green-ink); }
 /* Parcial fica no roxo de "informação", não no verde de resolvido nem no âmbar
    de atrasado: a fatura anda, mas não acabou */
-.badge.parcial { background: rgba(114, 57, 234, .1); color: var(--blue); }
+.badge.parcial { background: var(--blue-soft); color: var(--blue-ink); }
 /* Alvo confortável: são "marcar paga" e "↺" na linha da fatura, botões colados
    que antes tinham a altura só do texto (~16px). */
 .link-btn {
-  background: none; border: none; color: var(--gold); font-size: 12.5px; font-weight: 600;
+  background: none; border: none; color: var(--gold-ink); font-size: 12.5px; font-weight: 600;
   cursor: pointer; font-family: var(--font-body);
-  min-height: 40px; padding: 0 10px; border-radius: 8px;
+  min-height: 40px; padding: 0 10px; border-radius: var(--radius-sm);
 }
-.link-btn:hover { background: rgba(0, 158, 247, .08); }
-/* Dentro do cartão escuro o dourado padrão some no gradiente. A especialização
-   vem DEPOIS da regra base de propósito: antes dela, era a primeira ocorrência de
+.link-btn:hover { background: var(--gold-soft); }
+/* Dentro do cartão escuro o azul padrão some no gradiente. A especialização vem
+   DEPOIS da regra base de propósito: antes dela, era a primeira ocorrência de
    ".link-btn {" no arquivo, e a checagem de alvo de toque passava a ler um bloco
    sem altura — o teste reprovava por ordem de CSS, não por alvo pequeno. */
-.cc-acoes .link-btn { color: #cfd2e6; }
-.cc-acoes .link-btn.forte { color: #fff; font-weight: 700; }
+.cc-acoes .link-btn { color: var(--paper-dim); }
+.cc-acoes .link-btn.forte { color: var(--gold-ink); font-weight: 600; }
 
-/* Metas */
+/* ---------- Metas ---------- */
 .goal-head { display: flex; align-items: center; gap: 10px; }
 .goal-ico { font-size: 22px; }
 .goal-name { font-weight: 700; flex: 1; }
-.goal-pct { font-weight: 800; color: var(--gold); }
+.goal-pct { font-weight: 800; color: var(--gold-ink); }
 .goal-nums { display: flex; justify-content: space-between; font-size: 12px; color: var(--paper-dim); margin: 8px 0 6px; }
 .goal-nums b { color: var(--paper); }
 
-/* ---------- Tab bar & FAB (mobile) ---------- */
+/* ============================================================================
+   BARRA INFERIOR (mobile)
+
+   Ancorada no rodapé, não flutuando com cantos de 24px. A barra solta com sombra
+   larga é um maneirismo: ela come 16px de cada lado da lista, projeta sombra
+   sobre o conteúdo que se está tentando ler e arredonda a base da tela inteira.
+   Encostada, com uma borda de 1px em cima, ela some do caminho — que é o que uma
+   barra de navegação deve fazer.
+   ============================================================================ */
 .tabbar {
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 20;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 30;
   display: flex; justify-content: space-around; align-items: center;
-  background: rgba(255, 255, 255, .95); backdrop-filter: blur(14px);
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   border-top: 1px solid var(--line);
-  padding: 8px 8px calc(8px + env(safe-area-inset-bottom));
+  padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
 }
 .tab {
-  background: none; border: none; color: var(--paper-dim); font-size: 11px; font-weight: 600; cursor: pointer;
-  display: flex; flex-direction: column; align-items: center; gap: 2px; width: 68px; min-height: 48px;
-  justify-content: center; font-family: var(--font-body); transition: color .15s ease;
+  background: none; border: none; color: var(--paper-dim); font-size: 10px; font-weight: 500; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 2px; width: 62px; min-height: 44px;
+  justify-content: center; font-family: var(--font-body);
+  transition: color .15s ease;
 }
-.tabbar .tab-ico {
-  width: 40px; height: 26px; border-radius: 999px;
-  display: grid; place-items: center; transition: background .15s ease;
-}
-.tab.active { color: var(--gold); }
-.tab.active .tab-ico { background: rgba(0, 158, 247, .12); }  /* pill de estado ativo (Material/Metronic) */
-.fab {
-  width: 54px; height: 54px; border-radius: 50%; border: none; cursor: pointer;
-  background: var(--gold); color: #fff; font-size: 26px; font-weight: 700;
-  box-shadow: 0 8px 22px rgba(0, 158, 247, .4);
-  margin-top: -26px;
-}
-.fab:active { transform: scale(.93); }
+/* Sem pastilha atrás do ícone: no item ativo, cor e peso já bastam. A pílula
+   tingida era mais um container arredondado numa tela que não precisa deles. */
+.tabbar .tab-ico { width: 24px; height: 24px; display: grid; place-items: center; transition: transform .18s var(--ease-out); }
+.tab.active { color: var(--gold-ink); font-weight: 600; }
+.tab:active .tab-ico { transform: scale(.9); }
 
-/* Com o teclado aberto a barra de abas fica prensada entre ele e o conteúdo,
-   roubando altura de quem está digitando — e ninguém troca de aba nesse momento.
-   O botão de novo lançamento vive dentro dela, então sai junto. */
+/* O botão de lançar, no meio da barra. Continua redondo — é um alvo para o
+   polegar, não um container de dado — mas em azul chapado, sem gradiente e sem
+   halo colorido embaixo. */
+.fab {
+  width: 44px; height: 44px; border-radius: 50%; border: none; cursor: pointer;
+  background: var(--gold);
+  color: #fff; font-size: 24px; font-weight: 600;
+  display: grid; place-items: center;
+  margin-top: -4px; flex: none;
+  transition: transform .14s var(--ease-out), background .16s ease;
+}
+.fab svg { width: 22px; height: 22px; }
+.fab:active { transform: scale(.92); }
+.fab:hover { background: var(--gold-ink); }
+
+/* Com o teclado aberto a barra fica prensada entre ele e o conteúdo, roubando
+   altura de quem está digitando — e ninguém troca de aba nesse momento. */
 body.teclado-aberto .tabbar { display: none; }
 
-/* ---------- Sheet e Modal ---------- */
-.sheet-backdrop, .modal-backdrop { position: fixed; inset: 0; background: rgba(24, 28, 50, .35); z-index: 30; }
+/* ============================================================================
+   FOLHA (bottom sheet) E MODAL
+   ============================================================================ */
+.sheet-backdrop, .modal-backdrop {
+  position: fixed; inset: 0; z-index: 30;
+  background: rgba(4, 6, 12, .55);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  animation: fade .2s ease;
+}
+@keyframes fade { from { opacity: 0; } }
 /* A folha é sempre a camada mais interna — dá para abrir uma sobre um modal (ex.:
-   etiquetas de uma linha da importação). Sem isto ela ficava atrás: os dois tinham
-   z-index 31 e #modal vem depois no HTML, então vencia o empate. */
+   etiquetas de uma linha da importação). Sem isto ela ficava atrás. */
 .sheet-backdrop { z-index: 32; }
 /* bottom acompanha o teclado: apoiada nele, a folha mantém o botão de salvar à
    vista. max-height desconta o teclado para o conteúdo continuar rolável. */
 .sheet {
   position: fixed; left: 0; right: 0; bottom: var(--teclado); z-index: 33;
   max-width: 560px; margin: 0 auto; max-height: calc(90dvh - var(--teclado)); overflow-y: auto; overscroll-behavior: contain;
-  background: var(--ink-2); border-radius: 16px 16px 0 0;
+  background: var(--ink-2); border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border: 1px solid var(--line); border-bottom: 0;
   padding: 20px 20px calc(22px + env(safe-area-inset-bottom));
-  box-shadow: 0 -10px 50px rgba(24, 28, 50, .18);
-  animation: sheetUp .24s ease;
+  box-shadow: var(--shadow-lg);
+  animation: sheetUp .34s var(--ease-sheet);
 }
-@keyframes sheetUp { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
+/* A curva nativa: a folha sobe rápido e assenta devagar, como no iOS. */
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
+/* A alça: diz que a folha se arrasta antes de alguém tentar */
+.sheet-handle { width: 38px; height: 4px; border-radius: 2px; background: var(--line-strong); margin: -8px auto 14px; }
+
 .modal {
   position: fixed; inset: 0; z-index: 31; overflow-y: auto; overscroll-behavior: contain;
   /* O rodapé cresce com o teclado, senão o último campo e o botão de salvar ficam
      inalcançáveis: o modal rola, mas não havia para onde rolar. */
   background: var(--ink); padding: 18px 18px calc(28px + env(safe-area-inset-bottom) + var(--teclado));
-  animation: fadeUp .2s ease;
+  animation: sheetUp .3s var(--ease-sheet);
 }
 .modal-inner { max-width: 560px; margin: 0 auto; }
 .sheet-title, .modal-title {
-  font-size: 18px; font-weight: 800; margin-bottom: 16px;
-  display: flex; justify-content: space-between; align-items: center;
+  font-size: 18px; font-weight: 800; margin-bottom: 16px; letter-spacing: -.025em;
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
 }
-.close-x { background: var(--ink-3); border: none; color: var(--paper-dim); font-size: 16px; cursor: pointer; width: 40px; height: 40px; border-radius: 8px; flex: none; }
+.close-x {
+  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper-dim);
+  font-size: 16px; cursor: pointer; width: 40px; height: 40px; border-radius: var(--radius-sm); flex: none;
+  display: grid; place-items: center;
+  transition: color .15s ease, border-color .15s ease, transform .12s ease;
+}
+.close-x:hover { color: var(--paper); border-color: var(--line-strong); }
+.close-x:active { transform: scale(.94); }
 
-/* Formulários */
+/* ---------- Formulários ---------- */
 .field { margin-bottom: 13px; }
 .field label { display: block; font-size: 12px; font-weight: 600; color: var(--paper); margin-bottom: 6px; }
 input, select, textarea {
   width: 100%; background: var(--ink-3); border: 1px solid var(--line); color: var(--paper);
-  border-radius: 8px; padding: 11px 13px; font-size: 14px; font-family: var(--font-body);
+  border-radius: var(--radius-sm); padding: 11px 13px; font-size: 14px; font-family: var(--font-body);
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
 }
-input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5; background: #fff; }
+input::placeholder, textarea::placeholder { color: var(--paper-faint); }
+input:focus, select:focus, textarea:focus {
+  outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft);
+}
 .amount-input {
-  font-size: 32px; font-weight: 800; text-align: center;
-  background: none; border: 0; border-bottom: 2px solid var(--line); border-radius: 0; color: var(--gold);
+  font-size: 32px; font-weight: 800; text-align: center; letter-spacing: -.03em;
+  background: none; border: 0; border-bottom: 2px solid var(--line); border-radius: 0; color: var(--gold-ink);
   padding: 6px 0 10px;
 }
-.amount-input:focus { border-color: var(--gold); background: none; }
+.amount-input:focus { border-color: var(--gold); background: none; box-shadow: none; }
 .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
-/* ---------- Select e datepicker (estilo Metronic/Select2, sem dependências) ---------- */
+.btn {
+  width: 100%; padding: 13px; border-radius: var(--radius-sm); border: none; cursor: pointer;
+  font-size: 14px; font-weight: 700; font-family: var(--font-body);
+  background: var(--gold); color: #fff;
+  transition: transform .12s ease, filter .2s ease, box-shadow .2s ease;
+}
+.btn:hover { background: var(--gold-ink); }
+.btn:active { transform: scale(.98); }
+.btn.ghost { background: var(--ink-3); color: var(--paper); border: 1px solid var(--line); }
+.btn.ghost:hover { background: var(--ink-2); border-color: var(--line-strong); box-shadow: none; filter: none; }
+.btn.danger { background: var(--red-soft); border: 1px solid transparent; color: var(--red-ink); }
+.btn.danger:hover { box-shadow: none; }
+.btn-row { display: flex; gap: 10px; margin-top: 8px; }
+.btn-row .btn { flex: 1; }
+
+/* ---------- Estado de carregamento ----------
+   O spinner é o feedback de "estou trabalhando" dentro do próprio botão: trocar
+   o rótulo por outro texto faria o botão mudar de largura no meio da ação. */
+.btn.is-loading, .sec-btn.is-loading { color: transparent; pointer-events: none; position: relative; }
+.btn.is-loading::after, .sec-btn.is-loading::after {
+  content: ''; position: absolute; top: 50%; left: 50%;
+  width: 16px; height: 16px; margin: -8px 0 0 -8px;
+  border: 2px solid rgba(255, 255, 255, .35); border-top-color: #fff; border-radius: 50%;
+  animation: girar .7s linear infinite;
+}
+.sec-btn.is-loading::after { border-color: var(--line-strong); border-top-color: var(--gold); }
+@keyframes girar { to { transform: rotate(360deg); } }
+
+/* Confirmação de sucesso: um pulso verde curto no elemento salvo */
+@keyframes pulseOk {
+  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .5); }
+  100% { box-shadow: 0 0 0 14px rgba(34, 197, 94, 0); }
+}
+.pulse-ok { animation: pulseOk .7s ease-out; }
+
+/* ---------- Esqueleto de carregamento ----------
+   O brilho que atravessa é o que diz "está vindo" — um bloco cinza parado lê
+   como conteúdo quebrado. Só transform anima, então roda na GPU. */
+.skeleton {
+  position: relative; overflow: hidden;
+  background: var(--ink-3); border-radius: var(--radius-sm); color: transparent;
+}
+.skeleton::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, var(--line-strong), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+
+.empty { text-align: center; color: var(--paper-dim); padding: 30px 12px; font-size: 13.5px; }
+.empty b { display: block; font-size: 15px; font-weight: 700; color: var(--paper); margin-bottom: 4px; }
+
+.settings-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  padding: 13px 16px; background: var(--ink-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); margin-bottom: 8px; cursor: pointer; box-shadow: var(--shadow);
+  font-weight: 600; font-size: 13.5px;
+}
+.settings-item:hover { border-color: var(--line-strong); }
+.settings-item small { color: var(--paper-dim); font-weight: 400; }
+.cfg-left { display: flex; align-items: center; gap: 12px; }
+.cfg-ico {
+  width: 40px; height: 40px; border-radius: var(--radius-sm); flex: none;
+  background: var(--ink-3); color: var(--paper-dim);
+  display: grid; place-items: center;
+}
+.settings-item .chev { color: var(--paper-faint); }
+.settings-item .chev svg { width: 16px; height: 16px; }
+/* Ação destrutiva: vestida de vermelho desde a lista, para não ser tocada por engano */
+.danger-item { border-color: var(--red-borda); color: var(--red-ink); }
+.danger-item:hover { border-color: var(--red); background: var(--red-soft); }
+.danger-item small { color: var(--red-ink); opacity: .78; }
+/* precisa vir depois de .cfg-ico, senão o fundo neutro dela vence a tinta vermelha */
+.danger-item .cfg-ico { background: var(--red-soft); color: var(--red-ink); }
+
+/* Aviso em bloco dentro de folhas e modais */
+.callout {
+  border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 10px;
+  border-left: 3px solid var(--paper-dim); background: var(--ink-3);
+}
+.callout b { display: block; font-size: 13px; margin-bottom: 4px; }
+.callout p { font-size: 12.5px; line-height: 1.55; color: var(--paper-dim); }
+.callout.warn { border-left-color: var(--red); background: var(--red-soft); }
+.callout.warn b { color: var(--red-ink); }
+.callout.info { border-left-color: var(--gold); background: var(--gold-soft); }
+.callout.info b { color: var(--gold-ink); }
+
+.toast {
+  position: fixed; bottom: calc(104px + env(safe-area-inset-bottom)); left: 50%;
+  background: var(--ink-2); color: var(--paper);
+  border: 1px solid var(--line-strong);
+  padding: 11px 20px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; z-index: 60;
+  box-shadow: var(--shadow-lg); max-width: 90vw; text-align: center;
+  animation: toastIn .34s var(--ease-out);
+}
+.toast.t-ok { background: var(--green); border-color: transparent; color: #06231A; }
+.toast.t-err { background: var(--red); border-color: transparent; color: #fff; }
+.toast.t-info { background: var(--gold); border-color: transparent; color: #fff; }
+/* Aviso com ação junto (desfazer um lote): o botão precisa ser alcançável com o
+   polegar e distinguir-se do texto sem virar outra cor. */
+.toast.tem-acao { display: flex; align-items: center; gap: 14px; text-align: left; padding: 9px 10px 9px 18px; }
+.toast.tem-acao button {
+  flex: none; background: rgba(255, 255, 255, .2); border: 1px solid rgba(255, 255, 255, .42);
+  color: inherit; font-family: var(--font-body); font-size: 13px; font-weight: 700;
+  padding: 8px 14px; border-radius: var(--radius-sm); cursor: pointer; min-height: 38px;
+}
+.toast.tem-acao button:active { transform: scale(.96); }
+@keyframes toastIn {
+  from { opacity: 0; transform: translate(-50%, 16px) scale(.94); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+hr.sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+.muted { color: var(--paper-dim); font-size: 12.5px; }
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all;
+  color: var(--paper-dim); background: var(--ink-3); padding: 8px 10px; border-radius: var(--radius-sm);
+}
+
+/* ============================================================================
+   SELECT E DATEPICKER — componentes próprios, sem dependências
+   ============================================================================ */
 .ui-native { position: absolute !important; opacity: 0; pointer-events: none; width: 0; height: 0; }
 .ui-select, .ui-date { position: relative; }
-/* O campo nativo continua sendo a fonte da verdade: se ele está oculto,
-   o componente que o representa também some. Assim `el.hidden = true`
-   segue funcionando em todo o app, sem precisar mexer nos handlers. */
+/* O campo nativo continua sendo a fonte da verdade: se ele está oculto, o
+   componente que o representa também some. Assim `el.hidden = true` segue
+   funcionando em todo o app, sem precisar mexer nos handlers. */
 .ui-select:has(> select[hidden]), .ui-date:has(> input[hidden]) { display: none; }
 .ui-select-btn, .ui-date-btn {
   width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
   background: var(--ink-3); border: 1px solid var(--line); color: var(--paper);
-  border-radius: 8px; padding: 11px 13px; font-size: 14px; font-family: var(--font-body);
+  border-radius: var(--radius-sm); padding: 11px 13px; font-size: 14px; font-family: var(--font-body);
   cursor: pointer; text-align: left; min-height: 44px;
-  transition: border-color .15s ease, background .15s ease;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease;
 }
-.ui-select-btn:hover, .ui-date-btn:hover { border-color: #cbd7e1; }
-.ui-select-btn:focus-visible, .ui-date-btn:focus-visible { border-color: var(--gold); background: #fff; }
+.ui-select-btn:hover, .ui-date-btn:hover { border-color: var(--line-strong); }
+.ui-select-btn:focus-visible, .ui-date-btn:focus-visible { border-color: var(--gold); box-shadow: 0 0 0 3px var(--gold-soft); }
 .ui-select-txt, .ui-date-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .is-placeholder .ui-select-txt, .ui-date-btn.is-placeholder .ui-date-txt,
-.ui-select-btn.is-placeholder .ui-select-txt { color: #9aa3b2; }
+.ui-select-btn.is-placeholder .ui-select-txt { color: var(--paper-faint); }
 .ui-select-arrow {
   width: 0; height: 0; flex: none; border-left: 5px solid transparent; border-right: 5px solid transparent;
-  border-top: 6px solid #9aa3b2; transition: transform .18s ease;
+  border-top: 6px solid var(--paper-faint); transition: transform .18s ease;
 }
 .ui-select:has(.ui-panel) .ui-select-arrow { transform: rotate(180deg); }
 .ui-date-ico { font-size: 15px; flex: none; opacity: .8; }
@@ -1466,56 +1955,53 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 .ui-panel.acima { top: auto; bottom: calc(100% + 6px); }
 .ui-panel {
   position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; right: 0;
-  background: #fff; border: 1px solid var(--line); border-radius: 10px;
-  box-shadow: 0 12px 34px rgba(24, 28, 50, .16);
-  animation: uiPanel .16s cubic-bezier(.22, 1, .36, 1);
+  background: var(--ink-2); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  animation: uiPanel .18s var(--ease-out);
   overflow: hidden;
 }
-@keyframes uiPanel { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes uiPanel { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
 .ui-search { padding: 9px; border-bottom: 1px solid var(--line); }
 .ui-search input { padding: 9px 11px; font-size: 13.5px; background: var(--ink-3); }
-.ui-list { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; padding: 6px; scrollbar-width: thin; }
-.ui-list::-webkit-scrollbar { width: 6px; }
-.ui-list::-webkit-scrollbar-thumb { background: #d8e3ea; border-radius: 3px; }
+.ui-list { max-height: 260px; overflow-y: auto; overscroll-behavior: contain; padding: 6px; }
 .ui-group {
   font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em;
   color: var(--paper-dim); padding: 9px 10px 5px;
 }
 .ui-opt {
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 10px 11px; border-radius: 7px; font-size: 13.5px; cursor: pointer; min-height: 40px;
+  padding: 10px 11px; border-radius: 8px; font-size: 13.5px; cursor: pointer; min-height: 40px;
 }
 .ui-opt:hover, .ui-opt.is-mark { background: var(--ink-3); }
-.ui-opt.is-sel { background: rgba(0, 158, 247, .09); color: var(--gold); font-weight: 600; }
+.ui-opt.is-sel { background: var(--gold-soft); color: var(--gold-ink); font-weight: 600; }
 .ui-opt.is-off { opacity: .45; cursor: not-allowed; }
 .ui-check { font-weight: 700; }
 /* Navegação em dois níveis: linha de grupo leva à lista dele, em vez de despejar
    as 75 categorias de uma vez (11 telas de rolagem dentro do painel). */
 .ui-grupo-linha { font-weight: 600; }
 .ui-grupo-info { display: flex; align-items: center; gap: 8px; color: var(--paper-dim); font-size: 12px; font-weight: 500; }
-.ui-grupo-seta { font-size: 17px; line-height: 1; color: #c4cad4; }
+.ui-grupo-seta { font-size: 17px; line-height: 1; color: var(--paper-faint); }
 .ui-grupo-linha:hover .ui-grupo-seta { color: var(--gold); }
 .ui-voltar {
   display: flex; align-items: center; gap: 6px; cursor: pointer;
-  padding: 9px 11px; margin-bottom: 2px; border-radius: 7px;
-  font-size: 12.5px; font-weight: 600; color: var(--gold); min-height: 40px;
+  padding: 9px 11px; margin-bottom: 2px; border-radius: 8px;
+  font-size: 12.5px; font-weight: 600; color: var(--gold-ink); min-height: 40px;
 }
-.ui-voltar:hover { background: rgba(0, 158, 247, .08); }
+.ui-voltar:hover { background: var(--gold-soft); }
 .ui-empty { padding: 18px; text-align: center; color: var(--paper-dim); font-size: 13px; }
 
-/* Calendário — precisa de largura própria, não cabe na coluna estreita do formulário */
-/* O calendário agora nasce no <body> como `.ui-pop`, para escapar do overflow da
-   folha. Vem DEPOIS de `.ui-panel.ui-pop` neste arquivo, então o min-width daqui
-   venceria o teto de 88vw de lá e o calendário vazaria numa tela de 320px. O
-   `min()` resolve dos dois lados: 300px quando cabe, a largura da tela quando não. */
+/* Calendário — precisa de largura própria, não cabe na coluna estreita do
+   formulário. Nasce no <body> como `.ui-pop`, para escapar do overflow da folha,
+   e vem DEPOIS de `.ui-panel.ui-pop`: o min() resolve dos dois lados, 300px
+   quando cabe e a largura da tela quando não. */
 .ui-cal { padding: 14px; min-width: min(300px, calc(100vw - 24px)); }
 .ui-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .ui-cal-head b { font-size: 14px; font-weight: 700; }
 .ui-cal-nav {
   width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line);
-  background: var(--ink-2); color: var(--paper); cursor: pointer; font-size: 16px; line-height: 1;
+  background: var(--ink-3); color: var(--paper); cursor: pointer; font-size: 16px; line-height: 1;
 }
-.ui-cal-nav:hover { background: var(--ink-3); }
+.ui-cal-nav:hover { background: var(--ink-2); border-color: var(--line-strong); }
 .ui-cal-wd, .ui-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
 .ui-cal-wd span {
   text-align: center; font-size: 10.5px; font-weight: 700; color: var(--paper-dim);
@@ -1525,98 +2011,90 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
   aspect-ratio: 1; min-height: 36px; border: none; background: none; border-radius: 8px;
   font-size: 13.5px; font-family: var(--font-body); color: var(--paper); cursor: pointer;
   display: grid; place-items: center; transition: background .12s ease;
+  font-variant-numeric: tabular-nums;
 }
 .ui-cal-d:hover { background: var(--ink-3); }
 .ui-cal-d.is-out { visibility: hidden; }
-.ui-cal-d.is-today { color: var(--gold); font-weight: 700; box-shadow: inset 0 0 0 1px rgba(0, 158, 247, .35); }
+.ui-cal-d.is-today { color: var(--gold-ink); font-weight: 700; box-shadow: inset 0 0 0 1px var(--gold); }
 .ui-cal-d.is-sel { background: var(--gold); color: #fff; font-weight: 700; }
-.ui-cal-quick { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.ui-cal-quick { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .ui-cal-quick button {
-  flex: 1; padding: 8px 6px; border-radius: 7px; border: 1px solid var(--line);
-  background: var(--ink-2); color: var(--paper); font-size: 12px; font-weight: 600;
+  flex: 1; padding: 8px 6px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--ink-3); color: var(--paper); font-size: 12px; font-weight: 600;
   font-family: var(--font-body); cursor: pointer;
 }
-.ui-cal-quick button:hover { background: var(--ink-3); border-color: #cbd7e1; }
+.ui-cal-quick button:hover { background: var(--ink-2); border-color: var(--line-strong); }
 
 /* Em telas estreitas o painel vira uma folha ancorada, sem cortar nas bordas */
 @media (max-width: 520px) {
   .ui-panel { left: -2px; right: -2px; }
   .ui-list { max-height: 46vh; }
 }
-.btn {
-  width: 100%; padding: 13px; border-radius: 8px; border: none; cursor: pointer;
-  font-size: 14px; font-weight: 700; font-family: var(--font-body);
-  background: var(--gold); color: #fff;
-}
-.btn:hover { background: #0095e8; }
-.btn:active { transform: scale(.98); }
-.btn.ghost { background: var(--ink-3); color: var(--paper); border: 1px solid var(--line); }
-.btn.ghost:hover { background: #e9eef2; }
-.btn.danger { background: rgba(241, 65, 108, .08); border: 1px solid transparent; color: var(--red); }
-.btn-row { display: flex; gap: 10px; margin-top: 8px; }
-.btn-row .btn { flex: 1; }
 
-.empty { text-align: center; color: var(--paper-dim); padding: 30px 12px; font-size: 13.5px; }
-.empty b { display: block; font-size: 15px; font-weight: 700; color: var(--paper); margin-bottom: 4px; }
-
-.settings-item {
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  padding: 13px 16px; background: var(--ink-2); border: 1px solid var(--line);
-  border-radius: 10px; margin-bottom: 8px; cursor: pointer; box-shadow: var(--shadow);
-  font-weight: 600; font-size: 13.5px;
+/* ============================================================================
+   FOLHA DE CLASSIFICAÇÃO: fixo, variável ou pontual — um toque por linha
+   ============================================================================ */
+.cg-linha {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid var(--line);
 }
-.settings-item:hover { border-color: #d8e3ea; }
-.settings-item small { color: var(--paper-dim); font-weight: 400; }
-.cfg-left { display: flex; align-items: center; gap: 12px; }
-.cfg-ico {
-  width: 40px; height: 40px; border-radius: 9px; flex: none;
-  background: var(--ink-3); color: var(--paper-dim);
-  display: grid; place-items: center;
+.cg-linha:last-child { border-bottom: 0; }
+.cg-info { flex: 1; min-width: 0; }
+.cg-info b { display: block; font-size: 13px; font-weight: 600; }
+.cg-info small { color: var(--paper-dim); font-size: 11px; }
+.cg-val { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.cg-botoes { display: flex; gap: 4px; flex: none; }
+.cg-b {
+  min-height: 32px; padding: 0 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--ink-3); color: var(--paper-dim);
+  font-size: 11.5px; font-weight: 600; font-family: var(--font-body);
 }
-.settings-item .chev { color: #c4cad4; }
-.settings-item .chev svg { width: 16px; height: 16px; }
-/* Ação destrutiva: vestida de vermelho desde a lista, para não ser tocada por engano */
-.danger-item { border-color: rgba(241, 65, 108, .25); color: var(--red); }
-.danger-item:hover { border-color: var(--red); background: rgba(241, 65, 108, .03); }
-.danger-item small { color: rgba(241, 65, 108, .75); }
-/* precisa vir depois de .cfg-ico, senão o fundo neutro dela vence a tinta vermelha */
-.danger-item .cfg-ico { background: rgba(241, 65, 108, .1); color: var(--red); }
-
-/* Aviso em bloco dentro de folhas e modais */
-.callout {
-  border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
-  border-left: 3px solid var(--paper-dim); background: var(--ink-3);
+.cg-b.on { border-color: var(--gold); background: var(--gold-soft); color: var(--gold-ink); }
+.cg-travado { font-size: 11px; color: var(--paper-dim); flex: none; padding: 0 8px; }
+/* Três botões numa linha apertam o celular: abaixo de 420px eles descem para
+   baixo do valor, em vez de espremer a descrição até ela virar reticências. */
+@media (max-width: 420px) {
+  .cg-linha { flex-wrap: wrap; }
+  .cg-info { flex: 1 1 60%; }
+  .cg-botoes { flex: 1 1 100%; justify-content: flex-end; }
 }
-.callout b { display: block; font-size: 13px; margin-bottom: 4px; }
-.callout p { font-size: 12.5px; line-height: 1.55; color: var(--paper-dim); }
-.callout.warn { border-left-color: var(--red); background: rgba(241, 65, 108, .06); }
-.callout.warn b { color: var(--red); }
-.callout.info { border-left-color: var(--gold); background: rgba(0, 158, 247, .06); }
-.callout.info b { color: var(--gold); }
+/* A ajuda dos três estados: dita pelo EFEITO, porque o rótulo sozinho não avisa
+   que "fixo" faz o gasto voltar todo mês. */
+.cg-ajuda { margin-bottom: 12px; font-size: 12px; color: var(--paper-dim); line-height: 1.5; }
+.cg-ajuda b { color: var(--paper); }
+.cg-ajuda p { margin-bottom: 3px; }
+.cg-conta { margin-top: 7px; font-weight: 600; color: var(--paper); }
 
-.sheet-handle { width: 40px; height: 4px; border-radius: 2px; background: #dfe5ea; margin: -6px auto 14px; }
-
-.toast {
-  position: fixed; bottom: calc(96px + env(safe-area-inset-bottom)); left: 50%;
-  background: var(--paper); color: #fff;
-  padding: 11px 20px; border-radius: 10px; font-size: 13px; font-weight: 600; z-index: 60;
-  box-shadow: 0 10px 34px rgba(24, 28, 50, .34); max-width: 90vw; text-align: center;
-  animation: toastIn .3s cubic-bezier(.22, 1, .36, 1);
+/* Sugestões de vínculo: lançamento com o nome de um contrato ativo, contando como
+   variável. Bloco à parte e em âmbar porque é o que mais distorce a projeção. */
+.cg-sug {
+  margin-bottom: 12px; padding: 12px; border-radius: var(--radius);
+  background: var(--amber-soft); border: 1px solid var(--amber-borda);
 }
-.toast.t-ok { background: #1f9d61; }
-.toast.t-err { background: #d9214e; }
-.toast.t-info { background: #0072b8; }
-/* Aviso com ação junto (desfazer um lote): o botão precisa ser alcançável com o
-   polegar e distinguir-se do texto sem virar outra cor. */
-.toast.tem-acao { display: flex; align-items: center; gap: 14px; text-align: left; padding: 9px 10px 9px 18px; }
-.toast.tem-acao button {
-  flex: none; background: rgba(255, 255, 255, .18); border: 1px solid rgba(255, 255, 255, .4);
-  color: #fff; font-family: var(--font-body); font-size: 13px; font-weight: 700;
-  padding: 8px 14px; border-radius: 8px; cursor: pointer; min-height: 38px;
+.cg-sug-tit { font-size: 13px; font-weight: 700; margin-bottom: 3px; }
+.cg-sug .muted { font-size: 11.5px; line-height: 1.45; margin-bottom: 8px; }
+.cg-sug-l {
+  display: flex; align-items: center; gap: 10px; padding: 7px 0;
+  border-top: 1px solid var(--amber-borda); font-size: 12.5px;
 }
-.toast.tem-acao button:active { transform: scale(.96); }
+.cg-sug-l > span:first-child { flex: 1; min-width: 0; }
+.cg-sug-l i { display: block; font-style: normal; font-size: 11px; color: var(--paper-dim); }
 
-/* ---------- Edição em massa ---------- */
+/* Escolher o contrato: lista de opções em largura inteira, área de toque na linha. */
+.cg-esc {
+  display: flex; align-items: center; gap: 10px; width: 100%; margin-bottom: 8px;
+  padding: 12px 14px; background: var(--ink-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); text-align: left; cursor: pointer; color: var(--paper);
+  font-family: var(--font-body); font-size: 13px;
+}
+.cg-esc > span:first-child { flex: 1; }
+.cg-esc i { display: block; font-style: normal; font-size: 11.5px; color: var(--paper-dim); margin-top: 1px; }
+.cg-esc svg { width: 15px; height: 15px; color: var(--paper-dim); flex: none; }
+.cg-esc:hover { border-color: var(--gold); }
+
+/* ============================================================================
+   EDIÇÃO EM MASSA
+   ============================================================================ */
 .massa-head {
   display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
   padding-bottom: 10px; border-bottom: 1px solid var(--line); margin-bottom: 4px;
@@ -1627,13 +2105,12 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 .massa-lista { max-height: calc(100dvh - 320px); overflow-y: auto; overscroll-behavior: contain; margin: 0 -4px; padding: 0 4px; }
 /* ---------- Linha editável ----------
    Cada lançamento traz os próprios controles, porque o caso comum não é "os 34
-   viram a mesma categoria" — é cada um querer o seu. O lote continua existindo
-   para quando o valor realmente é o mesmo em todos. */
+   viram a mesma categoria" — é cada um querer o seu. */
 .ed-linha {
-  padding: 9px 8px; border-radius: 9px; border: 1px solid transparent;
+  padding: 9px 8px; border-radius: var(--radius-sm); border: 1px solid transparent;
   border-bottom-color: var(--line);
 }
-.ed-linha.is-on { background: rgba(0, 158, 247, .06); border-color: rgba(0, 158, 247, .28); }
+.ed-linha.is-on { background: var(--gold-soft); border-color: var(--gold-borda); }
 .ed-cabeca { display: flex; align-items: center; gap: 9px; }
 .ed-cabeca input { width: 19px; height: 19px; flex: none; accent-color: var(--gold); }
 .ed-nome {
@@ -1648,7 +2125,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
   font-family: var(--font-body); font-size: 11.5px; font-weight: 600;
   cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.ed-btn:hover { border-color: #d8e3ea; }
+.ed-btn:hover { border-color: var(--line-strong); }
 /* Campo em branco fica visivelmente pendente: numa tela de conserto, o que
    falta preencher tem de saltar antes do que já está pronto */
 .ed-btn.vazio { color: var(--paper-dim); border-style: dashed; }
@@ -1657,9 +2134,9 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
    transferência azul — trocar o tipo aqui muda a cor na hora, e é essa mudança
    que confirma o acerto sem precisar ler */
 .ed-tipo { font-weight: 700; }
-.ed-tipo.t-desp { color: var(--red); border-color: rgba(241, 65, 108, .3); background: rgba(241, 65, 108, .06); }
-.ed-tipo.t-rec { color: #1f9d61; border-color: rgba(80, 205, 137, .35); background: rgba(80, 205, 137, .08); }
-.ed-tipo.t-tr { color: var(--blue); border-color: rgba(114, 57, 234, .3); background: rgba(114, 57, 234, .06); }
+.ed-tipo.t-desp { color: var(--red-ink); border-color: var(--red-borda); background: var(--red-soft); }
+.ed-tipo.t-rec { color: var(--green-ink); border-color: var(--green-borda); background: var(--green-soft); }
+.ed-tipo.t-tr { color: var(--blue-ink); border-color: var(--blue-borda); background: var(--blue-soft); }
 .ed-grupo { padding: 8px 10px 4px; }
 .ed-grupo small { display: block; font-size: 10.5px; font-weight: 700; color: var(--paper-dim); margin-bottom: 5px; }
 .ed-op {
@@ -1667,7 +2144,7 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
   background: var(--ink-3); border: 1px solid var(--line); color: var(--paper);
   font-family: var(--font-body); font-size: 12px; font-weight: 600; cursor: pointer;
 }
-.ed-op.is-sel { background: rgba(0, 158, 247, .1); border-color: var(--gold); color: #0072b8; }
+.ed-op.is-sel { background: var(--gold-soft); border-color: var(--gold); color: var(--gold-ink); }
 .ed-mais-corpo { max-height: 320px; overflow-y: auto; }
 .ed-destino { border-top: 1px solid var(--line); }
 .massa-barra {
@@ -1680,54 +2157,16 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: #b5d9f5
 .massa-liga { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 14px; font-weight: 600; }
 .massa-liga input { width: 20px; height: 20px; flex: none; accent-color: var(--blue); }
 .massa-ctrl { margin-top: 10px; }
-@keyframes toastIn {
-  from { opacity: 0; transform: translate(-50%, 16px) scale(.94); }
-  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
-}
 
-/* ---------- Animações: dão sentido às ações, sem enfeitar à toa ---------- */
-/* Entrada em cascata dos cards, para a tela "montar" em vez de piscar */
-.view > * { animation: cardIn .32s cubic-bezier(.22, 1, .36, 1) backwards; }
-.view > *:nth-child(1) { animation-delay: .02s; }
-.view > *:nth-child(2) { animation-delay: .06s; }
-.view > *:nth-child(3) { animation-delay: .10s; }
-.view > *:nth-child(4) { animation-delay: .14s; }
-.view > *:nth-child(5) { animation-delay: .18s; }
-.view > *:nth-child(n+6) { animation-delay: .22s; }
-@keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-
-/* Barras e anéis crescem a partir do zero — o dado "chega".
-   Os gráficos da ApexCharts animam por conta própria (chart.animations); aqui
-   ficam só os que continuam desenhados à mão. */
-.bar > i { animation: barGrow .55s cubic-bezier(.22, 1, .36, 1); }
-@keyframes barGrow { from { width: 0 !important; } }
-.dn-arc { animation: arcIn .7s cubic-bezier(.22, 1, .36, 1) backwards; }
-@keyframes arcIn { from { opacity: 0; stroke-width: 0; } }
-
-/* Resposta ao toque: o elemento reage antes de a ação acontecer */
-.tx, .settings-item, .acc-row, .invoice-row { transition: transform .12s ease, background .15s ease, border-color .15s ease; }
-.tx:active, .settings-item:active, .acc-row:active { transform: scale(.985); }
-.chip, .btn, .icon-btn, .fab, .pay-btn { transition: transform .12s ease, background .16s ease, border-color .16s ease, color .16s ease; }
-.chip:active { transform: scale(.94); }
-.btn:active { transform: scale(.97); }
-.kpi { transition: transform .18s ease, box-shadow .18s ease; }
-.kpi:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(76, 87, 125, .1); }
-
-/* Confirmação de sucesso: um pulso curto no elemento salvo */
-@keyframes pulseOk { 0% { box-shadow: 0 0 0 0 rgba(80, 205, 137, .5); } 100% { box-shadow: 0 0 0 14px rgba(80, 205, 137, 0); } }
-.pulse-ok { animation: pulseOk .7s ease-out; }
-
-hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
-.muted { color: var(--paper-dim); font-size: 12.5px; }
-.mono { font-family: monospace; font-size: 12px; word-break: break-all; color: var(--paper-dim); background: var(--ink-3); padding: 8px 10px; border-radius: 8px; }
-
-/* Cadastro de categorias: envelope recolhido, subcategorias sob demanda.
-   Aberta, a lista tinha ~123 linhas — quase 8 telas de rolagem. */
+/* ============================================================================
+   CADASTRO DE CATEGORIAS: envelope recolhido, subcategorias sob demanda.
+   Aberta, a lista tinha ~123 linhas — quase 8 telas de rolagem.
+   ============================================================================ */
 .env {
-  background: var(--ink-2); border: 1px solid var(--line); border-radius: 10px;
+  background: var(--ink-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
   margin-bottom: 8px; box-shadow: var(--shadow); overflow: hidden;
 }
-.env.aberto { border-color: #d8e3ea; }
+.env.aberto { border-color: var(--line-strong); }
 .env-head {
   display: flex; align-items: center; gap: 12px;
   padding: 11px 14px; cursor: pointer; font-weight: 600; font-size: 13.5px;
@@ -1739,39 +2178,39 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
    abrir o grupo antes. Alvos de 36px, o mínimo confortável para o dedo. */
 .env-add, .env-editar {
   flex: none; width: 36px; height: 36px; border-radius: 8px; cursor: pointer;
-  background: none; border: 1px solid transparent; color: #c4cad4;
+  background: none; border: 1px solid transparent; color: var(--paper-faint);
   display: grid; place-items: center;
 }
-.env-add:hover, .env-editar:hover { border-color: var(--line); color: var(--gold); background: var(--ink-2); }
+.env-add:hover, .env-editar:hover { border-color: var(--line); color: var(--gold-ink); background: var(--ink-3); }
 .env-add svg, .env-editar svg { width: 15px; height: 15px; }
-.env-add { color: var(--gold); }
+.env-add { color: var(--gold-ink); }
 .env-add svg { width: 17px; height: 17px; }
-.env-chev { color: #c4cad4; flex: none; transition: transform .18s ease; }
+.env-chev { color: var(--paper-faint); flex: none; transition: transform .18s ease; }
 .env-chev svg { width: 15px; height: 15px; }
 .env.aberto .env-chev { transform: rotate(90deg); }
-.env-body { padding: 2px 14px 12px; border-top: 1px dashed var(--line); }
+.env-body { padding: 2px 14px 12px; border-top: 1px solid var(--line); }
 /* Subcategoria é linha simples, não card: card dentro de card vira ruído visual */
 .sub-linha {
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 9px 2px; background: none; border: none; cursor: pointer;
   font-family: var(--font-body); font-size: 13px; color: var(--paper); text-align: left;
-  border-bottom: 1px dashed var(--line);
+  border-bottom: 1px solid var(--line);
 }
 .sub-linha:last-of-type { border-bottom: none; }
-.sub-linha:hover { color: var(--gold); }
-.sub-traco { width: 14px; height: 1px; background: #c9d4de; flex: none; }
+.sub-linha:hover { color: var(--gold-ink); }
+.sub-traco { width: 14px; height: 1px; background: var(--line-strong); flex: none; }
 .btn-sub { margin-top: 8px; width: 100%; font-size: 12.5px; padding: 8px 12px; color: var(--paper-dim); }
 
 /* Alternador de duas opções: as abas ocupam metade cada, sem rolagem lateral */
 .chips.seg { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.chips.seg .chip { justify-content: center; }
+.chips.seg .chip { justify-content: center; text-align: center; }
 .budget-row.clicavel { cursor: pointer; }
-.budget-row.clicavel:hover .budget-head b { color: var(--gold); }
-.chev-min { display: inline-flex; vertical-align: middle; color: #c4cad4; }
+.budget-row.clicavel:hover .budget-head b { color: var(--gold-ink); }
+.chev-min { display: inline-flex; vertical-align: middle; color: var(--paper-faint); }
 .chev-min svg { width: 13px; height: 13px; }
 
 /* Diagnóstico da sincronização: uma linha por tabela, verde ou vermelha */
-.diag { margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.diag { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); overflow: hidden; }
 .diag-row {
   display: flex; justify-content: space-between; align-items: center; gap: 10px;
   padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12.5px;
@@ -1779,15 +2218,15 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .diag-row:last-child { border-bottom: none; }
 .diag-row b { font-weight: 600; font-size: 12.5px; }
 .diag-row small { color: var(--paper-dim); text-align: right; word-break: break-word; max-width: 62%; }
-.diag-row.ok b { color: #47be7d; }
-.diag-row.ruim { background: rgba(241, 65, 108, .05); }
-.diag-row.ruim b { color: var(--red); }
-.diag-row.ruim small { color: var(--red); }
+.diag-row.ok b { color: var(--green-ink); }
+.diag-row.ruim { background: var(--red-soft); }
+.diag-row.ruim b { color: var(--red-ink); }
+.diag-row.ruim small { color: var(--red-ink); }
 
 /* Convite para a família: o código precisa parecer algo para compartilhar,
    não um detalhe técnico perdido em cinza no rodapé de uma tela de ajustes. */
 .convite {
-  border: 1px solid var(--line); border-radius: 12px; padding: 14px;
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 14px;
   background: var(--ink-2); margin-bottom: 16px;
 }
 .convite-topo { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
@@ -1796,37 +2235,110 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .convite-cod {
   font-family: monospace; font-size: 13px; letter-spacing: .02em; word-break: break-all;
   text-align: center; color: var(--paper); background: var(--ink-3);
-  border: 1px dashed #c9d4de; border-radius: 10px; padding: 12px 10px; margin-bottom: 12px;
+  border: 1px dashed var(--line-strong); border-radius: var(--radius-sm); padding: 12px 10px; margin-bottom: 12px;
   cursor: pointer; user-select: all;
 }
-.convite-cod:hover { border-color: var(--gold); color: var(--gold); }
+.convite-cod:hover { border-color: var(--gold); color: var(--gold-ink); }
 .convite .btn-row { margin: 0; }
 
-/* ---------- Tela de bloqueio / login ---------- */
+/* ============================================================================
+   COFRINHO DAS CRIANÇAS — a gestão, no app de quem administra
+   O app DELAS tem visual próprio, claro e colorido, em cofrinho/. Aqui é a área
+   do adulto, e por isso segue a linguagem desta casa — mesma lista, mesmos pesos.
+   Só o avatar traz cor, porque é o que identifica de quem é o cofrinho num
+   relance quando há mais de uma criança.
+   ============================================================================ */
+.kid-item {
+  display: flex; align-items: center; gap: 12px; padding: 12px 0;
+  border-bottom: 1px solid var(--line); cursor: pointer;
+}
+.kid-item:last-of-type { border-bottom: 0; }
+.kid-item.off { opacity: .5; }
+.kid-item:hover { background: var(--ink-3); border-radius: var(--radius-sm); padding-left: 8px; padding-right: 8px; }
+.kid-av { font-size: 22px; width: 44px; height: 44px; border-radius: var(--radius); display: grid; place-items: center; flex: none; }
+.kid-info { flex: 1; min-width: 0; }
+.kid-info b { display: block; font-size: 14px; font-weight: 600; }
+.kid-info small { display: block; color: var(--paper-dim); font-size: 11.5px; }
+.kid-saldo { font-weight: 700; white-space: nowrap; }
+.kid-item svg { width: 15px; height: 15px; color: var(--paper-dim); flex: none; }
+
+.kid-tarefa {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid var(--line); font-size: 13px;
+}
+.kid-tarefa:last-of-type { border-bottom: 0; }
+.kid-tarefa > span:first-child { flex: 1; }
+
+.kid-mov { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.kid-mov:last-of-type { border-bottom: 0; }
+.kid-mov-ico { font-size: 18px; width: 34px; height: 34px; border-radius: var(--radius-sm); background: var(--ink-3); display: grid; place-items: center; flex: none; }
+.kid-mov-info { flex: 1; min-width: 0; }
+.kid-mov-info b { display: block; font-size: 13px; font-weight: 600; }
+.kid-mov-info small { color: var(--paper-dim); font-size: 11px; }
+.kid-mov-val { font-weight: 700; white-space: nowrap; }
+
+/* Escolher bichinho e cor: alvo grande, porque a lista é de tocar, não de ler. */
+.kd-escolha { display: flex; flex-wrap: wrap; gap: 8px; }
+.kd-op {
+  width: 46px; height: 46px; border-radius: var(--radius); cursor: pointer; font-size: 22px;
+  border: 2px solid var(--line); background: var(--ink-3); display: grid; place-items: center;
+  font-family: var(--font-body); transition: transform .12s ease, border-color .15s ease;
+}
+.kd-op.on { border-color: var(--gold); background: var(--gold-soft); }
+.kd-cor { border-width: 3px; }
+.kd-cor.on { border-color: var(--paper); transform: scale(1.08); }
+
+/* O nome da missão com o progresso embaixo: a diária precisa mostrar quantos
+   dias já foram, senão o adulto aprova o bônus da semana no escuro. */
+.kid-tarefa-nome { flex: 1; min-width: 0; }
+.kid-tarefa-nome small { display: block; color: var(--paper-dim); font-size: 11.5px; }
+.kid-tarefa b small { color: var(--paper-dim); font-weight: 400; font-size: 11px; }
+
+/* ---------- A PERGUNTA DA SEMANA ----------
+   Discreta: é uma sugestão de conversa, não um alerta. Se tivesse a cor de
+   pendência viraria mais uma coisa a resolver — e conversar com um filho não é
+   tarefa vencida. */
+.conversa {
+  margin-bottom: 12px;
+  border-left: 3px solid var(--gold);
+}
+.conversa-cab {
+  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--paper-dim); margin-bottom: 6px; font-weight: 700;
+}
+.conversa-fato { font-weight: 600; margin-bottom: 3px; }
+.conversa-q { color: var(--paper-dim); font-size: 14px; line-height: 1.45; }
+
+/* ============================================================================
+   TELA DE BLOQUEIO / LOGIN
+   ============================================================================ */
 .lock {
   position: fixed; inset: 0; z-index: 100;
-  background: var(--sidebar);
+  background: var(--ink);
   display: flex; align-items: center; justify-content: center; padding: 24px;
 }
 .lock-card {
-  width: 100%; max-width: 380px; background: #fff; border-radius: 14px;
-  padding: 30px 26px; text-align: center; box-shadow: 0 20px 60px rgba(0, 0, 0, .35);
-  animation: fadeUp .3s ease;
+  position: relative;
+  width: 100%; max-width: 380px; background: var(--ink-2); border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 30px 26px; text-align: center; box-shadow: var(--shadow-lg);
+  animation: cardIn .34s var(--ease-out);
 }
-.lock-card img { width: 62px; height: 62px; border-radius: 14px; margin-bottom: 14px; }
-.lock-card h2 { font-size: 19px; font-weight: 800; margin-bottom: 4px; }
+.lock-card img { width: 62px; height: 62px; border-radius: var(--radius); margin-bottom: 14px; }
+.lock-card h2 { font-size: 19px; font-weight: 800; margin-bottom: 4px; letter-spacing: -.025em; }
 .lock-card p { color: var(--paper-dim); font-size: 13px; margin-bottom: 18px; }
+
 /* ---------- Desbloqueio por digital ---------- */
 .bio-alvo {
   width: 104px; height: 104px; margin: 6px auto 14px; display: grid; place-items: center;
   border-radius: 50%; border: none; cursor: pointer;
-  background: rgba(0, 158, 247, .1); color: var(--gold);
+  background: var(--gold-soft); color: var(--gold-ink);
   -webkit-tap-highlight-color: transparent;
   transition: background .18s ease, transform .12s ease, color .18s ease;
   position: relative;
 }
 .bio-alvo svg { width: 54px; height: 54px; }
-.bio-alvo:hover { background: rgba(0, 158, 247, .16); }
+.bio-alvo:hover { background: var(--gold-soft); }
 .bio-alvo:active { transform: scale(.94); }
 /* Anel pulsante enquanto o leitor espera o dedo */
 .bio-alvo::after {
@@ -1834,10 +2346,16 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
   border: 2px solid var(--gold); opacity: 0;
 }
 .bio-alvo.lendo::after { animation: bioPulso 1.4s ease-out infinite; }
-.bio-alvo.lendo { background: rgba(0, 158, 247, .18); }
+.bio-alvo.lendo { background: var(--gold-soft); }
 @keyframes bioPulso {
   0% { opacity: .55; transform: scale(1); }
   100% { opacity: 0; transform: scale(1.35); }
+}
+/* Recurso indisponível no navegador: avisa em vermelho e não oferece o botão */
+.bio-indisponivel {
+  color: var(--red); font-size: 12.5px; font-weight: 600; line-height: 1.5;
+  background: var(--red-soft); border-left: 3px solid var(--red);
+  padding: 10px 12px; border-radius: var(--radius-sm);
 }
 
 /* ---------- Teclado numérico do PIN ---------- */
@@ -1848,7 +2366,7 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
 .pin-dots { display: flex; justify-content: center; gap: 12px; margin-bottom: 6px; min-height: 16px; }
 .pin-dots i {
   width: 13px; height: 13px; border-radius: 50%;
-  border: 2px solid #d3dce6; background: transparent;
+  border: 2px solid var(--line-strong); background: transparent;
   transition: background .15s ease, border-color .15s ease, transform .15s ease;
 }
 .pin-dots i.on {
@@ -1867,24 +2385,23 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
   margin: 4px auto 0; max-width: 260px;
 }
 .pin-key {
-  height: 58px; border-radius: 14px; border: 1px solid var(--line);
-  background: var(--ink-2); color: var(--paper);
+  height: 58px; border-radius: var(--radius); border: 1px solid var(--line);
+  background: var(--ink-3); color: var(--paper);
   font-family: var(--font-body); font-size: 22px; font-weight: 600;
   cursor: pointer; display: grid; place-items: center;
   transition: background .12s ease, transform .1s ease, border-color .12s ease;
   -webkit-tap-highlight-color: transparent; user-select: none;
+  font-variant-numeric: tabular-nums;
 }
-.pin-key:hover { background: var(--ink-3); border-color: #cbd7e1; }
-.pin-key:active { transform: scale(.93); background: #e6edf3; }
+.pin-key:hover { background: var(--ink-2); border-color: var(--line-strong); }
+.pin-key:active { transform: scale(.93); background: var(--gold-soft); }
 .pin-aux { font-size: 20px; color: var(--paper-dim); border-color: transparent; background: transparent; }
 .pin-aux:hover { background: var(--ink-3); }
-.pin-ok {
-  background: var(--gold); border-color: var(--gold); color: #fff; font-size: 22px;
-}
-.pin-ok:hover { background: #0095e8; border-color: #0095e8; }
+.pin-ok { background: var(--gold); border-color: var(--gold); color: #fff; font-size: 22px; }
+.pin-ok:hover { filter: brightness(1.08); border-color: var(--gold); }
 .pin-ok:disabled {
-  background: var(--ink-3); border-color: var(--line); color: #c3ccd8;
-  cursor: not-allowed; transform: none;
+  background: var(--ink-3); border-color: var(--line); color: var(--paper-faint);
+  cursor: not-allowed; transform: none; filter: none;
 }
 /* Em telas bem baixas, encolhe para não precisar rolar */
 @media (max-height: 680px) {
@@ -1893,117 +2410,103 @@ hr.sep { border: 0; border-top: 1px dashed var(--line); margin: 16px 0; }
   .lock-pin-card p { margin-bottom: 12px; font-size: 12.5px; }
   .pin-key { height: 50px; font-size: 20px; }
 }
-.lock-err { color: var(--red); font-size: 12.5px; font-weight: 600; margin: -6px 0 12px; min-height: 16px; }
-/* Recurso indisponível no navegador: avisa em vermelho e não oferece o botão */
-.bio-indisponivel {
-  color: var(--red); font-size: 12.5px; font-weight: 600; line-height: 1.5;
-  background: rgba(241, 65, 108, .07); border-left: 3px solid var(--red);
-  padding: 10px 12px; border-radius: 8px;
-}
+.lock-err { color: var(--red-ink); font-size: 12.5px; font-weight: 600; margin: -6px 0 12px; min-height: 16px; }
 
 /* Primeiro acesso: passos, escolhas e campos */
 .ob-steps { display: flex; gap: 6px; justify-content: center; margin-bottom: 14px; }
-.ob-steps i { width: 26px; height: 4px; border-radius: 2px; background: var(--line); transition: background .25s ease; }
+.ob-steps i { width: 26px; height: 4px; border-radius: 2px; background: var(--line-strong); transition: background .25s ease; }
 .ob-steps i.on { background: var(--gold); }
-.ob-steps i.done { background: #a9d8f5; }
+.ob-steps i.done { background: var(--gold-fraco); }
 .ob-opts { display: flex; flex-direction: column; gap: 10px; margin-bottom: 4px; }
 .ob-opt {
-  text-align: left; padding: 14px 16px; border-radius: 11px; border: 1px solid var(--line);
-  background: var(--ink-2); cursor: pointer; font-family: var(--font-body);
+  text-align: left; padding: 14px 16px; border-radius: var(--radius); border: 1px solid var(--line);
+  background: var(--ink-3); cursor: pointer; font-family: var(--font-body); color: var(--paper);
   transition: border-color .15s ease, box-shadow .15s ease, transform .12s ease;
 }
-.ob-opt:hover { border-color: var(--gold); box-shadow: 0 4px 16px rgba(0, 158, 247, .14); }
+.ob-opt:hover { border-color: var(--gold); }
 .ob-opt:active { transform: scale(.985); }
 .ob-opt b { display: block; font-size: 14.5px; font-weight: 700; margin-bottom: 3px; }
 .ob-opt small { color: var(--paper-dim); font-size: 12.5px; line-height: 1.45; }
 .ob-field { text-align: left; margin-bottom: 12px; }
 .ob-field label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
 
-/* ---------- Desktop (>= 1024px): vira admin template ---------- */
+/* ============================================================================
+   ANIMAÇÕES — dão sentido às ações, sem enfeitar à toa
+   Só transform e opacity: as duas propriedades que o compositor resolve sem
+   passar por layout nem repintura.
+   ============================================================================ */
+/* Entrada em cascata dos cards, para a tela "montar" em vez de piscar */
+.view > * { animation: cardIn .34s var(--ease-out) backwards; }
+.view > *:nth-child(1) { animation-delay: .02s; }
+.view > *:nth-child(2) { animation-delay: .06s; }
+.view > *:nth-child(3) { animation-delay: .10s; }
+.view > *:nth-child(4) { animation-delay: .14s; }
+.view > *:nth-child(5) { animation-delay: .18s; }
+.view > *:nth-child(n+6) { animation-delay: .22s; }
+@keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* Barras e anéis crescem a partir do zero — o dado "chega".
+   Os gráficos da ApexCharts animam por conta própria (chart.animations). */
+.bar > i { animation: barGrow .55s var(--ease-out); }
+@keyframes barGrow { from { width: 0 !important; } }
+.dn-arc { animation: arcIn .7s var(--ease-out) backwards; }
+@keyframes arcIn { from { opacity: 0; stroke-width: 0; } }
+
+/* SENSAÇÃO HÁPTICA VISUAL: o elemento cede sob o dedo e volta. A escala é sutil
+   de propósito — abaixo de .97 o toque vira "botão de brinquedo"; acima, não se
+   percebe. `will-change` só nos alvos que realmente animam sob o dedo, para não
+   promover metade da tela a camada própria. */
+.tx, .settings-item, .acc-row, .invoice-row { transition: transform .12s ease, background .15s ease, border-color .15s ease; }
+.tx:active, .settings-item:active, .acc-row:active { transform: scale(.985); }
+.chip, .btn, .icon-btn, .fab, .pay-btn { transition: transform .12s ease, background .16s ease, border-color .16s ease, color .16s ease; }
+.fab, .icon-btn, .avatar-btn { will-change: transform; }
+.chip:active { transform: scale(.94); }
+.btn:active { transform: scale(.98); }
+.kpi { transition: transform .18s var(--ease-out), box-shadow .18s ease, border-color .18s ease; }
+.kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); border-color: var(--line-strong); }
+
+/* ============================================================================
+   DESKTOP (>= 1024px): vira painel administrativo
+   ============================================================================ */
 @media (min-width: 1024px) {
   .sidebar { display: flex; }
   .tabbar { display: none; }
   .btn-new-desktop { display: inline-flex; }
+  .only-desk { display: grid; }
   .content { padding: 0 32px 48px; }
-  .topbar { padding-top: 20px; }
-  .topbar-month { font-size: 24px; }
+  .topbar-inner { padding: 10px 32px; }
+  .topbar-month { font-size: 19px; }
+  .topbar-logo { display: none; }   /* a marca já está na sidebar */
   .kpi-grid { grid-template-columns: repeat(4, 1fr); }
   .grid-2 { grid-template-columns: 5fr 7fr; }
   .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   /* Um card do grid pode não existir — a regra 50·30·20 só aparece com renda
-     cadastrada, e no relatório uma seção sai sob recorte. As colunas acompanham o
-     que sobrou, em vez de deixar um vão fantasma no fim da linha. */
+     cadastrada, e no relatório uma seção sai sob recorte. As colunas acompanham
+     o que sobrou, em vez de deixar um vão fantasma no fim da linha. */
   .grid-3:has(> .card:only-child) { grid-template-columns: minmax(0, 1fr); }
   .grid-3:has(> .card:nth-child(2):last-child) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .modal { display: flex; align-items: flex-start; justify-content: center; padding-top: 6vh; background: rgba(24, 28, 50, .4); }
-  .modal-inner { background: var(--ink); border-radius: 14px; padding: 24px; width: 100%; box-shadow: 0 20px 60px rgba(24, 28, 50, .25); }
-  .sheet { bottom: auto; top: 6vh; border-radius: 16px; }
+
+
+  .modal { display: flex; align-items: flex-start; justify-content: center; padding-top: 6vh; background: rgba(4, 6, 12, .6); }
+  .modal-inner {
+    background: var(--ink-2); border: 1px solid var(--line); border-radius: var(--radius-lg);
+    padding: 24px; width: 100%; box-shadow: var(--shadow-lg);
+  }
+  /* No desktop a folha deixa de ser folha: vira caixa centrada, e a animação
+     acompanha — subir do rodapé num monitor é gesto de celular fora de lugar. */
+  .sheet {
+    bottom: auto; top: 6vh; border-radius: var(--radius-lg); border: 1px solid var(--line);
+    animation: modalIn .24s var(--ease-out);
+  }
+  .sheet-handle { display: none; }
+  @keyframes modalIn { from { opacity: 0; transform: translateY(-12px) scale(.98); } }
 }
 
-/* ---------- Cofrinho das crianças: a gestão, no app de quem administra ----------
-   O app DELAS tem visual próprio, claro e colorido, em cofrinho/. Aqui é a área
-   do adulto, e por isso segue a linguagem desta casa — mesma lista, mesmos pesos.
-   Só o avatar traz cor, porque é o que identifica de quem é o cofrinho num
-   relance quando há mais de uma criança. */
-.kid-item {
-  display: flex; align-items: center; gap: 12px; padding: 12px 0;
-  border-bottom: 1px dashed var(--line); cursor: pointer;
-}
-.kid-item:last-of-type { border-bottom: 0; }
-.kid-item.off { opacity: .5; }
-.kid-item:hover { background: var(--ink-3); border-radius: 8px; padding-left: 8px; padding-right: 8px; }
-.kid-av { font-size: 22px; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex: none; }
-.kid-info { flex: 1; min-width: 0; }
-.kid-info b { display: block; font-size: 14px; font-weight: 600; }
-.kid-info small { display: block; color: var(--paper-dim); font-size: 11.5px; }
-.kid-saldo { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.kid-item svg { width: 15px; height: 15px; color: var(--paper-dim); flex: none; }
+/* No celular, tudo o que é diálogo entra como folha de baixo: é o gesto que o
+   sistema ensina, e a alça diz que dá para arrastar de volta. */
 
-.kid-tarefa {
-  display: flex; align-items: center; gap: 10px; padding: 10px 0;
-  border-bottom: 1px dashed var(--line); font-size: 13px;
-}
-.kid-tarefa:last-of-type { border-bottom: 0; }
-.kid-tarefa > span:first-child { flex: 1; }
-.kid-tarefa b { font-variant-numeric: tabular-nums; }
 
-.kid-mov { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px dashed var(--line); }
-.kid-mov:last-of-type { border-bottom: 0; }
-.kid-mov-ico { font-size: 18px; width: 34px; height: 34px; border-radius: 9px; background: var(--ink-3); display: grid; place-items: center; flex: none; }
-.kid-mov-info { flex: 1; min-width: 0; }
-.kid-mov-info b { display: block; font-size: 13px; font-weight: 600; }
-.kid-mov-info small { color: var(--paper-dim); font-size: 11px; }
-.kid-mov-val { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* Escolher bichinho e cor: alvo grande, porque a lista é de tocar, não de ler. */
-.kd-escolha { display: flex; flex-wrap: wrap; gap: 8px; }
-.kd-op {
-  width: 46px; height: 46px; border-radius: 12px; cursor: pointer; font-size: 22px;
-  border: 2px solid var(--line); background: var(--ink-2); display: grid; place-items: center;
-  font-family: var(--font-body);
-}
-.kd-op.on { border-color: var(--gold); background: rgba(0, 158, 247, .12); }
-.kd-cor { border-width: 3px; }
-.kd-cor.on { border-color: var(--paper); transform: scale(1.08); }
-
-/* O nome da missão com o progresso embaixo: a diária precisa mostrar quantos
-   dias já foram, senão o adulto aprova o bônus da semana no escuro. */
-.kid-tarefa-nome { flex: 1; min-width: 0; }
-.kid-tarefa-nome small { display: block; color: var(--paper-dim); font-size: 11.5px; }
-.kid-tarefa b small { color: var(--paper-dim); font-weight: 400; font-size: 11px; }
-
-/* ---------- A PERGUNTA DA SEMANA ----------
-
-   Discreta: é uma sugestão de conversa, não um alerta. Se tivesse a cor de pendência
-   viraria mais uma coisa a resolver — e conversar com um filho não é tarefa vencida. */
-.conversa {
-  margin-bottom: 12px;
-  border-left: 3px solid var(--gold);
-}
-.conversa-cab {
-  font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
-  color: var(--muted); margin-bottom: 6px;
-}
-.conversa-fato { font-weight: 600; margin-bottom: 3px; }
-.conversa-q { color: var(--muted); font-size: 14px; line-height: 1.45; }
-
+/* Rótulo do período: encolhe com reticências em vez de empurrar as ações do
+   header para fora da tela. */
+.periodo-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

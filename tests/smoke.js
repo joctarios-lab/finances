@@ -231,6 +231,21 @@ console.log('\n=== Ações no topo seguem um padrão só ===');
   check('o ícone existe no conjunto de ícones',
     /data-ico="target"><\/span>Nova meta/.test(metasHtml)
     && fs.readFileSync(BASE + 'js/icons.js', 'utf8').includes('target'), true);
+
+  /* ---- Nenhum ícone fantasma ----
+     `paintIcons` procura o nome no conjunto e, não achando, simplesmente não
+     escreve nada: o elemento fica vazio, sem erro no console e sem falha
+     visível em teste nenhum. Um botão sem ícone é o tipo de defeito que só
+     aparece quando alguém abre a tela — por isso a checagem é aqui. */
+  const fonteIcones = fs.readFileSync(BASE + 'js/icons.js', 'utf8');
+  const definidos = new Set([...fonteIcones.matchAll(/^  ([a-zA-Z]+): _svg/gm)].map(m => m[1]));
+  const fontes = ['js/app.js', 'js/auth.js', 'js/ui.js', 'index.html']
+    .map(f => fs.readFileSync(BASE + f, 'utf8')).join('\n');
+  // Só os nomes literais: os montados por expressão são conferidos pelo ramo abaixo
+  const literais = [...fontes.matchAll(/data-ico="([a-zA-Z]+)"/g)].map(m => m[1]);
+  const fantasmas = [...new Set(literais)].filter(n => !definidos.has(n));
+  check('todo data-ico literal existe em icons.js', fantasmas.join(', '), '');
+  check('e o conjunto cobre a interface inteira', definidos.size >= 30, true);
   // O cabeçalho vem antes da lista, senão a ação fica perdida no meio dela
   check('o cabeçalho vem antes do conteúdo',
     metasHtml.indexOf('sec-cab') < metasHtml.indexOf('id="btn-new-goal"') + 400, true);
@@ -4306,8 +4321,165 @@ console.log('\n=== Retorno ao usuário ===');
     const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
     return (x + 0.05) / (y + 0.05);
   };
-  const dim = (cssA.match(/--paper-dim: (#[0-9a-f]{6})/i) || [])[1];
-  check('texto secundário passa no AA', contraste(dim, '#ffffff') >= 4.5, true);
+  /* O AA vale nos DOIS temas, e cada um contra o próprio fundo.
+
+     Antes bastava medir uma cor contra branco, porque só existia o tema claro.
+     Com o escuro, o secundário dele é claro de propósito — medi-lo contra
+     branco reprovaria justamente a cor certa, e escurecê-la para o teste passar
+     a tornaria ilegível no fundo em que ela realmente aparece.
+
+     O fundo de referência é o do CARTÃO (--ink-2), não o da página: é sobre o
+     cartão que "faltam R$ X" e "vence dia 5" são lidos, e ele é o mais claro
+     dos dois no escuro — ou seja, o pior caso. */
+  const tokensDe = bloco => {
+    const m = cssA.match(new RegExp(bloco + '\\s*\\{[\\s\\S]*?\\n\\}'));
+    if (!m) return {};
+    const pega = nome => (m[0].match(new RegExp('--' + nome + ': (#[0-9a-fA-F]{6})')) || [])[1];
+    return { dim: pega('paper-dim'), fundo: pega('ink-2') };
+  };
+  const escuro = tokensDe(':root');
+  const claro = tokensDe('\\:root\\[data-tema="light"\\]');
+  check('tema escuro define os dois tokens', !!(escuro.dim && escuro.fundo), true);
+  check('tema claro define os dois tokens', !!(claro.dim && claro.fundo), true);
+  check('texto secundário passa no AA (escuro)', contraste(escuro.dim, escuro.fundo) >= 4.5, true);
+  check('texto secundário passa no AA (claro)', contraste(claro.dim, claro.fundo) >= 4.5, true);
+}
+
+console.log('\n=== Tema, privacidade e o header ===');
+{
+  const cssT2 = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  const apT = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const idx = fs.readFileSync(BASE + 'index.html', 'utf8');
+
+  /* O tema é decidido ANTES da primeira pintura. Lido depois que app.js carrega,
+     o app abre no tema errado e troca no quadro seguinte — o flash branco. */
+  check('o tema é aplicado antes de qualquer script do app',
+    idx.indexOf('financas.tema') < idx.indexOf('js/config.js'), true);
+  check('e a privacidade também', idx.indexOf('financas.privacidade') < idx.indexOf('js/app.js'), true);
+  check('o escuro é o padrão do sistema de cores', /:root \{\s*\n\s*color-scheme: dark/.test(cssT2), true);
+  check('o claro existe por preferência do aparelho',
+    /@media \(prefers-color-scheme: light\)[\s\S]{0,80}:root:not\(\[data-tema="dark"\]\)/.test(cssT2), true);
+  check('e a escolha explícita vence os dois', /:root\[data-tema="light"\] \{/.test(cssT2), true);
+
+  /* ---- Todo token de COR precisa existir nos dois temas ----
+     Um valor definido só no escuro não some: ele VAZA para o claro com a cor
+     errada, e o efeito é discreto o bastante para passar despercebido — foi o
+     que aconteceu com quinze bordas que continuaram no azul da paleta anterior
+     depois de a paleta inteira mudar.
+
+     Tokens estruturais (raio, fonte, curva de animação) não dependem de tema e
+     ficam de fora por nome. */
+  const blocoDark = cssT2.slice(cssT2.indexOf(':root {'), cssT2.indexOf('@media (prefers-color-scheme: light)'));
+  const blocoLight = cssT2.slice(cssT2.indexOf(':root[data-tema="light"]'), cssT2.indexOf('/* ---------- Base'));
+  const nomes = t => [...new Set([...t.matchAll(/(--[a-z0-9-]+):/g)].map(m => m[1]))];
+  const estrutural = /^--(radius|font|h-topbar|teclado|ease|glass-blur)/;
+  const soNoEscuro = nomes(blocoDark).filter(t => !estrutural.test(t) && !nomes(blocoLight).includes(t));
+  check('nenhum token de cor existe só no tema escuro', soNoEscuro.join(', '), '');
+
+  /* ---- Sem decoração: a cor é do dado ---- */
+  check('nenhum gradiente sobrou', /linear-gradient|radial-gradient/.test(
+    cssT2.replace(/\.skeleton::after \{[^}]*\}/, '')), false);
+  /* Sombra CROMÁTICA em estado permanente é o glow que se quis eliminar. Duas
+     coisas ficam de fora da regra, e por motivos diferentes:
+
+       - dentro de @keyframes: o pulso verde de 0,7s que confirma uma gravação é
+         feedback, dura o tempo da ação e desaparece;
+       - sombra neutra (preto ou branco puros): preto é a elevação de sempre, e
+         branco a 5% é o fio de luz na aresta do hero — acabamento de superfície,
+         o mesmo recurso de um botão de macOS. Nenhum dos dois tinge nada. */
+  const semKeyframes = cssT2.replace(/@keyframes[\s\S]*?\n\}/g, '');
+  const sombrasCromaticas = (semKeyframes.match(/box-shadow:[^;]+/g) || [])
+    .flatMap(regra => regra.match(/rgba?\(\s*\d+\s*,\s*\d+\s*,\s*\d+/g) || [])
+    .filter(cor => {
+      const [r, g, b] = cor.match(/\d+/g).map(Number);
+      return !(r === g && g === b);   // neutro só quando os três canais são iguais
+    });
+  check('nem sombra colorida de brilho', sombrasCromaticas.join(', '), '');
+  check('o fundo da página é plano', /body::before/.test(cssT2), false);
+  check('cantos discretos nos cards', /--radius: 8px/.test(cssT2), true);
+  check('e no máximo 12px no que flutua', /--radius-lg: 12px/.test(cssT2), true);
+
+  /* O hero e o cartão se destacam por superfície e filete, não por gradiente */
+  check('o hero usa a superfície de destaque', /\.hero \{[^}]*background: var\(--destaque\)/.test(cssT2), true);
+  check('e o cartão de crédito também', /\.credit-card \{[^}]*background: var\(--destaque\)/.test(cssT2), true);
+  check('o filete do hero diz a situação',
+    /\.hero-red::before \{ background: var\(--red\)/.test(cssT2), true);
+  /* A classe do hero é binária; o selo tem três estados e conhece o "Aperto no
+     variável". Quando os dois discordam, quem manda no filete é o selo — senão
+     aparece um filete verde ao lado de um selo âmbar dizendo o contrário. */
+  check('e o selo tem a palavra final sobre ele',
+    /\.hero:has\(\.b-amber\)::before \{ background: var\(--amber\)/.test(cssT2), true);
+  const iClasse = cssT2.indexOf('.hero-red::before');
+  const iSelo = cssT2.indexOf('.hero:has(.b-red)::before');
+  check('e vence por vir depois na cascata', iSelo > iClasse, true);
+  /* Os painéis de conta recuam um plano dentro do hero: é a terceira camada
+     (página → hero → painel) que dá relevo sem nenhuma tinta decorativa. */
+  check('a conta do hero é um painel embutido',
+    /\.hero \.hero-conta \{[^}]*background: var\(--embutido\)/.test(cssT2), true);
+  check('e o embutido existe nos dois temas',
+    (cssT2.match(/--embutido:/g) || []).length >= 3, true);
+  check('e o do cartão, se a fatura fechou sem pagamento',
+    /\.credit-card:has\(\.cc-alerta\)::before \{ background: var\(--red\)/.test(cssT2), true);
+
+  /* ---- O seletor do tema precisa ter escopo ----
+     O <html> carrega `data-tema` quando há tema escolhido. Um
+     querySelectorAll('[data-tema]') pegava o documento inteiro e pendurava o
+     handler nele: qualquer clique na página — o botão de voltar inclusive —
+     reabria a tela de Aparência, e o voltar parecia sem função. */
+  check('o seletor das opções de tema não alcança o <html>',
+    /querySelectorAll\('\[data-tema\]'\)/.test(apT), false);
+  check('ele é escopado ao modal', apT.includes("querySelectorAll('#modal [data-tema-op]')"), true);
+  check('e lê o atributo próprio da opção', apT.includes('b.dataset.temaOp'), true);
+  check('as três escolhas existem', /'auto',[\s\S]{0,200}'dark',[\s\S]{0,200}'light',/.test(apT), true);
+
+  /* ---- Modo privado ----
+     O alvo é a CIFRA, marcada no texto por marcarValores(). Uma lista de classes
+     no CSS errava dos dois lados: borrava a caixa inteira (o rótulo sumia junto
+     com o número) e, mesmo com quarenta seletores, deixava valores de fora. */
+  check('o esconderijo é a marca, não uma lista de classes',
+    /\.privado \.v \{[^}]*filter: blur/.test(cssT2), true);
+  check('e a lista antiga não voltou', (cssT2.match(/\.privado \./g) || []).length <= 5, true);
+  check('o gráfico não é borrado inteiro', /\.privado \.apx\s*[,{]/.test(cssT2), false);
+  check('nem o donut inteiro', /\.privado \.donut-svg\s*[,{]/.test(cssT2), false);
+  check('a cifra dentro do gráfico leva desfoque menor',
+    /\.privado svg text\.v \{ filter: blur\(3px\)/.test(cssT2), true);
+  check('o campo de valor continua coberto pelo elemento',
+    /\.privado \.amount-input \{[^}]*filter: blur/.test(cssT2), true);
+  check('o botão do olho conta o estado atual', apT.includes("ligado ? 'eyeOff' : 'eye'"), true);
+  check('e é anunciado como interruptor', apT.includes("setAttribute('aria-pressed'"), true);
+
+  /* ---- A marcação alcança o valor onde ele estiver ----
+     Roda sobre o texto renderizado, então cobre a cifra solta no meio de uma
+     frase, dentro de uma célula de tabela ou como <text> de um gráfico. */
+  const casos = [
+    ['R$ 1.234,56', 1], ['-R$ 2.078,32', 1], ['R$ 7', 1],
+    ['faltam R$ 200 para a meta', 1],
+    ['de R$ 32.000 · 2 meta(s)', 1],
+    ['R$ 0,00 a R$ 2.089,97', 2],
+    ['dia 12 de 31', 0], ['Alimentação · Mercado', 0], ['50 · 30 · 20', 0],
+  ];
+  const reMoeda = new RegExp(/-?R\$[\s ]?-?\d[\d.]*(?:,\d{2})?/.source, 'g');
+  for (const [txt, qtd] of casos) {
+    check(`marca ${qtd} valor(es) em "${txt}"`, (txt.match(reMoeda) || []).length, qtd);
+  }
+  check('a varredura é chamada ao desenhar a tela', apT.includes("marcarValores($('#view'))"), true);
+  check('e também no que abre por cima dela',
+    apT.includes("marcarValores($('#modal'))") && apT.includes('marcarValores(sheet)'), true);
+  check('o painel de filtros também é marcado',
+    fs.readFileSync(BASE + 'js/ui.js', 'utf8').includes('marcarValores(painel)'), true);
+  check('a lista é coletada antes de trocar os nós',
+    /const nos = \[\];\s*\n\s*while \(it\.nextNode\(\)\) nos\.push/.test(apT), true);
+  check('dentro de SVG marca o próprio <text>', apT.includes("pai.classList.add('v')"), true);
+
+  /* ---- O header ocupa a largura da tela ----
+     Preso à largura do conteúdo, as ações boiavam no meio da faixa num monitor
+     largo, longe de qualquer borda. */
+  const inner = (cssT2.match(/\.topbar-inner \{[^}]*\}/) || [''])[0];
+  check('o header não limita a própria largura', /max-width/.test(inner), false);
+  check('mas o conteúdo abaixo dele limita', /\.content \{ max-width: min\(100%, \d+px\)/.test(cssT2), true);
+  check('o header fica preso no topo', /\.topbar \{[^}]*position: sticky/.test(cssT2), true);
+  check('e a barra do extrato encosta embaixo dele',
+    /\.ext-topo \{[^}]*top: calc\(var\(--h-topbar\)/.test(cssT2), true);
 }
 
 console.log('\n=== Teclado do celular não esconde nada ===');
@@ -11224,6 +11396,13 @@ try {
     corpoInicio.indexOf('filaDePendencias()') < corpoInicio.indexOf('heroAtual'), true);
   check('e o aviso de aperto logo depois dele',
     corpoInicio.indexOf('avisoDeAperto()') > corpoInicio.indexOf('heroAtual'), true);
+  /* O painel é UMA COLUNA. Uma divisão em duas foi tentada e desfeita: abaixo do
+     ponto de corte as colunas viravam pilha na ordem dos wrappers, e conselheiro
+     e fila passavam à frente do saldo — com o cartão de configuração caindo
+     depois deles. A checagem trava a volta disso por acidente. */
+  check('o painel não volta a se dividir em colunas', /class="col-(side|main)"/.test(apF3), false);
+  check('o cartão de configuração continua abrindo a tela',
+    corpoInicio.indexOf('${setupCard}') < corpoInicio.indexOf('filaDePendencias()'), true);
   // Só no mês corrente: pendência de um mês fechado não é decisão de hoje
   check('a fila só existe no mês corrente', /\$\{atual \? filaDePendencias\(\) : ''\}/.test(apF3), true);
 

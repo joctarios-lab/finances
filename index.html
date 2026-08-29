@@ -5,7 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Finanças da Família</title>
 <meta name="description" content="Gestão financeira da família — offline, rápida e sincronizada.">
-<meta name="theme-color" content="#1e1e2d">
+<!-- A cor da barra do sistema acompanha o tema: carbono no escuro, creme no claro.
+     Sem os dois, um app instalado em tema claro abre com a faixa preta do escuro. -->
+<meta name="theme-color" content="#0C0D0E" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F6F8FA" media="(prefers-color-scheme: light)">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
@@ -17,8 +20,25 @@
 <!-- CSS da propria ApexCharts. O .min.js NAO o injeta: sem ele a dica de valor
      perde a caixa e o ancoramento (.apexcharts-canvas{position:relative}) e voa
      para o canto da pagina. Vem ANTES do nosso, para o nosso poder sobrepor. -->
-<link rel="stylesheet" href="vendor/apexcharts.css?v=153">
-<link rel="stylesheet" href="css/styles.css?v=153">
+<link rel="stylesheet" href="vendor/apexcharts.css?v=155">
+<link rel="stylesheet" href="css/styles.css?v=155">
+<script>
+  /* TEMA ANTES DA PRIMEIRA PINTURA.
+
+     O tema escolhido mora no localStorage, e lê-lo depois que app.js carrega
+     significaria pintar a tela clara e trocar para escura no quadro seguinte —
+     o "flash branco" que todo app de tema duplo tem quando essa decisão desce
+     para o fim da fila. Este bloco é minúsculo e síncrono de propósito: ele
+     precisa rodar antes de o body existir.
+
+     Sem escolha gravada, nada é marcado e o CSS segue o prefers-color-scheme
+     do sistema. */
+  try {
+    var _t = localStorage.getItem('financas.tema');
+    if (_t === 'dark' || _t === 'light') document.documentElement.dataset.tema = _t;
+    if (localStorage.getItem('financas.privacidade') === '1') document.documentElement.classList.add('privado');
+  } catch (e) {}
+</script>
 </head>
 <body>
 
@@ -30,13 +50,17 @@
       <div><b>Finanças</b><small id="side-family">Minha família</small></div>
     </div>
     <nav class="sidebar-menu">
-      <p class="sidebar-section">Visão</p>
+      <p class="sidebar-section">Visão geral</p>
       <button class="side-item" data-tab="inicio"><span class="tab-ico" data-ico="home"></span>Painel</button>
-      <button class="side-item" data-tab="extrato"><span class="tab-ico" data-ico="list"></span>Extrato</button>
       <button class="side-item" data-tab="relatorios"><span class="tab-ico" data-ico="pie"></span>Relatórios</button>
-      <p class="sidebar-section">Gestão</p>
+      <p class="sidebar-section">Movimentações</p>
+      <button class="side-item" data-tab="extrato"><span class="tab-ico" data-ico="list"></span>Extrato</button>
       <button class="side-item" data-tab="cartoes"><span class="tab-ico" data-ico="card"></span>Cartões &amp; Faturas</button>
+      <p class="sidebar-section">Planejamento</p>
       <button class="side-item" data-tab="metas"><span class="tab-ico" data-ico="target"></span>Metas</button>
+      <button class="side-item" id="side-recorrencias"><span class="tab-ico" data-ico="calendar"></span>Contas fixas</button>
+      <p class="sidebar-section">Cofrinho</p>
+      <button class="side-item" id="side-criancas"><span class="tab-ico" data-ico="piggy"></span>Crianças</button>
       <p class="sidebar-section">Sistema</p>
       <button class="side-item" id="side-config"><span class="tab-ico" data-ico="settings"></span>Configurações</button>
       <button class="side-item" id="side-lock"><span class="tab-ico" data-ico="lock"></span>Bloquear</button>
@@ -51,24 +75,49 @@
 
   <!-- Conteúdo -->
   <div class="wrapper">
-    <div class="content">
-      <header class="topbar">
-        <div>
-          <p class="topbar-hello" id="topbar-hello">Finanças da Família</p>
-          <h1 class="topbar-month" id="topbar-month">—</h1>
+    <!-- HEADER GLOBAL, preso no topo em qualquer largura.
+
+         Fora de .content de propósito, e em largura inteira: a faixa atravessa a
+         tela para o desfoque cobrir tudo o que passa por baixo, e as ações ficam
+         na borda direita, que é onde a mão as procura num monitor largo. -->
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="topbar-left">
+          <img class="topbar-logo" src="icons/icon-192.png" alt="" width="30" height="30">
+          <div class="topbar-ctx">
+            <p class="topbar-hello" id="topbar-hello">Finanças da Família</p>
+            <h1 class="topbar-month" id="topbar-month">—</h1>
+          </div>
+          <!-- O período é INDICADOR, não um segundo controle de navegação: as
+               setas de mês vivem dentro da tela que tem mês. Quando se está fora
+               do ciclo corrente ele vira o atalho de volta para ele, que é a
+               única ação que faltava a quem se perdeu navegando meses atrás. -->
+          <button class="periodo-chip" id="btn-periodo" hidden>
+            <span class="periodo-ico" data-ico="calendar"></span>
+            <span class="periodo-txt" id="topbar-periodo">—</span>
+          </button>
+          <button class="sync-badge" id="btn-sync" title="Sincronizar" aria-label="Sincronizar">
+            <i class="sync-dot" aria-hidden="true"></i>
+            <span class="sync-txt" id="sync-rotulo">Local</span>
+          </button>
         </div>
         <div class="topbar-actions">
           <button class="btn-new-desktop" id="btn-new-desktop"><span data-ico="plus"></span>Novo lançamento</button>
-          <button class="icon-btn" id="btn-sync" title="Sincronizar" aria-label="Sincronizar"><span data-ico="sync"></span></button>
-          <button class="icon-btn" id="btn-config" title="Configurações" aria-label="Configurações"><span data-ico="settings"></span></button>
+          <button class="icon-btn only-desk" id="btn-ofx" title="Importar extrato OFX" aria-label="Importar extrato OFX"><span data-ico="download"></span></button>
+          <!-- aria-pressed: o botão é um interruptor, e sem ele um leitor de tela
+               anuncia "botão ocultar valores" sem dizer se já estão ocultos. -->
+          <button class="icon-btn" id="btn-privacidade" title="Ocultar valores" aria-label="Ocultar valores" aria-pressed="false"><span data-ico="eye"></span></button>
+          <button class="avatar-btn" id="btn-perfil" title="Perfil e configurações" aria-label="Perfil e configurações"><span id="topbar-avatar">F</span></button>
         </div>
-      </header>
+      </div>
+    </header>
 
+    <div class="content">
       <p id="sync-status" class="sync-status" hidden></p>
-
       <main id="view" class="view"><!-- renderizado por app.js --></main>
     </div>
 
+    <!-- Barra inferior (mobile): quatro atalhos e o botão de lançar no meio -->
     <nav class="tabbar" aria-label="Navegação principal">
       <button data-tab="inicio" class="tab active"><span class="tab-ico" data-ico="home"></span><span>Início</span></button>
       <button data-tab="extrato" class="tab"><span class="tab-ico" data-ico="list"></span><span>Extrato</span></button>
@@ -94,18 +143,18 @@
      quem usa leitor de tela tenta salvar, o formulário não fecha e nada é dito. -->
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/config.js?v=153"></script>
+<script src="js/config.js?v=155"></script>
 <!-- ApexCharts v3.54.1 (MIT), vendorizado: o app e offline-first e CDN quebraria
      o uso sem rede. Vem antes de app.js, que o usa ao desenhar. -->
-<script src="vendor/apexcharts.min.js?v=153"></script>
-<script src="js/icons.js?v=153"></script>
-<script src="js/ui.js?v=153"></script>
-<script src="js/graficos.js?v=153"></script>
-<script src="js/ofx.js?v=153"></script>
-<script src="js/db.js?v=153"></script>
-<script src="js/sync.js?v=153"></script>
-<script src="js/auth.js?v=153"></script>
-<script src="js/app.js?v=153"></script>
+<script src="vendor/apexcharts.min.js?v=155"></script>
+<script src="js/icons.js?v=155"></script>
+<script src="js/ui.js?v=155"></script>
+<script src="js/graficos.js?v=155"></script>
+<script src="js/ofx.js?v=155"></script>
+<script src="js/db.js?v=155"></script>
+<script src="js/sync.js?v=155"></script>
+<script src="js/auth.js?v=155"></script>
+<script src="js/app.js?v=155"></script>
 <script>
   if ('serviceWorker' in navigator) {
     /* REGISTRAR NÃO BASTA NUM APP INSTALADO: o navegador só procura versão nova em uma
