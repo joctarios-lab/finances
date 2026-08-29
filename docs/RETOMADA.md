@@ -25,7 +25,7 @@ Leia primeiro, nesta ordem:
 
 ## Estado atual
 - Versão 157 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 3028 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- 3054 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - a prova de cifra do assistente: `node tests/cofre.js` (roda o WebCrypto de verdade)
 - a conversa completa nos dois provedores: `node tests/provedores.js`
@@ -70,7 +70,34 @@ Leia primeiro, nesta ordem:
   teste exigindo que todo token de cor do escuro exista também no claro, porque
   um rgba solto não acompanha a troca de tema e vaza a cor do tema anterior.
 
-## O ASSISTENTE (v159) — como está montado
+## O ASSISTENTE (v160) — como está montado
+
+- **O CONTEXTO VAI EM TODA REQUISIÇÃO, e é montado em camadas** (`IA.contexto()`,
+  que `instrucao()` apenas devolve). Não é repetido por mensagem — a instrução do
+  sistema já viaja com cada chamada; repetir só multiplicaria custo.
+- **A ORDEM É DO ESTÁTICO AO VOLÁTIL, e isso não é estética.** Identidade →
+  vocabulário → limites → regras → a casa → o que não foi autorizado → data e
+  tela atual. As duas APIs cobram uma fração por prefixo já visto, e prefixo só
+  se repete se o começo do texto for idêntico entre chamadas: a data no topo
+  invalidaria o cache a cada pergunta. Há teste sobre a ordem.
+- **A camada de VOCABULÁRIO é a que mais importa.** `DB.available()` e
+  `DB.caixaLivre()` são grandezas diferentes DE PROPÓSITO (uma é planejamento, a
+  outra é caixa — ver os comentários no js/db.js). Sem a definição, o modelo
+  chama as duas de "saldo" e passa a contradizer as telas. Num app de dinheiro
+  isso é pior que errar a conta: ensina um modelo mental que o app não sustenta.
+- **A camada "A CASA" obedece às MESMAS permissões das ferramentas.** Ela cita
+  nomes de contas, cartões e crianças — e nome não é saldo, mas é dado da casa.
+  Entregá-lo com a permissão desmarcada quebraria a promessa da tela ("o
+  desmarcado nem chega ao modelo"). Foi um defeito real na primeira versão desta
+  camada; há teste travando.
+- **`IA.ondeEstou` é um gancho preenchido pelo app.js**, não uma leitura de
+  `state` dentro do js/ia.js — que precisa continuar carregável sozinho, é assim
+  que as suítes o rodam sem navegador. Ele resolve "e esse mês?" para o ciclo que
+  a pessoa está de fato olhando, em vez de sempre o atual.
+- **Custo:** o fixo por pergunta foi de 1372 para ~1890 tokens (+37%), ~US$ 0,005
+  a mais por pergunta no Opus 5. Com o prefixo cacheado ficaria em ~US$ 0,018 —
+  mais barato que os ~US$ 0,030 de hoje sem cache. O cache ainda NÃO está ligado;
+  a ordenação acima é o que o torna possível.
 
 - **A chave é DO USUÁRIO, não do app**, e o provedor é escolha dele: Claude
   (Anthropic) ou DeepSeek. `IA.chamar()` vai **direto do navegador** para a API

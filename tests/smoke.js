@@ -4406,6 +4406,96 @@ console.log('\n=== O header nomeia o app e a tela ===');
     /id="topbar-month"[^>]*>—</.test(idxH), false);
 }
 
+console.log('\n=== O contexto que viaja em toda pergunta ===');
+{
+  const guardaCfg = IA.cfg;
+  const guardaOnde = IA.ondeEstou;
+  const guardaAcc = DB.data.accounts, guardaCards = DB.data.cards, guardaKids = DB.data.kids;
+
+  DB.data.accounts = [{ name: 'Banco Um' }];
+  DB.data.cards = [{ name: 'Cartao Um' }];
+  DB.data.kids = [{ name: 'Crianca Uma' }];
+
+  IA.cfg = IA.padrao();
+  IA.cfg.ligado = true;
+  IA.cfg.ver.situacao = true;
+  IA.ondeEstou = () => ({ tela: 'Extrato', ciclo: -1, rotulo: 'julho de 2026' });
+  const ctx = IA.instrucao();
+
+  /* ---- O vocabulário do app ----
+     A razão de existir desta camada: `available()` e `caixaLivre()` são
+     grandezas DIFERENTES de propósito no js/db.js. Sem a definição, o modelo
+     chama as duas de "saldo" e passa a contradizer as telas — que é pior que
+     errar a conta, porque ensina um modelo mental que o app não sustenta. */
+  check('define disponível para gastar', /Disponível para gastar:/.test(ctx), true);
+  check('  e diz que receita futura não entra', /não caiu NÃO entra|Receita que ainda não caiu/.test(ctx), true);
+  check('define livre em caixa à parte', /Livre em caixa:/.test(ctx), true);
+  check('  marcando a diferença dos dois', /sem descontar o comprometido/.test(ctx), true);
+  check('define comprometido, guardado e ciclo',
+    /Comprometido:/.test(ctx) && /Guardado:/.test(ctx) && /Ciclo \(ou mês financeiro\):/.test(ctx), true);
+
+  /* ---- Ele só lê ---- */
+  check('avisa que só lê', /você só LÊ/.test(ctx), true);
+  check('  e manda apontar a tela em vez de fingir', /diga em qual tela/.test(ctx), true);
+
+  /* ---- Onde a pessoa está ----
+     Sem isto "e esse mês?" resolve para o ciclo atual enquanto a tela mostra
+     outro — a resposta fica certa sobre o mês errado. */
+  check('diz em que tela a pessoa está', /tela Extrato/.test(ctx), true);
+  check('  e em que ciclo', /ciclo anterior \(julho de 2026\)/.test(ctx), true);
+  check('  resolvendo o "esse mês"', /"esse mês", "aqui" ou "isso"/.test(ctx), true);
+
+  /* ---- A CASA respeita as MESMAS permissões das ferramentas ----
+     Nome não é saldo, mas é dado da casa. Entregá-lo com a permissão desmarcada
+     quebraria a promessa central da tela de configuração. */
+  check('com só "situação", cita as contas', /Banco Um/.test(ctx), true);
+  check('  mas NÃO o cartão', /Cartao Um/.test(ctx), false);
+  check('  nem a criança', /Crianca Uma/.test(ctx), false);
+
+  IA.cfg.ver.cartoes = true;
+  IA.cfg.ver.criancas = true;
+  const ctx2 = IA.instrucao();
+  check('autorizado, o cartão aparece', /Cartao Um/.test(ctx2), true);
+  check('  e a criança também', /Crianca Uma/.test(ctx2), true);
+
+  /* ---- O que está desligado é dito pelo nome, nunca pelo dado ---- */
+  IA.cfg = IA.padrao();
+  IA.cfg.ver.situacao = true;
+  const ctx3 = IA.instrucao();
+  check('lista o que não foi autorizado', /NÃO AUTORIZADO nesta casa:/.test(ctx3), true);
+  check('  nomeando as áreas desligadas', /cartões e faturas/.test(ctx3), true);
+  check('  sem citar o que está ligado', /NÃO AUTORIZADO[^\n]*saldos e disponível/.test(ctx3), false);
+  Object.keys(IA.cfg.ver).forEach(k => { IA.cfg.ver[k] = true; });
+  check('com tudo ligado, a linha some', /NÃO AUTORIZADO/.test(IA.instrucao()), false);
+
+  /* ---- A ORDEM: do estático ao volátil ----
+     Não é estética. As duas APIs cobram uma fração por um prefixo já visto, e o
+     prefixo só se repete se o começo for idêntico entre as chamadas. A data no
+     topo invalidaria o cache a cada pergunta. */
+  const ctxO = IA.instrucao();
+  const pos = t => ctxO.indexOf(t);
+  check('a identidade vem primeiro', pos('Você é o assistente do DOMI'), 0);
+  check('o vocabulário antes das regras', pos('O VOCABULÁRIO') < pos('REGRAS:'), true);
+  check('a casa depois das regras', pos('REGRAS:') < pos('A CASA:'), true);
+  check('e a data por último, que é o que muda', pos('A CASA:') < pos('Hoje é'), true);
+
+  /* ---- Não estoura o orçamento de tokens ----
+     Vai em TODA pergunta: o que cresce aqui é multiplicado por cada chamada. */
+  check('o contexto cabe em ~1000 tokens', Math.round(ctxO.length / 3.6) < 1000, true,
+    `~${Math.round(ctxO.length / 3.6)} tokens`);
+
+  /* ---- Sem app carregado, não estoura ----
+     ia.js roda sozinho nas suítes, e o gancho pode não existir. */
+  IA.ondeEstou = null;
+  check('sem o gancho, o contexto ainda sai', IA.instrucao().length > 500, true);
+  IA.ondeEstou = () => { throw new Error('ops'); };
+  check('e um gancho que estoura não derruba a pergunta', IA.instrucao().length > 500, true);
+
+  IA.cfg = guardaCfg;
+  IA.ondeEstou = guardaOnde;
+  DB.data.accounts = guardaAcc; DB.data.cards = guardaCards; DB.data.kids = guardaKids;
+}
+
 console.log('\n=== Os dois provedores ===');
 {
   const iaSrc2 = fs.readFileSync(BASE + 'js/ia.js', 'utf8');

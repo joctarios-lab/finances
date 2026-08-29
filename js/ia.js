@@ -723,23 +723,179 @@ const IA = {
      Curta de propósito. O que o assistente precisa saber é o que ele NÃO deve
      fazer: inventar número, dar conselho de investimento, e falar como um
      relatório. O resto vem das ferramentas. */
-  instrucao() {
-    const s = DB.settings() || {};
+  /* ==========================================================================
+     O CONTEXTO — o que o assistente sabe antes de qualquer pergunta
+
+     ISTO VAI EM TODA REQUISIÇÃO. Não porque seja repetido a cada mensagem — não
+     é —, mas porque a instrução do sistema viaja junto de cada chamada. É o
+     lugar certo para contextualizar: uma cópia por pergunta, e não uma por
+     turno de conversa.
+
+     POR QUE EXISTE. Sem isto o modelo recebe números com nomes bonitos e nenhum
+     significado. `disponivel_para_gastar` e `livre_em_caixa` são grandezas
+     DIFERENTES no DOMI, de propósito (ver DB.available e DB.caixaLivre) — um é
+     planejamento, o outro é caixa. Um modelo que não sabe disso chama os dois de
+     "saldo", e aí o assistente contradiz a tela que a pessoa está olhando. Esse
+     é o pior defeito possível num app de dinheiro: não é errar a conta, é
+     ensinar um modelo mental diferente do que o app inteiro sustenta.
+
+     A ORDEM IMPORTA, e não é estética. As camadas vão da mais ESTÁTICA para a
+     mais VOLÁTIL. As duas APIs cobram bem mais barato por um prefixo que já
+     viram antes, e prefixo só se repete se o começo do texto for idêntico entre
+     as chamadas. Colocar a data ou a tela atual no topo invalidaria o cache a
+     cada pergunta. */
+  contexto() {
     return [
-      'Você é o assistente financeiro do DOMI, um aplicativo de contas de uma família brasileira.',
-      '',
-      'REGRAS:',
-      '- Todo número vem das ferramentas. Nunca estime, arredonde de cabeça nem invente um valor: se não tem a ferramenta para responder, diga o que falta autorizar em Configurações → Assistente.',
-      '- Responda em português do Brasil, com valores em reais no formato R$ 1.234,56.',
-      '- Seja curto. Uma resposta boa aqui tem duas ou três frases e o número que importa. Só use lista quando forem realmente vários itens.',
-      '- Fale como alguém da casa, não como um relatório de banco: "sobra R$ 300 até o fim do mês" em vez de "o saldo projetado indica superávit".',
-      '- Você não dá recomendação de investimento nem indica produto financeiro. Pode explicar os números da pessoa e as consequências das escolhas dela.',
-      '- Quando a resposta depender de uma projeção, diga que é estimativa.',
-      '',
-      `Hoje é ${new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}.`,
-      `O mês financeiro da família começa no dia ${s.month_start_day || 1}.`,
-      'Mês 0 é o ciclo atual, -1 o anterior, +1 o próximo.',
+      this.ctxQuemVoceE(),
+      this.ctxVocabulario(),
+      this.ctxLimites(),
+      this.ctxRegras(),
+      this.ctxACasa(),
+      this.ctxAutorizacao(),
+      this.ctxAgora(),
+    ].filter(Boolean).join('\n\n');
+  },
+
+  // Mantido pelo nome antigo: é o que perguntar() e os testes já chamam.
+  instrucao() { return this.contexto(); },
+
+  /* ---------- 1. estático: quem ele é ---------- */
+  ctxQuemVoceE() {
+    return 'Você é o assistente do DOMI, um aplicativo de finanças de uma família brasileira. Você responde sobre o dinheiro DESTA casa, com os números do próprio app.';
+  },
+
+  /* ---------- 2. estático: o vocabulário do app ----------
+
+     A camada mais importante das sete. Cada termo aqui tem uma definição exata
+     no js/db.js, e as telas todas a usam. O assistente precisa falar a MESMA
+     língua — senão ele explica com palavras que o app não usa, ou pior, usa as
+     palavras do app com outro sentido. */
+  ctxVocabulario() {
+    return [
+      'O VOCABULÁRIO DO DOMI. Estes termos têm significado exato aqui. Use-os com o mesmo sentido que as telas usam e nunca troque um pelo outro:',
+      '- Disponível para gastar: o que existe em conta, MENOS o comprometido, MENOS o guardado. É número de planejamento — "quanto posso assumir de novo até o fim do ciclo". Receita que ainda não caiu NÃO entra: disponível é dinheiro que existe.',
+      '- Livre em caixa: o que existe em conta MENOS o guardado, sem descontar o comprometido. É realidade de caixa — a fatura só sai da conta quando é paga. É este número que diz se um gasto encostou na reserva.',
+      '- Comprometido: contas e faturas que vencem até o fim do ciclo atual. O dinheiro está lá, mas já tem dono.',
+      '- Guardado: a reserva de emergência mais o que está separado em metas.',
+      '- Ciclo (ou mês financeiro): começa no dia que a família escolheu, que pode não ser o dia 1. "Mês" numa pergunta quase sempre quer dizer ciclo.',
+      '- Categoria, ou envelope: para onde o gasto foi. Pode ter subcategoria.',
+      '- Fatura: o que um cartão acumulou entre o fechamento e o vencimento.',
+      '- Reserva: o colchão de emergência, medido em meses de custo de vida.',
+      '- Cofrinho: o dinheiro das crianças — potes, tarefas e semanada. Vive no mesmo banco de dados, num app à parte.',
+      '- Conselheiro: as análises que o painel já mostra sozinho.',
     ].join('\n');
+  },
+
+  /* ---------- 3. estático: o que ele NÃO faz, e para onde mandar ----------
+
+     Toda ferramenta aqui é de leitura; `simular_cenario` calcula e não grava.
+     Sem dizer isso, o modelo aceita "lança aí um gasto de 50" e responde como se
+     tivesse lançado — e a pessoa só descobre que não foi quando procura. */
+  ctxLimites() {
+    return [
+      'O QUE VOCÊ NÃO FAZ: você só LÊ. Não cria, edita nem apaga lançamento, conta, cartão, meta ou categoria — nenhuma das suas ferramentas escreve. Se pedirem para lançar ou mudar algo, diga em qual tela a pessoa faz isso, em uma linha, e siga.',
+      'ONDE AS COISAS FICAM, para você apontar o caminho: lançar é o botão + em qualquer tela; contas e cartões em Cartões & Contas; metas e reserva em Metas; orçamento por categoria, dia de início do ciclo e backup em Configurações; suas permissões em Configurações → Assistente.',
+    ].join('\n');
+  },
+
+  /* ---------- 4. estático: como responder ---------- */
+  ctxRegras() {
+    return [
+      'REGRAS:',
+      '- Todo número vem das ferramentas. Nunca estime, arredonde de cabeça nem invente: se falta ferramenta para responder, diga o que precisa ser autorizado em Configurações → Assistente.',
+      '- Responda em português do Brasil, com valores em reais no formato R$ 1.234,56.',
+      '- Seja curto. Uma resposta boa aqui tem duas ou três frases e o número que importa. Lista só quando forem mesmo vários itens.',
+      '- Fale como alguém da casa, não como relatório de banco: "sobra R$ 300 até o fim do mês" em vez de "o saldo projetado indica superávit".',
+      '- Não dê recomendação de investimento nem indique produto financeiro. Pode explicar os números da pessoa e as consequências das escolhas dela.',
+      '- Quando a resposta depender de projeção, diga que é estimativa.',
+    ].join('\n');
+  },
+
+  /* ---------- 5. muda raramente: a forma desta casa ----------
+
+     Os NOMES, não os valores. É o que faz "e no Nubank?" ser resolvível sem uma
+     ida e volta perdida. Com teto: uma família com trinta categorias não pode
+     empurrar a lista inteira em toda pergunta. */
+  MAX_NOMES: 12,
+  ctxACasa() {
+    if (!DB.data) return '';
+    const nomes = (lista) => {
+      const v = (lista || []).map(x => x && (x.name || x.nome)).filter(Boolean);
+      if (!v.length) return null;
+      return v.length > this.MAX_NOMES
+        ? v.slice(0, this.MAX_NOMES).join(', ') + ` e mais ${v.length - this.MAX_NOMES}`
+        : v.join(', ');
+    };
+    /* CADA LINHA OBEDECE À MESMA PERMISSÃO DA FERRAMENTA CORRESPONDENTE.
+       Nome não é saldo, mas é dado da casa: entregar "o cartão se chama C6" com
+       "Cartões e faturas" desmarcado quebraria a promessa da tela — a de que o
+       desmarcado nem chega ao modelo. */
+    const ok = (this.cfg && this.cfg.ver) || {};
+    const linhas = [];
+    const familia = DB.familyName && DB.familyName();
+    if (familia) linhas.push(`A família se chama ${familia}.`);
+
+    // Conta aparece em saldos e na lista de lançamentos; basta uma das duas.
+    const contas = (ok.situacao || ok.lancamentos) ? nomes(DB.data.accounts) : null;
+    const cartoes = ok.cartoes ? nomes(DB.data.cards) : null;
+    const criancas = ok.criancas ? nomes(DB.data.kids) : null;
+    if (contas) linhas.push(`Contas: ${contas}.`);
+    if (cartoes) linhas.push(`Cartões: ${cartoes}.`);
+    if (criancas) linhas.push(`Crianças no cofrinho: ${criancas}.`);
+
+    if (!linhas.length) return '';
+    linhas.push('Quando a pessoa citar um desses nomes, é a estes que ela se refere.');
+    return 'A CASA:\n' + linhas.join('\n');
+  },
+
+  /* ---------- 6. muda raramente: o que ficou de fora ----------
+
+     O modelo não enxerga a ferramenta que não foi autorizada — é o desenho, e
+     está certo. Mas então ele também não sabe que ela EXISTE, e o conselho
+     "peça autorização" sai vago. Dizer o nome do que está desligado (nunca o
+     dado) transforma isso em instrução aproveitável. */
+  ctxAutorizacao() {
+    const rotulos = {
+      situacao: 'saldos e disponível',
+      categorias: 'gastos por categoria',
+      previsao: 'projeções e contas fixas',
+      cartoes: 'cartões e faturas',
+      metas: 'metas e reserva',
+      lancamentos: 'a lista de lançamentos',
+      criancas: 'o cofrinho das crianças',
+    };
+    const ok = (this.cfg && this.cfg.ver) || {};
+    const fora = Object.keys(rotulos).filter(k => !ok[k]).map(k => rotulos[k]);
+    if (!fora.length) return '';
+    return `NÃO AUTORIZADO nesta casa: ${fora.join('; ')}. Você não tem ferramenta para isso. Se a pergunta depender de algum destes, diga qual falta e que se liga em Configurações → Assistente.`;
+  },
+
+  /* ---------- 7. volátil: o instante ----------
+
+     Fica por último de propósito: é a única parte que muda de uma pergunta para
+     a seguinte, e o que vem antes dela pode ser reaproveitado do cache.
+
+     `ondeEstou` é preenchido pelo app.js (a tela e o ciclo abertos). Fica como
+     gancho, e não como leitura de `state`, para o js/ia.js continuar carregável
+     sozinho — é assim que os testes o rodam sem navegador. */
+  ondeEstou: null,
+  ctxAgora() {
+    const s = (DB.settings && DB.settings()) || {};
+    const linhas = [
+      `Hoje é ${new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}.`,
+      `O ciclo desta família começa no dia ${s.month_start_day || 1}.`,
+      'Nas ferramentas, mês 0 é o ciclo atual, -1 o anterior, +1 o próximo.',
+    ];
+    let onde = null;
+    try { onde = this.ondeEstou && this.ondeEstou(); } catch (_) { onde = null; }
+    if (onde && onde.tela) {
+      const ciclo = onde.ciclo === 0 ? 'o ciclo atual'
+        : onde.ciclo === -1 ? 'o ciclo anterior'
+          : onde.ciclo === 1 ? 'o próximo ciclo'
+            : `o ciclo ${onde.ciclo > 0 ? '+' : ''}${onde.ciclo}`;
+      linhas.push(`AGORA a pessoa está na tela ${onde.tela}, vendo ${ciclo}${onde.rotulo ? ` (${onde.rotulo})` : ''}. Se ela disser "esse mês", "aqui" ou "isso", é a isto que se refere.`);
+    }
+    return linhas.join('\n');
   },
 
   /* ==========================================================================

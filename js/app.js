@@ -10515,6 +10515,21 @@ Auth.init(() => {
   /* Só agora dá: a configuração do assistente mora dentro do banco cifrado, e
      antes do PIN DB.data era null — o IA.load() lá de cima leu o padrão. */
   IA.load();
+/* O ASSISTENTE PRECISA SABER ONDE A PESSOA ESTÁ.
+
+   Sem isto, "e esse mês?" é ambíguo: o modelo assume o ciclo atual enquanto a
+   tela mostra março. Com isto, "esse mês", "aqui" e "isso" resolvem para o que
+   ela está de fato olhando.
+
+   É um GANCHO, e não uma leitura de `state` dentro do js/ia.js, para aquele
+   arquivo continuar carregável sozinho — é assim que as suítes o rodam sem
+   navegador. */
+IA.ondeEstou = () => {
+  try {
+    const p = DB.monthPeriod(new Date(), state.monthOffset || 0);
+    return { tela: TITULOS[state.tab] || 'Painel', ciclo: state.monthOffset || 0, rotulo: p && p.label };
+  } catch (_) { return null; }
+};
   pintarBotaoIA();
   /* Traz do Supabase a chave e as conversas que este aparelho não tem. É o que
      devolve o assistente inteiro depois de "apagar os dados deste aparelho". */
