@@ -2035,23 +2035,44 @@ input:focus, select:focus, textarea:focus {
 
 /* ---------- A lista de conversas ---------- */
 .ia-item {
-  width: 100%; text-align: left; font-family: var(--font-body);
-  display: flex; align-items: center; justify-content: space-between; gap: var(--e3);
-  padding: var(--e3) var(--e4); margin-bottom: var(--e2);
+  display: flex; align-items: stretch; margin-bottom: var(--e2);
   background: var(--ink-2); border: 1px solid var(--line);
-  border-radius: var(--radius); cursor: pointer; color: var(--paper);
-  transition: border-color .15s ease, transform .12s ease;
+  border-radius: var(--radius); color: var(--paper);
+  transition: border-color .15s ease;
 }
 .ia-item:hover { border-color: var(--line-strong); }
-.ia-item:active { transform: scale(.99); }
+/* A área de abrir toma o resto da linha: o alvo grande é o gesto comum. */
+.ia-item-abrir {
+  flex: 1; min-width: 0;
+  text-align: left; font-family: var(--font-body); color: inherit;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--e3);
+  padding: var(--e3) var(--e4);
+  background: none; border: none; cursor: pointer;
+  transition: transform .12s ease;
+}
+.ia-item-abrir:active { transform: scale(.99); }
+/* A LIXEIRA É DISCRETA ATÉ SER PROCURADA. Ela fica encostada em "abrir" e o que
+   faz é irreversível: apagada em cinza, ela não disputa o toque; no hover e no
+   foco assume o vermelho, dizendo o que é antes de ser tocada. */
+.ia-item-apagar {
+  flex: none; display: flex; align-items: center;
+  padding: 0 var(--e4);
+  background: none; border: none; border-left: 1px solid var(--line);
+  color: var(--paper-faint); cursor: pointer;
+  transition: color .15s ease, background .15s ease;
+}
+.ia-item-apagar:hover, .ia-item-apagar:focus-visible {
+  color: var(--red-ink); background: var(--red-soft);
+}
+.ia-item-apagar svg { width: 17px; height: 17px; }
 .ia-item-txt { min-width: 0; }
 .ia-item-txt b {
   display: block; font-size: 13.5px; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .ia-item-txt small { display: block; font-size: 11.5px; color: var(--paper-dim); margin-top: 1px; }
-.ia-item .chev { color: var(--paper-faint); flex: none; }
-.ia-item .chev svg { width: 16px; height: 16px; }
+.ia-item-abrir .chev { color: var(--paper-faint); flex: none; }
+.ia-item-abrir .chev svg { width: 16px; height: 16px; }
 
 /* ---------- O cabeçalho da conversa ---------- */
 .ia-voltar {

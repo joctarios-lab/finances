@@ -122,7 +122,8 @@ eval(appSrc + `; Object.assign(global, {
   propagarNasParcelas, trocarDiaDoMes, irmasDaParcela,
   Rel, relProximosMeses, projecaoCard, passaNosFiltros, temFiltroAtivo, barraDePilulas, openRecorrencias, openEditarContrato, openConfig, criarRecorrenciaDoLancamento, clarear, svgComposicao, deltaCelula, pesoCelula, valorCelula, verLancamentosDaTag, quebrarRotulo, corDeTextoSobre,
   Massa, openMassaModal, renderMassa, closeModal, openModal, aplicarNaLinha, trocarTipo, linhaEditavel, openMassaEditSheet, aplicarMassa, excluirMassa, desfazerMassa,
-  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, openKidExtrato, blocoDaSemanada, openKidLancarSheet, openKidTarefaSheet, notaDosFilhos, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel });`);
+  efeitoNasContas, aplicarTags, massaAceita, confirmarMassa, openCategoriesConfig, openCategoryEditor, openCriancas, openCriancaDetalhe, openKidExtrato, blocoDaSemanada, openKidLancarSheet, openKidTarefaSheet, notaDosFilhos, openCriancaSheet, openConfirmarTarefas, pagarSemanada, confirmarTarefa, filaDasCriancas, openEnvelopeDetail, catLabel,
+  corpoDaListaIA, formatarResposta });`);
 
 /* 'R$ 1.234,56' de volta para 1234.56.
 
@@ -4500,6 +4501,67 @@ console.log('\n=== O contexto que viaja em toda pergunta ===');
   IA.cfg = guardaCfg;
   IA.ondeEstou = guardaOnde;
   DB.data.accounts = guardaAcc; DB.data.cards = guardaCards; DB.data.kids = guardaKids;
+}
+
+console.log('\n=== Apagar uma conversa ===');
+{
+  const guardaChats = DB.data.ia_chats;
+  const guardaCfg = IA.cfg;
+  IA.cfg = IA.padrao();
+  IA.cfg.ligado = true;
+  DB.data.ia_chats = [];
+
+  const a = IA.novaConversa();
+  IA.gravarTurno(a.id, 'primeira pergunta', 'primeira resposta');
+  const b = IA.novaConversa();
+  IA.gravarTurno(b.id, 'segunda pergunta', 'segunda resposta');
+  check('duas conversas na lista', IA.conversas().length, 2);
+
+  /* ---- A linha ganhou um botão, e ISSO É ESTRUTURAL ----
+     A linha inteira era um <button>. Botão não pode conter botão: aninhar a
+     lixeira ali produziria HTML inválido, que cada navegador conserta de um
+     jeito — normalmente jogando o botão de dentro para FORA da linha. */
+  const html = corpoDaListaIA();
+  check('cada conversa tem seu botão de apagar',
+    (html.match(/data-apagar=/g) || []).length, 2);
+  check('e a linha não é mais um botão só', /<button class="ia-item"/.test(html), false);
+  check('  virou um contêiner', /<div class="ia-item">/.test(html), true);
+  check('  com a área de abrir separada', /class="ia-item-abrir"/.test(html), true);
+  check('nenhum botão dentro de botão',
+    /<button[^>]*>(?:(?!<\/button>)[\s\S])*?<button/.test(html), false);
+  /* Leitor de tela anuncia "botão" três vezes numa lista de três conversas; sem
+     o nome, não dá para saber qual se está prestes a apagar. */
+  check('o rótulo acessível nomeia a conversa',
+    /aria-label="Apagar a conversa primeira pergunta"/.test(html), true);
+
+  /* ---- E apagar apaga mesmo ---- */
+  IA.apagarConversa(a.id);
+  check('some da lista', IA.conversas().length, 1);
+  check('  a certa', IA.conversas()[0].id, b.id);
+  check('  e não volta ao consultar', !!IA.conversa(a.id), false);
+
+  /* Apagar aqui e deixar na nuvem faria a próxima sincronização trazer de volta
+     — o defeito clássico de lixeira que não é lixeira. */
+  const fonteIA = fs.readFileSync(BASE + 'js/ia.js', 'utf8');
+  // A busca do fim tem de partir do início do trecho: 'podar()' também aparece
+  // ANTES, dentro de gravarTurno, e o slice sairia vazio — passando por acaso.
+  const iApagar = fonteIA.indexOf('apagarConversa(id)');
+  const trecho = fonteIA.slice(iApagar, fonteIA.indexOf('podar()', iApagar));
+  check('apagar também apaga na nuvem', /nuvemApagarChat\(id\)/.test(trecho), true);
+
+  /* ---- Confirma antes ----
+     O botão fica encostado em "abrir": o toque errado é provável, e o que ele
+     faz não tem volta. */
+  const fonteApp2 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const handler = fonteApp2.slice(fonteApp2.indexOf("'#sheet [data-apagar]'"), fonteApp2.indexOf("'#sheet [data-apagar]'") + 900);
+  check('pergunta antes de apagar', /confirm\(/.test(handler), true);
+  check('  e a pergunta nomeia a conversa', /alvo\.titulo/.test(handler), true);
+  check('  avisando que não desfaz', /Não dá para desfazer/.test(handler), true);
+  check('se a apagada estava aberta, volta para a lista',
+    /iaConversaAberta = null/.test(handler), true);
+
+  DB.data.ia_chats = guardaChats;
+  IA.cfg = guardaCfg;
 }
 
 console.log('\n=== O markdown da resposta ===');

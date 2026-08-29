@@ -25,7 +25,7 @@ Leia primeiro, nesta ordem:
 
 ## Estado atual
 - Versão 157 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 3090 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- 3105 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - a prova de cifra do assistente: `node tests/cofre.js` (roda o WebCrypto de verdade)
 - a conversa completa nos dois provedores: `node tests/provedores.js`

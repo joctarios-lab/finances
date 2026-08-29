@@ -10200,13 +10200,17 @@ function corpoDaListaIA() {
     ${lista.length ? `
       <p class="section-title" style="margin:var(--e5) 0 var(--e2)">Conversas anteriores</p>
       ${lista.map(c => `
-        <button class="ia-item" data-abrir="${c.id}">
-          <span class="ia-item-txt">
-            <b>${esc(c.titulo || 'Conversa')}</b>
-            <small>${c.turnos.length} pergunta(s) · ${fmtDay(String(c.tocada).slice(0, 10))}</small>
-          </span>
-          <span class="chev" data-ico="chev"></span>
-        </button>`).join('')}
+        <div class="ia-item">
+          <button class="ia-item-abrir" data-abrir="${c.id}">
+            <span class="ia-item-txt">
+              <b>${esc(c.titulo || 'Conversa')}</b>
+              <small>${c.turnos.length} pergunta(s) · ${fmtDay(String(c.tocada).slice(0, 10))}</small>
+            </span>
+            <span class="chev" data-ico="chev"></span>
+          </button>
+          <button class="ia-item-apagar" data-apagar="${c.id}" title="Apagar esta conversa"
+                  aria-label="Apagar a conversa ${esc(c.titulo || 'sem título')}"><span data-ico="trash"></span></button>
+        </div>`).join('')}
     ` : `
       <p class="muted" style="margin-top:var(--e4)">Pergunte sobre os seus números: como o mês fecha, para onde foi o dinheiro, o que muda se você cortar um gasto.</p>
     `}
@@ -10344,6 +10348,23 @@ function ligarIAChat() {
 
   document.querySelectorAll('#sheet [data-abrir]').forEach(el => {
     el.onclick = () => { iaConversaAberta = el.dataset.abrir; desenharIAChat(); };
+  });
+  /* Apagar conversa é IRREVERSÍVEL e o botão fica ao lado de "abrir" — o toque
+     errado custa caro. Por isso confirma, e a pergunta NOMEIA a conversa em vez
+     de dizer "esta": na dúvida sobre qual linha foi tocada, o nome resolve.
+
+     IA.apagarConversa também apaga na nuvem; sem isso a próxima sincronização
+     traria a conversa de volta. */
+  document.querySelectorAll('#sheet [data-apagar]').forEach(el => {
+    el.onclick = () => {
+      const alvo = IA.conversa(el.dataset.apagar);
+      const nome = (alvo && alvo.titulo) ? `"${alvo.titulo}"` : 'esta conversa';
+      if (!confirm(`Apagar ${nome}? Não dá para desfazer.`)) return;
+      IA.apagarConversa(el.dataset.apagar);
+      if (iaConversaAberta === el.dataset.apagar) iaConversaAberta = null;
+      toast('Conversa apagada ✓');
+      desenharIAChat();
+    };
   });
 
   document.querySelectorAll('#sheet .ia-sug').forEach(b => {
