@@ -10312,56 +10312,109 @@ function corpoDaConversa(c) {
    qualquer marcação, então nada que o modelo escreva pode injetar tag. Depois
    disso, só duas convenções sobrevivem — negrito e lista —, que são as que ele
    usa para destacar um número e enumerar itens. */
+/* MARKDOWN DA RESPOSTA — leitura LINHA A LINHA.
+
+   O DEFEITO QUE ISTO CONSERTA. A versão anterior partia o texto em blocos
+   separados por LINHA EM BRANCO e só reconhecia um bloco inteiro homogêneo:
+   ou tudo lista, ou tudo tabela, ou parágrafo. Só que modelo escreve assim o
+   tempo todo:
+
+       Aqui está o resumo:
+       - Alimentação: R$ 625,40
+       - Transporte: R$ 310,00
+
+   Sem a linha em branco, isso caía tudo num parágrafo só e os hifens e os pipes
+   apareciam crus na tela. Pedir no prompt que ele deixe a linha em branco ajuda,
+   mas depender disso é frágil: quem tem de ser tolerante é o leitor.
+
+   Agora cada linha diz o que é, e linhas vizinhas do mesmo tipo se juntam. Linha
+   em branco continua separando, mas deixou de ser obrigatória.
+
+   O QUE FICA DE FORA, e é decisão: LINK e IMAGEM. Um assistente financeiro não
+   tem por que emitir âncora clicável, e converter abriria porta para plantar um
+   endereço — o texto que ele repete pode vir da descrição de um lançamento, que
+   é dado de fora.
+
+   E A ORDEM É SAGRADA: escapa PRIMEIRO, formata DEPOIS. É o que impede que uma
+   tag escrita por qualquer um volte como tag de verdade dentro da folha. */
 function formatarResposta(txt) {
   // ESCAPA PRIMEIRO. Tudo daqui para baixo trabalha sobre texto já inerte.
-  const seguro = esc(String(txt || ''));
-  return seguro
-    .split(/\n{2,}/)
-    .map(montarBloco)
-    .filter(Boolean)
-    .join('');
-}
+  const linhas = esc(String(txt || '')).split('\n');
+  const saida = [];
+  let i = 0;
 
-function montarBloco(bloco) {
-  const linhas = bloco.split('\n').filter(l => l.trim() !== '');
-  if (!linhas.length) return '';
+  const eRegua = l => /^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(l);
+  const eTitulo = l => /^#{1,4}\s+/.test(l);
+  const eMarcador = l => /^\s*[-*+]\s+/.test(l);
+  const eNumero = l => /^\s*\d+[.)]\s+/.test(l);
+  const eCitacao = l => /^\s*&gt;\s?/.test(l);
+  const eSeparadorDeTabela = l => /^[\s|:-]+$/.test(l) && /-/.test(l) && /\|/.test(l);
+  // Qualquer linha que COMEÇA outro bloco interrompe o parágrafo em curso.
+  const abreBloco = l => eRegua(l) || eTitulo(l) || eMarcador(l) || eNumero(l) || eCitacao(l);
 
-  // Régua
-  if (linhas.length === 1 && /^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(linhas[0])) return '<hr class="ia-regua">';
+  // Colhe as linhas seguidas que satisfazem `casa`, a partir de i.
+  const colher = casa => {
+    const bloco = [];
+    while (i < linhas.length && linhas[i].trim() && casa(linhas[i])) bloco.push(linhas[i++]);
+    return bloco;
+  };
 
-  // Título de seção
-  if (linhas.length === 1 && /^#{1,4}\s+/.test(linhas[0])) {
-    return '<p class="ia-secao">' + inline(linhas[0].replace(/^#{1,4}\s+/, '')) + '</p>';
+  while (i < linhas.length) {
+    const l = linhas[i];
+    if (!l.trim()) { i++; continue; }
+
+    if (eRegua(l)) { saida.push('<hr class="ia-regua">'); i++; continue; }
+
+    if (eTitulo(l)) {
+      saida.push('<p class="ia-secao">' + inline(l.replace(/^#{1,4}\s+/, '')) + '</p>');
+      i++; continue;
+    }
+
+    /* TABELA: a linha atual tem pipe e a SEGUINTE é a de traços. Exigir as duas
+       é o que impede um texto qualquer com "|" no meio de virar tabela. */
+    if (/\|/.test(l) && linhas[i + 1] && eSeparadorDeTabela(linhas[i + 1])) {
+      const bloco = [linhas[i++], linhas[i++]];
+      while (i < linhas.length && linhas[i].trim() && /\|/.test(linhas[i])) bloco.push(linhas[i++]);
+      saida.push(montarTabela(bloco));
+      continue;
+    }
+
+    if (eCitacao(l)) {
+      const bloco = colher(eCitacao);
+      saida.push('<blockquote class="ia-cita">'
+        + inline(bloco.map(x => x.replace(/^\s*&gt;\s?/, '')).join('<br>')) + '</blockquote>');
+      continue;
+    }
+
+    if (eMarcador(l)) {
+      const bloco = colher(eMarcador);
+      saida.push('<ul>' + bloco.map(x => '<li>' + inline(x.replace(/^\s*[-*+]\s+/, '')) + '</li>').join('') + '</ul>');
+      continue;
+    }
+
+    // Numerada — o modelo usa muito para "os três maiores gastos foram…"
+    if (eNumero(l)) {
+      const bloco = colher(eNumero);
+      saida.push('<ol>' + bloco.map(x => '<li>' + inline(x.replace(/^\s*\d+[.)]\s+/, '')) + '</li>').join('') + '</ol>');
+      continue;
+    }
+
+    // Parágrafo: segue até a linha em branco ou até algo que abra outro bloco.
+    const bloco = [];
+    while (i < linhas.length && linhas[i].trim() && !abreBloco(linhas[i])
+           && !(/\|/.test(linhas[i]) && linhas[i + 1] && eSeparadorDeTabela(linhas[i + 1]))) {
+      bloco.push(linhas[i++]);
+    }
+    saida.push('<p>' + inline(bloco.join('<br>')) + '</p>');
   }
 
-  // Tabela: cabeçalho, linha de trav... e o resto. Precisa de pelo menos as duas
-  // primeiras para não confundir com um texto qualquer que tenha um "|".
-  if (linhas.length >= 2 && /\|/.test(linhas[0]) && /^[\s|:-]+$/.test(linhas[1]) && /-/.test(linhas[1])) {
-    return montarTabela(linhas);
-  }
-
-  // Citação
-  if (linhas.every(l => /^\s*&gt;\s?/.test(l))) {
-    return '<blockquote class="ia-cita">' + inline(linhas.map(l => l.replace(/^\s*&gt;\s?/, '')).join('<br>')) + '</blockquote>';
-  }
-
-  // Lista com marcador
-  if (linhas.every(l => /^\s*[-*+]\s+/.test(l))) {
-    return '<ul>' + linhas.map(l => '<li>' + inline(l.replace(/^\s*[-*+]\s+/, '')) + '</li>').join('') + '</ul>';
-  }
-
-  // Lista numerada — o modelo usa muito para "os três maiores gastos foram…"
-  if (linhas.every(l => /^\s*\d+[.)]\s+/.test(l))) {
-    return '<ol>' + linhas.map(l => '<li>' + inline(l.replace(/^\s*\d+[.)]\s+/, '')) + '</li>').join('') + '</ol>';
-  }
-
-  return '<p>' + inline(linhas.join('<br>')) + '</p>';
+  return saida.join('');
 }
 
 /* A tabela rola DENTRO do próprio bloco. A folha é estreita e a resposta pode
    ter quatro colunas; sem o embrulho com overflow, a folha inteira passaria a
-   rolar de lado. O alinhamento sai da linha de traços (:--, --:, :-:), que é o
-   que diz qual coluna é número. */
+   rolar de lado e o botão de fechar sairia da tela. O alinhamento sai da linha
+   de traços (:--, --:, :-:), que é o que diz qual coluna é número. */
 function montarTabela(linhas) {
   const celulas = l => l.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(x => x.trim());
   const alinha = celulas(linhas[1]).map(t => {

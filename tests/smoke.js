@@ -4825,6 +4825,48 @@ console.log('\n=== O markdown da resposta ===');
   const tabHostil = md(['| A | B |', '| --- | --- |', '| <img src=x onerror=1> | ok |'].join('\n'));
   check('tag dentro de célula continua inerte', /<img/i.test(tabHostil), false);
 
+
+  /* ---- SEM LINHA EM BRANCO ENTRE OS BLOCOS ----
+
+     O defeito relatado. A versão anterior partia o texto por linha em branco e
+     só reconhecia bloco inteiro homogêneo — mas modelo escreve "Aqui está o
+     resumo:" e emenda a lista na linha de baixo o tempo todo. Sem a linha em
+     branco, hifens e pipes apareciam crus na tela.
+
+     Pedir no prompt que ele deixe a linha em branco ajuda; DEPENDER disso é que
+     era frágil. Quem tem de ser tolerante é o leitor. */
+  check('lista colada no parágrafo vira <ul>',
+    /<p>Resumo:<\/p><ul><li>um<\/li><li>dois<\/li><\/ul>/.test(md('Resumo:\n- um\n- dois')), true);
+  check('  e o parágrafo não engole a lista',
+    /- um/.test(md('Resumo:\n- um\n- dois')), false);
+  check('numerada colada vira <ol>',
+    /<p>Passos:<\/p><ol>/.test(md('Passos:\n1. um\n2. dois')), true);
+  check('tabela colada no parágrafo vira <table>',
+    /<p>Veja:<\/p><div class="ia-tabela">/.test(md('Veja:\n| A | B |\n| --- | ---: |\n| x | 1 |')), true);
+  check('título colado vira seção',
+    /<p class="ia-secao">Resumo<\/p><p>Tem R\$ 10\.<\/p>/.test(md('### Resumo\nTem R$ 10.')), true);
+  check('texto DEPOIS da lista volta a ser parágrafo',
+    /<\/ul><p>É uma estimativa\.<\/p>/.test(md('- um\n- dois\nÉ uma estimativa.')), true);
+  check('citação colada vira blockquote',
+    /<\/p><blockquote/.test(md('Atenção:\n> a reserva está baixa')), true);
+
+  /* Uma resposta inteira sem NENHUMA linha em branco — o pior caso real. */
+  const tudo = md('### Resumo\nTem **R$ 10**.\n| A | B |\n| --- | ---: |\n| x | 1 |\n1. Cortar\n2. Adiar\n> cuidado\nFim.');
+  check('resposta sem linha em branco alguma: seção', /ia-secao/.test(tudo), true);
+  check('  tabela', /<table>/.test(tudo), true);
+  check('  lista numerada', /<ol>/.test(tudo), true);
+  check('  citação', /<blockquote/.test(tudo), true);
+  check('  e o parágrafo final', /<p>Fim\.<\/p>/.test(tudo), true);
+  check('  sem sobrar pipe cru', /\|/.test(tudo), false);
+
+  /* Linha em branco continua funcionando: ela separa, só deixou de ser exigida. */
+  check('com linha em branco também funciona',
+    /<p>Resumo:<\/p><ul>/.test(md('Resumo:\n\n- um\n- dois')), true);
+
+  /* O marcador interno do código não pode colidir com texto comum. */
+  check('número solto no texto não vira código',
+    /<code>/.test(md('gastei 3 reais em 2 dias')), false);
+
   /* ---- E o que NÃO deve virar ----
      Negrito é dois asteriscos; se o itálico rodasse antes, comeria um de cada
      par e "**x**" viraria "<i>*x*</i>". */
