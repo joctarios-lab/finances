@@ -4649,6 +4649,42 @@ console.log('\n=== Sem teto de resposta ===');
   IA.cfg = guarda;
 }
 
+console.log('\n=== A tela desenha enquanto o texto chega ===');
+{
+  const ap3 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const ia3 = fs.readFileSync(BASE + 'js/ia.js', 'utf8');
+  const env = ap3.slice(ap3.indexOf('async function enviarIA('), ap3.indexOf('/* ---------- Boot ---------- */'));
+
+  /* A chamada leva uma função aninhada no meio (o aoAndar), então a busca
+     ancora no FECHAMENTO dela, e não tenta atravessar os parênteses. */
+  check('a tela passa um recebedor de texto', /\}, aoTexto\);/.test(env), true);
+  check('  e o assistente o repassa ao laço',
+    /perguntar\(contexto, aoAndar, aoTexto\)/.test(ia3), true);
+
+  /* Repintar o markdown a cada pedaço seria refazer o parse dezenas de vezes por
+     segundo. O acúmulo em string + repintura espaçada é o que mantém isso barato
+     num celular. */
+  check('o texto se acumula antes de pintar', /acumulado \+= pedaco/.test(env), true);
+  check('  e a repintura é espaçada', /90 - \(Date\.now\(\) - ultimaPintura\)/.test(env), true);
+  check('  sem enfileirar uma pintura por pedaço', /if \(agendada\) return;/.test(env), true);
+
+  /* PRIVACIDADE. Sem marcar os valores a cada repintura, no modo privado os
+     números apareceriam limpos enquanto a resposta é escrita — exatamente o que
+     esse modo existe para impedir. */
+  check('cada repintura marca os valores', (env.match(/marcarValores\(resp\)/g) || []).length >= 2, true);
+
+  /* A pintura final usa o texto GRAVADO, não o acumulado: é ele que leva o aviso
+     de corte e é ele que reaparece ao reabrir a conversa. Divergir faria a tela
+     mudar sozinha na próxima abertura. */
+  check('a pintura final usa o texto gravado', /resp\.innerHTML = formatarResposta\(r\.texto\)/.test(env), true);
+  check('e a pintura agendada é cancelada no fim', /clearTimeout\(agendada\)/.test(env), true);
+
+  /* Consultar uma ferramenta é um tempo em que nada é escrito: os pontinhos
+     voltam para dizer que o trabalho continua. */
+  check('os pontinhos voltam durante a consulta',
+    /if \(p\) p\.textContent = rotulos\[nome\][\s\S]{0,220}pensando\.hidden = false/.test(env), true);
+}
+
 console.log('\n=== O markdown da resposta ===');
 {
   /* formatarResposta vive no js/app.js e depende de esc(). Roda aqui isolada,

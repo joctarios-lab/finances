@@ -25,7 +25,7 @@ Leia primeiro, nesta ordem:
 
 ## Estado atual
 - Versão 157 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 3128 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- 3137 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - a prova de cifra do assistente: `node tests/cofre.js` (roda o WebCrypto de verdade)
 - a conversa completa nos dois provedores: `node tests/provedores.js`
@@ -69,6 +69,32 @@ Leia primeiro, nesta ordem:
   sobre o fundo) e `--x-borda` (contorno). Nunca escreva rgba() na regra: há
   teste exigindo que todo token de cor do escuro exista também no claro, porque
   um rgba solto não acompanha a troca de tema e vaza a cor do tema anterior.
+
+## O ASSISTENTE (v165) — como está montado
+
+- **A RESPOSTA APARECE ENQUANTO É ESCRITA.** `IA.chamar(corpo, aoTexto)` liga o
+  streaming quando recebe um recebedor de texto, e devolve SEMPRE a forma
+  neutra `{texto, pedidos, cru, cortada}` — venha de uma resposta inteira ou de
+  um fluxo. O laço não percebe a diferença.
+- **`IA.lerSSE` cuida do TRANSPORTE** (ler o corpo em pedaços, remontar as
+  linhas, entregar um evento por vez); cada provedor traduz seus eventos em
+  `lerFluxo`. Um pedaço da rede quase nunca cai no fim de um evento, então o
+  resto sempre fica no buffer — há teste que corta as fatias em 17 bytes de
+  propósito, para cair sempre em lugar torto.
+- **O bloco de pensamento tem de voltar INTACTO**, com assinatura, quando há uso
+  de ferramenta: a Anthropic devolve 400 se ele for remontado diferente. Por
+  isso cada bloco é recomposto pelo ÍNDICE a partir do `content_block_start`, e
+  não inventado a partir do texto.
+- **Erro no MEIO do fluxo chega depois de um HTTP 200** e não passa pelo
+  tratamento de status. É tratado à parte — sem isso viraria resposta vazia.
+  (O `catch` do parse chegou a engolir esses erros; hoje só o parse é protegido.)
+- **O texto de TODAS as voltas entra na resposta.** Com streaming a pessoa lê o
+  que o modelo escreve antes de consultar uma ferramenta; descartar isso faria
+  o texto aparecer na tela e sumir do histórico.
+- **A tela repinta no máximo a cada 90ms**, acumulando numa string — refazer o
+  parse do markdown a cada pedaço seria caro num celular. E `marcarValores` vai
+  em CADA repintura: no modo privado os valores apareceriam limpos enquanto a
+  resposta é escrita, que é o que esse modo existe para impedir.
 
 ## O ASSISTENTE (v164) — como está montado
 

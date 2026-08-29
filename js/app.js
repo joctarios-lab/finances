@@ -10471,15 +10471,62 @@ async function enviarIA() {
   };
 
   try {
+    /* O TEXTO APARECE ENQUANTO É ESCRITO.
+
+       Redesenhar o markdown a cada pedacinho que chega seria refazer o parse
+       dezenas de vezes por segundo à toa. Então o texto se acumula numa string e
+       a tela é repintada no máximo a cada 90ms — rápido o bastante para parecer
+       contínuo, raro o bastante para não pesar num celular.
+
+       `marcarValores` vai junto em cada repintura, e não só no fim: sem isso, no
+       modo privado os valores apareceriam limpos enquanto a resposta é escrita —
+       exatamente o que esse modo existe para impedir. */
+    let acumulado = '';
+    let resp = null;
+    let ultimaPintura = 0;
+    let agendada = null;
+
+    const pintar = () => {
+      agendada = null;
+      ultimaPintura = Date.now();
+      if (!resp) {
+        if (pensando) pensando.hidden = true;
+        resp = document.createElement('div');
+        resp.className = 'ia-r';
+        bloco.appendChild(resp);
+      }
+      resp.innerHTML = formatarResposta(acumulado);
+      marcarValores(resp);
+      rolarIAFim();
+    };
+
+    const aoTexto = pedaco => {
+      acumulado += pedaco;
+      if (agendada) return;
+      const espera = Math.max(0, 90 - (Date.now() - ultimaPintura));
+      agendada = setTimeout(pintar, espera);
+    };
+
     const r = await IA.perguntarNaConversa(iaConversaAberta, pergunta, nome => {
       const p = $('#ia-passo');
       if (p) p.textContent = rotulos[nome] || 'consultando…';
-    });
+      /* Consultar leva um tempo em que nada é escrito. Os pontinhos voltam para
+         dizer que o trabalho continua — some de novo no próximo pedaço de texto. */
+      if (pensando) pensando.hidden = false;
+    }, aoTexto);
+
+    if (agendada) { clearTimeout(agendada); agendada = null; }
     if (pensando) pensando.hidden = true;
-    const resp = document.createElement('div');
-    resp.className = 'ia-r';
+    /* A pintura final usa o texto que FOI GRAVADO, não o acumulado: é ele que
+       leva o aviso de corte, e é ele que a conversa vai mostrar ao ser reaberta.
+       Divergir aqui faria a tela mudar sozinha na próxima abertura. */
+    if (!resp) {
+      resp = document.createElement('div');
+      resp.className = 'ia-r';
+      bloco.appendChild(resp);
+    }
     resp.innerHTML = formatarResposta(r.texto);
-    bloco.appendChild(resp);
+    marcarValores(resp);
     // O título só existe depois da primeira pergunta: atualiza o cabeçalho
     const tit = $('#sheet .ia-titulo');
     const conv = IA.conversa(iaConversaAberta);

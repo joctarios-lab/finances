@@ -88,7 +88,11 @@ function fingirAPI(roteiro) {
 
   let r = await IA.perguntar([{ role: 'user', content: 'como estou?' }]);
   ok('a conversa fecha em duas voltas', enviados.length === 2, `voltas: ${enviados.length}`);
-  ok('devolve a resposta final', r.texto === 'Você tem R$ 0,00 em conta.');
+  /* O texto das DUAS voltas entra na resposta: o que se viu na tela é o que
+     fica guardado. */
+  ok('a resposta final está lá', r.texto.endsWith('Você tem R$ 0,00 em conta.'));
+  ok('  e o texto pré-ferramenta também', r.texto.startsWith('deixa eu olhar'));
+  ok('  separados por parágrafo', r.texto.includes('\n\ndeixa') === false && /\n\n/.test(r.texto));
   ok('e registra o que consultou', r.consultou.join() === 'situacao_financeira');
   ok('a chave vai no cabeçalho x-api-key', enviados[0].headers['x-api-key'] === 'sk-ant-DE-MENTIRA');
   ok('com o cabeçalho de uso no navegador',
@@ -130,10 +134,127 @@ function fingirAPI(roteiro) {
 
   r = await IA.perguntar([{ role: 'user', content: 'como estou?' }]);
   ok('a conversa fecha em duas voltas', enviados.length === 2, `voltas: ${enviados.length}`);
-  ok('devolve a resposta final', r.texto === 'Você tem R$ 0,00 em conta.');
+  /* O texto das DUAS voltas entra na resposta: o que se viu na tela é o que
+     fica guardado. */
+  ok('a resposta final está lá', r.texto.endsWith('Você tem R$ 0,00 em conta.'));
+  ok('  e o texto pré-ferramenta também', r.texto.startsWith('deixa eu olhar'));
+  ok('  separados por parágrafo', r.texto.includes('\n\ndeixa') === false && /\n\n/.test(r.texto));
   ok('e registra o que consultou', r.consultou.join() === 'situacao_financeira');
   ok('a chave vai como Bearer', enviados[0].headers.Authorization === 'Bearer sk-DE-MENTIRA');
   ok('e o endereço é o da DeepSeek', /api\.deepseek\.com/.test(enviados[0].url));
+
+
+  // ------------------------------------------------------------- STREAMING
+  console.log('\n=== O texto chegando aos pedaços ===');
+  /* Um `fetch` que devolve um corpo em fatias, como a rede faz. As fatias são
+     CORTADAS DE PROPÓSITO NO MEIO DOS EVENTOS: é o caso que quebra um leitor
+     ingênuo, e o que mais acontece de verdade. */
+  function fingirFluxo(texto, conferir) {
+    const bytes = new TextEncoder().encode(texto);
+    let i = 0;
+    global.fetch = async (url, opts) => {
+      if (conferir) conferir(JSON.parse(opts.body));
+      return {
+        ok: true, status: 200,
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (i >= bytes.length) return { done: true };
+              // 17 bytes: um número primo qualquer, para cair sempre em lugar torto
+              const fim = Math.min(i + 17, bytes.length);
+              const pedaco = bytes.slice(i, fim);
+              i = fim;
+              return { done: false, value: pedaco };
+            },
+          }),
+        },
+      };
+    };
+  }
+
+  const ev = (t, d) => `event: ${t}\ndata: ${JSON.stringify(d)}\n\n`;
+
+  // ---- Anthropic: blocos por índice, pensamento incluído ----
+  IA.cfg.provedor = 'anthropic';
+  let pedidoStream = null;
+  fingirFluxo(
+    ev('message_start', { type: 'message_start' })
+    + ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: '' } })
+    + ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'pensando um pouco' } })
+    + ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'ASSINATURA' } })
+    + ev('content_block_stop', { type: 'content_block_stop', index: 0 })
+    + ev('content_block_start', { type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } })
+    + ev('content_block_delta', { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'Você tem ' } })
+    + ev('content_block_delta', { type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'R$ 10,00.' } })
+    + ev('content_block_stop', { type: 'content_block_stop', index: 1 })
+    + ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' } })
+    + ev('message_stop', { type: 'message_stop' }),
+    c => { pedidoStream = c; });
+
+  const vistos = [];
+  let rs = await IA.chamar({ model: 'x', messages: [] }, t => vistos.push(t));
+  ok('pede streaming à API', pedidoStream.stream === true);
+  ok('o texto chega em pedaços', vistos.length === 2, `pedaços: ${vistos.length}`);
+  ok('  e remonta inteiro', rs.texto === 'Você tem R$ 10,00.');
+  /* O bloco de pensamento tem de voltar INTACTO, com assinatura: com uso de
+     ferramenta a API recusa (400) se ele for remontado diferente. */
+  const pensa = rs.cru.find(b => b.type === 'thinking');
+  ok('o pensamento é preservado', pensa && pensa.thinking === 'pensando um pouco');
+  ok('  com a assinatura', pensa && pensa.signature === 'ASSINATURA');
+
+  // ---- Anthropic: ferramenta com argumentos fatiados ----
+  fingirFluxo(
+    ev('content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'tu_1', name: 'situacao_financeira', input: {} } })
+    + ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{"mes"' } })
+    + ev('content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: ':0}' } })
+    + ev('content_block_stop', { type: 'content_block_stop', index: 0 })
+    + ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'tool_use' } }));
+  rs = await IA.chamar({ model: 'x', messages: [] }, () => {});
+  ok('a ferramenta é reconhecida no fluxo', rs.pedidos[0].name === 'situacao_financeira');
+  ok('  com o JSON remontado das fatias', rs.pedidos[0].input.mes === 0);
+
+  // ---- Anthropic: corte e erro no meio ----
+  fingirFluxo(ev('message_delta', { type: 'message_delta', delta: { stop_reason: 'max_tokens' } }));
+  ok('corte por tamanho é percebido', (await IA.chamar({}, () => {})).cortada === true);
+
+  fingirFluxo(ev('error', { type: 'error', error: { message: 'sobrecarregado' } }));
+  let erroFluxo = '';
+  try { await IA.chamar({}, () => {}); } catch (e) { erroFluxo = e.message; }
+  /* Erro no MEIO do fluxo chega depois de um HTTP 200: não passa pelo
+     tratamento de status. Sem tratá-lo, viraria uma resposta vazia. */
+  ok('erro no meio do fluxo vira erro de verdade', /sobrecarregado/.test(erroFluxo));
+
+  // ---- DeepSeek: formato da OpenAI ----
+  IA.cfg.provedor = 'deepseek';
+  const dado = o => `data: ${JSON.stringify(o)}\n\n`;
+  const vistosD = [];
+  fingirFluxo(
+    dado({ choices: [{ delta: { content: 'Sobram ' } }] })
+    + dado({ choices: [{ delta: { content: 'R$ 300,00.' } }] })
+    + dado({ choices: [{ delta: {}, finish_reason: 'stop' }] })
+    + 'data: [DONE]\n\n');
+  rs = await IA.chamar({ model: 'x', messages: [] }, t => vistosD.push(t));
+  ok('DeepSeek: o texto chega em pedaços', vistosD.length === 2);
+  ok('  e remonta inteiro', rs.texto === 'Sobram R$ 300,00.');
+  ok('  a mensagem volta no formato de reenvio', rs.cru.role === 'assistant');
+
+  fingirFluxo(
+    dado({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'c1', function: { name: 'situacao_financeira', arguments: '{"me' } }] } }] })
+    + dado({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 's":0}' } }] } }] })
+    + dado({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] }));
+  rs = await IA.chamar({ model: 'x', messages: [] }, () => {});
+  ok('DeepSeek: ferramenta fatiada é remontada', rs.pedidos[0].name === 'situacao_financeira');
+  ok('  com os argumentos colados', rs.pedidos[0].input.mes === 0);
+  ok('  e os tool_calls voltam na mensagem', (rs.cru.tool_calls || []).length === 1);
+
+  fingirFluxo(dado({ choices: [{ delta: { content: 'x' }, finish_reason: 'length' }] }));
+  ok('DeepSeek: corte por tamanho é percebido', (await IA.chamar({}, () => {})).cortada === true);
+
+  /* Sem callback, nada de streaming: é o caminho do teste de chave e de qualquer
+     chamada que não tenha onde desenhar o texto. */
+  fingirAPI([{ responde: { choices: [{ message: { role: 'assistant', content: 'ok' } }] } }]);
+  const semFluxo = await IA.chamar({ model: 'x', messages: [] });
+  ok('sem callback, não pede streaming', semFluxo.texto === 'ok');
 
   // ------------------------------------------------- o teste da configuração
   console.log('\n=== "Testar e salvar" prova o que promete ===');

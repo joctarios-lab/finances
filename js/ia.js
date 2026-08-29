@@ -207,6 +207,54 @@ const IA = {
         };
       },
 
+      /* Os eventos vêm por BLOCO e por ÍNDICE: um `content_block_start` abre o
+         bloco, vários `content_block_delta` o preenchem. Recompor a partir do
+         start (e não montar um bloco do zero) é o que devolve a mensagem
+         idêntica à original — inclusive os blocos de pensamento, que a API exige
+         de volta intactos, com assinatura, quando há uso de ferramenta. */
+      async lerFluxo(ia, res, aoTexto) {
+        const blocos = [];
+        const parciais = {};        // JSON de argumento de ferramenta, ainda em pedaços
+        let cortada = false;
+
+        await ia.lerSSE(res, ev => {
+          if (ev.type === 'content_block_start') {
+            blocos[ev.index] = JSON.parse(JSON.stringify(ev.content_block));
+            if (ev.content_block.type === 'tool_use') parciais[ev.index] = '';
+            return;
+          }
+          if (ev.type === 'content_block_delta') {
+            const b = blocos[ev.index];
+            if (!b) return;
+            const d = ev.delta || {};
+            if (d.type === 'text_delta') { b.text = (b.text || '') + d.text; if (aoTexto) aoTexto(d.text); }
+            else if (d.type === 'thinking_delta') b.thinking = (b.thinking || '') + d.thinking;
+            else if (d.type === 'signature_delta') b.signature = d.signature;
+            else if (d.type === 'input_json_delta') parciais[ev.index] += d.partial_json || '';
+            return;
+          }
+          if (ev.type === 'content_block_stop') {
+            const b = blocos[ev.index];
+            if (b && b.type === 'tool_use') {
+              try { b.input = JSON.parse(parciais[ev.index] || '{}'); } catch (_) { b.input = {}; }
+            }
+            return;
+          }
+          if (ev.type === 'message_delta' && ev.delta && ev.delta.stop_reason === 'max_tokens') cortada = true;
+          /* Erro NO MEIO do fluxo: o HTTP já respondeu 200, então não passa pelo
+             tratamento de status. Sem isto, a falha viraria uma resposta vazia. */
+          if (ev.type === 'error') throw new Error((ev.error && ev.error.message) || 'O assistente interrompeu a resposta.');
+        });
+
+        const cru = blocos.filter(Boolean);
+        return {
+          texto: cru.filter(b => b.type === 'text').map(b => b.text).join('\n').trim(),
+          pedidos: cru.filter(b => b.type === 'tool_use').map(b => ({ id: b.id, name: b.name, input: b.input })),
+          cru,
+          cortada,
+        };
+      },
+
       msgAssistente(cru) { return { role: 'assistant', content: cru }; },
 
       /* Todos os resultados numa ÚNICA mensagem. Separá-los ensina o modelo a
@@ -278,6 +326,49 @@ const IA = {
         };
       },
 
+      /* Formato da OpenAI: um `delta` por evento, e as chamadas de ferramenta
+         chegam fatiadas POR ÍNDICE — o nome vem no primeiro pedaço, os
+         argumentos em vários, como texto de JSON que só fecha no fim. */
+      async lerFluxo(ia, res, aoTexto) {
+        let texto = '';
+        const chamadas = [];
+        let cortada = false;
+
+        await ia.lerSSE(res, ev => {
+          if (ev.error) throw new Error(ev.error.message || 'O assistente interrompeu a resposta.');
+          const esc = (ev.choices || [])[0];
+          if (!esc) return;
+          const d = esc.delta || {};
+          if (d.content) { texto += d.content; if (aoTexto) aoTexto(d.content); }
+          for (const tc of d.tool_calls || []) {
+            const i = tc.index || 0;
+            const alvo = chamadas[i] || (chamadas[i] = { id: '', type: 'function', function: { name: '', arguments: '' } });
+            if (tc.id) alvo.id = tc.id;
+            if (tc.function && tc.function.name) alvo.function.name = tc.function.name;
+            if (tc.function && tc.function.arguments) alvo.function.arguments += tc.function.arguments;
+          }
+          if (esc.finish_reason === 'length') cortada = true;
+        });
+
+        const usadas = chamadas.filter(Boolean);
+        /* A mensagem do assistente volta para a conversa no formato que a API
+           espera receber de novo — com os tool_calls inteiros, senão o
+           `role:'tool'` seguinte fica órfão e a chamada é recusada. */
+        const cru = { role: 'assistant', content: texto };
+        if (usadas.length) cru.tool_calls = usadas;
+
+        return {
+          texto: texto.trim(),
+          pedidos: usadas.map(c => ({
+            id: c.id,
+            name: c.function.name,
+            input: (() => { try { return JSON.parse(c.function.arguments || '{}'); } catch (_) { return {}; } })(),
+          })),
+          cru,
+          cortada,
+        };
+      },
+
       msgAssistente(cru) { return cru; },
 
       // Uma mensagem por resultado, cada uma amarrada ao seu tool_call_id.
@@ -298,6 +389,53 @@ const IA = {
   modeloAtual() {
     const p = (this.cfg && this.cfg.provedor) || 'anthropic';
     return ((this.cfg && this.cfg.modelos) || {})[p] || this.PROVEDORES[p].modelos[0].id;
+  },
+
+  /* ==========================================================================
+     STREAMING
+
+     POR QUE. Sem teto de resposta, uma pergunta de cenário pode levar bastante
+     tempo — e sem streaming a tela fica muda o tempo todo, com três pontinhos e
+     nenhuma prova de que algo está acontecendo. Pior: a conexão fica aberta e
+     ociosa, que é justamente o que redes móveis derrubam. Streaming resolve os
+     dois: o texto aparece enquanto é escrito, e a conexão nunca fica ociosa.
+
+     COMO. As duas APIs falam SSE (server-sent events) — a mesma mecânica de
+     transporte, formatos de evento diferentes. `lerSSE` cuida do transporte:
+     lê o corpo em pedaços, remonta as linhas e entrega um evento por vez. Cada
+     provedor traduz seus eventos na mesma forma neutra que `ler()` produz, e o
+     laço de conversa não percebe diferença nenhuma.
+
+     O DETALHE QUE NÃO PODE ERRAR: reconstruir a mensagem do assistente EXATAMENTE
+     como veio. Com uso de ferramenta, a Anthropic exige que os blocos de
+     pensamento voltem intactos, com assinatura e tudo — remontá-los errado
+     devolve 400. Por isso cada bloco é recomposto pelo índice, a partir do
+     `content_block_start`, e não inventado a partir do texto. */
+  async lerSSE(res, aoEvento) {
+    const leitor = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { done, value } = await leitor.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      /* Um evento SSE termina em linha em branco. O resto fica no buffer: um
+         pedaço da rede quase nunca cai exatamente no fim de um evento. */
+      let corte;
+      while ((corte = buf.indexOf('\n\n')) >= 0) {
+        const bruto = buf.slice(0, corte);
+        buf = buf.slice(corte + 2);
+        for (const linha of bruto.split('\n')) {
+          if (!linha.startsWith('data:')) continue;   // "event:" e ":" (keep-alive) são ignorados
+          const dado = linha.slice(5).trim();
+          if (!dado || dado === '[DONE]') continue;
+          let ev;
+          // Só o PARSE é protegido: um erro vindo do tratador tem de subir.
+          try { ev = JSON.parse(dado); } catch (_) { continue; }
+          aoEvento(ev);
+        }
+      }
+    }
   },
 
   /* ==========================================================================
@@ -1123,10 +1261,11 @@ const IA = {
   SEM_TETO: null,
 
   /* O laço não sabe com quem está falando. Ele pede ao adaptador do provedor
-     para montar o corpo e para ler a resposta, e trabalha na forma neutra
-     `{ texto, pedidos:[{id,name,input}] }`. Foi o que permitiu somar a DeepSeek
-     sem tocar em nada daqui. */
-  async perguntar(historico, aoAndar) {
+     para montar o corpo, e recebe de volta a forma neutra
+     `{texto, pedidos, cru, cortada}` — venha de uma resposta inteira ou de um
+     fluxo. Foi o que permitiu somar a DeepSeek, e depois o streaming, sem tocar
+     em nada daqui. */
+  async perguntar(historico, aoAndar, aoTexto) {
     if (!this.disponivel()) throw new Error('O assistente não está configurado. Vá em Configurações → Assistente.');
     if (!this.algoAutorizado()) {
       throw new Error('Nada foi autorizado ainda. Em Configurações → Assistente, escolha o que ele pode consultar.');
@@ -1136,17 +1275,23 @@ const IA = {
     const tools = this.ferramentasAutorizadas();
     const msgs = historico.slice();
     const consultou = [];
+    /* O texto de TODAS as voltas entra na resposta, não só o da última. Com
+       streaming a pessoa vê o que o modelo escreve antes de consultar uma
+       ferramenta ("vou olhar seus gastos por categoria"); descartar isso depois
+       faria o texto aparecer na tela e sumir do histórico. O que se viu é o que
+       fica guardado. */
+    const partes = [];
 
     for (let volta = 0; volta < this.MAX_VOLTAS; volta++) {
-      const bruto = await this.chamar(p.corpo(this.modeloAtual(), this.instrucao(), msgs, tools, this.SEM_TETO));
-      const r = p.ler(bruto);
+      const r = await this.chamar(
+        p.corpo(this.modeloAtual(), this.instrucao(), msgs, tools, this.SEM_TETO), aoTexto);
+      if (r.texto) partes.push(r.texto);
 
       if (!r.pedidos.length) {
         /* Resposta cortada no meio chega com cara de resposta pronta. Dizer que
            faltou é obrigatório: aqui se decide dinheiro em cima do que ele diz. */
-        const texto = r.cortada
-          ? r.texto + '\n\n_(a resposta foi cortada por tamanho — pergunte por partes)_'
-          : r.texto;
+        const texto = partes.join('\n\n') + (r.cortada
+          ? '\n\n_(a resposta foi cortada por tamanho — pergunte por partes)_' : '');
         return { texto, consultou, cortada: !!r.cortada, historico: msgs.concat([p.msgAssistente(r.cru)]) };
       }
 
@@ -1157,6 +1302,9 @@ const IA = {
         return { id: pedido.id, saida: JSON.stringify(this.executar(pedido.name, pedido.input)) };
       });
       msgs.push(...p.msgsResultado(pares));
+      // Uma volta nova começa outro parágrafo: sem isso, o texto pré-ferramenta
+      // e a resposta final saem grudados numa frase só.
+      if (aoTexto && r.texto) aoTexto('\n\n');
     }
     throw new Error('A conversa ficou longa demais. Tente uma pergunta mais direta.');
   },
@@ -1167,12 +1315,20 @@ const IA = {
      nuvem nenhuma — o assistente não podia ser a única parte que exige um
      backend publicado. A chave é de quem está perguntando, mora no aparelho
      dele, cifrada com o PIN dele e — se houver nuvem — cifrada de novo antes de
-     subir, com uma chave que o servidor não tem. */
-  async chamar(corpo) {
+     subir, com uma chave que o servidor não tem.
+
+     Devolve sempre a FORMA NEUTRA `{texto, pedidos, cru, cortada}`, venha ela de
+     uma resposta inteira ou de um fluxo. Quem chama não precisa saber qual foi. */
+  async chamar(corpo, aoTexto) {
     const p = this.prov();
+    const querFluxo = typeof aoTexto === 'function';
     let res;
     try {
-      res = await fetch(p.url, { method: 'POST', headers: p.cabecalhos(this.chaveAtual()), body: JSON.stringify(corpo) });
+      res = await fetch(p.url, {
+        method: 'POST',
+        headers: p.cabecalhos(this.chaveAtual()),
+        body: JSON.stringify(querFluxo ? { ...corpo, stream: true } : corpo),
+      });
     } catch (_) {
       // fetch só rejeita por rede/CORS; a API respondendo "não" vira res.ok false.
       throw new Error('Sem conexão com o assistente. O resto do app não precisa de internet.');
@@ -1181,7 +1337,11 @@ const IA = {
       const t = await res.text().catch(() => '');
       throw new Error(this.explicar(res.status, t));
     }
-    return res.json();
+    /* Fluxo exige `res.body`. Onde ele não existir (ambiente sem streams, ou um
+       intermediário que entregou tudo de uma vez), cai para a leitura inteira em
+       vez de quebrar — o resultado é o mesmo, só sem aparecer aos poucos. */
+    if (querFluxo && res.body && p.lerFluxo) return p.lerFluxo(this, res, aoTexto);
+    return p.ler(await res.json());
   },
 
   /* Confere a chave ANTES de guardá-la, e confere junto o que realmente importa:
@@ -1202,8 +1362,7 @@ const IA = {
     const corpo = p.corpo(this.modeloAtual(), 'Você responde sobre finanças. Consulte as ferramentas quando precisar de um número.',
       [{ role: 'user', content: 'Qual é o meu saldo?' }], brinquedo, this.SEM_TETO);
 
-    const bruto = await this.chamar(corpo);
-    const r = p.ler(bruto);
+    const r = await this.chamar(corpo);
     /* Cortada é outra coisa: a chave funciona e o modelo pode até chamar
        ferramenta — só não coube. Dizer "não chamou" aqui seria acusar o modelo
        de um defeito que não é dele. */
@@ -1263,11 +1422,11 @@ const IA = {
   /* ---------- O que a tela chama ----------
      Junta as duas metades: monta o contexto a partir do histórico guardado,
      pergunta, e grava o turno. A tela não precisa saber de nada disso. */
-  async perguntarNaConversa(id, pergunta, aoAndar) {
+  async perguntarNaConversa(id, pergunta, aoAndar, aoTexto) {
     const c = this.conversa(id);
     if (!c) throw new Error('Conversa não encontrada.');
     const contexto = this.contextoDe(c).concat([{ role: 'user', content: pergunta }]);
-    const r = await this.perguntar(contexto, aoAndar);
+    const r = await this.perguntar(contexto, aoAndar, aoTexto);
     this.gravarTurno(id, pergunta, r.texto);
     return r;
   },
