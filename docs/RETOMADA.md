@@ -25,7 +25,7 @@ Leia primeiro, nesta ordem:
 
 ## Estado atual
 - Versão 157 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 3137 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- 3169 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - a prova de cifra do assistente: `node tests/cofre.js` (roda o WebCrypto de verdade)
 - a conversa completa nos dois provedores: `node tests/provedores.js`
@@ -69,6 +69,29 @@ Leia primeiro, nesta ordem:
   sobre o fundo) e `--x-borda` (contorno). Nunca escreva rgba() na regra: há
   teste exigindo que todo token de cor do escuro exista também no claro, porque
   um rgba solto não acompanha a troca de tema e vaza a cor do tema anterior.
+
+## O ASSISTENTE (v166) — como está montado
+
+- **A PERGUNTA É GRAVADA NO ENVIO**, não junto com a resposta
+  (`gravarPergunta` / `gravarResposta` / `falharResposta`). Antes o turno só
+  nascia quando a resposta chegava — e fechar o app, perder a rede ou
+  recarregar a página no meio apagava a pergunta como se ela nunca tivesse
+  existido. Enquanto espera, o turno fica com `aberta: true`.
+- **Três desfechos, todos no histórico:** resposta (`r` preenchido), falha
+  (`erro` preenchido) ou o app morrendo (fica `aberta`, e a conversa reaberta
+  mostra "Ficou sem resposta"). `gravarTurno` continua existindo como as duas
+  etapas em sequência — é a porta que as suítes usam.
+- **`contextoDe` só devolve turnos COMPLETOS.** Um par com resposta vazia viraria
+  uma fala vazia do assistente, que algumas APIs recusam e as outras interpretam
+  mal.
+- **Resposta nova avisa em dois lugares:** um ponto no `#btn-ia` (`data-nova`) e
+  uma marca na linha da conversa. A resposta chega com `naoLida`, e a tela a
+  desmarca só se a conversa estiver À VISTA — `iaChatVisivel` confere o
+  `hidden` da folha, porque uma folha fechada continua no DOM. Sem isso, uma
+  resposta recebida com a folha fechada seria dada como lida e o aviso nunca
+  apareceria.
+- **O aviso é dito em palavras, não só em cor:** "resposta nova" na linha, e o
+  `title`/`aria-label` do botão mudam junto.
 
 ## O ASSISTENTE (v165) — como está montado
 

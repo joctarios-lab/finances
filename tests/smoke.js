@@ -4531,6 +4531,91 @@ console.log('\n=== Liberar o cofre num aparelho novo ===');
   check('a senha não é gravada no DB', /meta\.senha|cfg\.senha|senha:/.test(ia2), false);
 }
 
+console.log('\n=== A pergunta é gravada no envio ===');
+{
+  const guardaChats = DB.data.ia_chats;
+  const guardaCfg = IA.cfg;
+  IA.cfg = IA.padrao();
+  IA.cfg.ligado = true;
+  DB.data.ia_chats = [];
+
+  const c1 = IA.novaConversa();
+
+  /* ANTES, o turno só nascia com a resposta. Fechar o app, perder a rede ou
+     recarregar a página no meio apagava a pergunta como se ela nunca tivesse
+     sido feita. */
+  IA.gravarPergunta(c1.id, 'quanto sobra este mês?');
+  check('a pergunta já está no histórico', IA.conversa(c1.id).turnos.length, 1);
+  check('  e já foi para o disco', /quanto sobra este mês/.test(JSON.stringify(DB.data.ia_chats)), true);
+  check('  marcada como esperando', IA.conversa(c1.id).turnos[0].aberta, true);
+  check('  e a conversa já ganhou título', IA.conversa(c1.id).titulo, 'quanto sobra este mês?');
+
+  IA.gravarResposta(c1.id, 'Sobram R$ 300,00.');
+  const t1 = IA.conversa(c1.id).turnos[0];
+  check('a resposta preenche o MESMO turno', IA.conversa(c1.id).turnos.length, 1);
+  check('  com o texto', t1.r, 'Sobram R$ 300,00.');
+  check('  e sem ficar esperando', t1.aberta, undefined);
+
+  /* A falha também fica junto da pergunta, e não só na tela: reabrir a conversa
+     tem de mostrar o que aconteceu. */
+  const c2 = IA.novaConversa();
+  IA.gravarPergunta(c2.id, 'e no mês que vem?');
+  IA.falharResposta(c2.id, 'Sem conexão com o assistente.');
+  const t2 = IA.conversa(c2.id).turnos[0];
+  check('a falha fica gravada no turno', t2.erro, 'Sem conexão com o assistente.');
+  check('  a pergunta continua lá', t2.q, 'e no mês que vem?');
+  check('  e ele deixa de esperar', t2.aberta, undefined);
+
+  /* Turno sem resposta NÃO pode voltar como contexto: seria uma fala vazia do
+     assistente, que algumas APIs recusam e as outras interpretam mal. */
+  const ctx = IA.contextoDe(IA.conversa(c2.id));
+  check('turno incompleto não vira contexto', ctx.length, 0);
+  check('  e o completo vira', IA.contextoDe(IA.conversa(c1.id)).length, 2);
+
+  /* gravarTurno continua existindo: é a porta antiga, usada pelas suítes. */
+  const c3 = IA.novaConversa();
+  IA.gravarTurno(c3.id, 'p', 'r');
+  check('gravarTurno ainda funciona', IA.conversa(c3.id).turnos[0].r, 'r');
+  check('  em um único turno', IA.conversa(c3.id).turnos.length, 1);
+
+  console.log('\n=== O aviso de resposta nova ===');
+  check('a resposta chega marcada como não lida', IA.conversa(c1.id).naoLida, true);
+  check('  e o botão do topo sabe disso', IA.temNaoLida(), true);
+  check('ler a conversa apaga a marca', IA.marcarLida(c1.id), true);
+  check('  e aí não há mais aviso', !!IA.conversa(c1.id).naoLida, false);
+  check('marcar de novo não faz nada', IA.marcarLida(c1.id), false);
+
+  /* Uma falha não é "resposta nova": não há o que ler. */
+  check('conversa que falhou não pede leitura', !!IA.conversa(c2.id).naoLida, false);
+  /* c3 veio de gravarTurno, que é uma resposta como outra qualquer e também
+     chega por ler. Só depois de ler TODAS é que o botão fica limpo. */
+  check('ainda há outra por ler', IA.temNaoLida(), true);
+  IA.marcarLida(c3.id);
+  check('lidas todas, o botão fica limpo', IA.temNaoLida(), false);
+
+  /* A tela: o ponto no botão, a marca na linha, e o turno sem resposta. */
+  const ap4 = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const idx4 = fs.readFileSync(BASE + 'index.html', 'utf8');
+  const css4 = fs.readFileSync(BASE + 'css/styles.css', 'utf8');
+  check('o botão tem onde acender o ponto', /class="ia-dot"/.test(idx4), true);
+  check('  e ele só acende com resposta nova', /#btn-ia\[data-nova="1"\] \.ia-dot/.test(css4), true);
+  check('  com o title dizendo em palavras', /Assistente — resposta nova/.test(ap4), true);
+  check('abrir a conversa marca como lida', /if \(c\) IA\.marcarLida\(c\.id\)/.test(ap4), true);
+  check('e ver a resposta chegar também',
+    /if \(iaChatVisivel\(iaConversaAberta\)\) IA\.marcarLida/.test(ap4), true);
+  /* Uma folha escondida continua no DOM: é o `hidden` que separa "aberta" de
+     "existe". Sem isso, uma resposta recebida com a folha fechada seria dada
+     como lida e o aviso nunca apareceria. */
+  check('  conferindo que a folha está mesmo à vista', /!folha\.hidden/.test(ap4), true);
+  check('a lista marca a conversa não lida', /c\.naoLida \? '<i class="ia-nova"/.test(ap4), true);
+  check('  e diz em palavras, não só em cor', /resposta nova · /.test(ap4), true);
+  check('a conversa mostra o turno sem resposta', /Ficou sem resposta/.test(ap4), true);
+  check('  e o turno que falhou', /t\.erro \? /.test(ap4), true);
+
+  DB.data.ia_chats = guardaChats;
+  IA.cfg = guardaCfg;
+}
+
 console.log('\n=== Apagar uma conversa ===');
 {
   const guardaChats = DB.data.ia_chats;

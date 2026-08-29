@@ -1181,19 +1181,84 @@ const IA = {
     return c;
   },
 
-  gravarTurno(id, pergunta, resposta) {
+  /* ---------- Gravar em DUAS ETAPAS ----------
+
+     A PERGUNTA É GRAVADA NO ENVIO, não junto com a resposta. Antes, o turno só
+     nascia quando a resposta chegava — e uma resposta pode demorar. Fechar o
+     app, perder a rede ou recarregar a página no meio apagava a pergunta como se
+     ela nunca tivesse sido feita, e a conversa reaberta não tinha vestígio dela.
+
+     Enquanto espera, o turno fica com `aberta: true`. Três desfechos:
+       • resposta chega  -> `r` preenchido, `aberta` sai;
+       • erro            -> `erro` preenchido, `aberta` sai;
+       • o app morre     -> o turno FICA aberto, e a conversa reaberta mostra a
+                            pergunta com "ficou sem resposta". É o dado honesto:
+                            a pessoa perguntou mesmo. */
+  gravarPergunta(id, pergunta) {
     const c = this.conversa(id);
     if (!c) return null;
-    c.turnos.push({ q: pergunta, r: resposta, em: DB.now() });
     // O título é a primeira pergunta, cortada: é o que faz a lista ser varrível
     if (!c.titulo) c.titulo = pergunta.length > 52 ? pergunta.slice(0, 52).trim() + '…' : pergunta;
+    c.turnos.push({ q: pergunta, r: '', em: DB.now(), aberta: true });
     c.tocada = DB.now();
     this.podar();
     DB.save();
-    /* Sobe cifrada. Conversa recém-aberta e ainda vazia não sobe: só ganha linha
-       na nuvem quando vira pergunta de verdade. */
     this.nuvemSalvarChat(id).catch(() => {});
     return c;
+  },
+
+  /* Acha o turno que está esperando. Sempre o último em aberto: as perguntas
+     são feitas uma de cada vez, a tela bloqueia o campo enquanto responde. */
+  turnoAberto(c) {
+    for (let i = c.turnos.length - 1; i >= 0; i--) if (c.turnos[i].aberta) return c.turnos[i];
+    return null;
+  },
+
+  gravarResposta(id, resposta) {
+    const c = this.conversa(id);
+    if (!c) return null;
+    const t = this.turnoAberto(c);
+    if (t) { t.r = resposta; delete t.aberta; delete t.erro; }
+    else c.turnos.push({ q: '', r: resposta, em: DB.now() });
+    c.tocada = DB.now();
+    /* Chega marcada como não lida; a tela desmarca na hora se a conversa
+       estiver à vista. Assim uma resposta que chegou com a folha fechada — ou
+       com outra conversa aberta — não passa despercebida. */
+    c.naoLida = true;
+    this.podar();
+    DB.save();
+    this.nuvemSalvarChat(id).catch(() => {});
+    return c;
+  },
+
+  falharResposta(id, msg) {
+    const c = this.conversa(id);
+    if (!c) return null;
+    const t = this.turnoAberto(c);
+    if (!t) return c;
+    t.erro = String(msg || 'Não consegui responder agora.');
+    delete t.aberta;
+    DB.save();
+    this.nuvemSalvarChat(id).catch(() => {});
+    return c;
+  },
+
+  /* Mantido: é a porta antiga, e as suítes e os roteiros a usam. Agora ela é só
+     as duas etapas em sequência. */
+  gravarTurno(id, pergunta, resposta) {
+    this.gravarPergunta(id, pergunta);
+    return this.gravarResposta(id, resposta);
+  },
+
+  marcarLida(id) {
+    const c = this.conversa(id);
+    if (!c || !c.naoLida) return false;
+    delete c.naoLida;
+    DB.save();
+    return true;
+  },
+  temNaoLida() {
+    return this.conversas().some(c => c.naoLida);
   },
 
   apagarConversa(id) {
@@ -1229,7 +1294,11 @@ const IA = {
      sem melhorar a resposta, porque o dado vem das ferramentas de novo. */
   contextoDe(c) {
     if (!c || !c.turnos.length) return [];
-    return c.turnos.slice(-this.MAX_CONTEXTO).flatMap(t => ([
+    /* Só turnos COMPLETOS voltam como contexto. Um par com resposta vazia — a
+       pergunta que ficou sem resposta, ou que falhou — faria o modelo receber
+       uma fala vazia do assistente, que algumas APIs recusam e todas as outras
+       interpretam mal. */
+    return c.turnos.filter(t => t.q && t.r).slice(-this.MAX_CONTEXTO).flatMap(t => ([
       { role: 'user', content: t.q },
       { role: 'assistant', content: t.r },
     ]));
@@ -1426,9 +1495,19 @@ const IA = {
     const c = this.conversa(id);
     if (!c) throw new Error('Conversa não encontrada.');
     const contexto = this.contextoDe(c).concat([{ role: 'user', content: pergunta }]);
-    const r = await this.perguntar(contexto, aoAndar, aoTexto);
-    this.gravarTurno(id, pergunta, r.texto);
-    return r;
+    /* GRAVA A PERGUNTA ANTES DE PERGUNTAR. Se o app fechar, a rede cair ou a
+       página recarregar no meio, a pergunta sobrevive — antes ela sumia como se
+       nunca tivesse existido. */
+    this.gravarPergunta(id, pergunta);
+    try {
+      const r = await this.perguntar(contexto, aoAndar, aoTexto);
+      this.gravarResposta(id, r.texto);
+      return r;
+    } catch (e) {
+      // A falha fica junto da pergunta, no histórico, em vez de só na tela.
+      this.falharResposta(id, e.message);
+      throw e;
+    }
   },
 };
 

@@ -521,6 +521,23 @@ body {
   opacity: 0; transition: opacity .2s ease, background .2s ease;
   pointer-events: none;
 }
+/* RESPOSTA NOVA NO ASSISTENTE.
+
+   Mesmo idioma do ponto de sincronização, e de propósito: um ponto no canto do
+   botão já quer dizer "olhe aqui" neste app. Cor de destaque, e não vermelho —
+   uma resposta pronta é boa notícia, não um problema a resolver. */
+#btn-ia { position: relative; overflow: visible; }
+.ia-dot {
+  position: absolute; right: -1px; top: -1px;
+  width: 9px; height: 9px; border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--gold);
+  opacity: 0; transform: scale(.6);
+  transition: opacity .18s ease, transform .18s ease;
+  pointer-events: none;
+}
+#btn-ia[data-nova="1"] .ia-dot { opacity: 1; transform: scale(1); }
+
 #btn-perfil[data-sync="pendente"] .sync-dot { background: var(--amber); opacity: 1; }
 #btn-perfil[data-sync="offline"] .sync-dot { background: var(--paper-faint); opacity: 1; }
 #btn-perfil[data-sync="erro"] .sync-dot { background: var(--red); opacity: 1; }
@@ -2066,6 +2083,14 @@ input:focus, select:focus, textarea:focus {
 }
 .ia-item-apagar svg { width: 17px; height: 17px; }
 .ia-item-txt { min-width: 0; }
+/* A conversa com resposta nova: um ponto ANTES do título, na linha da leitura.
+   O texto "resposta nova" logo abaixo diz o mesmo em palavras — o ponto sozinho
+   não serve a quem não distingue a cor, nem a leitor de tela. */
+.ia-nova {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--gold); margin-right: 6px; vertical-align: middle;
+}
+.ia-item-txt b:has(.ia-nova) { font-weight: 700; }
 .ia-item-txt b {
   display: block; font-size: 13.5px; font-weight: 600;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -2160,6 +2185,14 @@ input:focus, select:focus, textarea:focus {
   color: var(--paper-dim); font-size: 13.5px;
 }
 .ia-r .ia-regua { border: none; border-top: 1px solid var(--line); margin: var(--e3) 0; }
+
+/* A pergunta que ficou sem resposta — o app fechou no meio. Não é erro: é um
+   estado, e some quando a pessoa perguntar de novo. Por isso discreta, e não
+   vermelha como a falha. */
+.ia-pendente {
+  font-size: 13px; color: var(--paper-dim); font-style: italic;
+  padding: var(--e2) 0;
+}
 
 .ia-erro {
   font-size: 13px; color: var(--red-ink);

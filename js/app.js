@@ -10199,6 +10199,13 @@ function pintarBotaoIA() {
   if (!btn) return;
   const mostra = typeof IA !== 'undefined' && IA.disponivel();
   btn.hidden = !mostra;
+  /* Uma resposta pode chegar com a folha fechada — quem perguntou e foi fazer
+     outra coisa não tem como saber. O ponto no botão é o aviso, e o title diz em
+     palavras o que ele diz em cor, para quem usa leitor de tela. */
+  const nova = mostra && IA.temNaoLida();
+  btn.dataset.nova = nova ? '1' : '';
+  btn.title = nova ? 'Assistente — resposta nova' : 'Assistente';
+  btn.setAttribute('aria-label', btn.title);
 }
 
 function openIAChat(conversaId) {
@@ -10227,8 +10234,11 @@ function openIAChat(conversaId) {
 
 function desenharIAChat() {
   const c = iaConversaAberta ? IA.conversa(iaConversaAberta) : null;
+  // Ver a conversa é o que a torna lida — o aviso não sobrevive à leitura.
+  if (c) IA.marcarLida(c.id);
   openSheet(c ? corpoDaConversa(c) : corpoDaListaIA());
   ligarIAChat();
+  pintarBotaoIA();
 }
 
 /* A lista: as conversas guardadas, da mais recente para a mais antiga. É a tela
@@ -10244,8 +10254,8 @@ function corpoDaListaIA() {
         <div class="ia-item">
           <button class="ia-item-abrir" data-abrir="${c.id}">
             <span class="ia-item-txt">
-              <b>${esc(c.titulo || 'Conversa')}</b>
-              <small>${c.turnos.length} pergunta(s) · ${fmtDay(String(c.tocada).slice(0, 10))}</small>
+              <b>${c.naoLida ? '<i class="ia-nova" aria-hidden="true"></i>' : ''}${esc(c.titulo || 'Conversa')}</b>
+              <small>${c.naoLida ? 'resposta nova · ' : ''}${c.turnos.length} pergunta(s) · ${fmtDay(String(c.tocada).slice(0, 10))}</small>
             </span>
             <span class="chev" data-ico="chev"></span>
           </button>
@@ -10259,10 +10269,16 @@ function corpoDaListaIA() {
 }
 
 function corpoDaConversa(c) {
+  /* Um turno pode não ter resposta: o app fechou no meio (fica `aberta`), ou a
+     chamada falhou (fica `erro`). Nos dois casos a pergunta continua no
+     histórico — ela foi feita de verdade —, e a tela diz o que houve em vez de
+     mostrar um vazio inexplicável. */
   const turnos = c.turnos.map(t => `
     <div class="ia-turno">
       <div class="ia-q">${esc(t.q)}</div>
-      <div class="ia-r">${formatarResposta(t.r)}</div>
+      ${t.erro ? `<div class="ia-erro">${esc(t.erro)}</div>`
+      : t.aberta ? '<div class="ia-pendente">Ficou sem resposta. Pergunte de novo quando quiser.</div>'
+      : `<div class="ia-r">${formatarResposta(t.r)}</div>`}
     </div>`).join('');
 
   return `
@@ -10527,6 +10543,10 @@ async function enviarIA() {
     }
     resp.innerHTML = formatarResposta(r.texto);
     marcarValores(resp);
+    /* Se a conversa está à vista neste instante, a resposta já foi lida. O aviso
+       só faz sentido para quem fechou a folha e foi fazer outra coisa. */
+    if (iaChatVisivel(iaConversaAberta)) IA.marcarLida(iaConversaAberta);
+    pintarBotaoIA();
     // O título só existe depois da primeira pergunta: atualiza o cabeçalho
     const tit = $('#sheet .ia-titulo');
     const conv = IA.conversa(iaConversaAberta);
@@ -10543,6 +10563,14 @@ async function enviarIA() {
     campo.focus();
     rolarIAFim();
   }
+}
+
+/* A conversa está mesmo na frente da pessoa? Só então a resposta conta como
+   lida. Uma folha escondida continua no DOM — perguntar pelo `hidden` é o que
+   separa "aberta" de "existe". */
+function iaChatVisivel(id) {
+  const folha = $('#sheet');
+  return !!(folha && !folha.hidden && iaConversaAberta === id);
 }
 
 /* ---------- Boot ---------- */
