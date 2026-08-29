@@ -20,22 +20,39 @@
    ferramenta declara a permissão que a habilita, e uma ferramenta sem permissão
    NÃO É NEM OFERECIDA ao modelo: ele não sabe que ela existe, então não pede.
 
-   A CHAVE NÃO MORA AQUI. O app fala com uma Edge Function do Supabase
-   (supabase/functions/assistente), que guarda a chave nos secrets e chama a
-   Anthropic. Nada de segredo chega ao navegador.
+   A CHAVE É DE QUEM PERGUNTA. Cada pessoa cola a própria chave da Anthropic
+   nas configurações, e a chamada vai direto do navegador para a API — sem
+   servidor no meio. Assim quem usa paga o próprio uso, e o assistente não
+   obriga um app local-first a depender de backend publicado.
+
+   A chave e as conversas ficam cifradas com o PIN aqui no aparelho, e sobem
+   para o Supabase cifradas de novo — com uma chave derivada da senha do login,
+   que o servidor nunca vê. Ver "O COFRE", mais abaixo.
    ============================================================================ */
 'use strict';
 
 const IA = {
-  CHAVE: 'financas.ia.v1',
   cfg: null,
 
   /* ---------- Configuração ----------
-     Tudo desligado por padrão. Sem `ligado`, o app é exatamente o de antes: o
-     botão de conversa não aparece e nada daqui roda. */
+
+     ONDE ELA MORA. Dentro de `DB.data.meta`, e não no localStorage solto. Três
+     consequências, todas necessárias por causa da chave de API:
+
+       1. fica CIFRADA com o PIN, junto do resto — chave em texto claro no
+          localStorage seria o furo mais óbvio deste app;
+       2. está fora de STORES, e sync.js só olha STORES: a chave NÃO vai junto
+          com os dados da família. Ela é de quem a comprou;
+       3. some junto com tudo no "apagar dados deste aparelho" — e é justamente
+          por isso que existe o cofre na nuvem, mais abaixo.
+
+     Tudo começa desligado. Sem ligar, o app é exatamente o de antes: o botão de
+     conversa não aparece em lugar nenhum. */
   padrao() {
     return {
       ligado: false,
+      chave: '',
+      modelo: 'claude-opus-5',
       // O que o assistente pode consultar. Cada chave liga um grupo de ferramentas.
       ver: {
         situacao: false,     // saldo, disponível, comprometido, guardado
@@ -49,23 +66,197 @@ const IA = {
     };
   },
 
+  /* Os modelos que a pessoa pode escolher. O custo agora é dela, então a escolha
+     também é — e para escolher ela precisa do número, não de adjetivos. Preço
+     por milhão de tokens, em dólar, como a Anthropic cobra. */
+  MODELOS: [
+    { id: 'claude-opus-5', nome: 'Opus 5', sub: 'o mais capaz — raciocina melhor sobre cenários', entrada: 5, saida: 25 },
+    { id: 'claude-sonnet-5', nome: 'Sonnet 5', sub: 'equilibrado — bem mais barato que o Opus', entrada: 2, saida: 10 },
+    { id: 'claude-haiku-4-5', nome: 'Haiku 4.5', sub: 'o mais barato e rápido — para perguntas diretas', entrada: 1, saida: 5 },
+  ],
+
   load() {
-    try { this.cfg = { ...this.padrao(), ...(JSON.parse(localStorage.getItem(this.CHAVE)) || {}) }; }
-    catch (_) { this.cfg = this.padrao(); }
+    const salvo = (DB.data && DB.data.meta && DB.data.meta.ia) || null;
+    this.cfg = { ...this.padrao(), ...(salvo || {}) };
     this.cfg.ver = { ...this.padrao().ver, ...(this.cfg.ver || {}) };
     return this.cfg;
   },
-  save() { try { localStorage.setItem(this.CHAVE, JSON.stringify(this.cfg)); } catch (_) {} },
+  save() {
+    if (!DB.data) return;
+    DB.data.meta = DB.data.meta || {};
+    DB.data.meta.ia = this.cfg;
+    DB.save();
+    // Sobe cifrado, se houver nuvem. Não é o caminho crítico: falhar aqui não
+    // pode derrubar o "salvar" que a pessoa acabou de pedir.
+    this.nuvemSalvarCfg().catch(() => {});
+  },
 
-  /* O assistente só existe com DUAS coisas: a pessoa ligou, e há nuvem
-     configurada — a Edge Function vive no projeto Supabase da família. Sem uma
-     delas o botão não aparece, em vez de aparecer e falhar ao ser tocado. */
+  /* O assistente existe quando a pessoa ligou E colou uma chave. Sem chave o
+     botão não aparece, em vez de aparecer e falhar no primeiro toque.
+
+     Note que NÃO exige nuvem: a chamada vai direto do navegador para a API, e o
+     app segue funcionando sem Supabase nenhum — como todo o resto dele. */
   disponivel() {
-    return !!(this.cfg && this.cfg.ligado)
-      && typeof Sync !== 'undefined' && Sync.hasFamily();
+    return !!(this.cfg && this.cfg.ligado && this.cfg.chave);
   },
   algoAutorizado() {
     return !!(this.cfg && Object.values(this.cfg.ver).some(Boolean));
+  },
+
+  /* ==========================================================================
+     O COFRE — por que a nuvem guarda sem conseguir ler
+
+     A chave da Anthropic e as conversas precisam sobreviver a "apagar os dados
+     deste aparelho". Logo, precisam estar na nuvem. Só que:
+
+       • uma chave de API é DINHEIRO. Não tem segundo fator, não tem "confirme
+         no aparelho": quem lê o texto gasta o crédito de quem comprou;
+       • RLS não protege do dono do projeto. A `service_role` do Supabase ignora
+         RLS por definição — em texto claro, o dono leria a chave de todo mundo
+         da casa pelo SQL Editor, e o backup automático viraria um depósito de
+         credenciais;
+       • a conversa é PIOR que a chave. Chave vazada se revoga em dez segundos;
+         conversa sobre o dinheiro da família, não.
+
+     Então nada sobe em texto claro. O app deriva uma chave AES-256 da SENHA DO
+     LOGIN (que ele nunca guarda — ver Sync.signIn), cifra ali no navegador, e
+     sobe só o resultado. O Supabase guarda bytes embaralhados; o dono do projeto
+     lê bytes embaralhados; uma service_role vazada leva bytes embaralhados.
+
+     O sal vem do id do usuário, não é sorteado: assim o aparelho novo deriva a
+     MESMA chave sem precisar buscar nada antes. Sal não é segredo — precisa ser
+     único, e um uuid é.
+
+     O PREÇO, dito na cara: trocar a senha do Supabase invalida o que está
+     cifrado com a antiga. Aí é recolar a chave e perder as conversas velhas.
+     Foi a troca aceita para que o servidor nunca consiga ler. */
+  cofre: null,
+  ITER_COFRE: 200000,
+
+  async sal(userId) {
+    const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('domi-ia:' + userId));
+    return KCrypto.b64(h);
+  },
+
+  /* Chamado no login, com a senha ainda na mão. A chave derivada fica guardada
+     em `meta` — que já está cifrado com o PIN — para o app não precisar da senha
+     de novo a cada abertura. */
+  async abrirCofre(senha) {
+    const uid = typeof Sync !== 'undefined' && Sync.cfg && Sync.cfg.user_id;
+    if (!uid || !senha || !DB.data) return null;
+    const k = await KCrypto.deriveKey(senha, await this.sal(uid), this.ITER_COFRE, true);
+    const bruta = await crypto.subtle.exportKey('raw', k);
+    DB.data.meta = DB.data.meta || {};
+    DB.data.meta.ia_cofre = KCrypto.b64(bruta);
+    DB.save();
+    this.cofre = k;
+    return k;
+  },
+
+  async chaveDoCofre() {
+    if (this.cofre) return this.cofre;
+    const b = DB.data && DB.data.meta && DB.data.meta.ia_cofre;
+    if (!b) return null;
+    this.cofre = await crypto.subtle.importKey(
+      'raw', KCrypto.unb64(b), { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
+    return this.cofre;
+  },
+
+  async cifrar(obj) {
+    const k = await this.chaveDoCofre();
+    if (!k) return null;
+    return JSON.stringify(await KCrypto.enc(k, JSON.stringify(obj)));
+  },
+  /* Decifrar falha por um motivo esperado: a senha do login mudou. Não é erro de
+     programa, é o preço documentado acima — devolve null e o app segue. */
+  async decifrar(txt) {
+    const k = await this.chaveDoCofre();
+    if (!k || !txt) return null;
+    try { return JSON.parse(await KCrypto.dec(k, JSON.parse(txt))); } catch (_) { return null; }
+  },
+
+  /* ---------- A cópia na nuvem ----------
+     Escopo de USUÁRIO, não de família: as tabelas filtram por auth.uid(), então
+     nem pelo app um membro da casa alcança a linha do outro. Toda função aqui é
+     silenciosa quando não há nuvem — o assistente funciona sem ela. */
+  temNuvem() {
+    /* refresh_token, não access_token: este expira em uma hora, e Sync.rest()
+       o renova sozinho antes de cada chamada. Exigir o access_token aqui faria a
+       cópia na nuvem parar de subir silenciosamente em toda sessão mais velha
+       que uma hora — o pior tipo de falha, a que ninguém percebe. */
+    return !!(typeof Sync !== 'undefined' && Sync.loggedIn() && Sync.cfg.user_id);
+  },
+
+  async nuvemSalvarCfg() {
+    if (!this.temNuvem()) return;
+    const dados = await this.cifrar(this.cfg);
+    if (!dados) return;
+    await Sync.rest('ia_config?on_conflict=user_id', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify({ user_id: Sync.cfg.user_id, dados, updated_at: new Date().toISOString() }),
+    });
+  },
+
+  /* Só sobrescreve o que está no aparelho se a nuvem realmente abriu. Um cofre
+     que não decifra (senha trocada) não pode apagar a configuração local. */
+  async nuvemPuxarCfg() {
+    if (!this.temNuvem()) return false;
+    const linhas = await Sync.rest('ia_config?select=dados&limit=1');
+    const txt = linhas && linhas[0] && linhas[0].dados;
+    const cfg = await this.decifrar(txt);
+    if (!cfg) return false;
+    this.cfg = { ...this.padrao(), ...cfg, ver: { ...this.padrao().ver, ...(cfg.ver || {}) } };
+    DB.data.meta = DB.data.meta || {};
+    DB.data.meta.ia = this.cfg;
+    DB.save();
+    return true;
+  },
+
+  async nuvemSalvarChat(id) {
+    if (!this.temNuvem()) return;
+    const c = this.conversa(id);
+    if (!c) return;
+    const dados = await this.cifrar(c);
+    if (!dados) return;
+    await Sync.rest('ia_chats?on_conflict=id', {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates' },
+      body: JSON.stringify({ id: c.id, user_id: Sync.cfg.user_id, dados, tocada: c.tocada || Date.now() }),
+    });
+  },
+
+  async nuvemApagarChat(id) {
+    if (!this.temNuvem()) return;
+    await Sync.rest(`ia_chats?id=eq.${encodeURIComponent(id)}`, { method: 'DELETE' });
+  },
+
+  /* Traz o que está na nuvem e junta com o que está aqui, ganhando a versão mais
+     recente de cada conversa. É isto que devolve o histórico depois de apagar o
+     aparelho — e o que alinha dois aparelhos da mesma pessoa. */
+  async nuvemPuxarChats() {
+    if (!this.temNuvem() || !DB.data) return 0;
+    const linhas = await Sync.rest('ia_chats?select=id,dados,tocada&order=tocada.desc&limit=' + this.MAX_CONVERSAS);
+    if (!linhas || !linhas.length) return 0;
+    const locais = DB.data.ia_chats || (DB.data.ia_chats = []);
+    let novas = 0;
+    for (const l of linhas) {
+      const c = await this.decifrar(l.dados);
+      if (!c || !c.id) continue;
+      const i = locais.findIndex(x => x.id === c.id);
+      if (i < 0) { locais.push(c); novas++; }
+      else if ((c.tocada || 0) > (locais[i].tocada || 0)) { locais[i] = c; novas++; }
+    }
+    if (novas) { this.podar(); DB.save(); }
+    return novas;
+  },
+
+  /* Uma vez por abertura, depois que o PIN já liberou o DB e o login já existe. */
+  async sincronizar() {
+    if (!this.temNuvem()) return;
+    if (!(await this.chaveDoCofre())) return;
+    await this.nuvemPuxarCfg().catch(() => {});
+    await this.nuvemPuxarChats().catch(() => {});
   },
 
   /* ==========================================================================
@@ -423,6 +614,9 @@ const IA = {
     c.tocada = DB.now();
     this.podar();
     DB.save();
+    /* Sobe cifrada. Conversa recém-aberta e ainda vazia não sobe: só ganha linha
+       na nuvem quando vira pergunta de verdade. */
+    this.nuvemSalvarChat(id).catch(() => {});
     return c;
   },
 
@@ -430,6 +624,8 @@ const IA = {
     if (!DB.data) return;
     DB.data.ia_chats = (DB.data.ia_chats || []).filter(c => c.id !== id);
     DB.save();
+    // Apagou aqui, apagou lá: senão a próxima sincronização a traria de volta.
+    this.nuvemApagarChat(id).catch(() => {});
   },
 
   /* Corta pelas pontas: turnos antigos dentro de cada conversa, conversas
@@ -481,7 +677,7 @@ const IA = {
   MAX_VOLTAS: 6,
 
   async perguntar(historico, aoAndar) {
-    if (!this.disponivel()) throw new Error('O assistente não está configurado.');
+    if (!this.disponivel()) throw new Error('O assistente não está configurado. Vá em Configurações → Assistente.');
     if (!this.algoAutorizado()) {
       throw new Error('Nada foi autorizado ainda. Em Configurações → Assistente, escolha o que ele pode consultar.');
     }
@@ -518,19 +714,44 @@ const IA = {
     throw new Error('A conversa ficou longa demais. Tente uma pergunta mais direta.');
   },
 
-  /* A chamada em si vai para a Edge Function, nunca direto para a Anthropic: é
-     lá que a chave mora. O JWT do Supabase vai junto, então só quem está na
-     família consegue usar. */
+  /* A CHAMADA VAI DIRETO DO NAVEGADOR PARA A ANTHROPIC.
+
+     Sem servidor no meio, e por escolha: o app é local-first e funciona sem
+     nuvem nenhuma — o assistente não podia ser a única parte que exige um
+     backend publicado. A chave é de quem está perguntando, mora no aparelho
+     dele, cifrada com o PIN dele e — se houver nuvem — cifrada de novo
+     antes de subir, com uma chave que o servidor não tem.
+
+     O cabeçalho `anthropic-dangerous-direct-browser-access` é o que a API exige
+     para aceitar chamada de página web. O nome avisa do risco real: uma chave no
+     navegador pode ser lida por quem tiver acesso àquele navegador. Aqui isso é
+     aceitável porque a chave é a DA PRÓPRIA PESSOA, no aparelho DELA — é o
+     cenário de ferramenta pessoal que a documentação da Anthropic descreve como
+     razoável. O que seria inaceitável é embutir UMA chave no app e distribuí-la
+     a todo mundo; não é o caso. */
+  API: 'https://api.anthropic.com/v1/messages',
+  MAX_TOKENS: 2000,
+
   async chamar(corpo) {
-    await Sync.ensureToken();
-    const res = await fetch(`${Sync.cfg.url}/functions/v1/assistente`, {
+    const res = await fetch(this.API, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        apikey: Sync.cfg.anonKey,
-        Authorization: `Bearer ${Sync.cfg.access_token}`,
+        'x-api-key': this.cfg.chave,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
       },
-      body: JSON.stringify(corpo),
+      body: JSON.stringify({
+        model: this.cfg.modelo || 'claude-opus-5',
+        max_tokens: this.MAX_TOKENS,
+        /* Pensamento adaptativo: as perguntas aqui vão de "qual meu saldo" a
+           "o que acontece se eu cortar 300 por mês durante um ano". O modelo
+           decide quanto pensar em cada uma. */
+        thinking: { type: 'adaptive' },
+        system: corpo.system,
+        messages: corpo.messages,
+        tools: corpo.tools && corpo.tools.length ? corpo.tools : undefined,
+      }),
     });
     if (!res.ok) {
       const t = await res.text().catch(() => '');
@@ -539,19 +760,53 @@ const IA = {
     return res.json();
   },
 
+  /* Confere a chave com a menor chamada possível, para a tela de configuração
+     poder dizer "funciona" antes da primeira pergunta de verdade. Um token de
+     saída: o que se testa é a autenticação, não a resposta. */
+  async testar() {
+    const res = await fetch(this.API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': this.cfg.chave,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: this.cfg.modelo || 'claude-opus-5',
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'oi' }],
+      }),
+    });
+    if (res.ok) return true;
+    const t = await res.text().catch(() => '');
+    throw new Error(this.explicar(res.status, t));
+  },
+
   /* Erro de API é críptico por natureza. Aqui ele vira uma frase que diz o que
-     aconteceu e o que fazer — inclusive quando a resposta é "não é com você,
-     é com quem publicou a função". */
+     aconteceu e o que fazer — sobretudo nos dois casos que a pessoa REALMENTE
+     vai encontrar: chave errada e crédito acabado. */
   explicar(status, corpo) {
-    if (status === 404) return 'A função do assistente não está publicada no Supabase. Veja o README.';
-    if (status === 401 || status === 403) return 'Sua sessão expirou. Entre de novo em Configurações → Sincronização.';
-    if (status === 429) return 'Muitas perguntas em pouco tempo. Espere um instante e tente de novo.';
-    if (status === 402) return 'A conta da Anthropic está sem crédito.';
-    if (status >= 500) return 'O assistente está fora do ar no momento. Tente daqui a pouco.';
-    try {
-      const j = JSON.parse(corpo);
-      if (j && j.erro) return j.erro;
-    } catch (_) {}
+    let tipo = '';
+    try { tipo = (JSON.parse(corpo).error || {}).type || ''; } catch (_) {}
+
+    if (status === 401 || tipo === 'authentication_error') {
+      return 'A chave não foi aceita. Confira se copiou inteira, incluindo o "sk-ant-".';
+    }
+    if (status === 403 || tipo === 'permission_error') {
+      return 'Essa chave não tem permissão para este modelo. Tente escolher outro modelo nas configurações.';
+    }
+    if (status === 400 && /credit|balance/i.test(corpo)) {
+      return 'A conta está sem crédito. Adicione crédito em console.anthropic.com.';
+    }
+    if (status === 429 || tipo === 'rate_limit_error') {
+      return 'Muitas perguntas em pouco tempo. Espere um instante e tente de novo.';
+    }
+    if (status === 400) {
+      return 'A pergunta não pôde ser processada. Tente reformular ou comece uma conversa nova.';
+    }
+    if (status >= 500) return 'O assistente está instável no momento. Tente daqui a pouco.';
+    if (!status) return 'Sem conexão. O assistente precisa de internet — o resto do app não.';
     return `Não consegui falar com o assistente (${status}).`;
   },
 

@@ -25,6 +25,8 @@
 -- truncate em vez de delete: é mais rápido e reinicia as sequências.
 -- cascade cobre qualquer dependência que apareça no futuro.
 truncate table
+  ia_chats,
+  ia_config,
   kid_wishes,
   kid_entries,
   kid_tasks,

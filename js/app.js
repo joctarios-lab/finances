@@ -8297,7 +8297,7 @@ function openConfig() {
     ${item('backup', 'upload', 'Backup', 'exportar ou importar um arquivo JSON')}
 
     <p class="cfg-grupo">O app</p>
-    ${item('ia', 'sparkles', 'Assistente', IA.load().ligado ? (IA.algoAutorizado() ? 'ligado' : 'ligado, mas sem nada autorizado') : 'desligado')}
+    ${item('ia', 'sparkles', 'Assistente', (function(){ const c = IA.load(); if (!c.chave) return 'sem chave — não configurado'; if (!c.ligado) return 'configurado, mas desligado'; return IA.algoAutorizado() ? 'ligado' : 'ligado, mas sem nada autorizado'; })())}
     ${item('tema', Tema.atual() === 'light' ? 'sun' : 'moon', 'Aparência', Tema.rotulo())}
     ${item('notif', 'bell', 'Notificações', Notif.enabled() ? 'ativas — faturas, orçamentos e metas' : 'desativadas')}
     ${item('security', 'shield', 'Segurança', Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'sem proteção local')}
@@ -8739,9 +8739,13 @@ function openConfigSection(sec) {
        de conversa não aparece em lugar nenhum. */
     const desenhar = () => {
       const c = IA.load();
-      const temNuvem = Sync.hasFamily();
       const kb = Math.round(IA.tamanhoDoHistorico() / 1024);
       const nConversas = IA.conversas().length;
+      const temChave = !!c.chave;
+      /* Sync.loggedIn, não IA.temNuvem: aquele exige o access_token, que expira
+         em uma hora e é renovado sozinho por Sync.rest(). Usá-lo aqui faria a
+         tela dizer "só neste aparelho" a quem está sincronizando há mais tempo. */
+      const naNuvem = typeof Sync !== 'undefined' && Sync.loggedIn();
 
       const permissao = (chave, titulo, sub) => `
         <label class="ia-perm">
@@ -8749,24 +8753,53 @@ function openConfigSection(sec) {
           <span><b>${titulo}</b><small>${sub}</small></span>
         </label>`;
 
+      /* O preço aparece no rótulo do modelo porque o custo é de quem escolhe.
+         "mais capaz" e "mais rápido" são adjetivos; 5 e 25 dólares por milhão
+         de tokens é o que permite decidir. */
+      const modelo = m => `
+        <label class="ia-perm">
+          <input type="radio" name="ia-modelo" data-modelo="${m.id}" ${c.modelo === m.id ? 'checked' : ''}>
+          <span><b>${m.nome}</b><small>${m.sub} · US$ ${m.entrada}/${m.saida} por milhão de tokens</small></span>
+        </label>`;
+
       openModal(`
         <div class="modal-title">Assistente<button class="close-x" id="md-back" aria-label="Voltar"><span data-ico="back"></span></button></div>
 
-        ${!temNuvem ? `
-          <div class="callout warn">
-            <b>Precisa da sincronização</b>
-            <p>O assistente conversa através do seu projeto no Supabase, que é onde a chave fica guardada. Configure a sincronização primeiro.</p>
-          </div>
-          <button class="btn ghost" id="ia-ir-sync">Ir para Sincronização</button>
-        ` : `
-          <p class="muted" style="margin-bottom:var(--e4)">Um assistente que responde sobre as suas contas — quanto sobra, para onde foi o dinheiro, como o mês fecha, e o que muda se você cortar um gasto. Ele consulta os números pelo próprio app: <b>nada é calculado por fora</b>.</p>
+        <p class="muted" style="margin-bottom:var(--e4)">Um assistente que responde sobre as suas contas — quanto sobra, para onde foi o dinheiro, como o mês fecha, e o que muda se você cortar um gasto. Ele consulta os números pelo próprio app: <b>nada é calculado por fora</b>.</p>
 
-          <label class="ia-liga">
+        <p class="section-title" style="margin:0 0 var(--e2)">Sua chave da Anthropic</p>
+        <p class="muted" style="margin-bottom:var(--e3)">O assistente usa <b>a sua conta</b>, e o consumo é cobrado nela — ninguém paga por você, e você não paga por ninguém. Crie uma chave em <b>console.anthropic.com</b> → API Keys e cole abaixo.</p>
+
+        <div class="field">
+          <label>Chave</label>
+          <input id="ia-chave" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="sk-ant-..." value="${esc(c.chave || '')}">
+        </div>
+        <div style="display:flex;gap:var(--e2)">
+          <button class="btn ghost" id="ia-ver" style="flex:0 0 auto;width:auto">Mostrar</button>
+          <button class="btn" id="ia-testar" style="flex:1;width:auto" ${temChave ? '' : 'disabled'}>Testar e salvar</button>
+        </div>
+        <p class="muted" id="ia-estado" style="margin-top:var(--e2)">${temChave
+          ? 'Chave guardada neste aparelho, cifrada com o seu PIN.'
+          : 'Sem chave, o assistente não aparece em lugar nenhum do app.'}</p>
+
+        <div class="callout info" style="margin-top:var(--e4)">
+          <b>${naNuvem ? 'Cópia na nuvem ligada' : 'Guardado só neste aparelho'}</b>
+          <p>${naNuvem
+            ? 'A chave e as conversas sobem para o seu Supabase <b>cifradas com a senha do seu login</b> — nem o dono do projeto consegue lê-las. Se você apagar os dados deste aparelho, elas voltam quando você entrar de novo. Trocar a senha do login torna essa cópia ilegível: aí é colar a chave outra vez.'
+            : 'A chave e as conversas ficam aqui, cifradas com o seu PIN — e some tudo se você apagar os dados deste aparelho. Para que voltem sozinhas depois, ligue a sincronização em <b>Configurações → Sincronização</b>'}</p>
+        </div>
+
+        <div id="ia-detalhe" ${temChave ? '' : 'hidden'}>
+          <p class="section-title" style="margin:var(--e5) 0 var(--e2)">Modelo</p>
+          ${IA.MODELOS.map(modelo).join('')}
+
+          <label class="ia-liga" style="margin-top:var(--e4)">
             <input type="checkbox" id="ia-ligado" ${c.ligado ? 'checked' : ''}>
             <span><b>Usar o assistente</b><small>${c.ligado ? 'o botão de conversa aparece no topo' : 'desligado, o app fica exatamente como está'}</small></span>
           </label>
 
-          <div id="ia-detalhe" ${c.ligado ? '' : 'hidden'}>
+          <div id="ia-permissoes" ${c.ligado ? '' : 'hidden'}>
             <p class="section-title" style="margin:var(--e5) 0 var(--e2)">O que ele pode consultar</p>
             <p class="muted" style="margin-bottom:var(--e3)">Ele só enxerga o que estiver marcado aqui, e recebe o número já somado — não o seu banco. Desmarcado, ele nem sabe que o dado existe.</p>
 
@@ -8778,23 +8811,54 @@ function openConfigSection(sec) {
             ${permissao('lancamentos', 'Lançamentos', 'a lista com descrição — o dado mais detalhado que existe')}
             ${permissao('criancas', 'Cofrinho das crianças', 'saldo dos potes e semanada de cada uma')}
 
-            <div class="callout info" style="margin-top:var(--e4)">
-              <b>O que sai do aparelho</b>
-              <p>Só o que a pergunta exigir, e só do que está marcado. As conversas ficam <b>neste aparelho</b>, cifradas com o seu PIN — elas não sincronizam com a família.</p>
-            </div>
-
             <p class="section-title" style="margin:var(--e5) 0 var(--e2)">Conversas guardadas</p>
             <p class="muted" style="margin-bottom:var(--e3)">${nConversas
               ? `${nConversas} conversa(s), ocupando ${kb} KB. Ficam as ${IA.MAX_CONVERSAS} mais recentes; as antigas saem sozinhas.`
               : 'Nenhuma conversa ainda.'}</p>
             ${nConversas ? '<button class="btn danger" id="ia-limpar">Apagar todas as conversas</button>' : ''}
           </div>
-        `}
+        </div>
       `);
       $('#md-back').onclick = openConfig;
 
-      const irSync = $('#ia-ir-sync');
-      if (irSync) irSync.onclick = () => openConfigSection('sync');
+      const campo = $('#ia-chave');
+      const estado = $('#ia-estado');
+      const btTestar = $('#ia-testar');
+
+      $('#ia-ver').onclick = () => {
+        const escondida = campo.type === 'password';
+        campo.type = escondida ? 'text' : 'password';
+        $('#ia-ver').textContent = escondida ? 'Ocultar' : 'Mostrar';
+      };
+      campo.oninput = () => { btTestar.disabled = !campo.value.trim(); };
+
+      /* Salvar só depois de testar é de propósito. Uma chave errada guardada faz
+         o botão de conversa aparecer e falhar na primeira pergunta — o pior
+         momento possível para descobrir que faltou um caractere no meio. */
+      btTestar.onclick = async () => {
+        const nova = campo.value.trim();
+        if (!nova) return;
+        btTestar.disabled = true;
+        estado.textContent = 'Conferindo a chave…';
+        const anterior = IA.cfg.chave;
+        IA.cfg.chave = nova;
+        try {
+          await IA.testar();
+          IA.save();
+          estado.textContent = 'Chave conferida e guardada ✓';
+          toast('Chave conferida ✓');
+          pintarBotaoIA();
+          desenhar();
+        } catch (e) {
+          IA.cfg.chave = anterior;
+          estado.textContent = e.message;
+          btTestar.disabled = false;
+        }
+      };
+
+      document.querySelectorAll('#modal [data-modelo]').forEach(el => {
+        el.onchange = () => { IA.cfg.modelo = el.dataset.modelo; IA.save(); };
+      });
 
       const liga = $('#ia-ligado');
       if (liga) liga.onchange = () => {
@@ -8812,10 +8876,13 @@ function openConfigSection(sec) {
       });
 
       const limpar = $('#ia-limpar');
-      if (limpar) limpar.onclick = () => {
+      if (limpar) limpar.onclick = async () => {
         if (!confirm('Apagar todas as conversas com o assistente? Isso não afeta seus lançamentos.')) return;
+        const ids = IA.conversas().map(x => x.id);
         DB.data.ia_chats = [];
         DB.save();
+        // Apagar aqui e deixar lá faria a próxima sincronização trazer tudo de volta.
+        for (const id of ids) await IA.nuvemApagarChat(id).catch(() => {});
         toast('Conversas apagadas ✓');
         desenhar();
       };
@@ -10421,6 +10488,13 @@ Auth.init(() => {
      desenho, porque a fila do painel precisa contar as tarefas que ela marcou
      enquanto este app estava fechado. */
   try { DB.ponteDoCofrinho(); } catch (_) {}
+  /* Só agora dá: a configuração do assistente mora dentro do banco cifrado, e
+     antes do PIN DB.data era null — o IA.load() lá de cima leu o padrão. */
+  IA.load();
+  pintarBotaoIA();
+  /* Traz do Supabase a chave e as conversas que este aparelho não tem. É o que
+     devolve o assistente inteiro depois de "apagar os dados deste aparelho". */
+  IA.sincronizar().then(() => { pintarBotaoIA(); }).catch(() => {});
   setTab(state.tab);          // restaura a aba e marca o menu corretamente
   Sync.startAuto();           // mantém o aparelho em dia sempre que houver conexão
   setTimeout(() => Notif.check(), 800);

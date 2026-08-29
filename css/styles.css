@@ -1872,6 +1872,11 @@ input:focus, select:focus, textarea:focus {
   transition: transform .12s ease, background .16s ease;
 }
 .btn:hover { background: var(--gold-ink); }
+/* Botão desligado precisa PARECER desligado. Sem isto, "Testar e salvar" fica
+   azul e convidativo antes de existir chave para testar — e não responde ao
+   toque, que é a pior combinação possível. */
+.btn:disabled, .btn[disabled] { opacity: .45; cursor: not-allowed; }
+.btn:disabled:hover, .btn[disabled]:hover { background: var(--gold); transform: none; }
 /* A folha de lançamento tinge o botão de salvar com a cor do TIPO escolhido, e o
    texto tem de acompanhar: branco sobre o verde claro do tema escuro seria
    ilegível. Cada tinta traz o próprio contraste. */

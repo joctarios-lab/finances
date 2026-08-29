@@ -1862,8 +1862,18 @@ const DB = {
   },
 
   /* ---------- Backup ---------- */
+  /* O backup sai SEM as duas chaves que vivem em `meta`: a da API da Anthropic
+     e a do cofre que cifra o assistente na nuvem. O arquivo exportado é um .json
+     solto na pasta de downloads, mandado por e-mail, guardado no drive — ou
+     seja, o lugar do app onde criptografia nenhuma protege. Perder o assistente
+     ao restaurar um backup é aceitável; vazar uma chave que gasta dinheiro, não. */
   exportJSON() {
-    return JSON.stringify(this.data, null, 2);
+    const copia = { ...this.data };
+    if (copia.meta) {
+      copia.meta = { ...copia.meta, ia_cofre: undefined };
+      if (copia.meta.ia) copia.meta.ia = { ...copia.meta.ia, chave: '' };
+    }
+    return JSON.stringify(copia, null, 2);
   },
 
   /* Importar backup.

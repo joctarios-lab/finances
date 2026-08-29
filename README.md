@@ -113,29 +113,47 @@ quem calcula são as mesmas funções que desenham as telas.
 Desligado por padrão. Sem configurar, o app fica exatamente como está — o botão
 de conversa nem aparece.
 
-**1. Uma chave da Anthropic.** Crie em [console.anthropic.com](https://console.anthropic.com)
-e ponha crédito. Vale definir um **limite de gasto** por lá: quem publica a
-função paga o uso de toda a família.
+**Cada pessoa usa a própria conta da Anthropic, e paga o próprio uso.** Não há
+chave embutida no app, nem função a publicar: a configuração inteira é feita
+dentro do app.
 
-**2. Publicar a Edge Function** (a CLI já está instalada e o projeto linkado, se
-você configurou o push):
+**1. Crie uma chave** em [console.anthropic.com](https://console.anthropic.com)
+→ *API Keys*, e ponha crédito na conta. Vale criar a chave num **workspace com
+teto de gasto mensal**: assim, mesmo no pior caso, o prejuízo é limitado por
+construção.
 
-```bash
-supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
-supabase functions deploy assistente
-```
+**2. Cole no app**: **⚙︎ → Assistente** → cole a chave e toque em **Testar e
+salvar**. O app confere a chave contra a API antes de guardar — chave errada é
+recusada ali, e não na primeira pergunta.
 
-> ⚠️ **Sem `--no-verify-jwt`**, ao contrário da função `notify`. A `notify` é
-> chamada pelo agendador, sem usuário; esta é chamada por uma pessoa, e a
-> verificação do JWT é o que impede alguém de fora usar a sua chave.
+**3. Escolha o modelo e o que ele pode ver.** Opus 5 (mais capaz), Sonnet 5
+(equilibrado) ou Haiku 4.5 (mais barato) — o preço por milhão de tokens aparece
+ao lado de cada um. Depois marque o que ele pode consultar: tudo começa
+desmarcado, e uma permissão desmarcada não é só bloqueada — a ferramenta nem é
+oferecida ao modelo. Marcado o primeiro item, o botão ✨ aparece no topo.
 
-**Não há mudança no banco** — nada de rodar `schema.sql` de novo. As conversas
-ficam no próprio aparelho, cifradas com o seu PIN, e não sincronizam.
+**Quanto custa.** Uma pergunta típica custa cerca de R$ 0,15 no Opus 5; um uso de
+família fica na casa de R$ 15 a R$ 30 por mês. No Haiku sai cerca de cinco vezes
+menos.
 
-**3. Ligar no app**: **⚙︎ → Assistente** → ative e marque o que ele pode
-consultar. Tudo começa desmarcado: uma permissão desmarcada não é só bloqueada,
-ela nem é oferecida ao modelo. Marcado o primeiro item, o botão ✨ aparece no
-topo do app.
+### Se você tem sincronização
+
+Rode `supabase/schema.sql` de novo (é idempotente) para criar `ia_config` e
+`ia_chats`. Aí a chave e as conversas **sobrevivem a "apagar os dados deste
+aparelho"**: voltam sozinhas quando você entrar de novo.
+
+O conteúdo sobe **cifrado no seu navegador** (AES-256-GCM), com uma chave
+derivada da **senha do seu login** — que nunca é enviada. Quem abrir a tabela no
+Supabase, inclusive o dono do projeto e um backup automático, vê só base64 sem
+sentido. As duas tabelas são as únicas do app com escopo pessoal (`auth.uid()`)
+em vez de familiar: a chave é de quem a comprou, a conversa é de quem conversou.
+
+> O preço dessa garantia: **trocar a senha do login torna a cópia ilegível**.
+> Quando isso acontecer, é colar a chave outra vez — as conversas antigas se
+> perdem. Foi a troca escolhida para que o servidor nunca consiga ler.
+
+Sem sincronização, tudo funciona igual — só que a chave e as conversas existem
+apenas neste aparelho, cifradas com o seu PIN.
 
 ### O que sai do seu aparelho
 Só o que a pergunta exigir, e só do que estiver marcado. "Gastos por categoria"

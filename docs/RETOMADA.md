@@ -25,8 +25,9 @@ Leia primeiro, nesta ordem:
 
 ## Estado atual
 - Versão 157 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2963 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- 2978 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
+- a prova de cifra do assistente: `node tests/cofre.js` (roda o WebCrypto de verdade)
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
 
@@ -68,17 +69,43 @@ Leia primeiro, nesta ordem:
   teste exigindo que todo token de cor do escuro exista também no claro, porque
   um rgba solto não acompanha a troca de tema e vaza a cor do tema anterior.
 
-## O ASSISTENTE (v157) — como está montado
+## O ASSISTENTE (v158) — como está montado
 
-- **A chave da Anthropic NUNCA vai ao navegador.** Ela mora nos secrets do
-  Supabase e é usada por `supabase/functions/assistente/index.ts`, que faz o
-  proxy. Publicar:
-  `supabase secrets set ANTHROPIC_API_KEY=sk-ant-...` e
-  `supabase functions deploy assistente` — **sem** `--no-verify-jwt` (ao
-  contrário da `notify`): esta exige o JWT de quem está perguntando.
-- **O modelo é fixado na função** (`claude-opus-5`), não pedido pelo cliente.
-  Se viesse no corpo, qualquer um poderia pedir o mais caro em toda pergunta — e
-  quem paga é quem publicou a função.
+- **A chave é DO USUÁRIO, não do app.** Cada pessoa cola a própria chave da
+  Anthropic em ⚙︎ → Assistente, e `IA.chamar()` vai **direto do navegador** para
+  `api.anthropic.com` com o cabeçalho `anthropic-dangerous-direct-browser-access`.
+  Não há Edge Function, secret nem `functions deploy` — foi removido na v158.
+  Motivo: o custo passou a ser de quem usa, e um app local-first não podia ter o
+  assistente como a única parte que exige backend publicado.
+- **A chave mora em `DB.data.meta.ia`**, dentro do banco cifrado com o PIN — não
+  no localStorage solto, que é onde criptografia nenhuma protege. `meta` está
+  fora de `STORES`, e `sync.js` só olha `STORES`: a chave não vai junto com os
+  dados da família.
+- **`DB.exportJSON()` limpa as duas chaves** antes de gerar o backup. O arquivo
+  exportado é um `.json` solto na pasta de downloads — perder o assistente ao
+  restaurar é aceitável; vazar credencial que gasta dinheiro, não.
+- **O cofre (`IA.abrirCofre`)** é o que permite guardar na nuvem sem que o
+  servidor leia. Deriva AES-256 da **senha do login** (PBKDF2, 200 mil voltas,
+  sal = SHA-256 do `user_id`) no único instante em que a senha existe no app:
+  `Sync.signIn`. Tudo que sobe para `ia_config`/`ia_chats` passa por
+  `IA.cifrar()` antes. O sal vem do id (não é sorteado) para que um aparelho novo
+  chegue à mesma chave sem buscar nada antes.
+- **Consequência aceita:** trocar a senha do Supabase torna a cópia na nuvem
+  indecifrável. `IA.decifrar()` devolve `null` nesse caso, e `nuvemPuxarCfg()`
+  **não** sobrescreve o que está no aparelho quando isso acontece.
+- **`ia_config` e `ia_chats` são as únicas tabelas de escopo pessoal** do
+  schema: RLS por `auth.uid()`, não por `family_id`. Uma policy escrita por
+  engano com escopo de família deixaria um membro da casa ler a chave do outro, e
+  nada no app daria erro — por isso há teste sobre o texto do SQL.
+- **`tests/cofre.js`** roda a cifra de verdade no WebCrypto e verifica que a
+  chave e o texto das conversas não aparecem no que sobe, que a mesma senha
+  recupera e que outra senha falha devolvendo `null`. Asserção de texto não prova
+  ilegibilidade; esta prova, sim. Rode junto com as outras.
+- **O modelo é escolhido pela pessoa** (`IA.MODELOS`: Opus 5, Sonnet 5, Haiku
+  4.5), com o preço por milhão de tokens no rótulo — quem paga escolhe, e para
+  escolher precisa do número, não de adjetivos.
+- **`IA.testar()`** confere a chave com `max_tokens: 1` antes de salvar. Chave
+  errada é recusada na tela de configuração, não na primeira pergunta.
 - **O modelo não recebe o banco.** Ele recebe FERRAMENTAS (`IA.ferramentas()`),
   que são perguntas ao app; quem calcula é o `js/db.js`, as mesmas funções que
   desenham as telas. Isso vale por três razões, nesta ordem: privacidade (sai o
@@ -115,8 +142,10 @@ Leia primeiro, nesta ordem:
 - **Voz.** `SpeechRecognition` e `SpeechSynthesis` são nativas e sem
   dependência, mas o iOS exige gesto do usuário para iniciar e o Firefox não tem
   reconhecimento. Ficou para uma segunda rodada, sobre a base de texto.
-- **Outros provedores.** A configuração já fala em "assistente", não em "Claude",
-  e a troca ficaria só na Edge Function — o app não sabe qual modelo responde.
+- **Outros provedores.** A configuração já fala em "assistente", não em "Claude".
+  Agora a troca é maior do que era: sem Edge Function no meio, `IA.chamar()` fala
+  o formato da Anthropic direto. Trocar de provedor significa mexer em `chamar()`,
+  no formato das ferramentas e no laço de tool use.
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
 Rodar supabase/schema.sql (é idempotente). São DUAS coisas agora:

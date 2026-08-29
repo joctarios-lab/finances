@@ -4376,17 +4376,67 @@ console.log('\n=== O assistente: permissões e ferramentas ===');
   check('o botão nasce escondido no HTML', /id="btn-ia"[^>]*hidden/.test(idxIA), true);
   check('e só é revelado por pintarBotaoIA', /function pintarBotaoIA[\s\S]{0,320}IA\.disponivel\(\)/.test(apIA), true);
 
-  /* ---- A chave nunca chega ao navegador ---- */
-  /* Nenhum segredo DA ANTHROPIC no cliente. A `anonKey` do Supabase que aparece
-     aqui é outra coisa: ela é pública por projeto e já circula no app inteiro —
-     quem protege os dados lá é o login mais o RLS, não o sigilo dela. */
-  check('o app não guarda chave da Anthropic', /sk-ant|ANTHROPIC_API_KEY|x-api-key/i.test(iaSrc), false);
-  check('a chamada vai para a Edge Function', iaSrc.includes('/functions/v1/assistente'), true);
-  const fn = fs.readFileSync(BASE + 'supabase/functions/assistente/index.ts', 'utf8');
-  check('e é lá que a chave é lida dos secrets', fn.includes("Deno.env.get('ANTHROPIC_API_KEY')"), true);
-  check('o modelo é fixado no servidor, não pedido pelo cliente',
-    /const MODELO = 'claude-opus-5'/.test(fn) && !/corpo\.model/.test(fn), true);
-  check('a função exige quem está autenticado', fn.includes("startsWith('Bearer ')"), true);
+  /* ---- A chave é do usuário, e nunca sai em texto claro ----
+
+     Mudou o dono da conta: antes a chave era do app, guardada nos secrets de uma
+     Edge Function. Agora é de quem pergunta, e mora no aparelho dele. Isso move
+     o risco de lugar, e é isso que estas asserções guardam. */
+  check('a chamada vai direto para a API da Anthropic',
+    iaSrc.includes('https://api.anthropic.com/v1/messages'), true);
+  check('com o cabeçalho que a Anthropic exige do navegador',
+    iaSrc.includes('anthropic-dangerous-direct-browser-access'), true);
+  check('e não sobrou nada da Edge Function', iaSrc.includes('/functions/v1/assistente'), false);
+  check('nenhuma chave literal ficou no código', /sk-ant-[A-Za-z0-9]/.test(iaSrc), false);
+
+  /* A chave mora dentro do banco cifrado com o PIN, não no localStorage solto —
+     que é o único lugar deste app onde criptografia nenhuma protege. */
+  check('a configuração mora dentro do banco cifrado',
+    /DB\.data\.meta\.ia = this\.cfg/.test(iaSrc), true);
+  check('e não no localStorage', /localStorage\.setItem/.test(iaSrc), false);
+
+  /* O que sobe para o Supabase passa obrigatoriamente pelo cofre. Se alguém um
+     dia trocar `cifrar(...)` por `this.cfg` cru, a chave de API de todo mundo
+     passa a estar legível no SQL Editor do dono do projeto — e nada quebraria. */
+  check('o que sobe é cifrado antes', /const dados = await this\.cifrar\(this\.cfg\)/.test(iaSrc), true);
+  check('a conversa também sobe cifrada', /const dados = await this\.cifrar\(c\)/.test(iaSrc), true);
+  check('nenhum corpo sobe com a chave crua',
+    /body: JSON\.stringify\(\{[^}]*chave/.test(iaSrc), false);
+
+  /* A chave do cofre vem da senha do login, com sal derivado do id do usuário —
+     é o que faz o aparelho novo chegar na MESMA chave sem buscar nada antes. */
+  check('o cofre deriva da senha do login', /abrirCofre\(senha\)/.test(iaSrc), true);
+  check('com PBKDF2 e sal do id do usuário',
+    /deriveKey\(senha, await this\.sal\(uid\)/.test(iaSrc), true);
+  check('e o login é quem o abre',
+    /IA\.abrirCofre\(password\)/.test(fs.readFileSync(BASE + 'js/sync.js', 'utf8')), true);
+
+  /* O backup exportado é um .json solto na pasta de downloads. Credencial
+     nenhuma pode ir junto. */
+  {
+    const dbSrc = fs.readFileSync(BASE + 'js/db.js', 'utf8');
+    const exp = dbSrc.slice(dbSrc.indexOf('exportJSON()'), dbSrc.indexOf('importJSON('));
+    check('o backup sai sem a chave da API', /chave: ''/.test(exp), true);
+    check('e sem a chave do cofre', /ia_cofre: undefined/.test(exp), true);
+  }
+
+  /* As duas tabelas do assistente são as únicas de escopo pessoal do app. Uma
+     policy escrita por engano com escopo de família deixaria um membro da casa
+     ler a chave do outro — e nada no app daria erro. */
+  {
+    const sql = fs.readFileSync(BASE + 'supabase/assistente.sql', 'utf8');
+    check('ia_config e ia_chats existem no schema',
+      /create table if not exists ia_config/.test(sql) && /create table if not exists ia_chats/.test(sql), true);
+    check('com RLS ligado nas duas',
+      (sql.match(/enable row level security/g) || []).length >= 2, true);
+    /* Sem os comentários: a palavra "family_id" aparece no texto que explica
+       justamente por que estas duas tabelas não a usam. */
+    const codigo = sql.replace(/--.*/g, '');
+    check('o escopo é do usuário, não da família',
+      codigo.includes('using (user_id = auth.uid()) with check (user_id = auth.uid())')
+      && !codigo.includes('family_id'), true);
+    check('e o schema principal também as tem',
+      fs.readFileSync(BASE + 'supabase/schema.sql', 'utf8').includes('create table if not exists ia_chats'), true);
+  }
 
   /* ---- Sem permissão, a ferramenta não é nem oferecida ---- */
   IA.cfg.ligado = true;

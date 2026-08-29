@@ -295,6 +295,11 @@ const Sync = {
     this.setSession(d);
     // Não pode falhar o login por causa disto; é uma comodidade, não um requisito
     await this.detectarFamilia().catch(() => {});
+    /* O ÚNICO instante em que a senha existe dentro do app. É dela que sai a
+       chave que cifra o assistente antes de subir — o servidor nunca a vê, e
+       sem passar por aqui não há como decifrar o que já está lá. Falhar não
+       pode derrubar o login: o assistente é acessório, entrar não é. */
+    if (typeof IA !== 'undefined') await IA.abrirCofre(password).catch(() => {});
     return d;
   },
 
