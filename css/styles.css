@@ -2091,9 +2091,54 @@ input:focus, select:focus, textarea:focus {
 .ia-r { font-size: 14px; line-height: 1.62; color: var(--paper); }
 .ia-r p { margin: 0 0 var(--e2); }
 .ia-r p:last-child { margin-bottom: 0; }
-.ia-r ul { margin: 0 0 var(--e2); padding-left: var(--e5); }
+.ia-r ul, .ia-r ol { margin: 0 0 var(--e2); padding-left: var(--e5); }
 .ia-r li { margin-bottom: var(--e1); }
+.ia-r li::marker { color: var(--paper-faint); }
 .ia-r b { font-weight: 600; }
+.ia-r i { font-style: italic; color: var(--paper-dim); }
+/* Trecho literal: nome de categoria, de conta, um valor citado como texto. */
+.ia-r code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .92em; background: var(--embutido);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 1px 5px;
+}
+/* Seção de uma resposta longa. Não vira <h*>: dentro da folha o título grande
+   competiria com o número, que é o que a pessoa veio ver. Peso e cor bastam. */
+.ia-r .ia-secao {
+  font-weight: 700; font-size: 12px; letter-spacing: .04em;
+  text-transform: uppercase; color: var(--paper-dim);
+  margin: var(--e3) 0 var(--e1);
+}
+.ia-r .ia-secao:first-child { margin-top: 0; }
+.ia-r s { color: var(--paper-faint); }
+
+/* A TABELA ROLA DENTRO DELA MESMA.
+
+   A folha é estreita e uma resposta de "quanto foi para cada categoria" tem
+   três ou quatro colunas. Sem este embrulho com overflow, quem passaria a rolar
+   de lado seria a folha inteira — e aí some o botão de fechar. */
+.ia-tabela { overflow-x: auto; margin: 0 0 var(--e2); -webkit-overflow-scrolling: touch; }
+.ia-r table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.ia-r th, .ia-r td {
+  padding: var(--e2) var(--e3);
+  border-bottom: 1px solid var(--line);
+  text-align: left; white-space: nowrap;
+}
+.ia-r th {
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--paper-dim); border-bottom-color: var(--line-strong);
+}
+/* Dinheiro em coluna só se compara se os dígitos tiverem a mesma largura. */
+.ia-r td { font-variant-numeric: tabular-nums; }
+.ia-r tr:last-child td { border-bottom: none; }
+
+.ia-r .ia-cita {
+  margin: 0 0 var(--e2); padding: var(--e2) var(--e3);
+  border-left: 3px solid var(--line-strong);
+  color: var(--paper-dim); font-size: 13.5px;
+}
+.ia-r .ia-regua { border: none; border-top: 1px solid var(--line); margin: var(--e3) 0; }
 
 .ia-erro {
   font-size: 13px; color: var(--red-ink);

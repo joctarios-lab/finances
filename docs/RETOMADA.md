@@ -25,7 +25,7 @@ Leia primeiro, nesta ordem:
 
 ## Estado atual
 - Versão 157 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 3054 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- 3090 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - a prova de cifra do assistente: `node tests/cofre.js` (roda o WebCrypto de verdade)
 - a conversa completa nos dois provedores: `node tests/provedores.js`
@@ -70,7 +70,35 @@ Leia primeiro, nesta ordem:
   teste exigindo que todo token de cor do escuro exista também no claro, porque
   um rgba solto não acompanha a troca de tema e vaza a cor do tema anterior.
 
-## O ASSISTENTE (v160) — como está montado
+## O ASSISTENTE (v161) — como está montado
+
+- **O TAMANHO DA RESPOSTA é instrução, não limite do modelo.** A regra antiga
+  ("duas ou três frases") era dada a toda pergunta e cortava justamente as de
+  cenário. Agora o critério é a pergunta: consulta direta em três frases,
+  explicação com o espaço de que precisar.
+- **`MAX_TOKENS` é 8000, não 2000.** Na Anthropic o pensamento adaptativo conta
+  DENTRO do teto: com 2000, um raciocínio longo comia o orçamento e a resposta
+  chegava truncada — parecendo apenas "curta". Teto alto não custa: a saída é
+  cobrada pelo que sai, não pelo teto.
+- **O corte é detectado e dito** (`stop_reason: 'max_tokens'` /
+  `finish_reason: 'length'` → `r.cortada`). Resposta truncada chegava com cara
+  de resposta pronta, e aqui se decide dinheiro em cima do que ela diz.
+- **`formatarResposta` entende markdown de verdade**: seção (###), listas com
+  marcador e numeradas, TABELA em pipes (com alinhamento pela linha de traços),
+  citação, régua, negrito, itálico, riscado e código. Tabela importa mais que o
+  resto: resposta de app de dinheiro é tabular, e o modelo escreve em pipes sem
+  que se peça.
+- **A tabela rola DENTRO do próprio bloco** (`.ia-tabela` com overflow-x). Sem
+  isso, a folha inteira rolaria de lado e o botão de fechar sairia da tela.
+- **LINK E IMAGEM ficam de fora de propósito.** Um assistente financeiro não tem
+  por que emitir âncora clicável, e converter `[x](url)` abriria porta para
+  plantar um endereço — o texto que ele repete pode vir da descrição de um
+  lançamento, que é dado de fora.
+- **ESCAPA PRIMEIRO, FORMATA DEPOIS**, sempre. É o que impede que uma tag escrita
+  por qualquer um volte como tag dentro da folha. Há teste com entrada hostil,
+  inclusive dentro de célula de tabela.
+- **`ctxFormato()` ensina o dialeto ao modelo.** De nada adianta a tela entender
+  tabela se o modelo não souber que pode usá-la — nem que link vira texto cru.
 
 - **O CONTEXTO VAI EM TODA REQUISIÇÃO, e é montado em camadas** (`IA.contexto()`,
   que `instrucao()` apenas devolve). Não é repetido por mensagem — a instrução do

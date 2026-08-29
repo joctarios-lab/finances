@@ -189,6 +189,7 @@ const IA = {
           texto: blocos.filter(b => b.type === 'text').map(b => b.text).join('\n').trim(),
           pedidos: blocos.filter(b => b.type === 'tool_use').map(b => ({ id: b.id, name: b.name, input: b.input })),
           cru: blocos,
+          cortada: json.stop_reason === 'max_tokens',
         };
       },
 
@@ -245,6 +246,7 @@ const IA = {
         const msg = ((json.choices || [])[0] || {}).message || {};
         const chamadas = msg.tool_calls || [];
         return {
+          cortada: ((json.choices || [])[0] || {}).finish_reason === 'length',
           texto: (msg.content || '').trim(),
           pedidos: chamadas.map(c => ({
             id: c.id,
@@ -750,6 +752,7 @@ const IA = {
       this.ctxVocabulario(),
       this.ctxLimites(),
       this.ctxRegras(),
+      this.ctxFormato(),
       this.ctxACasa(),
       this.ctxAutorizacao(),
       this.ctxAgora(),
@@ -804,10 +807,35 @@ const IA = {
       'REGRAS:',
       '- Todo número vem das ferramentas. Nunca estime, arredonde de cabeça nem invente: se falta ferramenta para responder, diga o que precisa ser autorizado em Configurações → Assistente.',
       '- Responda em português do Brasil, com valores em reais no formato R$ 1.234,56.',
-      '- Seja curto. Uma resposta boa aqui tem duas ou três frases e o número que importa. Lista só quando forem mesmo vários itens.',
+      '- AJUSTE O TAMANHO À PERGUNTA. Consulta direta ("quanto sobra?") se responde em duas ou três frases, com o número na frente. Pergunta que pede explicação, comparação, causa ou cenário merece o espaço de que precisar: mostre as parcelas da conta, o raciocínio e o que fazer a respeito. O que não vale é encher linguiça — toda frase tem de acrescentar.',
+      '- Formate a resposta segundo o COMO ESCREVER abaixo.',
       '- Fale como alguém da casa, não como relatório de banco: "sobra R$ 300 até o fim do mês" em vez de "o saldo projetado indica superávit".',
       '- Não dê recomendação de investimento nem indique produto financeiro. Pode explicar os números da pessoa e as consequências das escolhas dela.',
       '- Quando a resposta depender de projeção, diga que é estimativa.',
+    ].join('\n');
+  },
+
+  /* ---------- 4b. estático: como a resposta é DESENHADA ----------
+
+     A tela não é um terminal: ela renderiza um markdown específico, e só ele.
+     Dizer qual é a diferença entre uma resposta bem apresentada e uma resposta
+     com "|" e "###" à mostra. O que o app NÃO renderiza também precisa ser dito
+     — senão o modelo emite link e imagem, que aqui viram texto cru. */
+  ctxFormato() {
+    return [
+      'COMO ESCREVER. A resposta aparece numa folha estreita, num celular. Ela é renderizada com este markdown, e só com ele:',
+      '- **negrito** para o número que responde a pergunta. Use com parcimônia: se tudo é negrito, nada é.',
+      '- Listas com "- " quando forem itens soltos, ou "1. " quando a ordem significar algo (maior para menor, primeiro para último).',
+      '- TABELA sempre que houver mais de duas linhas comparáveis — categoria e valor, mês e saldo, cartão e fatura. É o formato que melhor se lê aqui. Use o cabeçalho e alinhe a coluna de dinheiro à direita, assim:',
+      '  | Categoria | Gasto |',
+      '  | --- | ---: |',
+      '  | Alimentação | R$ 625,40 |',
+      '- "### Título" para separar seções, e só em resposta longa. Resposta de duas frases não precisa de seção.',
+      '- `código` para citar o nome exato de uma conta, cartão ou categoria.',
+      '- "> " para destacar um alerta curto, no máximo um por resposta.',
+      'NÃO use link, imagem, título de nível 1 ("# "), nem bloco de código com três crases: a tela mostra esses como texto cru.',
+      'Deixe uma linha em branco entre blocos — parágrafo, lista e tabela só são reconhecidos assim.',
+      'Comece pela resposta, não pelo caminho: primeiro o número que a pessoa pediu, depois a explicação se ela for útil.',
     ].join('\n');
   },
 
@@ -1008,7 +1036,11 @@ const IA = {
      círculo.
      ========================================================================== */
   MAX_VOLTAS: 6,
-  MAX_TOKENS: 2000,
+  /* Teto ALTO de propósito. Só limita o caso extremo — a saída é cobrada pelo
+     que realmente sai, não pelo teto. Em 2000, com pensamento adaptativo (que na
+     Anthropic conta DENTRO deste número), uma pergunta de cenário gastava o
+     orçamento pensando e devolvia a resposta pela metade. */
+  MAX_TOKENS: 8000,
 
   /* O laço não sabe com quem está falando. Ele pede ao adaptador do provedor
      para montar o corpo e para ler a resposta, e trabalha na forma neutra
@@ -1030,7 +1062,12 @@ const IA = {
       const r = p.ler(bruto);
 
       if (!r.pedidos.length) {
-        return { texto: r.texto, consultou, historico: msgs.concat([p.msgAssistente(r.cru)]) };
+        /* Resposta cortada no meio chega com cara de resposta pronta. Dizer que
+           faltou é obrigatório: aqui se decide dinheiro em cima do que ele diz. */
+        const texto = r.cortada
+          ? r.texto + '\n\n_(a resposta foi cortada por tamanho — pergunte por partes)_'
+          : r.texto;
+        return { texto, consultou, cortada: !!r.cortada, historico: msgs.concat([p.msgAssistente(r.cru)]) };
       }
 
       msgs.push(p.msgAssistente(r.cru));

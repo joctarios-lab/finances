@@ -4481,7 +4481,13 @@ console.log('\n=== O contexto que viaja em toda pergunta ===');
 
   /* ---- Não estoura o orçamento de tokens ----
      Vai em TODA pergunta: o que cresce aqui é multiplicado por cada chamada. */
-  check('o contexto cabe em ~1000 tokens', Math.round(ctxO.length / 3.6) < 1000, true,
+  /* O TETO É UM ORÇAMENTO, não um número redondo. Isto vai em TODA pergunta e
+     é reenviado a cada volta do laço de ferramentas — o que cresce aqui é
+     multiplicado por chamada. 1400 é o que as sete camadas custam hoje com
+     folga; passar disso deve ser uma DECISÃO (medir o que a camada nova compra),
+     não um efeito colateral de escrever mais uma frase. Se estourar, o candidato
+     natural a sair é a lista de nomes da casa, que já tem teto próprio. */
+  check('o contexto cabe no orçamento de 1400 tokens', Math.round(ctxO.length / 3.6) < 1400, true,
     `~${Math.round(ctxO.length / 3.6)} tokens`);
 
   /* ---- Sem app carregado, não estoura ----
@@ -4494,6 +4500,89 @@ console.log('\n=== O contexto que viaja em toda pergunta ===');
   IA.cfg = guardaCfg;
   IA.ondeEstou = guardaOnde;
   DB.data.accounts = guardaAcc; DB.data.cards = guardaCards; DB.data.kids = guardaKids;
+}
+
+console.log('\n=== O markdown da resposta ===');
+{
+  /* formatarResposta vive no js/app.js e depende de esc(). Roda aqui isolada,
+     com o mesmo esc do app, para o teste exercitar a função de verdade em vez
+     de conferir o texto do código. */
+  const fonteApp = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const trechoMD = fonteApp.slice(
+    fonteApp.indexOf('function formatarResposta('),
+    fonteApp.indexOf('function ligarIAChat('));
+  // `esc` é uma arrow const, não uma function declarada — a busca precisa
+  // casar com a forma real, senão o teste roda contra o esc global da suíte
+  // e deixa de provar que formatarResposta escapa por conta própria.
+  const escApp = (fonteApp.match(/^const esc = [^\r\n]+/m) || [])[0];
+  check('achou formatarResposta e esc no app.js', !!(trechoMD && escApp), true);
+  const md = new Function(escApp + '\n' + trechoMD + '\nreturn formatarResposta;')();
+
+  /* ---- ESCAPAR VEM PRIMEIRO. SEMPRE. ----
+     A resposta é texto de fora. Se a formatação rodasse antes do escape,
+     bastaria o modelo repetir uma tag para ela virar HTML de verdade dentro da
+     folha — e ele repete o que leu nos dados da própria pessoa, que é onde
+     alguém poderia ter plantado isso na descrição de um lançamento. */
+  const hostil = md('<img src=x onerror=alert(1)> e <script>roubar()</script>');
+  check('tag na resposta não vira HTML', /<img|<script/i.test(hostil), false);
+  check('  ela aparece como texto', /&lt;img/.test(hostil), true);
+  check('negrito com tag dentro continua inerte', /<b><img/i.test(md('**<img src=x>**')), false);
+  check('e o texto entre asteriscos ainda vira negrito', /<b>/.test(md('o total é **R$ 30,00**')), true);
+
+  /* ---- O que o modelo escreve o tempo todo ---- */
+  check('lista com "-" vira <ul>', /<ul><li>/.test(md('- um\n- dois')), true);
+  check('lista numerada vira <ol>', /<ol><li>/.test(md('1. um\n2. dois')), true);
+  check('  sem repetir o número no texto', /<li>1\./.test(md('1. um\n2. dois')), false);
+  check('"###" vira rótulo de seção, não título solto',
+    /<p class="ia-secao">Resumo<\/p>/.test(md('### Resumo')), true);
+  check('itálico vira <i>', /<i>quase<\/i>/.test(md('é *quase* isso')), true);
+  check('código vira <code>', /<code>Alimentação<\/code>/.test(md('a categoria `Alimentação`')), true);
+  check('citação vira blockquote', /<blockquote/.test(md('> cuidado com a fatura')), true);
+  check('régua vira <hr>', /<hr/.test(md('---')), true);
+  check('riscado vira <s>', /<s>era<\/s>/.test(md('~~era~~ agora é')), true);
+
+  /* ---- TABELA: o formato que mais importa aqui ----
+     Resposta de app de dinheiro é tabular. O modelo escreve em pipes sem que se
+     peça; sem entender, a folha mostrava uma grade de "|" que ninguém lê. */
+  const tab = md(['| Categoria | Gasto |', '| --- | ---: |', '| Alimentação | R$ 625,40 |'].join('\n'));
+  check('tabela em pipes vira <table>', /<table>/.test(tab), true);
+  check('  com cabeçalho', /<th[^>]*>Categoria<\/th>/.test(tab), true);
+  check('  e a célula no corpo', /<td[^>]*>Alimentação<\/td>/.test(tab), true);
+  check('  a linha de traços não vira linha', /<td[^>]*>---/.test(tab), false);
+  check('  o alinhamento sai da sintaxe ---:', /text-align:right/.test(tab), true);
+  /* A folha é estreita: a tabela tem de rolar DENTRO dela mesma, senão quem rola
+     de lado é a folha inteira — e some o botão de fechar. */
+  check('  e rola dentro do próprio bloco', /<div class="ia-tabela">/.test(tab), true);
+  check('texto com um | solto NÃO vira tabela', /<table>/.test(md('gasto | previsto')), false);
+  const tabHostil = md(['| A | B |', '| --- | --- |', '| <img src=x onerror=1> | ok |'].join('\n'));
+  check('tag dentro de célula continua inerte', /<img/i.test(tabHostil), false);
+
+  /* ---- E o que NÃO deve virar ----
+     Negrito é dois asteriscos; se o itálico rodasse antes, comeria um de cada
+     par e "**x**" viraria "<i>*x*</i>". */
+  check('negrito não é confundido com itálico', /<b>total<\/b>/.test(md('**total**')), true);
+  check('  e não sobra asterisco solto', /\*/.test(md('**total**')), false);
+  check('asterisco de multiplicação não vira itálico', /<i>/.test(md('3*4 = 12')), false);
+  /* LINK NÃO VIRA ÂNCORA, de propósito: um assistente financeiro não tem por que
+     emitir endereço clicável, e converter abriria porta para plantar um. */
+  check('link não vira âncora', /<a /.test(md('veja [aqui](http://x.com)')), false);
+
+  /* ---- Parágrafos ---- */
+  check('linha simples vira <p>', /^<p>oi<\/p>$/.test(md('oi')), true);
+  check('quebra simples vira <br>', /<br>/.test(md('uma\noutra')), true);
+  check('linha em branco separa parágrafos', (md('uma\n\noutra').match(/<p>/g) || []).length, 2);
+  check('texto vazio não estoura', md(''), '');
+  check('nulo não estoura', md(null), '');
+
+  /* ---- E o prompt DIZ tudo isso ao modelo ----
+     De nada adianta a tela entender tabela se o modelo não souber que pode usá-la
+     — nem emitir link, que aqui vira texto cru. */
+  const ctxF = IA.instrucao();
+  check('o prompt ensina o formato da tela', /COMO ESCREVER\./.test(ctxF), true);
+  check('  pedindo tabela para dados comparáveis', /TABELA sempre que/.test(ctxF), true);
+  check('  com um exemplo de tabela', /\| --- \| ---: \|/.test(ctxF), true);
+  check('  e proibindo o que a tela não renderiza', /NÃO use link, imagem/.test(ctxF), true);
+  check('  avisando da linha em branco entre blocos', /linha em branco entre blocos/.test(ctxF), true);
 }
 
 console.log('\n=== Os dois provedores ===');

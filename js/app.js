@@ -10252,19 +10252,85 @@ function corpoDaConversa(c) {
    disso, só duas convenções sobrevivem — negrito e lista —, que são as que ele
    usa para destacar um número e enumerar itens. */
 function formatarResposta(txt) {
+  // ESCAPA PRIMEIRO. Tudo daqui para baixo trabalha sobre texto já inerte.
   const seguro = esc(String(txt || ''));
   return seguro
     .split(/\n{2,}/)
-    .map(bloco => {
-      const linhas = bloco.split('\n');
-      if (linhas.every(l => /^\s*[-*]\s+/.test(l))) {
-        return '<ul>' + linhas.map(l => `<li>${negrito(l.replace(/^\s*[-*]\s+/, ''))}</li>`).join('') + '</ul>';
-      }
-      return `<p>${negrito(linhas.join('<br>'))}</p>`;
-    })
+    .map(montarBloco)
+    .filter(Boolean)
     .join('');
 }
-function negrito(s) { return s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>'); }
+
+function montarBloco(bloco) {
+  const linhas = bloco.split('\n').filter(l => l.trim() !== '');
+  if (!linhas.length) return '';
+
+  // Régua
+  if (linhas.length === 1 && /^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(linhas[0])) return '<hr class="ia-regua">';
+
+  // Título de seção
+  if (linhas.length === 1 && /^#{1,4}\s+/.test(linhas[0])) {
+    return '<p class="ia-secao">' + inline(linhas[0].replace(/^#{1,4}\s+/, '')) + '</p>';
+  }
+
+  // Tabela: cabeçalho, linha de trav... e o resto. Precisa de pelo menos as duas
+  // primeiras para não confundir com um texto qualquer que tenha um "|".
+  if (linhas.length >= 2 && /\|/.test(linhas[0]) && /^[\s|:-]+$/.test(linhas[1]) && /-/.test(linhas[1])) {
+    return montarTabela(linhas);
+  }
+
+  // Citação
+  if (linhas.every(l => /^\s*&gt;\s?/.test(l))) {
+    return '<blockquote class="ia-cita">' + inline(linhas.map(l => l.replace(/^\s*&gt;\s?/, '')).join('<br>')) + '</blockquote>';
+  }
+
+  // Lista com marcador
+  if (linhas.every(l => /^\s*[-*+]\s+/.test(l))) {
+    return '<ul>' + linhas.map(l => '<li>' + inline(l.replace(/^\s*[-*+]\s+/, '')) + '</li>').join('') + '</ul>';
+  }
+
+  // Lista numerada — o modelo usa muito para "os três maiores gastos foram…"
+  if (linhas.every(l => /^\s*\d+[.)]\s+/.test(l))) {
+    return '<ol>' + linhas.map(l => '<li>' + inline(l.replace(/^\s*\d+[.)]\s+/, '')) + '</li>').join('') + '</ol>';
+  }
+
+  return '<p>' + inline(linhas.join('<br>')) + '</p>';
+}
+
+/* A tabela rola DENTRO do próprio bloco. A folha é estreita e a resposta pode
+   ter quatro colunas; sem o embrulho com overflow, a folha inteira passaria a
+   rolar de lado. O alinhamento sai da linha de traços (:--, --:, :-:), que é o
+   que diz qual coluna é número. */
+function montarTabela(linhas) {
+  const celulas = l => l.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map(x => x.trim());
+  const alinha = celulas(linhas[1]).map(t => {
+    if (/^:.*:$/.test(t)) return 'center';
+    if (/:$/.test(t)) return 'right';
+    if (/^:/.test(t)) return 'left';
+    return '';
+  });
+  const estilo = i => (alinha[i] ? ' style="text-align:' + alinha[i] + '"' : '');
+  const cabecalho = celulas(linhas[0]).map((t, i) => '<th' + estilo(i) + '>' + inline(t) + '</th>').join('');
+  const corpo = linhas.slice(2).map(l =>
+    '<tr>' + celulas(l).map((t, i) => '<td' + estilo(i) + '>' + inline(t) + '</td>').join('') + '</tr>').join('');
+  return '<div class="ia-tabela"><table><thead><tr>' + cabecalho + '</tr></thead><tbody>' + corpo + '</tbody></table></div>';
+}
+
+/* Formatação dentro da linha. A ORDEM IMPORTA: o código sai de cena primeiro,
+   para um asterisco dentro dele não virar itálico; depois o negrito, e só então
+   o itálico — se o itálico viesse antes, comeria um asterisco de cada par e
+   "**x**" viraria "<i>*x*</i>". */
+function inline(s) {
+  const guardados = [];
+  let t = String(s).replace(/`([^`]+)`/g, (_, dentro) => {
+    guardados.push(dentro);
+    return '\u0000' + (guardados.length - 1) + '\u0000';
+  });
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  t = t.replace(/~~([^~]+)~~/g, '<s>$1</s>');
+  t = t.replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s.,;:!?)]|$)/g, '$1<i>$2</i>');
+  return t.replace(/\u0000(\d+)\u0000/g, (_, i) => '<code>' + guardados[i] + '</code>');
+}
 
 function ligarIAChat() {
   const x = $('#ia-x');
