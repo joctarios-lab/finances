@@ -77,6 +77,10 @@ const I = {
   /* ---------- Estados ---------- */
   alert: _svg('<path d="M10.3 3.9 2.5 17.4a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9.4" x2="12" y2="13.4"/><circle cx="12" cy="16.8" r=".9"/>'),
   info: _svg('<circle cx="12" cy="12" r="8.8"/><line x1="12" y1="11.4" x2="12" y2="16.4"/><circle cx="12" cy="8" r=".9"/>'),
+  /* O assistente. Quatro pontos de luz de tamanhos diferentes — a forma que
+     virou convenção para "isto é inteligência artificial" sem precisar de
+     rótulo. Assimétrico de propósito: simétrico vira floco de neve. */
+  sparkles: _svg('<path d="M12 3.2 13.7 8.3 18.8 10 13.7 11.7 12 16.8 10.3 11.7 5.2 10 10.3 8.3z"/><path d="M18.4 14.6 19.2 17 21.6 17.8 19.2 18.6 18.4 21 17.6 18.6 15.2 17.8 17.6 17z"/><path d="M6.2 3.4 6.7 4.9 8.2 5.4 6.7 5.9 6.2 7.4 5.7 5.9 4.2 5.4 5.7 4.9z"/>'),
   wifiOff: _svg('<line x1="2.4" y1="2.4" x2="21.6" y2="21.6"/><path d="M8.6 15.2a5 5 0 0 1 6.2-.4"/><path d="M5.2 11.6a10 10 0 0 1 3.4-2.1M15.2 9.6a10 10 0 0 1 3.6 2M2.2 8.2A14.6 14.6 0 0 1 7 5.4m5.6-.7a14.6 14.6 0 0 1 9.2 3.5"/><circle cx="12" cy="19" r=".9"/>'),
 };
 

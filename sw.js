@@ -1,7 +1,7 @@
 /* Finanças da Família — service worker: app shell offline-first */
 'use strict';
 
-const VERSAO = '156';
+const VERSAO = '157';
 const CACHE = 'financas-' + VERSAO;
 const SHELL = [
   './',
@@ -16,6 +16,7 @@ const SHELL = [
   'js/ofx.js?v=' + VERSAO,
   'js/db.js?v=' + VERSAO,
   'js/sync.js?v=' + VERSAO,
+  'js/ia.js?v=' + VERSAO,
   'js/auth.js?v=' + VERSAO,
   'js/app.js?v=' + VERSAO,
   'manifest.webmanifest',

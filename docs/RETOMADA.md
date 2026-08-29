@@ -24,8 +24,8 @@ Leia primeiro, nesta ordem:
   docs/plano-ia.md
 
 ## Estado atual
-- Versão 156 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
-- 2921 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
+- Versão 157 (sw.js VERSAO + as 12 tags ?v= do index.html andam JUNTAS a cada entrega)
+- 2963 testes em tests/smoke.js, todos passando: `node tests/smoke.js`
 - 819 em tests/cofrinho.js: `node tests/cofrinho.js`
 - E a suíte inteira em 9 datas de calendário: `node tests/tempo.js`
 - Nada pendente no git
@@ -67,6 +67,56 @@ Leia primeiro, nesta ordem:
   sobre o fundo) e `--x-borda` (contorno). Nunca escreva rgba() na regra: há
   teste exigindo que todo token de cor do escuro exista também no claro, porque
   um rgba solto não acompanha a troca de tema e vaza a cor do tema anterior.
+
+## O ASSISTENTE (v157) — como está montado
+
+- **A chave da Anthropic NUNCA vai ao navegador.** Ela mora nos secrets do
+  Supabase e é usada por `supabase/functions/assistente/index.ts`, que faz o
+  proxy. Publicar:
+  `supabase secrets set ANTHROPIC_API_KEY=sk-ant-...` e
+  `supabase functions deploy assistente` — **sem** `--no-verify-jwt` (ao
+  contrário da `notify`): esta exige o JWT de quem está perguntando.
+- **O modelo é fixado na função** (`claude-opus-5`), não pedido pelo cliente.
+  Se viesse no corpo, qualquer um poderia pedir o mais caro em toda pergunta — e
+  quem paga é quem publicou a função.
+- **O modelo não recebe o banco.** Ele recebe FERRAMENTAS (`IA.ferramentas()`),
+  que são perguntas ao app; quem calcula é o `js/db.js`, as mesmas funções que
+  desenham as telas. Isso vale por três razões, nesta ordem: privacidade (sai o
+  agregado, não o extrato), exatidão (modelo somando parcela de fatura erra de
+  um jeito plausível) e custo.
+- **Permissão é conferida DUAS vezes**: a ferramenta sem permissão não entra na
+  lista enviada (o modelo não sabe que existe) e ainda assim é recusada em
+  `IA.executar` se for pedida pelo nome. Há teste sabotado confirmando que a
+  segunda barreira pega.
+- **`simular_cenario` não grava nada.** É o que separa responder "e se eu cortar
+  a academia" de mexer na vida financeira de alguém sem pedir. Teste confere que
+  a contagem de lançamentos não muda.
+- **Desligado, o app é o de antes.** `IA.disponivel()` exige duas coisas: a
+  pessoa ligou E existe nuvem configurada (a função vive no projeto Supabase).
+  Sem isso, `pintarBotaoIA()` mantém o botão do header escondido.
+
+### O histórico das conversas
+- Fica na store `ia_chats`, **dentro do DB** — herda a criptografia em repouso e
+  a tela de bloqueio. **Fora do `SYNC_TABLES`**: conversa é do aparelho, não da
+  família; sincronizá-la mandaria texto sobre a vida financeira para a nuvem e
+  inflaria todo pull.
+- **Só o texto é guardado** — pergunta e resposta. Os blocos de ferramenta ficam
+  de fora por dois motivos: são a parte pesada (cada um é um JSON de dados) e a
+  que ENVELHECE. Retomar em setembro uma conversa de agosto com os saldos de
+  agosto colados faria o assistente responder sobre um mês que já passou.
+  Descartados, a retomada consulta o app de novo — mais leve e mais correto pelo
+  mesmo motivo.
+- Três tetos seguram o tamanho: `MAX_CONVERSAS` (20), `MAX_TURNOS` (30 por
+  conversa) e `MAX_CONTEXTO` (8 turnos voltam ao modelo). Sem eles, um ano de uso
+  encheria o localStorage e cada `DB.save` ficaria mais lento — ele serializa e
+  cifra tudo de uma vez.
+
+### O que ainda não existe
+- **Voz.** `SpeechRecognition` e `SpeechSynthesis` são nativas e sem
+  dependência, mas o iOS exige gesto do usuário para iniciar e o Firefox não tem
+  reconhecimento. Ficou para uma segunda rodada, sobre a base de texto.
+- **Outros provedores.** A configuração já fala em "assistente", não em "Claude",
+  e a troca ficaria só na Edge Function — o app não sabe qual modelo responde.
 
 ## PENDÊNCIA MINHA (do usuário), confira antes de mexer em sync
 Rodar supabase/schema.sql (é idempotente). São DUAS coisas agora:

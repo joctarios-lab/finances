@@ -5,7 +5,14 @@
 const DB_KEY = 'financas.v1';
 const STORES = ['accounts', 'cards', 'categories', 'transactions', 'goals', 'goal_entries', 'invoice_status', 'recurrences', 'family_settings', 'budget_overrides',
   // Cofrinho das crianças — o app delas lê daqui pelo mesmo DB.
-  'kids', 'kid_goals', 'kid_tasks', 'kid_entries', 'kid_wishes'];
+  'kids', 'kid_goals', 'kid_tasks', 'kid_entries', 'kid_wishes',
+  /* Conversas com o assistente. Mora aqui para herdar as duas coisas que
+     importam — a criptografia em repouso e a tela de bloqueio —, mas NÃO está
+     em SYNC_TABLES: conversa é do aparelho, não da família. Sincronizá-la
+     mandaria texto sobre a vida financeira para a nuvem sem necessidade, e
+     inflaria todo pull. js/ia.js escreve direto neste array, sem o envelope de
+     sync, e mantém o tamanho sob controle (ver IA.podar). */
+  'ia_chats'];
 
 /* Criptografia local: AES-256-GCM com chave derivada do PIN (PBKDF2, 150 mil iterações). */
 const KCrypto = {

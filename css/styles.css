@@ -1985,6 +1985,152 @@ input:focus, select:focus, textarea:focus {
 .settings-item .chev { color: var(--paper-faint); flex: none; }
 .settings-item .chev svg { width: 16px; height: 16px; }
 
+
+/* ============================================================================
+   O ASSISTENTE
+
+   A conversa mora numa folha, como todo diálogo do app. O que ela tem de
+   próprio é o fluxo rolável entre o cabeçalho e a barra de escrever: sem isso,
+   uma conversa longa empurraria o campo de texto para fora da tela.
+   ============================================================================ */
+
+/* ---------- Configurações: os interruptores de permissão ----------
+   Alvo é a linha inteira, não o quadradinho: numa tela de consentimento, errar
+   o toque é errar a permissão. */
+.ia-liga, .ia-perm {
+  display: flex; align-items: flex-start; gap: var(--e3);
+  padding: var(--e3) var(--e4); margin-bottom: var(--e2);
+  background: var(--ink-2); border: 1px solid var(--line);
+  border-radius: var(--radius); cursor: pointer;
+  transition: border-color .15s ease;
+}
+.ia-liga:hover, .ia-perm:hover { border-color: var(--line-strong); }
+.ia-liga input, .ia-perm input {
+  width: 20px; height: 20px; flex: none; margin-top: 1px;
+  accent-color: var(--gold); cursor: pointer;
+}
+.ia-liga b, .ia-perm b { display: block; font-size: 13.5px; font-weight: 600; }
+.ia-liga small, .ia-perm small {
+  display: block; font-size: 11.5px; color: var(--paper-dim);
+  line-height: 1.45; margin-top: 1px;
+}
+/* O interruptor mestre pesa mais que as permissões: ele governa todas elas */
+.ia-liga { background: var(--ink-3); border-color: var(--line-strong); }
+.ia-liga b { font-size: 14.5px; }
+
+/* ---------- A lista de conversas ---------- */
+.ia-item {
+  width: 100%; text-align: left; font-family: var(--font-body);
+  display: flex; align-items: center; justify-content: space-between; gap: var(--e3);
+  padding: var(--e3) var(--e4); margin-bottom: var(--e2);
+  background: var(--ink-2); border: 1px solid var(--line);
+  border-radius: var(--radius); cursor: pointer; color: var(--paper);
+  transition: border-color .15s ease, transform .12s ease;
+}
+.ia-item:hover { border-color: var(--line-strong); }
+.ia-item:active { transform: scale(.99); }
+.ia-item-txt { min-width: 0; }
+.ia-item-txt b {
+  display: block; font-size: 13.5px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ia-item-txt small { display: block; font-size: 11.5px; color: var(--paper-dim); margin-top: 1px; }
+.ia-item .chev { color: var(--paper-faint); flex: none; }
+.ia-item .chev svg { width: 16px; height: 16px; }
+
+/* ---------- O cabeçalho da conversa ---------- */
+.ia-voltar {
+  width: 36px; height: 36px; border-radius: var(--radius-sm); flex: none;
+  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper-dim);
+  cursor: pointer; display: grid; place-items: center;
+}
+.ia-voltar:hover { color: var(--paper); border-color: var(--line-strong); }
+.ia-titulo {
+  flex: 1; min-width: 0; font-size: 15px; font-weight: 600; letter-spacing: -.02em;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ---------- O fluxo ----------
+   Altura limitada e rolagem própria: o cabeçalho e a barra de escrever ficam
+   parados, e só o meio anda. `overscroll-behavior` impede que rolar até o fim
+   da conversa continue rolando a página atrás da folha. */
+.ia-fluxo {
+  max-height: min(58dvh, 520px);
+  overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column; gap: var(--e4);
+  padding: var(--e2) 0 var(--e4);
+}
+.ia-turno { display: flex; flex-direction: column; gap: var(--e2); }
+
+/* A pergunta é da pessoa: alinhada à direita, em bloco tingido — a convenção de
+   bolha que todo mundo já lê sem explicação. */
+.ia-q {
+  align-self: flex-end; max-width: 85%;
+  background: var(--gold-soft); color: var(--gold-ink);
+  border: 1px solid var(--gold-borda);
+  padding: var(--e2) var(--e3); border-radius: var(--radius) var(--radius) var(--radius-sm) var(--radius);
+  font-size: 13.5px; line-height: 1.5;
+}
+/* A resposta é do app: largura inteira, sem bolha. Ela costuma trazer números
+   em coluna, e uma bolha estreita os quebraria. */
+.ia-r { font-size: 14px; line-height: 1.62; color: var(--paper); }
+.ia-r p { margin: 0 0 var(--e2); }
+.ia-r p:last-child { margin-bottom: 0; }
+.ia-r ul { margin: 0 0 var(--e2); padding-left: var(--e5); }
+.ia-r li { margin-bottom: var(--e1); }
+.ia-r b { font-weight: 600; }
+
+.ia-erro {
+  font-size: 13px; color: var(--red-ink);
+  background: var(--red-soft); border: 1px solid var(--red-borda);
+  padding: var(--e2) var(--e3); border-radius: var(--radius-sm);
+}
+
+/* ---------- Enquanto ele pensa ----------
+   Os três pontos dizem "estou trabalhando"; o texto ao lado diz O QUE está
+   sendo consultado. É a transparência que a tela de permissões promete — a
+   pessoa vê "olhando as categorias…" e sabe que foi só isso que saiu daqui. */
+.ia-pensando {
+  display: flex; align-items: center; gap: var(--e2);
+  font-size: 12.5px; color: var(--paper-dim);
+}
+.ia-pensando i {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--paper-faint);
+  animation: iaPulso 1.2s ease-in-out infinite;
+}
+.ia-pensando i:nth-child(2) { animation-delay: .15s; }
+.ia-pensando i:nth-child(3) { animation-delay: .3s; }
+@keyframes iaPulso { 0%, 60%, 100% { opacity: .3; } 30% { opacity: 1; } }
+
+/* ---------- A tela vazia ---------- */
+.ia-vazio { padding: var(--e4) 0; }
+.ia-vazio p { font-size: 13.5px; color: var(--paper-dim); margin-bottom: var(--e3); }
+.ia-sugestoes { display: flex; flex-wrap: wrap; gap: var(--e2); }
+.ia-sug {
+  font-family: var(--font-body); font-size: 12.5px; font-weight: 500;
+  background: var(--ink-3); border: 1px solid var(--line); color: var(--paper);
+  padding: var(--e2) var(--e3); border-radius: var(--radius-pill); cursor: pointer;
+  text-align: left;
+}
+.ia-sug:hover { border-color: var(--gold); color: var(--gold-ink); }
+
+/* ---------- A barra de escrever ---------- */
+.ia-barra {
+  display: flex; gap: var(--e2); align-items: center;
+  padding-top: var(--e3); border-top: 1px solid var(--line);
+}
+.ia-barra input { flex: 1; min-width: 0; border-radius: var(--radius-pill); }
+.ia-enviar {
+  width: 44px; height: 44px; border-radius: 50%; flex: none; border: none;
+  background: var(--gold); color: var(--gold-contraste);
+  display: grid; place-items: center; cursor: pointer;
+  transition: background .16s ease, transform .12s ease;
+}
+.ia-enviar svg { width: 20px; height: 20px; }
+.ia-enviar:hover { background: var(--gold-ink); }
+.ia-enviar:active { transform: scale(.94); }
+.ia-enviar:disabled { opacity: .45; cursor: default; transform: none; }
+
 /* Aviso em bloco dentro de folhas e modais */
 .callout {
   border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 10px;

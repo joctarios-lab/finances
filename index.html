@@ -22,8 +22,8 @@
 <!-- CSS da propria ApexCharts. O .min.js NAO o injeta: sem ele a dica de valor
      perde a caixa e o ancoramento (.apexcharts-canvas{position:relative}) e voa
      para o canto da pagina. Vem ANTES do nosso, para o nosso poder sobrepor. -->
-<link rel="stylesheet" href="vendor/apexcharts.css?v=156">
-<link rel="stylesheet" href="css/styles.css?v=156">
+<link rel="stylesheet" href="vendor/apexcharts.css?v=157">
+<link rel="stylesheet" href="css/styles.css?v=157">
 <script>
   /* TEMA ANTES DA PRIMEIRA PINTURA.
 
@@ -96,6 +96,10 @@
           <button class="icon-btn only-desk" id="btn-ofx" title="Importar extrato OFX" aria-label="Importar extrato OFX"><span data-ico="download"></span></button>
           <!-- aria-pressed: o botão é um interruptor, e sem ele um leitor de tela
                anuncia "botão ocultar valores" sem dizer se já estão ocultos. -->
+          <!-- O ASSISTENTE, quando ligado. Fica escondido por padrão: quem não
+               configurou não vê botão nenhum, e o app segue idêntico ao de
+               sempre. Quem o revela é pintarBotaoIA(), no boot. -->
+          <button class="icon-btn" id="btn-ia" title="Assistente" aria-label="Assistente" hidden><span data-ico="sparkles"></span></button>
           <button class="icon-btn" id="btn-privacidade" title="Ocultar valores" aria-label="Ocultar valores" aria-pressed="false"><span data-ico="eye"></span></button>
           <!-- O ESTADO DA SINCRONIZAÇÃO MORA NO AVATAR.
 
@@ -150,18 +154,19 @@
      quem usa leitor de tela tenta salvar, o formulário não fecha e nada é dito. -->
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
-<script src="js/config.js?v=156"></script>
+<script src="js/config.js?v=157"></script>
 <!-- ApexCharts v3.54.1 (MIT), vendorizado: o app e offline-first e CDN quebraria
      o uso sem rede. Vem antes de app.js, que o usa ao desenhar. -->
-<script src="vendor/apexcharts.min.js?v=156"></script>
-<script src="js/icons.js?v=156"></script>
-<script src="js/ui.js?v=156"></script>
-<script src="js/graficos.js?v=156"></script>
-<script src="js/ofx.js?v=156"></script>
-<script src="js/db.js?v=156"></script>
-<script src="js/sync.js?v=156"></script>
-<script src="js/auth.js?v=156"></script>
-<script src="js/app.js?v=156"></script>
+<script src="vendor/apexcharts.min.js?v=157"></script>
+<script src="js/icons.js?v=157"></script>
+<script src="js/ui.js?v=157"></script>
+<script src="js/graficos.js?v=157"></script>
+<script src="js/ofx.js?v=157"></script>
+<script src="js/db.js?v=157"></script>
+<script src="js/sync.js?v=157"></script>
+<script src="js/ia.js?v=157"></script>
+<script src="js/auth.js?v=157"></script>
+<script src="js/app.js?v=157"></script>
 <script>
   if ('serviceWorker' in navigator) {
     /* REGISTRAR NÃO BASTA NUM APP INSTALADO: o navegador só procura versão nova em uma

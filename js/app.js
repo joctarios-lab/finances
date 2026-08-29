@@ -8297,6 +8297,7 @@ function openConfig() {
     ${item('backup', 'upload', 'Backup', 'exportar ou importar um arquivo JSON')}
 
     <p class="cfg-grupo">O app</p>
+    ${item('ia', 'sparkles', 'Assistente', IA.load().ligado ? (IA.algoAutorizado() ? 'ligado' : 'ligado, mas sem nada autorizado') : 'desligado')}
     ${item('tema', Tema.atual() === 'light' ? 'sun' : 'moon', 'Aparência', Tema.rotulo())}
     ${item('notif', 'bell', 'Notificações', Notif.enabled() ? 'ativas — faturas, orçamentos e metas' : 'desativadas')}
     ${item('security', 'shield', 'Segurança', Auth.enabled() ? 'PIN ativo · bloqueia após ' + (Auth.cfg.lockAfterMin ?? 5) + ' min' : 'sem proteção local')}
@@ -8725,6 +8726,102 @@ function openConfigSection(sec) {
   if (sec === 'sync') openSyncConfig();
 
   if (sec === 'ofx') openOfxImport();
+
+  if (sec === 'ia') {
+    /* ---------- CONFIGURAÇÕES DO ASSISTENTE ----------
+
+       A tela é uma escada de consentimento, e a ordem importa: primeiro ligar,
+       depois escolher o que ele vê. Ligado sem nenhuma permissão, o assistente
+       existe mas não consegue responder nada — e a tela diz isso, em vez de
+       deixar a pessoa descobrir na primeira pergunta.
+
+       TUDO COMEÇA DESLIGADO. Sem ligar, o app é exatamente o de antes: o botão
+       de conversa não aparece em lugar nenhum. */
+    const desenhar = () => {
+      const c = IA.load();
+      const temNuvem = Sync.hasFamily();
+      const kb = Math.round(IA.tamanhoDoHistorico() / 1024);
+      const nConversas = IA.conversas().length;
+
+      const permissao = (chave, titulo, sub) => `
+        <label class="ia-perm">
+          <input type="checkbox" data-perm="${chave}" ${c.ver[chave] ? 'checked' : ''}>
+          <span><b>${titulo}</b><small>${sub}</small></span>
+        </label>`;
+
+      openModal(`
+        <div class="modal-title">Assistente<button class="close-x" id="md-back" aria-label="Voltar"><span data-ico="back"></span></button></div>
+
+        ${!temNuvem ? `
+          <div class="callout warn">
+            <b>Precisa da sincronização</b>
+            <p>O assistente conversa através do seu projeto no Supabase, que é onde a chave fica guardada. Configure a sincronização primeiro.</p>
+          </div>
+          <button class="btn ghost" id="ia-ir-sync">Ir para Sincronização</button>
+        ` : `
+          <p class="muted" style="margin-bottom:var(--e4)">Um assistente que responde sobre as suas contas — quanto sobra, para onde foi o dinheiro, como o mês fecha, e o que muda se você cortar um gasto. Ele consulta os números pelo próprio app: <b>nada é calculado por fora</b>.</p>
+
+          <label class="ia-liga">
+            <input type="checkbox" id="ia-ligado" ${c.ligado ? 'checked' : ''}>
+            <span><b>Usar o assistente</b><small>${c.ligado ? 'o botão de conversa aparece no topo' : 'desligado, o app fica exatamente como está'}</small></span>
+          </label>
+
+          <div id="ia-detalhe" ${c.ligado ? '' : 'hidden'}>
+            <p class="section-title" style="margin:var(--e5) 0 var(--e2)">O que ele pode consultar</p>
+            <p class="muted" style="margin-bottom:var(--e3)">Ele só enxerga o que estiver marcado aqui, e recebe o número já somado — não o seu banco. Desmarcado, ele nem sabe que o dado existe.</p>
+
+            ${permissao('situacao', 'Saldos e disponível', 'quanto existe, quanto está comprometido, quanto sobra')}
+            ${permissao('categorias', 'Gastos por categoria', 'quanto foi para cada envelope, sem citar lançamento')}
+            ${permissao('previsao', 'Projeções e contas fixas', 'como o mês fecha, os próximos meses, simulações')}
+            ${permissao('cartoes', 'Cartões e faturas', 'fatura aberta, limite usado, vencimento')}
+            ${permissao('metas', 'Metas e reserva', 'quanto guardado, ritmo, meses de cobertura')}
+            ${permissao('lancamentos', 'Lançamentos', 'a lista com descrição — o dado mais detalhado que existe')}
+            ${permissao('criancas', 'Cofrinho das crianças', 'saldo dos potes e semanada de cada uma')}
+
+            <div class="callout info" style="margin-top:var(--e4)">
+              <b>O que sai do aparelho</b>
+              <p>Só o que a pergunta exigir, e só do que está marcado. As conversas ficam <b>neste aparelho</b>, cifradas com o seu PIN — elas não sincronizam com a família.</p>
+            </div>
+
+            <p class="section-title" style="margin:var(--e5) 0 var(--e2)">Conversas guardadas</p>
+            <p class="muted" style="margin-bottom:var(--e3)">${nConversas
+              ? `${nConversas} conversa(s), ocupando ${kb} KB. Ficam as ${IA.MAX_CONVERSAS} mais recentes; as antigas saem sozinhas.`
+              : 'Nenhuma conversa ainda.'}</p>
+            ${nConversas ? '<button class="btn danger" id="ia-limpar">Apagar todas as conversas</button>' : ''}
+          </div>
+        `}
+      `);
+      $('#md-back').onclick = openConfig;
+
+      const irSync = $('#ia-ir-sync');
+      if (irSync) irSync.onclick = () => openConfigSection('sync');
+
+      const liga = $('#ia-ligado');
+      if (liga) liga.onchange = () => {
+        IA.cfg.ligado = liga.checked;
+        IA.save();
+        pintarBotaoIA();
+        desenhar();
+      };
+
+      document.querySelectorAll('#modal [data-perm]').forEach(el => {
+        el.onchange = () => {
+          IA.cfg.ver[el.dataset.perm] = el.checked;
+          IA.save();
+        };
+      });
+
+      const limpar = $('#ia-limpar');
+      if (limpar) limpar.onclick = () => {
+        if (!confirm('Apagar todas as conversas com o assistente? Isso não afeta seus lançamentos.')) return;
+        DB.data.ia_chats = [];
+        DB.save();
+        toast('Conversas apagadas ✓');
+        desenhar();
+      };
+    };
+    return desenhar();
+  }
 
   if (sec === 'notif') {
     openModal(`
@@ -9952,6 +10049,236 @@ const Voltar = {
   },
 };
 
+/* ---------- A CONVERSA COM O ASSISTENTE ----------
+
+   Mora numa folha, como todo diálogo do app. A lista de conversas e a conversa
+   aberta são a MESMA folha em dois estados: abrir uma conversa não empilha
+   telas, troca o conteúdo — é o que evita o modal-dentro-de-modal que já
+   deixou as Configurações confusas.
+
+   O BOTÃO só existe quando o assistente está ligado. Ele fica no header, ao
+   lado do olho: é o lugar de ferramenta global, presente em toda tela, e é o
+   único canto do app que não disputa espaço com a barra de baixo — que já
+   carrega quatro abas e o botão de lançar. */
+let iaConversaAberta = null;
+
+function pintarBotaoIA() {
+  const btn = $('#btn-ia');
+  if (!btn) return;
+  const mostra = typeof IA !== 'undefined' && IA.disponivel();
+  btn.hidden = !mostra;
+}
+
+function openIAChat(conversaId) {
+  if (!IA.disponivel()) return openConfigSection('ia');
+
+  /* Sem nada autorizado, o assistente não consegue responder nada. Melhor dizer
+     isso aqui, com o caminho para resolver, do que deixar a pessoa perguntar e
+     receber uma recusa. */
+  if (!IA.algoAutorizado()) {
+    openSheet(`
+      <div class="sheet-title">Assistente<button class="close-x" id="ia-x" aria-label="Fechar"><span data-ico="x"></span></button></div>
+      <div class="callout info">
+        <b>Falta autorizar o que ele pode ver</b>
+        <p>O assistente está ligado, mas não tem permissão para consultar nenhum dado — então não conseguiria responder nada.</p>
+      </div>
+      <button class="btn" id="ia-cfg">Escolher o que ele pode ver</button>
+    `);
+    $('#ia-x').onclick = closeSheet;
+    $('#ia-cfg').onclick = () => { closeSheet(); openConfigSection('ia'); };
+    return;
+  }
+
+  iaConversaAberta = conversaId || null;
+  desenharIAChat();
+}
+
+function desenharIAChat() {
+  const c = iaConversaAberta ? IA.conversa(iaConversaAberta) : null;
+  openSheet(c ? corpoDaConversa(c) : corpoDaListaIA());
+  ligarIAChat();
+}
+
+/* A lista: as conversas guardadas, da mais recente para a mais antiga. É a tela
+   de entrada quando não há conversa aberta. */
+function corpoDaListaIA() {
+  const lista = IA.conversas().filter(c => c.turnos.length);
+  return `
+    <div class="sheet-title">Assistente<button class="close-x" id="ia-x" aria-label="Fechar"><span data-ico="x"></span></button></div>
+    <button class="btn" id="ia-nova"><span data-ico="plus"></span> Nova conversa</button>
+    ${lista.length ? `
+      <p class="section-title" style="margin:var(--e5) 0 var(--e2)">Conversas anteriores</p>
+      ${lista.map(c => `
+        <button class="ia-item" data-abrir="${c.id}">
+          <span class="ia-item-txt">
+            <b>${esc(c.titulo || 'Conversa')}</b>
+            <small>${c.turnos.length} pergunta(s) · ${fmtDay(String(c.tocada).slice(0, 10))}</small>
+          </span>
+          <span class="chev" data-ico="chev"></span>
+        </button>`).join('')}
+    ` : `
+      <p class="muted" style="margin-top:var(--e4)">Pergunte sobre os seus números: como o mês fecha, para onde foi o dinheiro, o que muda se você cortar um gasto.</p>
+    `}
+  `;
+}
+
+function corpoDaConversa(c) {
+  const turnos = c.turnos.map(t => `
+    <div class="ia-turno">
+      <div class="ia-q">${esc(t.q)}</div>
+      <div class="ia-r">${formatarResposta(t.r)}</div>
+    </div>`).join('');
+
+  return `
+    <div class="sheet-title">
+      <button class="ia-voltar" id="ia-lista" aria-label="Todas as conversas"><span data-ico="back"></span></button>
+      <span class="ia-titulo">${esc(c.titulo || 'Nova conversa')}</span>
+      <button class="close-x" id="ia-x" aria-label="Fechar"><span data-ico="x"></span></button>
+    </div>
+    <div class="ia-fluxo" id="ia-fluxo">
+      ${turnos || `<div class="ia-vazio">
+        <p>Pergunte o que quiser sobre as suas contas.</p>
+        <div class="ia-sugestoes">
+          <button class="ia-sug">Como fecha este mês?</button>
+          <button class="ia-sug">Para onde foi meu dinheiro?</button>
+          <button class="ia-sug">Quanto posso gastar hoje sem apertar?</button>
+          <button class="ia-sug">E se eu cortar R$ 300 por mês?</button>
+        </div>
+      </div>`}
+      <div class="ia-pensando" id="ia-pensando" hidden>
+        <i></i><i></i><i></i><span id="ia-passo">consultando…</span>
+      </div>
+    </div>
+    <div class="ia-barra">
+      <input id="ia-campo" placeholder="Pergunte sobre suas contas…" autocomplete="off" enterkeyhint="send">
+      <button class="ia-enviar" id="ia-enviar" aria-label="Enviar"><span data-ico="chevR"></span></button>
+    </div>
+  `;
+}
+
+/* A resposta vem em texto. Aqui ela vira HTML seguro: o escape é feito ANTES de
+   qualquer marcação, então nada que o modelo escreva pode injetar tag. Depois
+   disso, só duas convenções sobrevivem — negrito e lista —, que são as que ele
+   usa para destacar um número e enumerar itens. */
+function formatarResposta(txt) {
+  const seguro = esc(String(txt || ''));
+  return seguro
+    .split(/\n{2,}/)
+    .map(bloco => {
+      const linhas = bloco.split('\n');
+      if (linhas.every(l => /^\s*[-*]\s+/.test(l))) {
+        return '<ul>' + linhas.map(l => `<li>${negrito(l.replace(/^\s*[-*]\s+/, ''))}</li>`).join('') + '</ul>';
+      }
+      return `<p>${negrito(linhas.join('<br>'))}</p>`;
+    })
+    .join('');
+}
+function negrito(s) { return s.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>'); }
+
+function ligarIAChat() {
+  const x = $('#ia-x');
+  if (x) x.onclick = closeSheet;
+
+  const nova = $('#ia-nova');
+  if (nova) nova.onclick = () => { iaConversaAberta = IA.novaConversa().id; desenharIAChat(); };
+
+  const voltar = $('#ia-lista');
+  if (voltar) voltar.onclick = () => { iaConversaAberta = null; desenharIAChat(); };
+
+  document.querySelectorAll('#sheet [data-abrir]').forEach(el => {
+    el.onclick = () => { iaConversaAberta = el.dataset.abrir; desenharIAChat(); };
+  });
+
+  document.querySelectorAll('#sheet .ia-sug').forEach(b => {
+    b.onclick = () => { const campo = $('#ia-campo'); campo.value = b.textContent; enviarIA(); };
+  });
+
+  const enviar = $('#ia-enviar');
+  if (enviar) enviar.onclick = enviarIA;
+
+  const campo = $('#ia-campo');
+  if (campo) {
+    campo.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); enviarIA(); } };
+    setTimeout(() => campo.focus(), 60);
+  }
+  rolarIAFim();
+}
+
+function rolarIAFim() {
+  const f = $('#ia-fluxo');
+  if (f) f.scrollTop = f.scrollHeight;
+}
+
+async function enviarIA() {
+  const campo = $('#ia-campo');
+  const pergunta = (campo && campo.value || '').trim();
+  if (!pergunta) return;
+
+  if (!iaConversaAberta) iaConversaAberta = IA.novaConversa().id;
+
+  campo.value = '';
+  campo.disabled = true;
+  const enviar = $('#ia-enviar');
+  if (enviar) enviar.disabled = true;
+
+  /* A pergunta entra na tela ANTES da resposta chegar. Sem isso, o texto some
+     do campo e nada aparece por vários segundos — parece que o toque falhou. */
+  const fluxo = $('#ia-fluxo');
+  const vazio = fluxo && fluxo.querySelector('.ia-vazio');
+  if (vazio) vazio.remove();
+  const bloco = document.createElement('div');
+  bloco.className = 'ia-turno';
+  bloco.innerHTML = `<div class="ia-q">${esc(pergunta)}</div>`;
+  const pensando = $('#ia-pensando');
+  if (fluxo && pensando) fluxo.insertBefore(bloco, pensando);
+  if (pensando) pensando.hidden = false;
+  rolarIAFim();
+
+  /* Dizer QUAL dado está sendo consultado, enquanto consulta. É a transparência
+     que a tela de permissões promete: a pessoa vê o assistente pedindo "gastos
+     por categoria" e sabe que foi só isso que saiu. */
+  const rotulos = {
+    situacao_financeira: 'vendo seus saldos…',
+    resumo_do_mes: 'somando o mês…',
+    gastos_por_categoria: 'olhando as categorias…',
+    projecao_do_mes: 'projetando o fim do mês…',
+    proximos_meses: 'olhando os próximos meses…',
+    contas_fixas: 'listando as contas fixas…',
+    cartoes_e_faturas: 'conferindo as faturas…',
+    metas_e_reserva: 'vendo metas e reserva…',
+    lancamentos: 'procurando nos lançamentos…',
+    cofrinho_das_criancas: 'vendo o cofrinho…',
+    simular_cenario: 'simulando…',
+  };
+
+  try {
+    const r = await IA.perguntarNaConversa(iaConversaAberta, pergunta, nome => {
+      const p = $('#ia-passo');
+      if (p) p.textContent = rotulos[nome] || 'consultando…';
+    });
+    if (pensando) pensando.hidden = true;
+    const resp = document.createElement('div');
+    resp.className = 'ia-r';
+    resp.innerHTML = formatarResposta(r.texto);
+    bloco.appendChild(resp);
+    // O título só existe depois da primeira pergunta: atualiza o cabeçalho
+    const tit = $('#sheet .ia-titulo');
+    const conv = IA.conversa(iaConversaAberta);
+    if (tit && conv && conv.titulo) tit.textContent = conv.titulo;
+  } catch (e) {
+    if (pensando) pensando.hidden = true;
+    const err = document.createElement('div');
+    err.className = 'ia-erro';
+    err.textContent = e.message || 'Não consegui responder agora.';
+    bloco.appendChild(err);
+  } finally {
+    campo.disabled = false;
+    if (enviar) enviar.disabled = false;
+    campo.focus();
+    rolarIAFim();
+  }
+}
+
 /* ---------- Boot ---------- */
 Sync.onStatus = (msg, ok = true) => {
   const el = $('#sync-status');
@@ -9970,6 +10297,7 @@ $('#side-lock').onclick = () => Auth.lockNow();
    Nada de lógica nova: são as mesmas funções que a lista de ajustes chama. */
 $('#btn-perfil').onclick = openConfig;
 $('#btn-ofx').onclick = () => openOfxImport();
+$('#btn-ia').onclick = () => openIAChat();
 $('#side-recorrencias').onclick = () => openRecorrencias();
 $('#side-criancas').onclick = () => openCriancas();
 
@@ -10069,11 +10397,13 @@ function refreshUserChip() {
   if (topo) topo.textContent = inicial;
 }
 refreshUserChip();
+pintarBotaoIA();
 paintIcons();   // ícones do shell estático (sidebar, topbar, tabbar)
 
 window.addEventListener('beforeunload', persistUI);
 
 Notif.load();
+IA.load();
 UI.init();
 Voltar.init();
 restoreUI();

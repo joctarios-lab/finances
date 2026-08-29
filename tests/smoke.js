@@ -90,6 +90,10 @@ eval(fs.readFileSync(BASE + 'js/ofx.js', 'utf8') + '; global.OFX = OFX;');
    ambiente headless, montar() é no-op de propósito: o que continua sob teste é a
    configuração que cada gráfico produz — a matemática do dinheiro — não o pixel. */
 eval(fs.readFileSync(BASE + 'js/graficos.js', 'utf8') + '; global.Graficos = Graficos;');
+/* O assistente. Carregado antes do app porque a lista de Configurações lê o
+   estado dele para dizer se está ligado. Nenhum teste aqui chama a API — o que
+   se testa são as ferramentas sobre o DB, que rodam locais, e as permissões. */
+eval(fs.readFileSync(BASE + 'js/ia.js', 'utf8') + '; global.IA = IA;');
 
 /* Com ApexCharts o gráfico não é mais HTML inspecionável: a função devolve um
    <div> vazio e enfileira a CONFIGURAÇÃO. Então é a configuração que os testes
@@ -4355,6 +4359,127 @@ console.log('\n=== Retorno ao usuário ===');
   check('tema claro define os dois tokens', !!(claro.dim && claro.fundo), true);
   check('texto secundário passa no AA (escuro)', contraste(escuro.dim, escuro.fundo) >= 4.5, true);
   check('texto secundário passa no AA (claro)', contraste(claro.dim, claro.fundo) >= 4.5, true);
+}
+
+console.log('\n=== O assistente: permissões e ferramentas ===');
+{
+  const iaSrc = fs.readFileSync(BASE + 'js/ia.js', 'utf8');
+  const apIA = fs.readFileSync(BASE + 'js/app.js', 'utf8');
+  const idxIA = fs.readFileSync(BASE + 'index.html', 'utf8');
+
+  /* ---- Desligado, o app é o de antes ----
+     A promessa central: quem não configurou não vê nada de IA em lugar nenhum. */
+  IA.cfg = IA.padrao();
+  check('nasce desligado', IA.cfg.ligado, false);
+  check('e sem nenhuma permissão', Object.values(IA.cfg.ver).some(Boolean), false);
+  check('desligado, não está disponível', IA.disponivel(), false);
+  check('o botão nasce escondido no HTML', /id="btn-ia"[^>]*hidden/.test(idxIA), true);
+  check('e só é revelado por pintarBotaoIA', /function pintarBotaoIA[\s\S]{0,320}IA\.disponivel\(\)/.test(apIA), true);
+
+  /* ---- A chave nunca chega ao navegador ---- */
+  /* Nenhum segredo DA ANTHROPIC no cliente. A `anonKey` do Supabase que aparece
+     aqui é outra coisa: ela é pública por projeto e já circula no app inteiro —
+     quem protege os dados lá é o login mais o RLS, não o sigilo dela. */
+  check('o app não guarda chave da Anthropic', /sk-ant|ANTHROPIC_API_KEY|x-api-key/i.test(iaSrc), false);
+  check('a chamada vai para a Edge Function', iaSrc.includes('/functions/v1/assistente'), true);
+  const fn = fs.readFileSync(BASE + 'supabase/functions/assistente/index.ts', 'utf8');
+  check('e é lá que a chave é lida dos secrets', fn.includes("Deno.env.get('ANTHROPIC_API_KEY')"), true);
+  check('o modelo é fixado no servidor, não pedido pelo cliente',
+    /const MODELO = 'claude-opus-5'/.test(fn) && !/corpo\.model/.test(fn), true);
+  check('a função exige quem está autenticado', fn.includes("startsWith('Bearer ')"), true);
+
+  /* ---- Sem permissão, a ferramenta não é nem oferecida ---- */
+  IA.cfg.ligado = true;
+  check('nada autorizado ainda', IA.algoAutorizado(), false);
+  check('nenhuma ferramenta é oferecida', IA.ferramentasAutorizadas().length, 0);
+
+  IA.cfg.ver.situacao = true;
+  const oferecidas = IA.ferramentasAutorizadas().map(f => f.name);
+  check('com "situação" ligada, ela aparece', oferecidas.includes('situacao_financeira'), true);
+  check('mas os lançamentos não', oferecidas.includes('lancamentos'), false);
+  check('nem o cofrinho', oferecidas.includes('cofrinho_das_criancas'), false);
+
+  /* ---- E, mesmo pedida pelo nome, não roda ----
+     O modelo pode inventar um nome de ferramenta. O app não obedece: a permissão
+     é conferida de novo na hora de executar. */
+  const roubo = IA.executar('lancamentos', { mes: 0 });
+  check('pedir uma ferramenta não autorizada é recusado', !!roubo.erro, true);
+  check('e a recusa diz o motivo', /permiss/i.test(roubo.erro), true);
+  check('ferramenta inexistente também é recusada', !!IA.executar('formatar_disco', {}).erro, true);
+
+  /* ---- As ferramentas devolvem o número do app, não uma conta nova ---- */
+  const sit = IA.executar('situacao_financeira', {});
+  check('a situação vem sem erro', !sit.erro, true);
+  check('e o disponível é o mesmo do app',
+    Math.abs(sit.disponivel_para_gastar - DB.available()) < 0.011, true);
+  check('o em-conta também', Math.abs(sit.em_conta - DB.accountsTotal()) < 0.011, true);
+
+  IA.cfg.ver.categorias = true;
+  const cats = IA.executar('gastos_por_categoria', { mes: 0 });
+  check('categorias devolve uma lista', Array.isArray(cats), true);
+  check('ordenada do maior para o menor',
+    cats.every((c, i) => i === 0 || cats[i - 1].gasto >= c.gasto), true);
+  check('e sem nenhuma descrição de lançamento',
+    JSON.stringify(cats).includes('descricao'), false);
+
+  /* A simulação NÃO grava: é a diferença entre responder "e se" e mexer na vida
+     financeira de alguém sem pedir. */
+  IA.cfg.ver.previsao = true;
+  const antes = DB.all('transactions').length;
+  const sim = IA.executar('simular_cenario', { variacao_mensal: -300, meses: 3, descricao: 'academia' });
+  check('a simulação responde', !sim.erro, true);
+  check('e não cria lançamento nenhum', DB.all('transactions').length, antes);
+  check('nem grava recorrência', DB.all('recurrences').length, DB.all('recurrences').length);
+  check('a resposta avisa que nada foi gravado', /nada foi gravado/i.test(sim.observacao), true);
+
+  /* ---- O teto dos lançamentos ----
+     Um mês grande não pode ir inteiro para o modelo: custa caro e o agregado já
+     responde o que quase toda pergunta pede. */
+  IA.cfg.ver.lancamentos = true;
+  const lanc = IA.executar('lancamentos', { mes: 0 });
+  check('lançamentos agora é permitido', Array.isArray(lanc), true);
+  check('e vem com teto de itens', lanc.length <= 80, true);
+
+  /* ---- O histórico ---- */
+  DB.data.ia_chats = [];
+  const c1 = IA.novaConversa();
+  check('conversa nova começa vazia', c1.turnos.length, 0);
+  IA.gravarTurno(c1.id, 'Quanto sobra este mês?', 'Sobram R$ 1.031,55.');
+  check('o turno é gravado', IA.conversa(c1.id).turnos.length, 1);
+  check('e o título sai da primeira pergunta', IA.conversa(c1.id).titulo, 'Quanto sobra este mês?');
+
+  /* O que NÃO fica guardado é a parte pesada e a que envelhece: os resultados de
+     ferramenta. Retomar uma conversa antiga com saldos antigos colados daria
+     resposta sobre um mês que já passou. */
+  check('só texto é guardado, sem blocos de ferramenta',
+    /tool_use|tool_result/.test(JSON.stringify(DB.data.ia_chats)), false);
+  const ctx = IA.contextoDe(IA.conversa(c1.id));
+  check('o contexto de retomada é pergunta e resposta', ctx.length, 2);
+  check('e vem no formato da API', ctx[0].role === 'user' && ctx[1].role === 'assistant', true);
+
+  // Os tetos: sem eles, um ano de uso encheria o localStorage
+  for (let i = 0; i < IA.MAX_TURNOS + 10; i++) IA.gravarTurno(c1.id, 'p' + i, 'r' + i);
+  check('os turnos antigos caem', IA.conversa(c1.id).turnos.length, IA.MAX_TURNOS);
+  check('e ficam os mais recentes',
+    IA.conversa(c1.id).turnos.slice(-1)[0].q, 'p' + (IA.MAX_TURNOS + 9));
+
+  for (let i = 0; i < IA.MAX_CONVERSAS + 5; i++) {
+    const c = IA.novaConversa();
+    IA.gravarTurno(c.id, 'conversa ' + i, 'ok');
+  }
+  check('as conversas antigas também caem', IA.conversas().length <= IA.MAX_CONVERSAS, true);
+  check('o contexto de retomada é curto', IA.MAX_CONTEXTO <= 10, true);
+
+  /* ---- Não sincroniza ----
+     Conversa é do aparelho. Mandá-la para a nuvem exporia texto sobre a vida
+     financeira da família sem necessidade e inflaria todo pull. */
+  const syncSrc = fs.readFileSync(BASE + 'js/sync.js', 'utf8');
+  check('ia_chats não está nas tabelas de sincronização', /ia_chats/.test(syncSrc), false);
+  check('mas está nas stores do DB, para herdar a criptografia',
+    /STORES = \[[\s\S]*?'ia_chats'/.test(fs.readFileSync(BASE + 'js/db.js', 'utf8')), true);
+
+  DB.data.ia_chats = [];
+  IA.cfg = IA.padrao();
 }
 
 console.log('\n=== Tema, privacidade e o header ===');
