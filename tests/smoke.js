@@ -10249,16 +10249,34 @@ check('função is_member definida antes das policies', schema.indexOf('function
     const guardadoMetasHojeT = metasAtivas.reduce((s, g) => s + Math.max(0, DB.goalTotal(g.id)), 0);
     const guardadoMetasFimT = guardadoMetasHojeT + DB.aportesAgendadosAte(fimPT);
 
-    /* APORTE VENCIDO NÃO CONTA como guardado ao fim: ele não aconteceu, e afirmá-lo
-       contradiria a fila de pendências do Painel, que ainda está cobrando por ele. */
+    /* APORTE VENCIDO CONTA no guardado ao FIM — e esta expectativa foi INVERTIDA.
+
+       Antes ele ficava de fora, com o argumento de que não tinha acontecido e de
+       que a fila de pendências ainda o cobrava. O argumento confundia duas
+       perguntas, e produzia um defeito relatado: um aporte agendado para ontem e
+       não confirmado sumia do "guardado previsto" no mês corrente e em todos os
+       seguintes, como se tivesse sido cancelado.
+
+       E era incoerente com a regra que o próprio app aplica às contas, escrita em
+       previstoPorDia: "vencido e não pago entra também: é dinheiro que ainda vai
+       sair". Conta vencida entrava na projeção do saldo; aporte vencido não
+       entrava na do guardado.
+
+       A distinção que importa continua valendo, e é a de baixo: guardado() é
+       AGORA e segue ignorando o que não aconteceu; guardadoPrevisto(fim) é o fim
+       do período, e um aporte por confirmar pertence a ele. */
+    const guardadoAgora = DB.guardado();
     const metaVenc = DB.upsert('goals', { name: 'Meta Vencida', icon: '🎯', kind: 'Objetivo', target_amount: 5000 });
     const eVenc = DB.upsert('goal_entries', {
       goal_id: metaVenc, amount: 999, description: 'Aporte VENCIDO',
       date: somarDias(todayISO(), -3), from_account: cHero.id, to_account: cHero2.id, status: 'A Pagar',
     });
-    check('aporte agendado e vencido não entra no guardado do fim',
-      Math.round(DB.guardadoPrevisto(fimPT)), Math.round(guardadoFimT));
-    check('  mas ele existe e está sendo cobrado na fila',
+    check('aporte agendado e vencido entra no guardado do FIM',
+      Math.round(DB.guardadoPrevisto(fimPT)), Math.round(guardadoFimT + 999));
+    /* Mas não no de AGORA: o dinheiro ainda não foi separado. É esta linha que
+       impede a correção de virar o erro oposto. */
+    check('  e não no guardado de hoje', Math.round(DB.guardado()), Math.round(guardadoAgora));
+    check('  e ele continua sendo cobrado na fila',
       DB.pendencias(todayISO()).some(i => i.tipo === 'aporte' && i.id === eVenc), true);
     DB.remove('goal_entries', eVenc); DB.remove('goals', metaVenc);
 

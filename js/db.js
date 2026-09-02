@@ -1652,14 +1652,21 @@ const DB = {
      planejou guardar R$ 3.400 no dia 3 quer saber que terá R$ 3.534 guardados no
      fim do mês, não os R$ 134 de hoje.
 
-     Só o que está À FRENTE. Aporte agendado e VENCIDO não entra: ele não
-     aconteceu, e contá-lo aqui afirmaria um fato que a própria fila de pendências
-     do Painel ainda está cobrando. */
+     TUDO QUE AINDA VAI ACONTECER, inclusive o que já venceu. É a mesma regra que
+     previstoPorDia aplica às contas — "vencido e não pago entra também: é dinheiro
+     que ainda vai sair" —, e antes ela valia só para um dos dois lados: conta
+     vencida entrava na projeção do saldo, aporte vencido não entrava na do
+     guardado. Um aporte agendado para ontem e não confirmado sumia do previsto, no
+     mês corrente e em todos os seguintes.
+
+     A distinção que importa continua de pé, e é outra: `guardado()` responde
+     "quanto tem plano AGORA" e segue ignorando o que não aconteceu; aqui a
+     pergunta é "quanto terá plano no fim do período", e um aporte que ainda vai
+     ser confirmado pertence a essa resposta — atrasado ou não. */
   aportesAgendadosAte(dataISO) {
-    const hoje = this.hojeISO();
     return this.all('goal_entries')
       .filter(e => !this.aportePago(e) && Number(e.amount) > 0
-        && String(e.date) >= hoje && String(e.date) < dataISO)
+        && String(e.date) < dataISO)
       .reduce((s, e) => s + (Number(e.amount) || 0), 0);
   },
   guardadoPrevisto(dataISO) { return this.guardado() + this.aportesAgendadosAte(dataISO); },
