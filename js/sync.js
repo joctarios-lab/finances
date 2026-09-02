@@ -44,7 +44,7 @@ const SYNC_TABLES = {
   accounts: ['name', 'type', 'institution', 'balance', 'active', 'is_reserve'],
   cards: ['name', 'brand', 'limit_amount', 'closing_day', 'due_day', 'account_id', 'active'],
   categories: ['name', 'icon', 'scope', 'monthly_budget', 'kind', 'parent_id', 'type'],
-  transactions: ['description', 'amount', 'date', 'scope', 'member', 'method', 'status', 'recurring', 'category_id', 'account_id', 'card_id', 'invoice_key', 'notes', 'type', 'fitid', 'group_id', 'installment', 'adjustment', 'tags', 'to_account', 'pays_invoice', 'recurrence_id', 'pontual', 'kid_id'],
+  transactions: ['description', 'amount', 'date', 'scope', 'member', 'method', 'status', 'recurring', 'category_id', 'account_id', 'card_id', 'invoice_key', 'notes', 'type', 'fitid', 'group_id', 'installment', 'adjustment', 'tags', 'to_account', 'pays_invoice', 'recurrence_id', 'pontual', 'kid_id', 'goal_entry_id'],
   goals: ['name', 'icon', 'target_amount', 'target_date', 'done', 'kind'],
   goal_entries: ['goal_id', 'description', 'amount', 'date', 'from_account', 'to_account', 'status'],
   invoice_status: ['invoice_key', 'paid'],
@@ -95,7 +95,7 @@ const COLUNAS = {
   dia: 'int#', fim_vezes: 'int', geradas: 'int#',
   inicio: 'date!', fim_data: 'date', ultima_geracao: 'date', period_start: 'date!',
   date: 'date!', target_date: 'date',
-  kid_id: 'uuid!', task_id: 'uuid', kid_goal_id: 'uuid',
+  kid_id: 'uuid!', task_id: 'uuid', kid_goal_id: 'uuid', goal_entry_id: 'uuid',
   /* kid_id é NOT NULL nas tabelas do cofrinho, onde todo registro é de uma
      criança. Em recurrences e transactions é o contrário: só o contrato e o
      lançamento da semanada a preenchem, e a marca global de obrigatório faria o

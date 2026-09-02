@@ -10522,7 +10522,44 @@ check('função is_member definida antes das policies', schema.indexOf('function
     const apAp = fs.readFileSync(BASE + 'js/app.js', 'utf8');
     check('a folha de aporte oferece a situação', /chipGroup\('a-status'/.test(apAp), true);
     check('  e grava o que foi escolhido', /const pago = chipValue\('a-status'\) !== 'A Pagar'/.test(apAp), true);
-    check('  só movendo saldo quando já aconteceu', /if \(pago\) \{[\s\S]{0,200}adjustBalance/.test(apAp), true);
+    /* UM MOVIMENTO, UM DONO DO EFEITO.
+
+       O aporte e a transferência gêmea são o MESMO dinheiro. Enquanto as duas
+       mexiam no saldo, qualquer toque posterior na gêmea — confirmar pela fila,
+       editar a data — aplicava o efeito outra vez, e a conta andava sozinha sem
+       nada no extrato para explicar. Foi assim que uma conta ficou R$ 6.600
+       abaixo do que os próprios lançamentos diziam.
+
+       Agora quem mexe no saldo é só a transferência. O aporte não chama
+       adjustBalance em caminho nenhum. */
+    check('  só movendo saldo quando já aconteceu', /if \(pago\) applyTxEffect\(/.test(apAp), true);
+    const folhaAporte = apAp.slice(apAp.indexOf('function openAporteSheet('), apAp.indexOf('function openGoalDetail('));
+    check('  e o aporte nunca mexe no saldo direto', /adjustBalance\(/.test(folhaAporte), false);
+
+    /* O vínculo é explícito. Antes era adivinhado por data IDÊNTICA, e um dia de
+       diferença fazia o app tratar as duas linhas como movimentos separados. */
+    check('a gêmea guarda o vínculo com o aporte', /goal_entry_id: entryId/.test(apAp), true);
+    check('  e o casamento não depende de data exata',
+      /String\(t\.date\) === String\(e\.date\)/.test(apAp), false);
+
+    /* Meia movimentação não existe: com um lado só, o app creditava uma conta
+       sem contrapartida — dinheiro nascendo do nada dentro do saldo. */
+    check('exige as duas contas ou nenhuma', /Escolha as duas contas, ou nenhuma/.test(apAp), true);
+
+    /* Editar e excluir passam pela gêmea, que sempre desfaz o efeito antigo
+       antes de aplicar o novo — e por isso não podem duplicar nem ignorar o
+       status, que eram os dois defeitos anteriores. */
+    const editaAporte = apAp.slice(apAp.indexOf('function openEntrySheet('), apAp.indexOf('/* A fila do que espera decisão'));
+    check('editar aporte não mexe no saldo direto', /adjustBalance\(/.test(editaAporte), false);
+    check('  desfaz o efeito antigo antes do novo',
+      /applyTxEffect\(mov, -1\)[\s\S]{0,200}applyTxEffect\(novoMov, \+1\)/.test(editaAporte), true);
+    check('excluir aporte leva a gêmea junto',
+      /applyTxEffect\(mov, -1\);[\s\S]{0,80}DB\.remove\('transactions', mov\.id\)/.test(editaAporte), true);
+
+    /* Resgate também precisa de linha no extrato: antes ele mexia no saldo e não
+       deixava rastro, e o extrato ficava sem explicar o dinheiro que voltou. */
+    check('resgate também gera movimento no extrato',
+      /Resgate de|resg \? 'Resgate de'/.test(apAp), true);
     check('  e a data futura marca "agendado" sozinha',
       /selectChip\('a-status', d > todayISO\(\) \? 'A Pagar' : 'Pago'\)/.test(apAp), true);
     /* A transferência que acompanha o aporte HERDA o status. Uma transferência

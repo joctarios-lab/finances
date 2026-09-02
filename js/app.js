@@ -318,6 +318,42 @@ function applyTxEffect(t, sinal = 1) {
   adjustBalance(t.account_id, txEffect(t) * sinal);
 }
 
+/* A TRANSFERÊNCIA GÊMEA DE UM APORTE.
+
+   Um aporte que move dinheiro entre contas tem DUAS representações: a marcação
+   da meta (`goal_entries`) e a linha do extrato (`transactions`). São o mesmo
+   movimento — e por isso só UMA delas pode mexer no saldo.
+
+   Quem mexe é a do extrato, por três motivos: ela é a que você confere contra o
+   banco; o ciclo de vida dela já é tratado por código genérico que SEMPRE desfaz
+   o efeito antigo antes de aplicar o novo; e o aporte não precisa de saldo para
+   fazer o trabalho dele — `goalTotal` soma `goal_entries` e nunca olha conta.
+
+   O QUE ISTO CONSERTA. Antes, as duas mexiam. O aporte debitava direto, a
+   transferência entrava no extrato, e qualquer toque posterior na transferência
+   — marcar como paga pela fila, editar a data — aplicava o efeito outra vez. O
+   saldo andava sozinho e nada no extrato explicava.
+
+   O VÍNCULO É EXPLÍCITO (`goal_entry_id`). Antes era adivinhado por data, valor
+   e contas idênticos: um único dia de diferença bastava para o app tratar as
+   duas linhas como movimentos independentes. */
+function movimentoDoAporte(e) {
+  if (!e || !e.id) return null;
+  const todas = DB.all('transactions').filter(t => !t.deleted);
+  const porVinculo = todas.find(t => t.goal_entry_id === e.id);
+  if (porVinculo) return porVinculo;
+  /* Aportes criados antes do vínculo existir. Aqui a janela é de três dias, e só
+     vale se houver UMA candidata — na dúvida não casa, porque casar errado é
+     pior que não casar: mexeria no saldo de um movimento que não é este. */
+  const dia = 864e5;
+  const quando = d => new Date(String(d) + 'T12:00:00').getTime();
+  const cands = todas.filter(t => DB.isTransfer(t)
+    && t.account_id === e.from_account && t.to_account === e.to_account
+    && Math.abs(Number(t.amount) - Math.abs(Number(e.amount))) < 0.005
+    && Math.abs(quando(t.date) - quando(e.date)) <= 3 * dia);
+  return cands.length === 1 ? cands[0] : null;
+}
+
 /* Conciliação: corrigir o saldo NÃO reescreve o número em silêncio.
    Lança um "Ajuste de saldo" com a diferença, para que o extrato sempre explique
    o saldo e a correção possa ser auditada, revertida ou classificada depois.
@@ -4647,13 +4683,17 @@ function bindView() {
       const e = DB.get('goal_entries', b.dataset.pendOk);
       if (!e) return;
       DB.upsert('goal_entries', { ...e, status: 'Pago' });
-      if (e.from_account) adjustBalance(e.from_account, -Number(e.amount) || 0);
-      if (e.to_account) adjustBalance(e.to_account, Number(e.amount) || 0);
-      const irmã = DB.all('transactions').find(t => t.status === 'A Pagar' && DB.isTransfer(t)
-        && String(t.date) === String(e.date)
-        && Math.abs(Number(t.amount) - Number(e.amount)) < 0.005
-        && t.account_id === e.from_account && t.to_account === e.to_account);
-      if (irmã) DB.upsert('transactions', { ...irmã, status: 'Pago' });
+      /* O SALDO ANDA PELA TRANSFERÊNCIA, não aqui. Confirmar o aporte confirma o
+         movimento gêmeo, e é ele que aplica o efeito — uma vez só. Antes esta
+         função debitava as contas direto E marcava a gêmea como paga sem efeito;
+         bastava a gêmea ser confirmada por outro caminho (a fila, ou uma edição)
+         para o dinheiro sair duas vezes. */
+      const mov = movimentoDoAporte(e);
+      if (mov && mov.status !== 'Pago') {
+        const pagoMov = { ...mov, status: 'Pago', goal_entry_id: e.id };
+        DB.upsert('transactions', pagoMov);
+        applyTxEffect(pagoMov, +1);
+      }
       Sync.autoSync(); render();
       return toast('Guardado ✓');
     }
@@ -6962,17 +7002,38 @@ function openEntrySheet(entryId, goalId) {
   $('#sh-save').onclick = () => {
     const novo = moneyVal('#e-amount');
     if (!novo) return toast('Informe o valor');
-    const delta = novo - (Number(e.amount) || 0);
-    if (delta && e.from_account) adjustBalance(e.from_account, -delta);
-    if (delta && e.to_account) adjustBalance(e.to_account, delta);
-    DB.upsert('goal_entries', { ...e, amount: novo, description: $('#e-desc').value || 'Aporte', date: $('#e-date').value || e.date });
+    const data = $('#e-date').value || e.date;
+    const atualizado = { ...e, amount: novo, description: $('#e-desc').value || 'Aporte', date: data };
+    DB.upsert('goal_entries', atualizado);
+    /* O SALDO NÃO É TOCADO AQUI. A alteração é propagada para a transferência
+       gêmea, e o caminho normal dela desfaz o efeito antigo antes de aplicar o
+       novo — que é o que impede a conta de andar duas vezes.
+
+       Antes, esta função aplicava a diferença de valor direto no saldo E ignorava
+       o status: editar um aporte ainda "A Pagar" mexia numa conta por um
+       movimento que nunca tinha acontecido. E a gêmea continuava com o valor
+       velho, deixando extrato e saldo discordando para sempre. */
+    const mov = movimentoDoAporte(e);
+    if (mov) {
+      applyTxEffect(mov, -1);
+      const novoMov = { ...mov, amount: novo, date: data, goal_entry_id: e.id };
+      DB.upsert('transactions', novoMov);
+      applyTxEffect(novoMov, +1);
+    }
     voltarParaDetalhe();
     toast('Aporte atualizado ✓');
   };
   $('#sh-del').onclick = () => {
     if (!confirm('Excluir este aporte?')) return;
-    if (e.from_account) adjustBalance(e.from_account, Number(e.amount) || 0);   // devolve
-    if (e.to_account) adjustBalance(e.to_account, -(Number(e.amount) || 0));
+    /* Some com a gêmea também, devolvendo o saldo pelo efeito DELA. Antes, esta
+       função devolvia o valor às contas sem olhar o status — excluir um aporte
+       "A Pagar" creditava de volta um dinheiro que a conta nunca tinha perdido —
+       e ainda deixava a transferência órfã no extrato. */
+    const mov = movimentoDoAporte(e);
+    if (mov) {
+      applyTxEffect(mov, -1);
+      DB.remove('transactions', mov.id);
+    }
     DB.remove('goal_entries', e.id);
     voltarParaDetalhe();
     toast('Aporte excluído');
@@ -7418,7 +7479,18 @@ function openAporteSheet(goalId, opcoes = {}) {
     const de = $('#a-account').value, para = $('#a-to').value;
     if (de && de === para) return toast('Origem e destino não podem ser a mesma conta');
     const pago = chipValue('a-status') !== 'A Pagar';
-    DB.upsert('goal_entries', {
+    /* AS DUAS CONTAS, OU NENHUMA. Meia movimentação não existe: dinheiro sai de
+       um lugar e entra em outro. Com um lado só preenchido, o app creditava (ou
+       debitava) uma conta sem contrapartida — dinheiro nascendo do nada dentro
+       do saldo, sem nada no extrato para explicar.
+
+       Aporte SEM conta nenhuma continua valendo, e é um caso legítimo: marca que
+       aquele dinheiro já tem dono, sem que ele saia de onde está. O disponível
+       cai (guardado entra na conta de available()) e nenhum saldo se mexe — que
+       é a verdade. */
+    if ((de && !para) || (!de && para)) return toast('Escolha as duas contas, ou nenhuma');
+
+    const entryId = DB.upsert('goal_entries', {
       goal_id: goalId,
       amount: resg ? -amount : amount,     // resgate é o mesmo lançamento, com sinal
       description: $('#a-desc').value || (resg ? 'Resgate' : 'Aporte'),
@@ -7426,26 +7498,20 @@ function openAporteSheet(goalId, opcoes = {}) {
       from_account: de || null, to_account: para || null,   // guardado para poder reverter depois
       status: pago ? 'Pago' : 'A Pagar',
     });
-    /* SÓ MOVE SALDO SE JÁ ACONTECEU. Um aporte agendado é plano: o dinheiro ainda
-       está na conta, e debitá-lo hoje deixaria o disponível negativo por um
-       movimento que não ocorreu — foi exatamente o defeito relatado. */
-    if (pago) {
-      if (de) adjustBalance(de, -amount);      // sai de onde estava
-      if (para) adjustBalance(para, amount);   // entra onde vai ficar
-    }
-    /* A MOVIMENTAÇÃO APARECE NO EXTRATO, categorizada em Investimentos.
 
-       Antes, guardar dinheiro mexia nos saldos e não deixava rastro na lista: o
-       extrato do mês fechava com uma diferença que nada explicava, e quem
-       conferisse contra o banco veria a transferência lá e não aqui.
+    /* A MOVIMENTAÇÃO APARECE NO EXTRATO, categorizada em Investimentos, E É ELA
+       QUEM MEXE NO SALDO — ver movimentoDoAporte.
 
-       É TRANSFERÊNCIA, não despesa — sai de uma conta e entra na outra, e por
-       isso continua neutra em toda análise de gasto. A categoria serve para dar
-       nome à linha; o quanto foi guardado se lê nos aportes
-       (`DB.investidoNoPeriodo`), que é o que alimenta a barra do envelope. */
-    if (de && para && !resg) {
-      DB.upsert('transactions', {
-        description: ($('#a-desc').value || `Guardado em ${g.name}`).slice(0, 60),
+       É TRANSFERÊNCIA, não despesa: sai de uma conta e entra na outra, e por
+       isso continua neutra em toda análise de gasto. A categoria dá nome à
+       linha; o quanto foi guardado se lê nos aportes (`DB.investidoNoPeriodo`).
+
+       O resgate também gera transferência — antes não gerava, e o dinheiro
+       voltava ao saldo sem deixar rastro nenhum no extrato. Os rótulos da folha
+       já invertem o sentido no modo resgate, então `de → para` vale nos dois. */
+    if (de && para) {
+      const idMov = DB.upsert('transactions', {
+        description: ($('#a-desc').value || `${resg ? 'Resgate de' : 'Guardado em'} ${g.name}`).slice(0, 60),
         amount, date: $('#a-date').value || todayISO(),
         // O status acompanha o do aporte: uma transferência "Paga" com data futura
         // seria contada pelo saldo como se já tivesse saído da conta.
@@ -7453,7 +7519,9 @@ function openAporteSheet(goalId, opcoes = {}) {
         scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência',
         account_id: de, to_account: para,
         category_id: DB.categoriaDeAporte(g),
+        goal_entry_id: entryId,
       });
+      if (pago) applyTxEffect(DB.get('transactions', idMov), +1);
     }
     closeSheet(); render(); Sync.autoSync();
     if (opcoes.aoConcluir) opcoes.aoConcluir(amount);

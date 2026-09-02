@@ -199,6 +199,13 @@ create index if not exists idx_rec_kid on recurrences(kid_id);
    Quando a criança GASTA de verdade, o dinheiro sai da casa — e aí é uma despesa
    comum, lançada como qualquer outra. É esse par que fecha a conta. */
 alter table transactions add column if not exists kid_id uuid;
+
+-- O VÍNCULO DO APORTE COM A SUA TRANSFERÊNCIA.
+-- Um aporte que move dinheiro tem duas linhas: a marcação da meta e a do
+-- extrato. Só a do extrato mexe no saldo, e este campo é o que amarra as
+-- duas. Antes o par era adivinhado por data idêntica — um dia de diferença
+-- bastava para o app debitar a conta duas vezes.
+alter table transactions add column if not exists goal_entry_id uuid;
 create index if not exists idx_tx_kid on transactions(kid_id);
 
 create table if not exists goals (
