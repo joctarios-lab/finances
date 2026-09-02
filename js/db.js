@@ -629,14 +629,15 @@ const DB = {
      Calculado de trás para frente: o saldo atual menos tudo que se moveu de lá
      para cá. O saldo atual é o número confiável — vem da conciliação com o banco. */
   saldoNaData(contaIds, dataISO) {
-    const contas = (contaIds && contaIds.length)
-      ? contaIds
-      : this.all('accounts').map(a => a.id);
-    const atual = contas.reduce((s, id) => s + (Number((this.get('accounts', id) || {}).balance) || 0), 0);
-    // Tudo que se moveu de lá para cá, desfeito. O saldo atual é o número
-    // confiável — vem da conciliação com o banco.
-    const desde = this.movimentoRealizadoAte(contaIds, dataISO, null);
-    return atual - (desde.entra - desde.sai);
+    /* PARA FRENTE, a partir do começo. Antes esta função partia do saldo atual
+       e desfazia o que veio depois — o que fazia qualquer erro do presente
+       contaminar todo o passado. Agora o passado não depende do presente:
+       é a soma do que aconteceu até a véspera da data pedida.
+
+       `ateISO` é exclusivo em movimentoRealizadoAte, então isto é exatamente
+       "o saldo no início do dia D". */
+    const m = this.movimentoRealizadoAte(contaIds, null, dataISO);
+    return this.aberturasAte(contaIds, dataISO) + m.entra - m.sai;
   },
 
   /* O QUE JÁ MEXEU NO SALDO entre duas datas, separado em entra e sai.
@@ -680,6 +681,13 @@ const DB = {
          mexe com a semanada (ver txEffect), então somá-la em "saiu" faria o cartão
          do Extrato mostrar uma saída que o saldo abaixo não confirma. */
       if (this.isSemanada(t)) continue;
+      // A abertura ancora o saldo; ela não é entrada nem saída de mês nenhum.
+      if (t.method === this.ABERTURA) continue;
+      /* Compra no cartão não sai da conta — fica na fatura. A regra é a mesma de
+         txEffect; agora que esta função DEFINE o saldo, as duas têm de concordar
+         em tudo, e não só por acidente de os lançamentos de cartão não terem
+         conta preenchida. */
+      if (t.card_id) continue;
       if (!dentro(t.account_id)) continue;
       if (this.isExpense(t)) mov.sai += v; else mov.entra += v;
     }
@@ -1671,9 +1679,140 @@ const DB = {
       .reduce((s, g) => s + Math.max(0, this.goalTotal(g.id)), 0);
   },
 
+  /* ==========================================================================
+     O SALDO É A SOMA DO EXTRATO — E NADA MAIS
+
+     Antes o saldo era um NÚMERO GUARDADO em `accounts.balance`, mexido por
+     deltas a cada lançamento, e o passado era calculado andando PARA TRÁS a
+     partir dele. Duas consequências ruins, as duas medidas em dados reais:
+
+       1. Um delta perdido ou aplicado duas vezes corrompia o saldo para sempre,
+          e não havia de onde recalcular — o saldo que existia antes do primeiro
+          lançamento morava só naquele campo, sem lançamento que o explicasse.
+       2. Como o passado saía do presente, um erro de hoje contaminava TODOS os
+          meses anteriores. Uma conta ficou R$ 6.600 abaixo do extrato, e junho,
+          julho e agosto ficaram errados junto.
+
+     Agora o saldo é uma soma, feita para frente, a partir de um ponto fixo: o
+     lançamento de "Saldo inicial" de cada conta. Ele é um lançamento de verdade,
+     visível na primeira linha do extrato — como no extrato do banco —, marcado
+     como `adjustment` para ficar fora das análises de gasto e de renda.
+
+     O que isso compra: o saldo de QUALQUER dia pode ser conferido contra o
+     extrato do banco daquele dia, e nenhum código escreve saldo em lugar nenhum.
+     Você lança, o saldo anda; você corrige o lançamento, o saldo corrige junto. */
+  saldoDaConta(id) {
+    const m = this.movimentoRealizadoAte([id], null, null);
+    return this.aberturasAte([id], null) + m.entra - m.sai;
+  },
+
+  /* As aberturas das contas pedidas até uma data (exclusiva). Somadas à parte
+     porque ancoram a POSIÇÃO sem serem FLUXO — ver movimentoRealizadoAte. */
+  aberturasAte(contaIds, ateISO) {
+    const contas = (contaIds && contaIds.length) ? contaIds : this.all('accounts').map(a => a.id);
+    let s = 0;
+    for (const t of this.all('transactions')) {
+      if (t.method !== this.ABERTURA || t.status !== 'Pago') continue;
+      if (!contas.includes(t.account_id)) continue;
+      if (ateISO && String(t.date) >= ateISO) continue;
+      s += this.efeitoDaAbertura(t);
+    }
+    return s;
+  },
+
   accountsTotal() {
-    return this.all('accounts').filter(a => a.active !== false)
-      .reduce((s, a) => s + (Number(a.balance) || 0), 0);
+    const ativas = this.all('accounts').filter(a => a.active !== false).map(a => a.id);
+    if (!ativas.length) return 0;
+    const m = this.movimentoRealizadoAte(ativas, null, null);
+    return this.aberturasAte(ativas, null) + m.entra - m.sai;
+  },
+
+  /* ---------- O saldo inicial ----------
+
+     É o dinheiro que já estava na conta antes do primeiro lançamento. Ele SEMPRE
+     existiu — só morava escondido, como a diferença entre o campo `balance` e a
+     soma dos lançamentos. Aqui ele vira uma linha datada no começo, que se pode
+     ler, conferir e corrigir.
+
+     DATADO NO COMEÇO, e isso é o que o separa de um "ajuste de saldo": o ajuste
+     nasce com a data de HOJE e cai no meio de um mês, distorcendo aquele mês. O
+     saldo inicial fica onde o dinheiro estava, e não distorce mês nenhum. */
+  ABERTURA: 'Saldo inicial',
+
+  aberturaDaConta(id) {
+    return this.all('transactions')
+      .find(t => t.account_id === id && t.method === this.ABERTURA && !!t.adjustment) || null;
+  },
+
+  /* A data da abertura: a véspera do primeiro movimento da conta. Colocá-la no
+     mesmo dia faria a ordem entre as duas linhas depender do acaso. */
+  dataDaAbertura(id) {
+    const datas = this.all('transactions')
+      .filter(t => (t.account_id === id || t.to_account === id) && t.method !== this.ABERTURA)
+      .map(t => String(t.date)).sort();
+    return datas.length ? this.somarDiasISO(datas[0], -1) : this.hojeISO();
+  },
+
+  /* Define o saldo REAL de uma conta ajustando a ABERTURA, nunca um número solto.
+     É o que a tela de conciliação passa a fazer: você diz quanto o banco mostra,
+     e o app move o ponto de partida para que a conta feche — deixando a diferença
+     visível no extrato em vez de escondida numa coluna. */
+  definirSaldo(id, saldoReal, dataISO) {
+    const atual = this.aberturaDaConta(id);
+    const semAbertura = this.saldoDaConta(id) - (atual ? this.efeitoDaAbertura(atual) : 0);
+    const valor = Number(saldoReal) - semAbertura;
+    const data = dataISO || (atual ? atual.date : this.dataDaAbertura(id));
+    if (Math.abs(valor) < 0.005) {
+      if (atual) this.remove('transactions', atual.id);
+      return null;
+    }
+    const reg = {
+      ...(atual ? { id: atual.id } : {}),
+      description: this.ABERTURA,
+      amount: Math.abs(valor),
+      date: data,
+      type: valor >= 0 ? 'Receita' : 'Despesa',
+      status: 'Pago',
+      scope: 'Família',
+      member: '',
+      method: this.ABERTURA,
+      account_id: id,
+      category_id: null,
+      adjustment: true,   // fica fora das análises de gasto e de renda
+    };
+    this.upsert('transactions', reg);
+    return reg;
+  },
+
+  /* MIGRAÇÃO: o saldo que morava no campo vira a ABERTURA da conta.
+
+     Sem isto, a primeira abertura do app depois desta versão mostraria todas as
+     contas com a soma do extrato — que quase nunca é o saldo real, porque o
+     dinheiro que já existia antes do primeiro lançamento morava só no campo
+     `balance`. Contas certas passariam a parecer erradas de uma hora para outra.
+
+     A conta é a mesma que o diagnóstico sempre fez: abertura = saldo guardado
+     menos a soma dos lançamentos. Roda uma vez por conta — quem já tem abertura
+     não é tocado — e não mexe em conta cujo saldo já bate com o extrato. */
+  migrarAberturas() {
+    if (!this.data) return 0;
+    let n = 0;
+    this.emLote(() => {
+      for (const a of this.all('accounts')) {
+        if (this.aberturaDaConta(a.id)) continue;
+        const guardado = Number(a.balance) || 0;
+        const doExtrato = this.saldoDaConta(a.id);
+        if (Math.abs(guardado - doExtrato) < 0.005) continue;
+        this.definirSaldo(a.id, guardado);
+        n++;
+      }
+    });
+    return n;
+  },
+
+  efeitoDaAbertura(t) {
+    const v = Number(t.amount) || 0;
+    return this.isExpense(t) ? -v : v;
   },
 
   /* ---------- Caixa x investido ----------

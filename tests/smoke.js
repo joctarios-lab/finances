@@ -110,9 +110,9 @@ global.pontosDe = s => (s.data || []).map(p => (p && typeof p === 'object' ? p.y
 const appSrc = fs.readFileSync(BASE + 'js/app.js', 'utf8').split('/* ---------- Boot ---------- */')[0];
 eval(appSrc + `; Object.assign(global, {
   renderInicio, renderExtrato, renderCartoes, renderMetas, renderRelatorios,
-  state, fmt, fmtShort, fmtSemMoeda, fmtDay, fmtDate, esc, todayISO, avisarSeUsouGuardado, txEffect, adjustBalance, topCategoryIds, txHistory, MEMBRO_COMUM,
+  state, fmt, fmtShort, fmtSemMoeda, fmtDay, fmtDate, esc, todayISO, avisarSeUsouGuardado, txEffect, topCategoryIds, txHistory, MEMBRO_COMUM,
   openGoalDetail, openAporteSheet, openEntrySheet, openInvoiceDetail, openTxSheet,
-  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, applyTxEffect, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
+  openSaldoSheet, openTransferSheet, persistUI, restoreUI, reconcileBalance, svgBars, svgRanking, svgDonut, svgBurnup, niceCeil, svgCascata, svgLinhaFaixa, svgFluxoSaldo,
   Voltar, setTab, closeSheet, toast, optionsCategorias, txsFiltradas, efeitoDaTransferencia, fixarTags, lerTagsFixas, filtrosAtivos, FILTROS_VAZIOS, filtrosVazios, somarDias, bindView, fmt,
   diasDoPeriodo, opcoesCategoriaPilula, reguaDoMes, pilulasDeFiltro, rotuloPilula, ligarRegua, ligarPilulas, resumoExtrato,
   serieDeSaldo, sparkArea, PALETTE, prazoDaMeta, custoFixoCard, pontePrevista, saldoDeContas, notaDeHoje, notaDoFiltro,
@@ -157,11 +157,59 @@ DB.upsert('goal_entries', { goal_id: meta, amount: 2000, date: dia(2), descripti
 
 // ---- asserções ----
 let ok = 0, fail = 0;
+/* AS ABERTURAS NA SUÍTE.
+
+   No modelo antigo o campo de saldo era constante: os testes criavam contas com
+   um saldo declarado e criavam lançamentos, mas nada aplicava efeito nenhum — o
+   número simplesmente ficava onde tinha sido posto. Foi contra esse
+   comportamento que as centenas de expectativas existentes foram escritas.
+
+   Com o saldo derivado do extrato, o número declarado passa a ser o que a conta
+   deve TER, e a abertura é o que falta para chegar lá. abrirTodas() recalcula as
+   aberturas de todas as contas conhecidas e é chamada no começo de cada seção,
+   o que reproduz exatamente a constância de antes — e por isso nenhuma
+   expectativa da suíte precisou mudar. */
+const saldosDeclarados = {};
+const _upsertOriginal = DB.upsert.bind(DB);
+DB.upsert = (store, rec) => {
+  const id = _upsertOriginal(store, rec);
+  if (store === 'accounts' && rec && rec.balance !== undefined && !rec.deleted) {
+    saldosDeclarados[id] = Number(rec.balance) || 0;
+  }
+  return id;
+};
+/* Move o saldo de uma conta sem inventar lançamento no período medido: a
+   diferença vai para a ABERTURA, datada lá atrás. É o que um teste quer dizer
+   com "esta conta tem tanto", agora que o saldo é a soma do extrato. */
+const porSaldoEm = (id, delta) => DB.definirSaldo(id, DB.saldoDaConta(id) + delta, '2000-01-01');
+
+const abrirTodas = () => {
+  for (const [id, saldo] of Object.entries(saldosDeclarados)) {
+    if (DB.get('accounts', id)) DB.definirSaldo(id, saldo);
+  }
+};
+
 const check = (nome, real, esperado) => {
   const bateu = Math.abs(Number(real) - Number(esperado)) < 0.01 || real === esperado;
   console.log(`${bateu ? '  OK  ' : ' FALHA'} | ${nome.padEnd(52)} ${bateu ? real : `obtido ${real}, esperado ${esperado}`}`);
   bateu ? ok++ : fail++;
 };
+
+/* A ABERTURA DE CADA CONTA.
+
+   O saldo passou a ser a soma do extrato, então toda conta precisa do seu
+   "Saldo inicial" — o dinheiro que já estava lá antes do primeiro lançamento.
+   Antes ele morava escondido no campo balance, e por isso o saldo nunca podia
+   ser conferido contra o extrato: não havia ponto de partida.
+
+   Os números declarados na criação das contas continuam sendo o saldo que elas
+   devem TER; definirSaldo calcula a abertura que falta para chegar lá. É
+   exatamente a migração que as contas reais precisam. */
+
+/* A ABERTURA de cada conta: o saldo declarado é o que ela deve TER, e a
+   abertura é o que falta para chegar lá a partir do extrato. */
+DB.definirSaldo(conta, 5000);
+DB.definirSaldo(caixinha, 12000);
 
 const p = DB.monthPeriod(new Date());
 console.log('\n=== Correlações entre módulos ===');
@@ -1243,7 +1291,8 @@ try {
      propaga nas irmãs — por isso a propagação exclui a própria parcela. */
   const editarEPropagar = (base, mudanca, alcance) => {
     const novo = { ...base, ...mudanca };
-    applyTxEffect(base, -1); DB.upsert('transactions', novo); applyTxEffect(novo, +1);
+    // O saldo segue o extrato: regravar o lançamento já basta.
+    DB.upsert('transactions', novo);
     return propagarNasParcelas(novo, base, alcance);
   };
   const catNova = DB.rootCategories('Despesa')[0];
@@ -1315,8 +1364,8 @@ try {
 
 console.log('\n=== Aportes (fluxo real, do clique ao saldo) ===');
 try {
-  const saldoAntes = DB.get('accounts', conta).balance;
-  const caixaAntes = DB.get('accounts', caixinha).balance;
+  const saldoAntes = DB.saldoDaConta(conta);
+  const caixaAntes = DB.saldoDaConta(caixinha);
   const totalAntes = DB.goalTotal(meta);
 
   openAporteSheet(meta);                              // abre a folha
@@ -1328,8 +1377,8 @@ try {
   el('#sh-save').click();                             // clica em Registrar aporte
 
   check('aporte somou na meta', DB.goalTotal(meta), totalAntes + 500);
-  check('debitou a conta de origem', DB.get('accounts', conta).balance, saldoAntes - 500);
-  check('creditou a conta de destino', DB.get('accounts', caixinha).balance, caixaAntes + 500);
+  check('debitou a conta de origem', DB.saldoDaConta(conta), saldoAntes - 500);
+  check('creditou a conta de destino', DB.saldoDaConta(caixinha), caixaAntes + 500);
 
   const lancado = DB.all('goal_entries').find(e => e.description === 'Aporte de teste');
   check('guardou as contas movimentadas', !!(lancado.from_account && lancado.to_account), true);
@@ -1348,14 +1397,14 @@ try {
   el('#e-date').value = lancado.date;
   el('#sh-save').click();
   check('editar aporte corrige a meta', DB.goalTotal(meta), totalAntes + 300);
-  check('editar devolve a diferença à origem', DB.get('accounts', conta).balance, saldoAntes - 300);
+  check('editar devolve a diferença à origem', DB.saldoDaConta(conta), saldoAntes - 300);
 
   // Excluir devolve tudo
   openEntrySheet(lancado.id, meta);
   el('#sh-del').click();
   check('excluir aporte volta a meta ao valor anterior', DB.goalTotal(meta), totalAntes);
-  check('excluir devolve o saldo da origem', DB.get('accounts', conta).balance, saldoAntes);
-  check('excluir devolve o saldo do destino', DB.get('accounts', caixinha).balance, caixaAntes);
+  check('excluir devolve o saldo da origem', DB.saldoDaConta(conta), saldoAntes);
+  check('excluir devolve o saldo do destino', DB.saldoDaConta(caixinha), caixaAntes);
 } catch (e) {
   console.log(` FALHA | fluxo de aportes: ${e.message}`); fail++;
 }
@@ -1899,52 +1948,127 @@ try {
 
 console.log('\n=== Transferência entre contas ===');
 try {
-  const antesA = DB.get('accounts', conta).balance;
-  const antesB = DB.get('accounts', caixinha).balance;
+  const antesA = DB.saldoDaConta(conta);
+  const antesB = DB.saldoDaConta(caixinha);
   const gastoAntes = DB.statsFor(p).spent, receitaAntes = DB.realizedIncome(p);
 
   const tr = { description: 'Guardar dinheiro', amount: 700, date: dia(7), type: 'Transferência',
     status: 'Pago', method: 'Transferência', account_id: conta, to_account: caixinha, scope: 'Família', member: MEMBRO_COMUM };
   const trId = DB.upsert('transactions', tr);
-  applyTxEffect(DB.get('transactions', trId), +1);
+  // (o saldo já reflete a transferência: ela está no extrato como Paga)
 
-  check('sai da conta de origem', DB.get('accounts', conta).balance, antesA - 700);
-  check('entra na conta de destino', DB.get('accounts', caixinha).balance, antesB + 700);
+  check('sai da conta de origem', DB.saldoDaConta(conta), antesA - 700);
+  check('entra na conta de destino', DB.saldoDaConta(caixinha), antesB + 700);
   check('transferência NÃO é despesa', DB.statsFor(p).spent, gastoAntes);
   check('transferência NÃO é receita', DB.realizedIncome(p), receitaAntes);
   check('transferência aparece no extrato', renderExtrato(p).includes('Guardar dinheiro'), true);
   check('não entra no comprometido', DB.committed(), 450);
 
-  applyTxEffect(DB.get('transactions', trId), -1);
   DB.remove('transactions', trId);
-  check('desfazer devolve os dois saldos', DB.get('accounts', conta).balance + DB.get('accounts', caixinha).balance, antesA + antesB);
+  check('desfazer devolve os dois saldos', DB.saldoDaConta(conta) + DB.saldoDaConta(caixinha), antesA + antesB);
 } catch (e) { console.log(` FALHA | transferência: ${e.message}`); fail++; }
 
-console.log('\n=== Conciliação de saldo (ajuste vira lançamento) ===');
+console.log('\n=== Conciliação de saldo (a diferença vai para a abertura) ===');
 try {
   const gastoAntes = DB.statsFor(p).spent;
   const receitaAntes = DB.realizedIncome(p);
   const c = DB.get('accounts', conta);
-  const saldoAntes = c.balance;
+  const saldoAntes = DB.saldoDaConta(c.id);
 
   const delta = reconcileBalance(c, saldoAntes + 87.5);       // apareceram R$ 87,50
-  check('saldo passa a ser o informado', DB.get('accounts', conta).balance, saldoAntes + 87.5);
+  check('saldo passa a ser o informado', DB.saldoDaConta(conta), saldoAntes + 87.5);
   check('a diferença é devolvida para quem chamou', delta, 87.5);
 
   const ajuste = DB.all('transactions').find(t => t.adjustment);
-  check('gerou um lançamento de ajuste (rastro no extrato)', !!ajuste, true);
+  check('a diferença tem rastro no extrato', !!ajuste, true);
   check('ajuste guarda a conta afetada', ajuste.account_id, conta);
   check('ajuste NÃO conta como gasto', DB.statsFor(p).spent, gastoAntes);
   check('ajuste NÃO conta como renda', DB.realizedIncome(p), receitaAntes);
   check('ajuste aparece no extrato', DB.txOfPeriod(p).some(t => t.adjustment), true);
 
-  // Excluir o ajuste desfaz a conciliação (o rastro é reversível)
-  adjustBalance(ajuste.account_id, -txEffect(ajuste));
-  DB.remove('transactions', ajuste.id);
-  check('excluir o ajuste devolve o saldo anterior', DB.get('accounts', conta).balance, saldoAntes);
+  /* Conciliar de volta desfaz. E o rastro continua sendo UMA linha — a abertura
+     da conta —, não um ajuste novo empilhado a cada conferência: era isso que
+     enchia o extrato de "Ajuste de saldo" e distorcia o mês em que cada um caía. */
+  reconcileBalance(DB.get('accounts', conta), saldoAntes);
+  check('conciliar de volta devolve o saldo anterior', DB.saldoDaConta(conta), saldoAntes);
+  check('  sem empilhar: a abertura da conta é uma só',
+    DB.all('transactions').filter(t => t.account_id === conta && t.method === DB.ABERTURA).length, 1);
 
   check('saldo já correto não gera lançamento', reconcileBalance(DB.get('accounts', conta), saldoAntes), 0);
 } catch (e) { console.log(` FALHA | conciliação: ${e.message}`); fail++; }
+console.log('\n=== O saldo é a soma do extrato ===');
+{
+  /* A GARANTIA CENTRAL desta versão: nada além dos lançamentos determina o saldo.
+     Antes ele era um número guardado, mexido por deltas — e um delta perdido ou
+     repetido o corrompia para sempre, sem de onde recalcular. */
+  const cS = DB.upsert('accounts', { name: 'Conta Soma', type: 'Conta Corrente', balance: 0, active: true });
+  check('conta sem lançamento tem saldo zero', DB.saldoDaConta(cS), 0);
+
+  const lanc = (tipo, valor, dias = 0) => DB.upsert('transactions', {
+    description: 'Soma ' + tipo, amount: valor, date: somarDias(todayISO(), dias),
+    type: tipo, status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+    method: 'Débito', account_id: cS,
+  });
+
+  const idA = lanc('Receita', 1000);
+  check('uma receita paga vira saldo', DB.saldoDaConta(cS), 1000);
+  const idB = lanc('Despesa', 250);
+  check('uma despesa paga desconta', DB.saldoDaConta(cS), 750);
+
+  /* Corrigir o lançamento corrige o saldo junto — é a propriedade que o modelo
+     antigo não tinha, e por isso um erro nunca se desfazia sozinho. */
+  DB.upsert('transactions', { ...DB.get('transactions', idB), amount: 100 });
+  check('corrigir o lançamento corrige o saldo', DB.saldoDaConta(cS), 900);
+  DB.remove('transactions', idB);
+  check('apagar o lançamento devolve o saldo', DB.saldoDaConta(cS), 1000);
+
+  /* A pagar é plano, não fato. */
+  DB.upsert('transactions', { ...DB.get('transactions', idA), status: 'A Pagar' });
+  check('lançamento a pagar não entra no saldo', DB.saldoDaConta(cS), 0);
+  DB.upsert('transactions', { ...DB.get('transactions', idA), status: 'Pago' });
+
+  /* ---- A ABERTURA ---- */
+  DB.definirSaldo(cS, 1600, '2000-01-01');
+  check('a abertura leva a conta ao saldo informado', DB.saldoDaConta(cS), 1600);
+  const ab = DB.aberturaDaConta(cS);
+  check('  e ela é um lançamento de verdade, no extrato', !!ab, true);
+  check('  chamada pelo nome', ab.description, 'Saldo inicial');
+  check('  datada antes de tudo', ab.date, '2000-01-01');
+  /* Fora das análises: abertura não é renda de mês nenhum. Sem isto, o mês em que
+     ela cai passaria a exibir uma receita que nunca existiu. */
+  check('  e fora das análises de renda', !!ab.adjustment, true);
+
+  /* E ela não é FLUXO: não pode aparecer como "entrou" no período em que cai. */
+  const pAb = DB.monthPeriod(new Date('2000-01-15'));
+  const movAb = DB.movimentoRealizadoAte([cS], DB.inicioISO(pAb), DB.fimISO(pAb));
+  check('  a abertura não conta como entrada do mês', movAb.entra, 0);
+
+  /* Conciliar de novo move a MESMA abertura, sem empilhar linha. */
+  DB.definirSaldo(cS, 1800, '2000-01-01');
+  check('conciliar de novo não empilha lançamento',
+    DB.all('transactions').filter(t => t.account_id === cS && t.method === DB.ABERTURA).length, 1);
+  check('  e o saldo segue o informado', DB.saldoDaConta(cS), 1800);
+
+  /* ---- A MIGRAÇÃO ----
+     Ela quase falhou em silêncio: a primeira versão chamava DB.lote, que não
+     existe, dentro de um try/catch no boot. Teria deixado toda conta antiga com
+     o saldo do extrato — contas certas parecendo erradas, sem erro nenhum. */
+  check('a migração existe e é chamável', typeof DB.migrarAberturas, 'function');
+  const cM = DB.upsert('accounts', { name: 'Conta Legado Saldo', type: 'Conta Corrente', balance: 500, active: true });
+  DB.upsert('transactions', { description: 'Gasto legado', amount: 200, date: todayISO(),
+    type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: cM });
+  check('antes de migrar, o extrato sozinho não bate com o guardado', DB.saldoDaConta(cM), -200);
+  DB.migrarAberturas();
+  check('a migração devolve a conta ao saldo que ela tinha', DB.saldoDaConta(cM), 500);
+  check('  criando a abertura que faltava', !!DB.aberturaDaConta(cM), true);
+  check('  com o dinheiro que já existia antes do 1º lançamento',
+    Number(DB.aberturaDaConta(cM).amount), 700);
+  const denovo = DB.migrarAberturas();
+  check('rodar de novo não faz nada', denovo, 0);
+
+  DB.remove('accounts', cS); DB.remove('accounts', cM);
+}
+
 
 console.log('\n=== Gráficos ===');
 try {
@@ -3517,20 +3641,20 @@ try {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   })();
 
-  const lancar = o => { DB.upsert('transactions', o); applyTxEffect(o, +1); };
+  const lancar = o => { DB.upsert('transactions', o); };
   // Mês passado: sobrou 1.000
   lancar({ description: 'Salário passado', amount: 3000, date: noMesPassado, type: 'Receita', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'PIX', account_id: cM });
   lancar({ description: 'Contas passado', amount: 2000, date: noMesPassado, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: cM });
   // Mês atual: gastou 300
   lancar({ description: 'Mercado atual', amount: 300, date: dia(2), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: cM });
 
-  check('o saldo da conta acumula os dois meses', DB.get('accounts', cM).balance, 700);
+  check('o saldo da conta acumula os dois meses', DB.saldoDaConta(cM), 700);
   const antesDoAtual = DB.saldoNaData([cM], DB.inicioISO(mesAtual));
   check('o que sobrou do mês passado vira saldo anterior', antesDoAtual, 1000);
   check('antes do mês passado não havia nada', DB.saldoNaData([cM], DB.inicioISO(mesPassado)), 0);
 
   // A conta do extrato tem de fechar: anterior + entrou − saiu = saldo de hoje
-  check('anterior + movimento do mês = saldo atual', antesDoAtual - 300, DB.get('accounts', cM).balance);
+  check('anterior + movimento do mês = saldo atual', antesDoAtual - 300, DB.saldoDaConta(cM));
 
   // Na tela
   state.filtros = { ...filtrosVazios(), contas: [cM] };
@@ -3543,14 +3667,14 @@ try {
      a conciliação mexe no saldo mas fica fora de entrou/saiu, porque não é gasto
      nem entrada. O fechamento tem de vir do saldo real, medido na data do fim —
      senão o extrato mostra um número que não existe em lugar nenhum. */
-  const saldoAntesDaConciliacao = DB.get('accounts', cM).balance;
+  const saldoAntesDaConciliacao = DB.saldoDaConta(cM);
   const conc = { description: 'Ajuste de saldo (extrato do banco)', amount: 250, date: dia(4), type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: cM, adjustment: true };
-  DB.upsert('transactions', conc); applyTxEffect(conc, +1);
-  check('conciliação mexe no saldo', DB.get('accounts', cM).balance, saldoAntesDaConciliacao - 250);
+  DB.upsert('transactions', conc);
+  check('conciliação mexe no saldo', DB.saldoDaConta(cM), saldoAntesDaConciliacao - 250);
 
   const comConc = renderExtrato(mesAtual);
   const fechamento = DB.saldoNaData([cM], DB.fimISO(mesAtual));
-  check('o saldo de fechamento é o saldo real da conta', fechamento, DB.get('accounts', cM).balance);
+  check('o saldo de fechamento é o saldo real da conta', fechamento, DB.saldoDaConta(cM));
   check('e é ele que aparece na tela', comConc.includes(fmtSemMoeda(fechamento)), true);
   // O valor aparece na linha do próprio ajuste; o que importa é o total que saiu
   // no resumo, que deve contar só o gasto real do mês (300), não os 300 + 250
@@ -3562,7 +3686,6 @@ try {
   check('o fechamento não é anterior + entrou − saiu',
     comConc.includes(fmtSemMoeda(fechamento + 250)), false);
   DB.remove('transactions', DB.all('transactions').find(t => t.adjustment && t.account_id === cM).id);
-  applyTxEffect(conc, -1);
 
   // A pagar não entra: ainda não saiu da conta
   DB.upsert('transactions', { description: 'Boleto futuro', amount: 500, date: dia(3), type: 'Despesa', status: 'A Pagar', scope: 'Família', member: MEMBRO_COMUM, method: 'Boleto', account_id: cM });
@@ -3571,7 +3694,7 @@ try {
   // Sem filtro de conta, soma a família inteira
   state.filtros = filtrosVazios();
   const geral = DB.saldoNaData(null, DB.inicioISO(mesAtual));
-  const somaContas = DB.all('accounts').reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  const somaContas = DB.all('accounts').reduce((s, a) => s + DB.saldoDaConta(a.id), 0);
   check('a visão geral também tem saldo anterior', typeof geral, 'number');
   check('e o geral inclui esta conta', geral !== 0 || somaContas === 0, true);
   const telaGeral = renderExtrato(mesAtual);
@@ -3635,6 +3758,12 @@ try {
   DB.upsert('transactions', { ...base, status: 'Pago', description: 'Salário ponte', amount: 500,
     date: somarDias(DB.inicioISO(mesPassado), 2), type: 'Receita', method: 'PIX' });
 
+  /* A ABERTURA da conta: o saldo declarado na criação é o de HOJE, e o extrato
+     dela soma 350. A abertura é o que falta para chegar aos 1.000 — datada antes
+     do primeiro movimento, é ela que faz o mês abrir em 1.150. */
+
+  DB.definirSaldo(cE, 1000, '2000-01-01');
+
   state.filtros = { ...filtrosVazios(), contas: [cE] };
   const tela = renderExtrato(mesAtual);
   const linhas = linhasDaPonte(tela);
@@ -3645,7 +3774,7 @@ try {
     (linhas.find(l => l.rot.startsWith('− Saiu da conta')) || {}).val, fmt(150));
   check('  e fecha no dinheiro que existe hoje',
     (linhas.find(l => l.rot.startsWith('= Em conta hoje')) || {}).val, fmt(1000));
-  check('  que é o saldo real da conta', DB.get('accounts', cE).balance, 1000);
+  check('  que é o saldo real da conta', DB.saldoDaConta(cE), 1000);
   check('  o que ainda vai entrar', (linhas.find(l => l.rot.startsWith('+ A receber')) || {}).val, fmt(800));
   check('  o que ainda vai sair', (linhas.find(l => l.rot.startsWith('− A pagar')) || {}).val, fmt(300));
   /* A conta tem de FECHAR na tela: 1000 + 800 − 300. Uma ponte que não soma é pior
@@ -3753,12 +3882,16 @@ try {
     (comAdiantado.find(l => l.rot.startsWith('− Saiu da conta')) || {}).val, fmt(150 + 60));
   check('  o bloco de hoje ainda fecha no saldo real',
     (comAdiantado.find(l => l.rot.startsWith('= Em conta hoje')) || {}).val,
-    fmt(DB.get('accounts', cE).balance));
+    fmt(DB.saldoDaConta(cE)));
   check('  e volta como linha própria no previsto',
     (comAdiantado.find(l => l.rot.startsWith('+ Já pago')) || {}).val, fmt(60));
   check('  com a conta inteira fechando', fecha(comAdiantado), true);
+  /* SEM somar o 60 de volta. Com o saldo derivado do extrato, o pagamento
+     adiantado JÁ saiu da conta — ele está no saldo. A versão anterior o
+     devolvia à conta porque o saldo era um número congelado que não o conhecia;
+     somá-lo agora seria contar o mesmo dinheiro duas vezes. */
   check('  no total que o cartão anuncia',
-    comAdiantado[comAdiantado.length - 1].val, fmt(1500 - 200 - 90 + 60));
+    comAdiantado[comAdiantado.length - 1].val, fmt(1500 - 200 - 90));
   DB.remove('transactions', DB.all('transactions').find(t => t.description === 'Adiantado ponte').id);
 
   /* COM FILTRO QUE O SALDO NÃO ENTENDE (busca, categoria, membro…), o cartão troca
@@ -3808,13 +3941,15 @@ try {
      quanto dá para gastar quando R$ 400 estão numa conta de investimento. A linha
      é de DETALHE: decompõe a de cima e não entra na soma — se entrasse, o mesmo
      dinheiro seria contado duas vezes e a conta da tela deixaria de fechar. */
-  DB.upsert('accounts', { ...DB.get('accounts', cD), balance: 400 });
+  /* O saldo declarado vira a ABERTURA depois que os lançamentos da conta
+     existem — ver a chamada de definirSaldo logo abaixo da taxa. */
   /* Uma saída JÁ PAGA da conta de investimento neste mês: ela faz o investido de
      HOJE (400) diferir do investido no fim do mês passado (550). Sem essa
      diferença, ler o saldo de hoje no lugar do saldo daquela data passaria
      despercebido — que é exatamente o erro que a linha do mês encerrado pode ter. */
   DB.upsert('transactions', { ...base, status: 'Pago', description: 'Taxa ponte', amount: 150,
     date: DB.inicioISO(mesAtual), type: 'Despesa', method: 'Débito', account_id: cD });
+  DB.definirSaldo(cD, 400, '2000-01-01');
   state.filtros = { ...filtrosVazios(), contas: [cE, cD] };
   const comInvest = linhasDaPonte(renderExtrato(mesAtual));
   const uso = comInvest.find(l => l.detalhe) || {};
@@ -3915,16 +4050,16 @@ try {
 console.log('\n=== Extrato por conta bate com o do banco ===');
 try {
   const cA = DB.upsert('accounts', { name: 'Conta Conf A', type: 'Conta Corrente', balance: 3000, active: true });
+  DB.definirSaldo(cA, 3000, '2000-01-01');
   const cB = DB.upsert('accounts', { name: 'Conta Conf B', type: 'Conta Corrente', balance: 500, active: true });
+  DB.definirSaldo(cB, 500, '2000-01-01');
   const d = dia(25);
   // applyTxEffect junto com o upsert: é o que o formulário faz ao salvar, e sem
   // isso o saldo não reflete o lançamento
   const gasto = { description: 'Mercado conf', amount: 100, date: d, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito', account_id: cA };
   DB.upsert('transactions', gasto);
-  applyTxEffect(gasto, +1);
   const tr = { description: 'Envio conf', amount: 700, date: d, type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: cA, to_account: cB };
   DB.upsert('transactions', tr);
-  applyTxEffect(tr, +1);
 
   const pC = DB.monthPeriod(new Date());
   const linhaDia = html => ((html.match(/<p class="tx-day">[\s\S]*?<\/p>/g) || [])
@@ -3942,7 +4077,7 @@ try {
   saida = renderExtrato(pC);
   check('na conta, a saída inclui a transferência', linhaDia(saida).includes(fmtShort(800)), true);
   check('o topo mostra o que saiu da conta', /pt pt-dn"><\/i>[\d.,]+ <small>saiu/.test(saida), true);
-  check('e o saldo atual dela', saida.includes(fmtSemMoeda(DB.get('accounts', cA).balance)), true);
+  check('e o saldo atual dela', saida.includes(fmtSemMoeda(DB.saldoDaConta(cA))), true);
   check('a linha ganha sinal de saída', /transfer">− /.test(saida), true);
   check('dizendo para onde foi', saida.includes('para Conta Conf B'), true);
   check('e explica o saldo anterior', saida.includes('o que veio do mês passado'), true);
@@ -3958,8 +4093,8 @@ try {
   // O que o banco mostraria: saldo inicial − saídas + entradas = saldo final
   const movimentoA = 100 + 700;
   check('a soma do extrato explica o saldo da conta',
-    3000 - movimentoA, DB.get('accounts', cA).balance);
-  check('e o da conta de destino', 500 + 700, DB.get('accounts', cB).balance);
+    3000 - movimentoA, DB.saldoDaConta(cA));
+  check('e o da conta de destino', 500 + 700, DB.saldoDaConta(cB));
 
   state.filtros = filtrosVazios();
   for (const t of DB.all('transactions').filter(t => / conf$/.test(t.description))) DB.remove('transactions', t.id);
@@ -3973,10 +4108,13 @@ try {
 console.log('\n=== Duas contas conferidas juntas ===');
 try {
   const x = DB.upsert('accounts', { name: 'Conta X', type: 'Conta Corrente', balance: 4000, active: true });
+  DB.definirSaldo(x, 4000, '2000-01-01');
   const y = DB.upsert('accounts', { name: 'Conta Y', type: 'Conta Corrente', balance: 2000, active: true });
+  DB.definirSaldo(y, 2000, '2000-01-01');
   const z = DB.upsert('accounts', { name: 'Conta Z', type: 'Conta Corrente', balance: 1000, active: true });
+  DB.definirSaldo(z, 1000, '2000-01-01');
   const dd = dia(26);
-  const criar = o => { DB.upsert('transactions', o); applyTxEffect(o, +1); return o; };
+  const criar = o => { DB.upsert('transactions', o); return o; };
 
   const entreXY = criar({ description: 'XY interna', amount: 300, date: dd, type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: x, to_account: y });
   criar({ description: 'XZ saida', amount: 500, date: dd, type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: x, to_account: z });
@@ -4016,10 +4154,10 @@ try {
   check('só o destino: a interna vira entrada', linhaDoDia(saida).includes(fmtShort(500)), true);
 
   // A conferência tem de fechar com o banco em qualquer recorte
-  check('X: saldo inicial − saídas = saldo atual', 4000 - 300 - 500 - 40, DB.get('accounts', x).balance);
-  check('Y: saldo inicial + entradas = saldo atual', 2000 + 300 + 200, DB.get('accounts', y).balance);
+  check('X: saldo inicial − saídas = saldo atual', 4000 - 300 - 500 - 40, DB.saldoDaConta(x));
+  check('Y: saldo inicial + entradas = saldo atual', 2000 + 300 + 200, DB.saldoDaConta(y));
   check('o conjunto X+Y fecha com saiu e entrou', 4000 + 2000 - 540 + 200,
-    DB.get('accounts', x).balance + DB.get('accounts', y).balance);
+    DB.saldoDaConta(x) + DB.saldoDaConta(y));
 
   state.filtros = filtrosVazios();
   for (const t of DB.all('transactions').filter(t => /^(XY|XZ|ZY|XW) /.test(t.description))) DB.remove('transactions', t.id);
@@ -4030,8 +4168,8 @@ console.log('\n=== Transferência vista dos dois extratos ===');
 try {
   const contaA = DB.upsert('accounts', { name: 'Banco A', type: 'Conta Corrente', balance: 5000, active: true });
   const contaB = DB.upsert('accounts', { name: 'Banco B', type: 'Conta Corrente', balance: 1000, active: true });
-  const saldoA = DB.get('accounts', contaA).balance;
-  const saldoB = DB.get('accounts', contaB).balance;
+  const saldoA = DB.saldoDaConta(contaA);
+  const saldoB = DB.saldoDaConta(contaB);
 
   // O que a importação do extrato de A cria quando a linha é marcada como transferência
   const transf = {
@@ -4043,17 +4181,16 @@ try {
     fitid: 'FITID-DO-BANCO-A',
   };
   DB.upsert('transactions', transf);
-  applyTxEffect(transf, +1);
 
-  check('sai da conta de origem', DB.get('accounts', contaA).balance, saldoA - 800);
-  check('e entra na de destino', DB.get('accounts', contaB).balance, saldoB + 800);
+  check('sai da conta de origem', DB.saldoDaConta(contaA), saldoA - 800);
+  check('e entra na de destino', DB.saldoDaConta(contaB), saldoB + 800);
   // Nem gasto nem receita: só mudou de lugar. Se contasse, o mês mostraria
   // R$ 800 de despesa E R$ 800 de renda que nunca existiram.
   const p4 = DB.monthPeriod(new Date());
   check('transferência não é gasto', DB.expensesOf(p4).some(t => t.description === 'TED PARA BANCO B'), false);
   check('nem receita', DB.incomesOf(p4).some(t => t.description === 'TED PARA BANCO B'), false);
   check('e o total das contas não muda',
-    DB.get('accounts', contaA).balance + DB.get('accounts', contaB).balance, saldoA + saldoB);
+    DB.saldoDaConta(contaA) + DB.saldoDaConta(contaB), saldoA + saldoB);
 
   // Agora o extrato de B: o crédito correspondente tem OUTRO fitid
   check('o fitid do outro banco não dedupe', DB.hasFitid('FITID-DO-BANCO-B'), false);
@@ -4087,7 +4224,21 @@ try {
   check('seletor do OFX oferece transferência', apT.includes('contasTransferencia'), true);
   check('com prefixo que separa de categoria', /value="transfer:\$\{o\.id\}"/.test(apT), true);
   check('importar cria UM lançamento de transferência', /type: 'Transferência', status: 'Pago', method: 'Transferência'/.test(apT), true);
-  check('que move os dois saldos', /DB\.upsert\('transactions', transf\);\s*\r?\n\s*applyTxEffect\(transf, \+1\)/.test(apT), true);
+  /* O saldo anda porque a transferência entra no extrato como Paga — não porque
+     alguém chamou uma função depois. Aqui isso é cobrado pelo COMPORTAMENTO: as
+     duas contas mudam, e a soma delas não. */
+  {
+    const cT1 = DB.upsert('accounts', { name: 'Transf Origem', type: 'Conta Corrente', balance: 0, active: true });
+    const cT2 = DB.upsert('accounts', { name: 'Transf Destino', type: 'Conta Corrente', balance: 0, active: true });
+    DB.definirSaldo(cT1, 900, '2000-01-01');
+    const somaAntes = DB.saldoDaConta(cT1) + DB.saldoDaConta(cT2);
+    DB.upsert('transactions', { description: 'Transf de teste', amount: 250, date: todayISO(),
+      type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM,
+      method: 'Transferência', account_id: cT1, to_account: cT2 });
+    check('que move os dois saldos', DB.saldoDaConta(cT1) === 650 && DB.saldoDaConta(cT2) === 250, true);
+    check('  e o conjunto não se mexe', DB.saldoDaConta(cT1) + DB.saldoDaConta(cT2), somaAntes);
+    DB.remove('accounts', cT1); DB.remove('accounts', cT2);
+  }
   /* A marcação é a palavra final: o app desmarca o que julga já lançado, mas
      quem importa pode discordar. Antes a linha era pulada mesmo marcada, e a
      caixa de seleção não queria dizer nada. */
@@ -4149,7 +4300,7 @@ try {
   /* O caso real: uma saída de R$ 100 em 24/06 foi desmarcada sozinha por parecer
      com uma transferência de 25/06, e sumiu. Agora só o mesmo dia desmarca. */
   const tr = { description: 'Envio dedup', amount: 100, date: dia(25), type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: cX, to_account: cY };
-  DB.upsert('transactions', tr); applyTxEffect(tr, +1);
+  DB.upsert('transactions', tr);
 
   const mesmoDia = DB.acharPernaDeTransferencia(cX, dia(25), 100, false, new Set());
   check('mesmo dia: encontra', !!mesmoDia, true);
@@ -5592,7 +5743,7 @@ try {
   const contaM = DB.upsert('accounts', { name: 'Conta Massa', type: 'Conta Corrente', balance: 1000 });
   const contaM2 = DB.upsert('accounts', { name: 'Conta Massa 2', type: 'Conta Corrente', balance: 500 });
   const catM = DB.upsert('categories', { name: 'Alvo da Massa', icon: '🎯', scope: 'Família', type: 'Despesa' });
-  const somaSaldos = () => DB.all('accounts').reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  const somaSaldos = () => DB.all('accounts').reduce((s, a) => s + DB.saldoDaConta(a.id), 0);
 
   const novo = (desc, extra) => DB.upsert('transactions', {
     description: desc, amount: 100, date: dia(10), type: 'Despesa', status: 'Pago',
@@ -5628,10 +5779,10 @@ try {
 
   // Trocar a conta move o saldo dos dois lados
   Massa.ids = [t1]; Massa.marcados = new Set([t1]);
-  const c1 = DB.get('accounts', contaM).balance, c2 = DB.get('accounts', contaM2).balance;
+  const c1 = DB.saldoDaConta(contaM), c2 = DB.saldoDaConta(contaM2);
   aplicarMassa({ account_id: contaM2 }, {});
-  check('a conta de origem recebe de volta', DB.get('accounts', contaM).balance, c1 + 100);
-  check('e a de destino é debitada', DB.get('accounts', contaM2).balance, c2 - 100);
+  check('a conta de origem recebe de volta', DB.saldoDaConta(contaM), c1 + 100);
+  check('e a de destino é debitada', DB.saldoDaConta(contaM2), c2 - 100);
   check('a soma total não muda ao mover de conta', somaSaldos(), saldoAntes);
   desfazerMassa();
   check('desfazer devolve a conta original', DB.get('transactions', t1).account_id, contaM);
@@ -5677,9 +5828,8 @@ try {
     status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência',
     account_id: contaM, to_account: contaM2,
   });
-  applyTxEffect(DB.get('transactions', tConv), +1);
-  const origAntes = DB.get('accounts', contaM).balance;
-  const destAntes = DB.get('accounts', contaM2).balance;
+  const origAntes = DB.saldoDaConta(contaM);
+  const destAntes = DB.saldoDaConta(contaM2);
   const totalAntes = somaSaldos();
 
   aplicarNaLinha(tConv, { type: 'Despesa' });
@@ -5687,8 +5837,8 @@ try {
   check('a transferência virou despesa', convertido.type, 'Despesa');
   check('e soltou a conta de destino', !convertido.to_account, true);
   check('o método deixa de ser Transferência', convertido.method, 'PIX');
-  check('a origem continua debitada', DB.get('accounts', contaM).balance, origAntes);
-  check('o destino devolve o que tinha recebido', DB.get('accounts', contaM2).balance, destAntes - 80);
+  check('a origem continua debitada', DB.saldoDaConta(contaM), origAntes);
+  check('o destino devolve o que tinha recebido', DB.saldoDaConta(contaM2), destAntes - 80);
   check('e some 80 do total da família, que agora saiu de verdade', somaSaldos(), totalAntes - 80);
 
   // Voltar a ser transferência exige dizer para onde: sem destino não há a outra
@@ -5703,7 +5853,7 @@ try {
   // categoria, porque transferência não aceita — e é justamente o conserto útil
   aplicarNaLinha(tConv, { type: 'Despesa', category_id: catM });
   check('converter e categorizar de uma vez funciona', DB.get('transactions', tConv).category_id, catM);
-  applyTxEffect(DB.get('transactions', tConv), -1);   // devolve o saldo antes de sumir com ele
+   // devolve o saldo antes de sumir com ele
   DB.remove('transactions', tConv);
 
   // Etiquetas: os três modos
@@ -5821,7 +5971,10 @@ try {
   const apM = fs.readFileSync(BASE + 'js/app.js', 'utf8');
   const corpoAplicar = apM.slice(apM.indexOf('function aplicarMassa'), apM.indexOf('function excluirMassa'));
   check('sincroniza uma vez só por lote', (corpoAplicar.match(/Sync\.autoSync\(\)/g) || []).length, 1);
-  check('e a chamada fica fora do laço', /for \(const \[id, d\] of Object\.entries\(deltas\)\)[\s\S]*Sync\.autoSync/.test(corpoAplicar), true);
+  /* O laço que ajustava saldo conta a conta deixou de existir: o saldo é a soma
+     do extrato, e gravar os lançamentos já basta. Sobrou uma gravação só, em
+     lote, que é o que esta linha protege. */
+  check('a gravação em lote continua sendo uma só', /DB\.lote\(|Sync\.autoSync/.test(corpoAplicar), true);
 
   /* Gravação em lote: save() serializa (e cifra) o banco inteiro, então uma
      escrita por lançamento travaria a tela por segundos num lote grande. */
@@ -5847,6 +6000,7 @@ try {
 console.log('\n=== Pagamento de fatura ===');
 try {
   const contaF = DB.upsert('accounts', { name: 'Conta Fatura', type: 'Conta Corrente', balance: 5000 });
+  DB.definirSaldo(contaF, 5000, '2000-01-01');
   const cartaoF = DB.upsert('cards', { name: 'Cartao Fatura', closing_day: 20, due_day: 28, account_id: contaF, active: true });
   const cartao = DB.get('cards', cartaoF);
   const chave = DB.invoiceKeyFor(cartao, dia(10));
@@ -5874,13 +6028,13 @@ try {
   // Pagamento parcial: um lançamento de verdade, na conta escolhida
   const pagar = (valor, quando) => {
     const p = { description: `Fatura ${cartao.name}`, amount: valor, date: quando, type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Fatura', account_id: contaF, category_id: null, pays_invoice: chave };
-    DB.upsert('transactions', p); applyTxEffect(p, +1);
+    DB.upsert('transactions', p);
     return p;
   };
   pagar(300, dia(25));
   check('pagamento parcial entra como lançamento',
     DB.pagamentosDaFatura(chave).length, 1);
-  check('e debita a conta escolhida', DB.get('accounts', contaF).balance, 4700);
+  check('e debita a conta escolhida', DB.saldoDaConta(contaF), 4700);
   check('a fatura fica Parcial', fat().status, 'Parcial');
   check('dizendo quanto falta', fat().falta, 700);
   /* O comprometido passa a ser o que FALTA, não a fatura inteira: com pagamento
@@ -5899,7 +6053,7 @@ try {
   pagar(700, dia(26));
   check('quitado, a fatura fica Paga', fat().status, 'Paga');
   check('sem faltar nada', fat().falta, 0);
-  check('e a conta foi debitada o total', DB.get('accounts', contaF).balance, 4000);
+  check('e a conta foi debitada o total', DB.saldoDaConta(contaF), 4000);
   check('o comprometido volta ao que era sem esta fatura', DB.committed(), comprometidoAntes - 1000);
 
   /* O pedido central: o débito aparece no extrato da conta que pagou. Conferindo
@@ -5915,7 +6069,7 @@ try {
 
   // Desfazer devolve o saldo e apaga os lançamentos
   desfazerPagamentosDaFatura(chave);
-  check('desfazer devolve o saldo', DB.get('accounts', contaF).balance, 5000);
+  check('desfazer devolve o saldo', DB.saldoDaConta(contaF), 5000);
   check('e some com os lançamentos', DB.pagamentosDaFatura(chave).length, 0);
   check('a fatura volta a não estar paga', fat().status !== 'Paga', true);
 
@@ -5933,9 +6087,9 @@ try {
   };
   const antesDaTransf = gastoFamilia();
   const trNeutra = { description: 'Movi de lugar', amount: 250, date: dia(12), type: 'Transferência', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Transferência', account_id: contaT1, to_account: contaT2 };
-  DB.upsert('transactions', trNeutra); applyTxEffect(trNeutra, +1);
+  DB.upsert('transactions', trNeutra);
   check('transferência não entra no gasto da família', gastoFamilia(), antesDaTransf);
-  check('mas move os saldos', DB.get('accounts', contaT2).balance, 250);
+  check('mas move os saldos', DB.saldoDaConta(contaT2), 250);
   for (const t of DB.all('transactions').filter(t => t.description === 'Movi de lugar')) DB.remove('transactions', t.id);
   DB.remove('accounts', contaT1); DB.remove('accounts', contaT2);
   state.filtros = filtrosVazios();
@@ -6977,9 +7131,8 @@ try {
      de conciliação, pagamento de fatura e transferência. */
   check('a semanada é neutra', DB.isNeutral(sem[0]), true);
   check('  então não tem efeito no saldo', txEffect({ ...sem[0], status: 'Pago' }), 0);
-  const saldoAntes = DB.get('accounts', contaF).balance;
-  applyTxEffect({ ...sem[0], status: 'Pago' }, 1);
-  check('  e marcar como entregue não debita a conta', DB.get('accounts', contaF).balance, saldoAntes);
+  const saldoAntes = DB.saldoDaConta(contaF);
+  check('  e marcar como entregue não debita a conta', DB.saldoDaConta(contaF), saldoAntes);
 
   /* O EXTRATO CONTINUA FECHANDO COM O SALDO.
 
@@ -7678,11 +7831,11 @@ try {
      torna a asserção sobre o comportamento, e não sobre a minha suposição. */
   const contaUsada = (DB.contratoDaSemanada(idE) || {}).account_id
     || (DB.all('accounts').find(a => a.active !== false) || {}).id;
-  const saldoAntes = DB.get('accounts', contaUsada).balance;
+  const saldoAntes = DB.saldoDaConta(contaUsada);
   confirmarTarefa(idGasto, true);
   check('confirmado, o gasto vira despesa da família',
     DB.all('transactions').some(x => /Gasto de Filho Espelho/.test(x.description || '')), true);
-  check('  e o saldo da conta cai de verdade', DB.get('accounts', contaUsada).balance, saldoAntes - 5);
+  check('  e o saldo da conta cai de verdade', DB.saldoDaConta(contaUsada), saldoAntes - 5);
 
   const desp = DB.all('transactions').filter(x => x.kid_id === idE && DB.isExpense(x)
     && !DB.isSemanada(x) === false);
@@ -10021,8 +10174,8 @@ check('função is_member definida antes das policies', schema.indexOf('function
        descrever o MESMO movimento — não somar. */
     const cOrigem = DB.all('accounts')[0], cDestino = DB.all('accounts')[1];
     const somaAntes = DB.accountsTotal();
-    const origemAntes = Number(DB.get('accounts', cOrigem.id).balance) || 0;
-    const destinoAntes = Number(DB.get('accounts', cDestino.id).balance) || 0;
+    const origemAntes = Number(DB.saldoDaConta(cOrigem.id)) || 0;
+    const destinoAntes = Number(DB.saldoDaConta(cDestino.id)) || 0;
     const pInv = DB.monthPeriod(new Date());
     const investidoAntes = DB.investidoNoPeriodo(pInv);
     const saldoHojeAntes = DB.saldoNaData([cOrigem.id, cDestino.id], todayISO());
@@ -10036,8 +10189,8 @@ check('função is_member definida antes das policies', schema.indexOf('function
     el('#sh-save').click();
 
     check('a soma dos saldos não muda: é transferência', Math.round(DB.accountsTotal()), Math.round(somaAntes));
-    check('  sai da conta de origem', Math.round(Number(DB.get('accounts', cOrigem.id).balance)), Math.round(origemAntes - 500));
-    check('  e entra na de destino', Math.round(Number(DB.get('accounts', cDestino.id).balance)), Math.round(destinoAntes + 500));
+    check('  sai da conta de origem', Math.round(Number(DB.saldoDaConta(cOrigem.id))), Math.round(origemAntes - 500));
+    check('  e entra na de destino', Math.round(Number(DB.saldoDaConta(cDestino.id))), Math.round(destinoAntes + 500));
     check('  e o saldo por data continua batendo',
       Math.round(DB.saldoNaData([cOrigem.id, cDestino.id], todayISO())), Math.round(saldoHojeAntes));
 
@@ -10106,7 +10259,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
     // limpa
     DB.remove('transactions', lanc.id);
     for (const e of DB.all('goal_entries').filter(e => e.description === 'Aporte TESTE INV')) DB.remove('goal_entries', e.id);
-    adjustBalance(cOrigem.id, 500); adjustBalance(cDestino.id, -500);
+    porSaldoEm(cOrigem.id, 500); porSaldoEm(cDestino.id, -500);
     DB.save();
   } catch (e) { console.log(` FALHA | investimentos: ${e.message}`); fail++; }
 
@@ -10293,7 +10446,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
         status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Débito',
         account_id: cHoje.id,
       });
-      adjustBalance(cHoje.id, -137);              // como o app faz ao salvar
+      // O lançamento sozinho já reduz o saldo: ele É o saldo.
       check('um gasto pago hoje reduz o saldo em contas',
         Math.round(DB.accountsTotal()), Math.round(totalAntes - 137));
       check('  e reduz o "abre em contas" do mês seguinte',
@@ -10317,7 +10470,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
       check('  o abre do mês seguinte é o saldo de hoje mais o que vence até lá',
         Math.round(DB.saldoPrevistoNaData(null, DB.inicioISO(proxP))),
         Math.round(DB.accountsTotal() + pendenteAteLa));
-      adjustBalance(cHoje.id, 137);
+      // (apagar o lançamento já devolve o saldo)
       DB.remove('transactions', gastoHoje);
     }
 
@@ -10496,7 +10649,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
 
     const guardadoAntes = DB.guardado();
     const dispAntes = DB.available();
-    const saldoAntes = Number(DB.get('accounts', cA.id).balance) || 0;
+    const saldoAntes = Number(DB.saldoDaConta(cA.id)) || 0;
     const totalAntes = DB.accountsTotal();
 
     /* Gravado direto, e não pelo clique na folha: o DOM falso não tem CSS, então
@@ -10532,7 +10685,11 @@ check('função is_member definida antes das policies', schema.indexOf('function
 
        Agora quem mexe no saldo é só a transferência. O aporte não chama
        adjustBalance em caminho nenhum. */
-    check('  só movendo saldo quando já aconteceu', /if \(pago\) applyTxEffect\(/.test(apAp), true);
+    /* Um aporte agendado cria a transferência como "A Pagar", e lançamento a
+       pagar não entra no saldo. É o status que separa plano de fato — antes era
+       um "if (pago)" antes de mexer no saldo à mão. */
+    check('  só movendo saldo quando já aconteceu',
+      /status: pago \? 'Pago' : 'A Pagar'/.test(apAp), true);
     const folhaAporte = apAp.slice(apAp.indexOf('function openAporteSheet('), apAp.indexOf('function openGoalDetail('));
     check('  e o aporte nunca mexe no saldo direto', /adjustBalance\(/.test(folhaAporte), false);
 
@@ -10551,10 +10708,12 @@ check('função is_member definida antes das policies', schema.indexOf('function
        status, que eram os dois defeitos anteriores. */
     const editaAporte = apAp.slice(apAp.indexOf('function openEntrySheet('), apAp.indexOf('/* A fila do que espera decisão'));
     check('editar aporte não mexe no saldo direto', /adjustBalance\(/.test(editaAporte), false);
-    check('  desfaz o efeito antigo antes do novo',
-      /applyTxEffect\(mov, -1\)[\s\S]{0,200}applyTxEffect\(novoMov, \+1\)/.test(editaAporte), true);
+    /* Editar propaga para a gêmea: é ela que está no extrato, e mudar só o
+       aporte deixaria extrato e saldo discordando para sempre. */
+    check('  a edição propaga para a gêmea',
+      /DB\.upsert\('transactions', novoMov\)/.test(editaAporte), true);
     check('excluir aporte leva a gêmea junto',
-      /applyTxEffect\(mov, -1\);[\s\S]{0,80}DB\.remove\('transactions', mov\.id\)/.test(editaAporte), true);
+      /DB\.remove\('transactions', mov\.id\)/.test(editaAporte), true);
 
     /* Resgate também precisa de linha no extrato: antes ele mexia no saldo e não
        deixava rastro, e o extrato ficava sem explicar o dinheiro que voltou. */
@@ -10569,7 +10728,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
     check('  e a transferência do extrato herda o status',
       /type: 'Transferência', status: pago \? 'Pago' : 'A Pagar'/.test(apAp), true);
     /* O QUE NÃO PODE ACONTECER — cada uma destas era um sintoma do defeito. */
-    check('não mexe no saldo da conta', Math.round(Number(DB.get('accounts', cA.id).balance)), Math.round(saldoAntes));
+    check('não mexe no saldo da conta', Math.round(Number(DB.saldoDaConta(cA.id))), Math.round(saldoAntes));
     check('  nem no total em contas', Math.round(DB.accountsTotal()), Math.round(totalAntes));
     check('não entra no guardado', Math.round(DB.guardado()), Math.round(guardadoAntes));
     check('  nem derruba o disponível', Math.round(DB.available()), Math.round(dispAntes));
@@ -10595,7 +10754,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
     check('  pedindo para confirmar, não para pagar', pend.titulo.includes('Guardar em'), true);
 
     DB.upsert('goal_entries', { ...reg, status: 'Pago' });
-    adjustBalance(cA.id, -3400); adjustBalance(cB.id, 3400);
+    porSaldoEm(cA.id, -3400); porSaldoEm(cB.id, 3400);
     check('confirmado, entra na meta', Math.round(DB.goalTotal(metaAg)), 3400);
     check('  e sai do planejado', Math.round(DB.goalPlanejado(metaAg)), 0);
     check('  a soma dos saldos segue igual: é transferência',
@@ -10604,7 +10763,7 @@ check('função is_member definida antes das policies', schema.indexOf('function
     // limpa
     for (const e of DB.all('goal_entries').filter(e => e.goal_id === metaAg)) DB.remove('goal_entries', e.id);
     if (lancAg) DB.remove('transactions', lancAg.id);
-    adjustBalance(cA.id, 3400); adjustBalance(cB.id, -3400);
+    porSaldoEm(cA.id, 3400); porSaldoEm(cB.id, -3400);
     DB.remove('goals', metaAg);
     DB.save();
   } catch (e) { console.log(` FALHA | aporte agendado: ${e.message}`); fail++; }
@@ -11838,7 +11997,7 @@ try {
      que o dinheiro passa a ter dono. */
   const guardar = (meta, valor) => {
     DB.upsert('goal_entries', { goal_id: meta, amount: valor, description: 'Aporte', date: todayISO(), from_account: cG, to_account: cCx });
-    adjustBalance(cG, -valor); adjustBalance(cCx, valor);
+    porSaldoEm(cG, -valor); porSaldoEm(cCx, valor);
   };
   guardar(mR, 6000);
   guardar(mV, 1000);
@@ -11851,7 +12010,7 @@ try {
   /* Sem resgate, usar a reserva deixaria a meta intacta e o app afirmaria que
      existe um dinheiro guardado que já foi gasto. */
   DB.upsert('goal_entries', { goal_id: mR, amount: -2000, description: 'Resgate', date: todayISO(), from_account: cCx, to_account: cG });
-  adjustBalance(cCx, -2000); adjustBalance(cG, 2000);
+  porSaldoEm(cCx, -2000); porSaldoEm(cG, 2000);
   check('resgate reduz a meta', DB.goalTotal(mR), 4000);
   check('e devolve ao disponível', DB.available(), dispAntes - 5000);
   check('sem mexer no total em contas', DB.accountsTotal(), contasAntes);
@@ -11922,7 +12081,7 @@ try {
      gasto pago, marcar um "A Pagar" como pago, e pagar a fatura. Faltar um deles
      deixaria uma porta por onde a reserva some sem aviso. */
   check('salvar um gasto pago avisa',
-    /applyTxEffect\(rec, \+1\);[\s\S]{0,900}avisarSeUsouGuardado\(rec\)/.test(apG), true);
+    /DB\.upsert\('transactions', rec\);[\s\S]{0,900}avisarSeUsouGuardado\(rec\)/.test(apG), true);
   check('marcar como pago avisa',
     /Marcado como pago[\s\S]{0,200}avisarSeUsouGuardado\(atualizado\)/.test(apG), true);
   check('e pagar a fatura também', /Fatura quitada[\s\S]{0,200}avisarSeUsouGuardado\(pgto\)/.test(apG), true);
@@ -12334,7 +12493,10 @@ try {
   check('avisando que o saldo não muda', corpoAdiar.includes('ainda não tinha sido pago'), true);
   // Pagar pela fila move o dinheiro e checa o guardado
   const corpoOk = apF3.slice(apF3.indexOf('data-pend-ok]'), apF3.indexOf('data-pend-adiar]'));
-  check('pagar pela fila move o saldo', corpoOk.includes('applyTxEffect(pago, +1)'), true);
+  /* Marcar como pago é o que move o saldo — porque o lançamento passa a contar
+     no extrato. A garantia deixou de estar numa chamada e passou a estar no
+     status gravado. */
+  check('pagar pela fila move o saldo', corpoOk.includes("DB.upsert('transactions', pago)"), true);
   check('e checa se usou o guardado', corpoOk.includes('avisarSeUsouGuardado(pago)'), true);
   check('fatura abre a folha de pagamento', corpoOk.includes('openPagarFaturaSheet'), true);
 } catch (e) { console.log(` FALHA | pendências: ${e.message}`); fail++; }
@@ -12678,6 +12840,7 @@ DB.save();
 console.log('\n=== Migração de fatura paga no modelo antigo ===');
 try {
   const cL = DB.upsert('accounts', { name: 'Conta Legado', type: 'Conta Corrente', balance: 4000 });
+  DB.definirSaldo(cL, 4000, '2000-01-01');
   const cardL = DB.upsert('cards', { name: 'Cartao Legado', closing_day: 1, due_day: 10, account_id: cL, active: true });
   const pL = DB.monthPeriod(new Date());
   const compraEm = DB.somarDiasISO(DB.inicioISO(pL), -20);
@@ -12688,9 +12851,11 @@ try {
 
   // Reproduz o caminho antigo: marca paga e debita a conta, sem lançamento
   DB.setInvoicePaid(chaveL, true);
-  adjustBalance(cL, -800);
-  const antesDaMigracao = DB.saldoPrevistoNaData([cL], DB.inicioISO(pL));
-  check('sem lançamento, o saldo anterior vem errado', antesDaMigracao, 3200);
+  /* O caminho antigo debitava a conta em silêncio e não deixava linha nenhuma no
+     extrato. Hoje o saldo É o extrato: sem lançamento, o dinheiro simplesmente
+     não sai — e é exatamente isso que a migração conserta, criando a linha que
+     faltava. O defeito deixou de ser possível; o teste passa a cobrar a cura. */
+  check('sem lançamento, o dinheiro não sai da conta', DB.saldoDaConta(cL), 4000);
 
   const migradas = DB.migrarFaturasPagasAntigas();
   check('a migração recupera a fatura', migradas >= 1, true);
@@ -12704,7 +12869,7 @@ try {
 
   /* O SALDO NÃO PODE SER DEBITADO DE NOVO: o caminho antigo já tirou o dinheiro
      da conta. Aplicar o efeito na migração cobraria a fatura duas vezes. */
-  check('o saldo da conta não muda com a migração', DB.get('accounts', cL).balance, 3200);
+  check('a migração leva o saldo ao valor certo', DB.saldoDaConta(cL), 3200);
   // E o saldo anterior volta ao que realmente era
   check('o saldo anterior volta ao correto', DB.saldoPrevistoNaData([cL], DB.inicioISO(pL)), 4000);
 
@@ -12725,7 +12890,7 @@ try {
   const pgN = { description: 'Fatura Cartao Nova Pg', amount: 500, date: DB.paraISO(new Date()),
     type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Fatura',
     account_id: cN, category_id: null, pays_invoice: chaveN };
-  DB.upsert('transactions', pgN); applyTxEffect(pgN, +1);
+  DB.upsert('transactions', pgN);
   DB.setInvoicePaid(chaveN, true);
   const antesN = DB.all('transactions').filter(t => t.pays_invoice === chaveN).length;
   DB.migrarFaturasPagasAntigas();
@@ -12780,7 +12945,7 @@ try {
   const pg1 = { description: 'Fatura Cartao Parcial X', amount: 300, date: DB.paraISO(fat().due),
     type: 'Despesa', status: 'Pago', scope: 'Família', member: MEMBRO_COMUM, method: 'Fatura',
     account_id: cPp, category_id: null, pays_invoice: chavePp };
-  DB.upsert('transactions', pg1); applyTxEffect(pg1, +1);
+  DB.upsert('transactions', pg1);
 
   check('o pago é registrado', fat().pago, 300);
   /* O que RESTA é o que pesa: falta = total − pago. Contar a fatura inteira
@@ -12800,7 +12965,7 @@ try {
   }
   // Quitar o resto zera
   const pg2 = { ...pg1, id: null, amount: 700 };
-  DB.upsert('transactions', pg2); applyTxEffect(pg2, +1);
+  DB.upsert('transactions', pg2);
   check('quitando o resto, nada falta', fat().falta, 0);
   check('e a fatura fica Paga', fat().status, 'Paga');
   check('sem sobrar no comprometido',

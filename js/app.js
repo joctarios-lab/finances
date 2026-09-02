@@ -280,11 +280,6 @@ function moneyVal(sel) {
 /* ---------- Saldo automático ----------
    Gasto Pago em conta (fora de cartão) debita o saldo; fatura marcada paga debita a conta
    de pagamento do cartão. Edições e exclusões revertem o efeito. */
-function adjustBalance(accountId, delta) {
-  if (!accountId || !delta) return;
-  const a = DB.get('accounts', accountId);
-  if (a) DB.upsert('accounts', { ...a, balance: (Number(a.balance) || 0) + delta });
-}
 /* "NEUTRO" TEM DOIS SENTIDOS NESTE APP, e eles não coincidem.
 
    `DB.isNeutral` responde "isto conta como despesa ou receita da família?" —
@@ -307,16 +302,6 @@ function txEffect(t) {
 
 /* Aplica (sinal +1) ou desfaz (sinal −1) o efeito de um lançamento nos saldos.
    Transferência mexe em duas contas: sai de uma e entra na outra. */
-function applyTxEffect(t, sinal = 1) {
-  if (!t || t.status !== 'Pago') return;
-  const v = Number(t.amount) || 0;
-  if (DB.isTransfer(t)) {
-    if (t.account_id) adjustBalance(t.account_id, -v * sinal);
-    if (t.to_account) adjustBalance(t.to_account, v * sinal);
-    return;
-  }
-  adjustBalance(t.account_id, txEffect(t) * sinal);
-}
 
 /* A TRANSFERÊNCIA GÊMEA DE UM APORTE.
 
@@ -358,27 +343,24 @@ function movimentoDoAporte(e) {
    Lança um "Ajuste de saldo" com a diferença, para que o extrato sempre explique
    o saldo e a correção possa ser auditada, revertida ou classificada depois.
    Ajustes ficam de fora das análises (não são gasto nem renda de verdade). */
-function reconcileBalance(account, novoSaldo, descricao) {
-  const delta = Number(novoSaldo) - (Number(account.balance) || 0);
+/* Conciliar deixou de criar um "Ajuste de saldo".
+
+   O ajuste nascia com a data de HOJE e caía no meio de um mês — acertava o
+   número final e distorcia justamente aquele mês, que passava a abrir com uma
+   diferença que nunca esteve lá. Foi por isso que oito deles tiveram de ser
+   apagados à mão da base real.
+
+   Agora a diferença vai para a ABERTURA da conta, datada antes do primeiro
+   movimento — onde o dinheiro de fato estava. Ela continua visível no extrato,
+   como primeira linha, e não distorce mês nenhum.
+
+   Devolve a diferença encontrada, como antes, para quem chamou poder avisar. */
+function reconcileBalance(account, novoSaldo) {
+  const delta = Number(novoSaldo) - DB.saldoDaConta(account.id);
   if (Math.abs(delta) < 0.005) return 0;
-  const ajuste = {
-    description: descricao || 'Ajuste de saldo',
-    amount: Math.abs(delta),
-    date: todayISO(),
-    type: delta > 0 ? 'Receita' : 'Despesa',
-    status: 'Pago',
-    scope: 'Família',
-    member: MEMBRO_COMUM,
-    method: 'Ajuste',
-    account_id: account.id,
-    category_id: null,
-    adjustment: true,
-  };
-  DB.upsert('transactions', ajuste);
-  adjustBalance(account.id, txEffect(ajuste));   // o próprio lançamento leva o saldo ao novo valor
+  DB.definirSaldo(account.id, Number(novoSaldo));
   return delta;
 }
-
 function catOf(id) { return DB.get('categories', id); }
 // Caminho inteiro: "Mercado" sozinho nao diz de qual envelope saiu
 function catLabel(id) { const c = catOf(id); return c ? `${DB.categoryIcon(id)} ${DB.categoryPath(id)}` : 'Sem categoria'; }
@@ -1553,7 +1535,7 @@ function renderInicio(period) {
   const txs = DB.expensesOf(period);
   const total = txs.reduce((s, t) => s + Number(t.amount || 0), 0);
   const contas = DB.all('accounts').filter(a => a.active !== false);
-  const saldo = contas.reduce((s, a) => s + Number(a.balance || 0), 0);
+  const saldo = contas.reduce((s, a) => s + DB.saldoDaConta(a.id), 0);
 
   const stats = DB.statsFor(period);
   const committed = DB.committed();
@@ -2824,7 +2806,7 @@ function notaDoFiltro(soDeConta) {
    outro caminho é como o extrato de julho passou a discordar do saldo da conta. */
 function saldoDeContas(contas) {
   return (contas && contas.length)
-    ? contas.reduce((s, id) => s + (Number((DB.get('accounts', id) || {}).balance) || 0), 0)
+    ? contas.reduce((s, id) => s + DB.saldoDaConta(id), 0)
     : DB.accountsTotal();
 }
 
@@ -3154,7 +3136,7 @@ function renderExtrato(period) {
       // Conferindo contas: os números viram os DELAS, para bater com o extrato do
       // banco linha a linha.
       const nomes = contasFiltradas.map(id => (DB.get('accounts', id) || {}).name).filter(Boolean);
-      const saldo = contasFiltradas.reduce((s, id) => s + (Number((DB.get('accounts', id) || {}).balance) || 0), 0);
+      const saldo = contasFiltradas.reduce((s, id) => s + DB.saldoDaConta(id), 0);
       const varias = contasFiltradas.length > 1;
       /* Saldo anterior e saldo final vêm os DOIS do saldo real da conta, cada um
          medido na sua data — não de "anterior + entrou − saiu".
@@ -3343,7 +3325,7 @@ function renderCartoes() {
       <div class="pat-partes"><span>tenho <b>${fmt(pat.emContas)}</b></span><span class="pat-sep">·</span><span>devo <b>${fmt(deve)}</b></span></div>
     </div>` : '';
 
-  const totalContas = contas.reduce((s, a) => s + (Number(a.balance) || 0), 0);
+  const totalContas = contas.reduce((s, a) => s + DB.saldoDaConta(a.id), 0);
   const contasHtml = capa + `
     <div class="sec-cab">
       <div class="sec-tit">
@@ -3360,7 +3342,7 @@ function renderCartoes() {
         <div class="acc-row" data-acc="${a.id}">
           <span class="acc-ico">${a.type === 'Caixinha / Rendimento' ? '🐷' : a.type === 'Investimento' ? '📈' : a.type === 'Carteira Digital' ? '📱' : '🏦'}</span>
           <span class="acc-info"><b>${esc(a.name)}</b><small>${esc(a.type)}${a.institution ? ' · ' + esc(a.institution) : ''}</small></span>
-          <span class="num">${fmt(a.balance)}</span>
+          <span class="num">${fmt(DB.saldoDaConta(a.id))}</span>
         </div>`).join('') : '<div class="empty">Nenhuma conta cadastrada. Adicione em Configurações → Contas.</div>'}
     </div>`;
 
@@ -4692,7 +4674,6 @@ function bindView() {
       if (mov && mov.status !== 'Pago') {
         const pagoMov = { ...mov, status: 'Pago', goal_entry_id: e.id };
         DB.upsert('transactions', pagoMov);
-        applyTxEffect(pagoMov, +1);
       }
       Sync.autoSync(); render();
       return toast('Guardado ✓');
@@ -4701,7 +4682,6 @@ function bindView() {
     if (!t) return;
     const pago = { ...t, status: 'Pago' };
     DB.upsert('transactions', pago);
-    applyTxEffect(pago, +1);          // é agora que o dinheiro se move
     Sync.autoSync(); render();
     toast(DB.isExpense(t) ? 'Pago ✓' : 'Recebido ✓');
     avisarSeUsouGuardado(pago);
@@ -4841,9 +4821,7 @@ function bindView() {
     const t = DB.get('transactions', b.dataset.payTx);
     if (!t) return;
     const atualizado = { ...t, status: 'Pago' };
-    adjustBalance(t.account_id, -txEffect(t));
     DB.upsert('transactions', atualizado);
-    adjustBalance(atualizado.account_id, txEffect(atualizado));
     Sync.autoSync(); render();
     toast(DB.isExpense(t) ? 'Marcado como pago ✓' : 'Marcado como recebido ✓');
     // É AQUI que o dinheiro sai: enquanto era "A Pagar" o saldo estava intacto
@@ -5097,7 +5075,7 @@ function openPagarFaturaSheet(key) {
     <div class="field"><label>Data do pagamento</label><input id="pf-data" type="date" value="${todayISO()}"></div>
     <div class="field"><label>Conta que pagou</label>
       <select id="pf-conta">${contas.map(a =>
-        `<option value="${a.id}"${a.id === contaPadrao ? ' selected' : ''}>${esc(a.name)} — ${fmt(a.balance)}</option>`).join('')}</select>
+        `<option value="${a.id}"${a.id === contaPadrao ? ' selected' : ''}>${esc(a.name)} — ${fmt(DB.saldoDaConta(a.id))}</option>`).join('')}</select>
     </div>
     <p class="muted" style="margin-bottom:var(--e3)">O débito entra no extrato da conta escolhida. Não conta como gasto novo: as compras do cartão já entraram quando aconteceram.</p>
     <button class="btn" id="sh-save">Registrar pagamento</button>
@@ -5123,7 +5101,6 @@ function openPagarFaturaSheet(key) {
       pays_invoice: key,
     };
     DB.upsert('transactions', pgto);
-    applyTxEffect(pgto, +1);
     closeSheet(); Sync.autoSync(); render();
     const restante = falta - valor;
     toast(restante > 0.005 ? `Pago ${fmt(valor)} — faltam ${fmt(restante)}` : 'Fatura quitada ✓');
@@ -5151,7 +5128,6 @@ function rotuloDaFatura(key) {
 function desfazerPagamentosDaFatura(key) {
   DB.emLote(() => {
     for (const t of DB.pagamentosDaFatura(key)) {
-      applyTxEffect(t, -1);                 // devolve o saldo à conta
       DB.remove('transactions', t.id);
     }
     DB.setInvoicePaid(key, false);          // limpa também a marcação manual antiga
@@ -5242,7 +5218,6 @@ function aplicarNaLinha(id, campos) {
     somar(efeitoNasContas(t), -1);
     somar(efeitoNasContas(novo), +1);
     DB.upsert('transactions', novo);
-    for (const [conta, d] of Object.entries(deltas)) if (Math.abs(d) > 0.004) adjustBalance(conta, d);
   });
   Massa.desfazer = { antes: [{ ...t }], deltas };
   return novo;
@@ -5758,7 +5733,6 @@ function aplicarMassa(campos, extras) {
       mexidos++;
     }
     // Uma escrita por conta, depois de tudo somado
-    for (const [id, d] of Object.entries(deltas)) if (Math.abs(d) > 0.004) adjustBalance(id, d);
   });
 
   Massa.desfazer = { antes, deltas };
@@ -5779,7 +5753,6 @@ function excluirMassa() {
       for (const [id, v] of Object.entries(efeitoNasContas(t))) deltas[id] = (deltas[id] || 0) - v;
       DB.remove('transactions', t.id);
     }
-    for (const [id, d] of Object.entries(deltas)) if (Math.abs(d) > 0.004) adjustBalance(id, d);
   });
 
   Massa.desfazer = { antes, deltas };
@@ -5798,7 +5771,6 @@ function desfazerMassa() {
   if (!d) return toast('Não há o que desfazer');
   DB.emLote(() => {
     for (const t of d.antes) DB.upsert('transactions', t);
-    for (const [id, v] of Object.entries(d.deltas)) if (Math.abs(v) > 0.004) adjustBalance(id, -v);
   });
   Massa.desfazer = null;
   Massa.ids = d.antes.map(t => t.id);
@@ -6110,11 +6082,11 @@ function openTxSheet(tx, asNew) {
     </div>`}
     <div class="field" id="wrap-account" ${tx.method === 'Cartão de Crédito' ? 'hidden' : ''}>
       <label id="lbl-account">Conta <span class="muted">— o saldo é ajustado sozinho</span></label>
-      <select id="f-account"><option value="">— não movimenta conta —</option>${accounts.map(a => `<option value="${a.id}" ${tx.account_id === a.id ? 'selected' : ''}>${esc(a.name)}${DB.isReserveGoal({ name: a.name }) ? '' : ''} — ${fmtShort(a.balance)}</option>`).join('')}</select>
+      <select id="f-account"><option value="">— não movimenta conta —</option>${accounts.map(a => `<option value="${a.id}" ${tx.account_id === a.id ? 'selected' : ''}>${esc(a.name)}${DB.isReserveGoal({ name: a.name }) ? '' : ''} — ${fmtShort(DB.saldoDaConta(a.id))}</option>`).join('')}</select>
     </div>
     <div class="field" id="wrap-to-account" hidden>
       <label>Para qual conta</label>
-      <select id="f-to-account"><option value="">— selecione —</option>${accounts.map(a => `<option value="${a.id}" ${tx.to_account === a.id ? 'selected' : ''}>${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}</select>
+      <select id="f-to-account"><option value="">— selecione —</option>${accounts.map(a => `<option value="${a.id}" ${tx.to_account === a.id ? 'selected' : ''}>${esc(a.name)} — ${fmtShort(DB.saldoDaConta(a.id))}</option>`).join('')}</select>
       <p class="muted" style="margin-top:var(--e2)">Mover dinheiro entre contas suas <b>não é gasto nem renda</b> — só ajusta os saldos, sem poluir os relatórios.</p>
     </div>
     <div class="field" id="wrap-scope"><label>Âmbito</label>
@@ -6548,9 +6520,7 @@ function openTxSheet(tx, asNew) {
         category_id: null, card_id: null, invoice_key: '', recurring: false, pontual: false, adjustment: false,
         tags: tagsEscolhidas(),
       };
-      if (orig) applyTxEffect(orig, -1);
       DB.upsert('transactions', transf);
-      applyTxEffect(transf, +1);
       aplicarFixacao();
       closeSheet(); render(); Sync.autoSync();
       return toast(`${fmt(amount)} transferido ✓`);
@@ -6620,9 +6590,7 @@ function openTxSheet(tx, asNew) {
     } else {
       rec.account_id = $('#f-account').value || null;
     }
-    if (orig) applyTxEffect(orig, -1);   // reverte efeito antigo (inclui transferências)
     DB.upsert('transactions', rec);
-    applyTxEffect(rec, +1);              // aplica efeito novo
     const propagadas = propagarNasParcelas(rec, orig, chipValue('g-alcance'));
     aplicarFixacao();
     closeSheet(); render(); Sync.autoSync();
@@ -6656,12 +6624,11 @@ function openTxSheet(tx, asNew) {
     const irmas = tx.group_id ? DB.all('transactions').filter(t => t.group_id === tx.group_id) : [];
     if (irmas.length > 1) {
       if (confirm(`Faz parte de uma compra parcelada (${irmas.length}x). Excluir TODAS as parcelas?\n\nCancelar exclui só esta parcela.`)) {
-        irmas.forEach(g => { applyTxEffect(g, -1); DB.remove('transactions', g.id); });
+        irmas.forEach(g => { DB.remove('transactions', g.id); });
         closeSheet(); render(); Sync.autoSync();
         return toast(`${irmas.length} parcelas excluídas`);
       }
     } else if (!confirm('Excluir este lançamento?')) return;
-    if (orig) applyTxEffect(orig, -1);   // devolve ao saldo
     DB.remove('transactions', tx.id);
     closeSheet(); render(); Sync.autoSync();
     toast('Excluído');
@@ -6764,9 +6731,7 @@ function propagarNasParcelas(rec, orig, alcance) {
       if (mudouValor) novo.amount = rec.amount;
       // O efeito no saldo é revertido e reaplicado, como na edição única: uma
       // parcela já paga em conta move dinheiro de verdade
-      applyTxEffect(t, -1);
       DB.upsert('transactions', novo);
-      applyTxEffect(novo, +1);
     }
   });
   return alvos.length;
@@ -6784,11 +6749,11 @@ function openSaldoSheet(accountId) {
     <button class="btn" id="sh-save">Conciliar saldo</button>
     <div class="btn-row"><button class="btn ghost" id="sh-edit">Editar conta</button></div>
   `);
-  initMoney('#s-bal', a.balance);
+  initMoney('#s-bal', DB.saldoDaConta(a.id));
   const mostrarDelta = () => {
-    const d = moneyVal('#s-bal') - (Number(a.balance) || 0);
+    const d = moneyVal('#s-bal') - DB.saldoDaConta(a.id);
     $('#s-delta').innerHTML = Math.abs(d) < 0.005
-      ? 'Saldo registrado no app: <b>' + fmt(a.balance) + '</b>'
+      ? 'Saldo registrado no app: <b>' + fmt(DB.saldoDaConta(a.id)) + '</b>'
       : `Diferença de <b class="${d > 0 ? 'txt-green' : 'txt-red'}">${d > 0 ? '+' : '−'} ${fmt(Math.abs(d))}</b> — será lançada como <b>Ajuste de saldo</b> no extrato, para não sumir sem explicação.`;
   };
   mostrarDelta();
@@ -6805,7 +6770,7 @@ function openSaldoSheet(accountId) {
 function openTransferSheet(destinoId, titulo) {
   const contas = DB.all('accounts').filter(a => a.active !== false);
   const opts = sel => contas.map(a =>
-    `<option value="${a.id}" ${sel === a.id ? 'selected' : ''}>${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('');
+    `<option value="${a.id}" ${sel === a.id ? 'selected' : ''}>${esc(a.name)} — ${fmtShort(DB.saldoDaConta(a.id))}</option>`).join('');
   // Origem sugerida: a primeira conta que não é o destino
   const origem = (contas.find(a => a.id !== destinoId) || {}).id;
   openSheet(`
@@ -6824,8 +6789,6 @@ function openTransferSheet(destinoId, titulo) {
     const de = $('#t-from').value, para = $('#t-to').value;
     if (!valor) return toast('Informe o valor');
     if (de === para) return toast('Escolha contas diferentes');
-    adjustBalance(de, -valor);
-    adjustBalance(para, valor);
     closeSheet(); render(); Sync.autoSync();
     toast('Transferência registrada ✓');
   };
@@ -7015,10 +6978,8 @@ function openEntrySheet(entryId, goalId) {
        velho, deixando extrato e saldo discordando para sempre. */
     const mov = movimentoDoAporte(e);
     if (mov) {
-      applyTxEffect(mov, -1);
       const novoMov = { ...mov, amount: novo, date: data, goal_entry_id: e.id };
       DB.upsert('transactions', novoMov);
-      applyTxEffect(novoMov, +1);
     }
     voltarParaDetalhe();
     toast('Aporte atualizado ✓');
@@ -7031,7 +6992,6 @@ function openEntrySheet(entryId, goalId) {
        e ainda deixava a transferência órfã no extrato. */
     const mov = movimentoDoAporte(e);
     if (mov) {
-      applyTxEffect(mov, -1);
       DB.remove('transactions', mov.id);
     }
     DB.remove('goal_entries', e.id);
@@ -7397,12 +7357,12 @@ function openAporteSheet(goalId, opcoes = {}) {
     </div>
     <div class="field"><label id="a-lbl-de">Saiu de qual conta? <span class="muted">— opcional, ajusta o saldo</span></label>
       <select id="a-account"><option value="">— não movimentar contas —</option>
-        ${DB.all('accounts').filter(a => a.active !== false).map(a => `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}
+        ${DB.all('accounts').filter(a => a.active !== false).map(a => `<option value="${a.id}">${esc(a.name)} — ${fmtShort(DB.saldoDaConta(a.id))}</option>`).join('')}
       </select></div>
     <div class="field"><label id="a-lbl-para">Entrou em qual conta? <span class="muted">— onde o dinheiro ficou guardado</span></label>
       <select id="a-to"><option value="">— não movimentar contas —</option>
         ${DB.all('accounts').filter(a => a.active !== false).map(a =>
-          `<option value="${a.id}">${esc(a.name)} — ${fmtShort(a.balance)}</option>`).join('')}
+          `<option value="${a.id}">${esc(a.name)} — ${fmtShort(DB.saldoDaConta(a.id))}</option>`).join('')}
       </select></div>
     <!-- SITUAÇÃO, igual à de um lançamento. Um aporte agendado é PLANO: não mexe
          em saldo, não conta como guardado e não abate o disponível — ele entra na
@@ -7521,7 +7481,6 @@ function openAporteSheet(goalId, opcoes = {}) {
         category_id: DB.categoriaDeAporte(g),
         goal_entry_id: entryId,
       });
-      if (pago) applyTxEffect(DB.get('transactions', idMov), +1);
     }
     closeSheet(); render(); Sync.autoSync();
     if (opcoes.aoConcluir) opcoes.aoConcluir(amount);
@@ -8274,7 +8233,7 @@ function confirmarTarefa(entryId, aceitar) {
          saldo é aplicado: aplicar sobre todas as despesas da criança debitaria de
          novo, a cada confirmação, tudo o que ela já gastou antes. */
       try {
-        for (const tx of DB.espelharGastosDosFilhos()) applyTxEffect(tx, 1);
+        DB.espelharGastosDosFilhos();
       } catch (_) { }
     }
   } else {
@@ -8642,7 +8601,7 @@ function openConfigSection(sec) {
   }
   if (sec === 'accounts') {
     crudList('accounts', 'Contas',
-      a => `${esc(a.name)}<br><small>${esc(a.type)} · ${fmt(a.balance)}</small>`,
+      a => `${esc(a.name)}<br><small>${esc(a.type)} · ${fmt(DB.saldoDaConta(a.id))}</small>`,
       acc => {
         const isEdit = !!acc;
         acc = acc || { name: '', type: 'Conta Corrente', institution: '', balance: 0, active: true };
@@ -8655,16 +8614,19 @@ function openConfigSection(sec) {
           <button class="btn" id="md-save">Salvar</button>
           ${isEdit ? '<div class="btn-row"><button class="btn danger" id="md-del">Excluir</button></div>' : ''}
         `);
-        initMoney('#c-bal', acc.balance);
+        initMoney('#c-bal', DB.saldoDaConta(acc.id));
         $('#md-back').onclick = () => openConfigSection('accounts');
         $('#md-save').onclick = () => {
           if (!$('#c-name').value.trim()) return toast('Informe o nome');
           const saldoInformado = moneyVal('#c-bal');
           // Conta nova: o valor é o saldo de abertura. Conta existente: a diferença
           // vira um lançamento de ajuste, para o extrato continuar explicando o saldo.
-          const saldoFinal = isEdit ? (Number(acc.balance) || 0) : saldoInformado;
-          DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value, balance: saldoFinal });
-          if (isEdit) reconcileBalance(DB.get('accounts', acc.id), saldoInformado);
+          const id = DB.upsert('accounts', { ...acc, name: $('#c-name').value.trim(), type: $('#c-type').value, institution: $('#c-inst').value });
+          /* O SALDO DIGITADO VIRA A ABERTURA DA CONTA — um lançamento datado
+             antes do primeiro movimento, visível no extrato. Antes ele era
+             gravado num campo que só o app via, e por isso o saldo nunca podia
+             ser conferido contra o extrato: faltava o ponto de partida. */
+          DB.definirSaldo(id, saldoInformado);
           Sync.autoSync(); toast(isEdit ? 'Conta atualizada ✓' : 'Conta criada ✓'); openConfigSection('accounts');
         };
         const del = $('#md-del');
@@ -8674,7 +8636,8 @@ function openConfigSection(sec) {
           const presos = DB.all('transactions').filter(t => t.account_id === acc.id || t.to_account === acc.id).length;
           const cartoes = DB.all('cards').filter(c => c.account_id === acc.id).length;
           const aviso = [`Excluir "${acc.name}"?`];
-          if (acc.balance) aviso.push(`O saldo de ${fmt(acc.balance)} sai do total disponível.`);
+          const saldoDela = DB.saldoDaConta(acc.id);
+          if (saldoDela) aviso.push(`O saldo de ${fmt(saldoDela)} sai do total disponível.`);
           if (presos) aviso.push(`${presos} lançamento(s) ficam sem conta — o histórico permanece, mas deixa de somar aqui.`);
           if (cartoes) aviso.push(`${cartoes} cartão(ões) perdem a conta de pagamento.`);
           if (confirm(aviso.join('\n\n'))) {
@@ -10014,7 +9977,6 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
         if (atual && atual.status === 'A Pagar') {
           const pago = { ...atual, status: 'Pago', date: t.date, fitid: t.fitid || atual.fitid || '' };
           DB.upsert('transactions', pago);
-          applyTxEffect(pago, +1);        // agora sim o saldo se move
           confirmados++;
         }
         return;
@@ -10048,7 +10010,6 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
           fitid: t.fitid, tags,
         };
         DB.upsert('transactions', transf);
-        applyTxEffect(transf, +1);            // move os dois saldos de uma vez
         n++; transferidos++;
         return;
       }
@@ -10077,7 +10038,7 @@ function renderOfxPreview(parsed, accounts, cards, situacao) {
     const balBox = $('#ofx-bal');
     if (account && balBox && balBox.checked && parsed.balance !== null) {
       // A diferença aqui costuma ser o saldo que já existia antes do período importado
-      reconcileBalance(DB.get('accounts', account.id), parsed.balance, 'Ajuste de saldo (extrato do banco)');
+      DB.definirSaldo(account.id, parsed.balance);
     }
     Sync.autoSync(); closeModal();
     // Conta o que ficou de fora POR ESTAR DESMARCADO, não o que o app palpitou:
@@ -10830,6 +10791,10 @@ Auth.init(() => {
   /* Recupera faturas pagas antes de o pagamento virar lançamento. Sem isto, o
      saldo anterior de qualquer mês com fatura paga no modelo antigo vem errado e
      a soma do extrato não fecha — foi o defeito relatado na conta C6. */
+  /* O saldo que morava no campo vira a ABERTURA da conta. Sem isto, a primeira
+     abertura depois desta versão mostraria todas as contas com a soma do extrato
+     — e contas certas pareceriam erradas de uma hora para outra. */
+  try { DB.migrarAberturas(); } catch (_) {}
   try { DB.migrarFaturasPagasAntigas(); } catch (_) {}
   try { DB.gerarRecorrencias(); } catch (_) {}
   /* Traz o que a criança fez no app dela e devolve o que mudou aqui. Antes do
